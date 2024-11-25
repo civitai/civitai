@@ -23,7 +23,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
@@ -45,7 +45,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { env } from '~/env/client.mjs';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import { PaymentProvider } from '@prisma/client';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -305,7 +305,7 @@ export default function UserMembership() {
                           </>
                         )}
                         {canUpgrade && (
-                          <Button component={NextLink} href="/pricing" radius="xl">
+                          <Button component={Link} href="/pricing" radius="xl">
                             Upgrade
                           </Button>
                         )}

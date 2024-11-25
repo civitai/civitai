@@ -44,9 +44,9 @@ import { constants } from '~/server/common/constants';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
 import { showSuccessNotification } from '~/utils/notifications';
 import { BackButton } from '~/components/BackButton/BackButton';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openConfirmModal } from '@mantine/modals';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ClubsInfinite } from '../../../../components/Club/Infinite/ClubsInfinite';
 
 const querySchema = z.object({ id: z.coerce.number() });
@@ -215,7 +215,7 @@ export const ClubManagementLayout = ({ children }: { children: React.ReactNode }
       <Container size="xl">
         <Stack spacing="md">
           <Stack spacing="md">
-            <Link href={`/clubs/${club.id}`} passHref shallow>
+            <Link legacyBehavior href={`/clubs/${club.id}`} passHref shallow>
               <Anchor size="sm">
                 <Group spacing={4}>
                   <IconArrowLeft />

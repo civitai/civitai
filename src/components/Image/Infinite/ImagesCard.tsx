@@ -11,7 +11,7 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { ImageIngestionStatus } from '@prisma/client';
+import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -85,16 +85,14 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       width={450}
                       placeholder="empty"
                       contain={!!image.cosmetic?.data}
-                      fadeIn
+                      // fadeIn
                     />
                   ) : (
                     <MediaHash {...image} />
                   )}
                 </RoutedDialogLink>
 
-                <div className="absolute left-2 top-2">
-                  <ImageGuard2.BlurToggle />
-                </div>
+                <ImageGuard2.BlurToggle className="absolute left-2 top-2" />
 
                 {safe && (
                   <div className="absolute right-2 top-2 flex flex-col gap-2">
@@ -110,7 +108,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           e.preventDefault();
                           e.stopPropagation();
                           generationPanel.open({
-                            type: 'image',
+                            type: image.type,
                             id: image.id,
                           });
                         }}
@@ -173,7 +171,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         className={classes.reactions}
                       />
                       {data.hasMeta && (
-                        <ImageMetaPopover2 imageId={data.id}>
+                        <ImageMetaPopover2 imageId={data.id} type={data.type}>
                           <ActionIcon variant="transparent" size={30} component="span">
                             <IconInfoCircle
                               color="white"

@@ -1,6 +1,6 @@
 import { BadgeProps, ButtonProps } from '@mantine/core';
 import { useContext, createContext, ReactNode } from 'react';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 type ReactionSettingsState = {
   hideReactions?: boolean;

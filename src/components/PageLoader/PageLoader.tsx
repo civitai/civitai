@@ -1,21 +1,10 @@
-import { Center, createStyles, Loader, Text } from '@mantine/core';
+import { Loader, Text } from '@mantine/core';
 
 export function PageLoader({ text }: { text?: string }) {
-  const { classes } = useStyles();
   return (
-    <Center className={classes.root}>
+    <div className="absolute inset-0 flex items-center justify-center">
       <Loader />
       {text && <Text>{text}</Text>}
-    </Center>
+    </div>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  root: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%,-50%)',
-    flexDirection: 'column',
-  },
-}));

@@ -13,8 +13,7 @@ import {
   ThemeIcon,
   createStyles,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import { CollectionType, ModelStatus } from '@prisma/client';
+import { CollectionType, ModelStatus } from '~/shared/utils/prisma/enums';
 import {
   IconBrush,
   IconDotsVertical,
@@ -49,14 +48,14 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { truncate } from 'lodash-es';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import type { AssociatedResourceModelCardData } from '~/server/controllers/model.controller';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -159,7 +158,7 @@ export function ModelCategoryCard({
           onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
             e.preventDefault();
             e.stopPropagation();
-            openContext('report', { entityType: ReportEntity.Model, entityId: id });
+            openReportModal({ entityType: ReportEntity.Model, entityId: id });
           }}
         >
           Report Resource
@@ -178,7 +177,7 @@ export function ModelCategoryCard({
               onClick={(e: React.MouseEvent<HTMLButtonElement>) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openContext('report', { entityType: ReportEntity.Image, entityId: image.id });
+                openReportModal({ entityType: ReportEntity.Image, entityId: image.id });
               }}
             >
               Report Image
@@ -281,7 +280,7 @@ export function ModelCategoryCard({
         styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
         sx={{ opacity: isHidden ? 0.1 : undefined }}
       >
-        <NextLink
+        <Link
           href={`/models/${id}/${slugit(name)}`}
           className={classes.link}
           onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
@@ -449,7 +448,7 @@ export function ModelCategoryCard({
               </Group>
             </Stack>
           </Stack>
-        </NextLink>
+        </Link>
       </Indicator>
     </MasonryCard>
   );

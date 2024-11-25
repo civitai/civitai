@@ -1,5 +1,4 @@
 import { Group, Text, createStyles, Menu, Button } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import {
   IconCalendar,
   IconCaretDown,
@@ -13,7 +12,7 @@ import {
   IconProps,
   IconCake,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -188,7 +187,7 @@ export function HomeTabs() {
             <Button
               variant="default"
               key={key}
-              component={NextLink}
+              component={Link}
               href={value.url}
               className={clsx('h-8 rounded-full border-none py-2 pl-3 pr-4', {
                 ['bg-gray-4 dark:bg-dark-4']: activePath === key,
@@ -222,7 +221,7 @@ export function HomeTabs() {
           {Object.entries(homeOptions)
             .filter(([, value]) => value.grouped)
             .map(([key, value]) => (
-              <Link key={key} href={value.url} passHref>
+              <Link legacyBehavior key={key} href={value.url} passHref>
                 <Menu.Item
                   component="a"
                   icon={value.icon({ size: 16 })}

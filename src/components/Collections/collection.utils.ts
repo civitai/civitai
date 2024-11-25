@@ -1,28 +1,29 @@
-import {
-  CollectionMode,
-  CollectionReadConfiguration,
-  CollectionType,
-  CollectionWriteConfiguration,
-} from '@prisma/client';
 import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
+import produce from 'immer';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { CollectionSort } from '~/server/common/enums';
 import {
   GetAllCollectionsInfiniteSchema,
   RemoveCollectionItemInput,
+  SetItemScoreInput,
 } from '~/server/schema/collection.schema';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
-import { removeEmpty } from '~/utils/object-helpers';
-import { trpc } from '~/utils/trpc';
+import {
+  CollectionMode,
+  CollectionReadConfiguration,
+  CollectionType,
+  CollectionWriteConfiguration,
+} from '~/shared/utils/prisma/enums';
 import { CollectionByIdModel } from '~/types/router';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { ImageMetadata } from '~/server/schema/media.schema';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 const collectionQueryParamSchema = z
   .object({
@@ -316,5 +317,46 @@ export const useMutateCollection = () => {
   return {
     removeCollectionItem: removeCollectionItemHandler,
     removingCollectionItem: removeCollectionItemMutation.isLoading,
+  };
+};
+
+export const useSetCollectionItemScore = ({ imageId }: { imageId: number }) => {
+  const queryUtils = trpc.useUtils();
+  const setItemScoreMutation = trpc.collection.setItemScore.useMutation({
+    onSuccess: (result) => {
+      const { collectionItemId, userId, score } = result;
+      queryUtils.image.getContestCollectionDetails.setData(
+        { id: imageId },
+        produce((old) => {
+          if (!old) return;
+
+          const item = old.collectionItems.find((item) => item.id === collectionItemId);
+          if (!item) return;
+
+          const existingScore = item.scores.find((itemScore) => itemScore.userId === userId);
+          if (!existingScore) {
+            item.scores.push({ userId, score });
+            return;
+          }
+
+          existingScore.score = score;
+        })
+      );
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to set item score',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const setItemScoreHandler = (data: SetItemScoreInput) => {
+    return setItemScoreMutation.mutateAsync(data);
+  };
+
+  return {
+    setItemScore: setItemScoreHandler,
+    loading: setItemScoreMutation.isLoading,
   };
 };

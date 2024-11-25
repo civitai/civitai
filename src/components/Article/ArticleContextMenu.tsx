@@ -1,6 +1,6 @@
 import { ActionIcon, ActionIconProps, Loader, Menu } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconBan, IconDotsVertical, IconFlag, IconPencil, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 
@@ -12,7 +12,7 @@ import type { ArticleGetAllRecord } from '~/server/services/article.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
-import { ArticleStatus, CollectionType, CosmeticEntity } from '@prisma/client';
+import { ArticleStatus, CollectionType, CosmeticEntity } from '~/shared/utils/prisma/enums';
 import React from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ToggleLockComments } from '../CommentsV2';
@@ -20,6 +20,7 @@ import { IconLock } from '@tabler/icons-react';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { ArticleGetById } from '~/types/router';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function ArticleContextMenu({ article, ...props }: Props) {
   const queryUtils = trpc.useUtils();
@@ -169,7 +170,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
               </Menu.Item>
             )}
             <Menu.Item
-              component={NextLink}
+              component={Link}
               href={`/articles/${article.id}/edit`}
               icon={<IconPencil size={14} stroke={1.5} />}
             >
@@ -200,7 +201,7 @@ export function ArticleContextMenu({ article, ...props }: Props) {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                openContext('report', { entityType: ReportEntity.Article, entityId: article.id });
+                openReportModal({ entityType: ReportEntity.Article, entityId: article.id });
               }}
             >
               Report article

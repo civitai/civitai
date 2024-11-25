@@ -1,4 +1,4 @@
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
 
 /**

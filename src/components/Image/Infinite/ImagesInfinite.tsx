@@ -1,8 +1,8 @@
 import { Button, Center, Group, Loader, LoadingOverlay } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
@@ -31,6 +31,7 @@ type ImagesInfiniteProps = {
   showAds?: boolean;
   showEmptyCta?: boolean;
   useIndex?: boolean;
+  disableStoreFilters?: boolean;
 };
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
@@ -50,9 +51,14 @@ export function ImagesInfiniteContent({
   showAds,
   showEmptyCta,
   useIndex,
+  disableStoreFilters = false,
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
-  const filters = removeEmpty({ useIndex, withTags, ...imageFilters, ...filterOverrides });
+  const filters = removeEmpty({
+    ...(disableStoreFilters ? filterOverrides : { ...imageFilters, ...filterOverrides }),
+    useIndex,
+    withTags,
+  });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
@@ -70,7 +76,7 @@ export function ImagesInfiniteContent({
   //#endregion
 
   return (
-    <IsClient>
+    <>
       {isLoading ? (
         <Center p="xl">
           <Loader />
@@ -123,6 +129,6 @@ export function ImagesInfiniteContent({
           )}
         </NoContent>
       )}
-    </IsClient>
+    </>
   );
 }

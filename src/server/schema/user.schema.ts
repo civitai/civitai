@@ -4,7 +4,7 @@ import {
   MediaType,
   ModelEngagementType,
   TagEngagementType,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { banReasonDetails, constants } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';

@@ -7,7 +7,7 @@ import {
   ModelVersionMonetizationType,
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client.mjs';
@@ -428,6 +428,7 @@ export const baseModelSetTypes = [
   'ODOR',
   'Flux1',
   'Illustrious',
+  'Other',
   'Mochi',
 ] as const;
 
@@ -449,6 +450,7 @@ export const baseModelSets = defineBaseModelSets({
   Pony: ['Pony'],
   ODOR: ['ODOR'],
   Illustrious: ['Illustrious'],
+  Other: ['Other'],
   Mochi: ['Mochi'],
 });
 
@@ -470,6 +472,7 @@ export const baseModelSetNames = defineBaseModelSetNames({
   Pony: 'Stable Diffusion',
   ODOR: 'ODOR',
   Illustrious: 'Illustrious',
+  Other: 'Other',
   Mochi: 'Mochi',
 });
 
@@ -654,6 +657,7 @@ export const generation = {
     upscale: 1.5,
     civitaiTip: 0,
     creatorTip: 0.25,
+    fluxUltraAspectRatio: '4',
     model: {
       id: 128713,
       name: '8',
@@ -676,6 +680,7 @@ export const generation = {
     clipSkip: 3,
   },
 } as const;
+export const maxRandomSeed = 2147483647;
 
 export const generationConfig = {
   SD1: {
@@ -830,6 +835,24 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+    } as GenerationResource,
+  },
+  Other: {
+    aspectRatios: [] as { label: string; width: number; height: number }[],
+    checkpoint: {
+      id: 164821,
+      name: '',
+      trainedWords: [],
+      modelId: 147759,
+      modelName: 'Remacri',
+      modelType: 'Upscaler',
+      baseModel: 'Other',
+      covered: true,
+      available: true,
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      minor: false,
     } as GenerationResource,
   },
 };

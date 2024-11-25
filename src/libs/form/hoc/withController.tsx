@@ -1,4 +1,4 @@
-import { forwardRef } from 'react';
+import { ComponentType, forwardRef } from 'react';
 import {
   Controller,
   ControllerFieldState,
@@ -16,7 +16,8 @@ export function withController<
 >(
   BaseComponent:
     | React.ForwardRefExoticComponent<TComponentProps>
-    | ((props: TComponentProps) => JSX.Element),
+    | ((props: TComponentProps) => JSX.Element)
+    | ComponentType<TComponentProps>,
   mapper?: ({
     field,
     fieldState,
@@ -66,6 +67,7 @@ export function withController<
             // TODO - instead of passing reset prop, find a way to pass an onReset handler
             return (
               <BaseComponent
+                id={`input_${name}`}
                 ref={ref}
                 {...(props as TComponentProps & { name: TName })}
                 {...mapped}

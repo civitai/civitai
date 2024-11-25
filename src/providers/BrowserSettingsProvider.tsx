@@ -28,16 +28,26 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const storeRef = useRef<ContentSettingsStore | null>(null);
   if (!storeRef.current) {
     storeRef.current = createContentSettingsStore({ ...settings });
-    snapshotRef.current = storeRef.current.getState();
+    snapshotRef.current = settings;
   }
+
+  useEffect(() => {
+    if (storeRef.current) {
+      storeRef.current.setState({ ...settings });
+      snapshotRef.current = settings;
+    }
+  }, [settings]);
 
   useEffect(() => {
     const store = storeRef.current;
     if (!store || type === 'unauthed') return;
-    const unsubscribe = store.subscribe((curr, prev) => {
+    const unsubscribe = store.subscribe(({ setState, ...curr }, prev) => {
       debouncer(() => {
         const changed = getChanged(curr, snapshotRef.current);
-        mutate(changed);
+        if (Object.keys(changed).length > 0) {
+          mutate(changed);
+          snapshotRef.current = curr;
+        }
 
         // TODO - remove this once `disableHidden` comes in with rest of user settings
         if (curr.disableHidden !== prev.disableHidden)

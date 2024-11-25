@@ -1,6 +1,6 @@
 import { Anchor, Button, Container, Group, Paper, Stack, Text, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -10,7 +10,7 @@ import { trpc } from '~/utils/trpc';
 import { useClubContributorStatus } from '~/components/Club/club.utils';
 import { ClubPostUpsertForm } from '~/components/Club/ClubPost/ClubPostUpsertForm';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { createServerSideProps } from '../../../../../server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -55,7 +55,7 @@ export default function ClubPostEdit() {
   return (
     <Container size="md">
       <Stack spacing="xl">
-        <Link href={`/clubs/${clubPost.clubId}`} passHref shallow>
+        <Link legacyBehavior href={`/clubs/${clubPost.clubId}`} passHref shallow>
           <Anchor size="sm">
             <Group spacing={4}>
               <IconArrowLeft size={18} strokeWidth={1.5} />

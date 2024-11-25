@@ -8,7 +8,7 @@ import {
   Text,
   Tooltip,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
 import React from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

@@ -3,12 +3,13 @@ import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import { cloneDeep } from 'lodash-es';
-import { useEffect, useMemo } from 'react';
+import { useMemo } from 'react';
 import { z } from 'zod';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { SignalMessages } from '~/server/common/enums';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { MarkerType, SignalMessages } from '~/server/common/enums';
 import {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
@@ -19,19 +20,13 @@ import {
   TagsPatchSchema,
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
+import { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
 import {
   WorkflowStepFormatted,
   queryGeneratedImageWorkflows,
 } from '~/server/services/orchestrator/common';
-import {
-  IWorkflow,
-  IWorkflowsInfinite,
-  UpdateWorkflowStepParams,
-} from '~/server/services/orchestrator/orchestrator.schema';
-import {
-  WORKFLOW_TAGS,
-  orchestratorCompletedStatuses,
-} from '~/shared/constants/generation.constants';
+import { IWorkflow, IWorkflowsInfinite } from '~/server/services/orchestrator/orchestrator.schema';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -41,60 +36,75 @@ type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
 >;
 
+function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?: string[] }) {
+  return step.images.filter(({ id }) => {
+    const imageMeta = step.metadata?.images?.[id];
+    if (imageMeta?.hidden) return false;
+    if (tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite) return false;
+    if (tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) && imageMeta?.feedback !== 'liked')
+      return false;
+    if (tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) && imageMeta?.feedback !== 'disliked')
+      return false;
+    return true;
+  });
+}
+
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
   options?: { enabled?: boolean }
 ) {
   const currentUser = useCurrentUser();
-  const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(input ?? {}, {
-    getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-    enabled: !!currentUser,
-    ...options,
-  });
+
+  const filters = useFiltersContext((state) => state.markers);
+
+  const tags = useMemo(() => {
+    switch (filters.marker) {
+      case MarkerType.Favorited:
+        return [WORKFLOW_TAGS.FAVORITE];
+
+      case MarkerType.Liked:
+        return [WORKFLOW_TAGS.FEEDBACK.LIKED];
+
+      case MarkerType.Disliked:
+        return [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
+      default:
+        return [];
+    }
+  }, [filters.marker]);
+
+  const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
+    { ...input, tags: [WORKFLOW_TAGS.GENERATION, ...tags] },
+    {
+      getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
+      enabled: !!currentUser,
+      ...options,
+    }
+  );
 
   const flatData = useMemo(
     () =>
       data?.pages.flatMap((x) =>
         (x.items ?? [])
           .filter((workflow) => {
-            if (!!input?.tags?.length && workflow.tags.every((tag) => !input?.tags?.includes(tag)))
-              return false;
+            if (!!tags.length && workflow.tags.every((tag) => !tags.includes(tag))) return false;
             return true;
           })
           .map((response) => {
             const steps = response.steps.map((step) => {
-              const images = step.images
-                .filter(({ id }) => {
-                  const imageMeta = step.metadata?.images?.[id];
-                  if (imageMeta?.hidden) return false;
-                  if (input?.tags?.includes(WORKFLOW_TAGS.FAVORITE) && !imageMeta?.favorite)
-                    return false;
-                  if (
-                    input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.LIKED) &&
-                    imageMeta?.feedback !== 'liked'
-                  )
-                    return false;
-                  if (
-                    input?.tags?.includes(WORKFLOW_TAGS.FEEDBACK.DISLIKED) &&
-                    imageMeta?.feedback !== 'disliked'
-                  )
-                    return false;
-                  return true;
-                })
-                .sort((a, b) => {
-                  if (!b.completed) return 1;
-                  if (!a.completed) return -1;
-                  return b.completed.getTime() - a.completed.getTime();
-                  // if (a.completed !== b.completed) {
-                  //   if (!b.completed) return 1;
-                  //   if (!a.completed) return -1;
-                  //   return b.completed.getTime() - a.completed.getTime();
-                  // } else {
-                  //   if (a.id < b.id) return -1;
-                  //   if (a.id > b.id) return 1;
-                  //   return 0;
-                  // }
-                });
+              const images = imageFilter({ step, tags }).sort((a, b) => {
+                if (!b.completed) return 1;
+                if (!a.completed) return -1;
+                return b.completed.getTime() - a.completed.getTime();
+                // if (a.completed !== b.completed) {
+                //   if (!b.completed) return 1;
+                //   if (!a.completed) return -1;
+                //   return b.completed.getTime() - a.completed.getTime();
+                // } else {
+                //   if (a.id < b.id) return -1;
+                //   if (a.id > b.id) return 1;
+                //   return 0;
+                // }
+              });
               return { ...step, images };
             });
             return { ...response, steps };
@@ -104,7 +114,7 @@ export function useGetTextToImageRequests(
   );
 
   const steps = useMemo(() => flatData.flatMap((x) => x.steps), [flatData]);
-  const images = useMemo(() => steps.flatMap((x) => x.images), [steps]);
+  const images = useMemo(() => steps.flatMap((step) => imageFilter({ step, tags })), [steps]);
 
   return { data: flatData, steps, images, ...rest };
 }
@@ -144,6 +154,24 @@ export function useSubmitCreateImage() {
   });
 }
 
+export function useGenerate() {
+  return trpc.orchestrator.generate.useMutation({
+    onSuccess: (data) => {
+      updateTextToImageRequests((old) => {
+        old.pages[0].items.unshift(data);
+      });
+      updateFromEvents();
+    },
+    // onError: (error) => {
+    //   showErrorNotification({
+    //     title: 'Failed to generate',
+    //     error: new Error(error.message),
+    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+    //   });
+    // },
+  });
+}
+
 export function useDeleteTextToImageRequest() {
   return trpc.orchestrator.deleteWorkflow.useMutation({
     onSuccess: (_, { workflowId }) => {
@@ -165,24 +193,6 @@ export function useDeleteTextToImageRequest() {
 
 export function useCancelTextToImageRequest() {
   return trpc.orchestrator.cancelWorkflow.useMutation({
-    onSuccess: (_, { workflowId }) => {
-      updateTextToImageRequests((old) => {
-        for (const page of old.pages) {
-          for (const item of page.items.filter((x) => x.id === workflowId)) {
-            for (const step of item.steps) {
-              for (const image of step.images.filter(
-                (x) => !orchestratorCompletedStatuses.includes(x.status)
-              )) {
-                image.status = 'canceled';
-              }
-              if (step.images.some((x) => x.status === 'canceled')) {
-                item.status = 'canceled';
-              }
-            }
-          }
-        }
-      });
-    },
     onError: (error) => {
       showErrorNotification({
         title: 'Error cancelling request',
@@ -431,6 +441,7 @@ function updateFromEvents() {
             for (const image of images) {
               image.status = signalEvent.status!;
               image.completed = signalEvent.completed;
+              if (image.type === 'video') image.progress = signalEvent.progress ?? 0;
             }
 
             if (status === signalJobEventsDictionary[jobId].status) {

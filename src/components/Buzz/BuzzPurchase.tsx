@@ -4,7 +4,6 @@ import {
   Group,
   Stack,
   Text,
-  createStyles,
   Chip,
   Loader,
   Input,
@@ -12,7 +11,8 @@ import {
   ThemeIcon,
   Grid,
 } from '@mantine/core';
-import { Currency, Price } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { Price } from '~/shared/utils/prisma/models';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -27,8 +27,7 @@ import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { BuzzPaypalButton } from './BuzzPaypalButton';
+// import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
@@ -449,13 +448,15 @@ export const BuzzPurchase = ({
                 disabled={!ctaEnabled}
                 purchaseSuccessMessage={purchaseSuccessMessage}
               />
-              <BuzzPaypalButton
-                onError={(error) => setError(error.message)}
-                onSuccess={onPaypalSuccess}
-                amount={buzzAmount}
-                disabled={!ctaEnabled}
-                onValidate={onValidate}
-              />
+              {/* {env.NEXT_PUBLIC_PAYPAL_CLIENT_ID && (
+                <BuzzPaypalButton
+                  onError={(error) => setError(error.message)}
+                  onSuccess={onPaypalSuccess}
+                  amount={buzzAmount}
+                  disabled={!ctaEnabled}
+                  onValidate={onValidate}
+                />
+              )} */}
               {onCancel && (
                 <Button variant="light" color="gray" onClick={onCancel} radius="xl">
                   Cancel

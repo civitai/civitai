@@ -9,12 +9,12 @@ import {
   useMantineTheme,
   Title,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import React, { useEffect, useMemo, useState } from 'react';
 
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { Elements, PaymentElement } from '@stripe/react-stripe-js';
-import { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
+import type { StripeElementsOptions, StripePaymentElementOptions } from '@stripe/stripe-js';
 import { useStripePromise } from '~/providers/StripeProvider';
 import { useStripeTransaction } from '~/components/Buzz/useStripeTransaction';
 import { formatPriceForDisplay } from '~/utils/number-helpers';

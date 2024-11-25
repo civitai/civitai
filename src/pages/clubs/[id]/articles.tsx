@@ -7,7 +7,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { PeriodFilter, SortFilter } from '~/components/Filters';
 import { ArticleSort, ModelSort } from '~/server/common/enums';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MetricTimeframe } from '@prisma/client';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';

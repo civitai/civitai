@@ -21,9 +21,9 @@ import { IconArrowLeft, IconCheck, IconLock, IconX } from '@tabler/icons-react';
 import { slugit } from '~/utils/string-helpers';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
-import { TagTarget } from '@prisma/client';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 
 const schema = upsertQuestionSchema.extend({ tags: z.string().array().nullish() });

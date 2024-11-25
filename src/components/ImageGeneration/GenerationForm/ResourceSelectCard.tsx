@@ -10,8 +10,8 @@ import {
   Overlay,
   useMantineTheme,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
-import { ModelType } from '@prisma/client';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
@@ -80,7 +80,7 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap, hideVersion }:
         ) : null}
         <Stack spacing={2}>
           <Text
-            component={NextLink}
+            component={Link}
             sx={(theme) => ({
               cursor: 'pointer',
               color: theme.colorScheme === 'dark' ? theme.white : theme.black,
@@ -139,7 +139,7 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
               </ThemeIcon>
             )}
             <Text
-              component={NextLink}
+              component={Link}
               sx={{ cursor: 'pointer' }}
               href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
               onClick={() => generationPanel.close()}
@@ -159,7 +159,7 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
         </Group>
         {/* LORA */}
         {hasStrength && onUpdate && !unavailable && (
-          <Group spacing="xs" align="center">
+          <div className="flex w-full items-center gap-2">
             <NumberSlider
               value={resource.strength}
               onChange={(strength) => onUpdate({ ...resource, strength })}
@@ -169,7 +169,7 @@ function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
               sx={{ flex: 1 }}
               reverse
             />
-          </Group>
+          </div>
         )}
       </Stack>
       {onRemove && (

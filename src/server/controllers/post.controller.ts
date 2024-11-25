@@ -1,4 +1,4 @@
-import { CollectionMode, CollectionType, EntityType } from '@prisma/client';
+import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { Context } from '~/server/createContext';
@@ -503,8 +503,10 @@ export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }
 // #region [post for collections]
 export const getPostContestCollectionDetailsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetByIdInput;
+  ctx: Context;
 }) => {
   try {
     const items = await getPostContestCollectionDetails({ ...input });

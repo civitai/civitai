@@ -1,10 +1,10 @@
 import { Box, BoxProps, ThemeIcon, useMantineTheme } from '@mantine/core';
 import { IconRefresh } from '@tabler/icons-react';
 
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { ScrollAreaContext, useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { isMobileDevice } from '~/hooks/useIsMobile';
 import { UseScrollRestoreProps, useScrollRestore } from '~/hooks/useScrollRestore';
 import clsx from 'clsx';
 
@@ -16,7 +16,10 @@ export function ScrollArea({
   ...props
 }: ScrollAreaProps) {
   const { ref: scrollRef, key } = useScrollRestore<HTMLDivElement>(scrollRestore);
-  const mobile = useIsMobile({ breakpoint: 'md' });
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    setIsMobile(isMobileDevice());
+  }, []);
 
   return (
     <ScrollAreaContext.Provider value={{ ref: scrollRef }}>
@@ -26,7 +29,7 @@ export function ScrollArea({
           className={clsx('scroll-area flex-1 @container', className)}
           {...props}
         >
-          {mobile && <DragLoader />}
+          {isMobile && <DragLoader />}
           {children}
         </Box>
       </IntersectionObserverProvider>
@@ -120,9 +123,9 @@ function DragLoader() {
       }
     };
 
-    node.addEventListener('touchstart', pullStart);
-    node.addEventListener('touchmove', pull);
-    node.addEventListener('touchend', endPull);
+    node.addEventListener('touchstart', pullStart, { passive: true });
+    node.addEventListener('touchmove', pull, { passive: true });
+    node.addEventListener('touchend', endPull, { passive: true });
     return () => {
       node.removeEventListener('touchstart', pullStart);
       node.removeEventListener('touchmove', pull);

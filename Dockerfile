@@ -12,6 +12,9 @@ COPY prisma ./
 
 COPY package.json yarn.lock* package-lock.json* pnpm-lock.yaml\* ./
 
+# copy ./scripts directory to /app/scripts to run prisma enum generator
+COPY scripts ./scripts
+
 RUN \
   if [ -f yarn.lock ]; then yarn --frozen-lockfile; \
   elif [ -f package-lock.json ]; then npm ci; \

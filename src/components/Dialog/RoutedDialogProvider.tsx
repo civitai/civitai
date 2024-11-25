@@ -7,7 +7,8 @@ import {
   getBrowserRouter,
   useBrowserRouter,
 } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { NextRouter, resolveHref } from 'next/dist/shared/lib/router/router';
+import { NextRouter } from 'next/dist/shared/lib/router/router';
+import { resolveHref } from 'next/dist/client/resolve-href'
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { QS } from '~/utils/qs';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';

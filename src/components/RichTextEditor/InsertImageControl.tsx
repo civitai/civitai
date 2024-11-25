@@ -7,6 +7,7 @@ import { IconPhoto } from '@tabler/icons-react';
 import { useRef } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { constants } from '~/server/common/constants';
 
 export function InsertImageControl(props: Props) {
   const { editor } = useRichTextEditorContext();
@@ -20,7 +21,11 @@ export function InsertImageControl(props: Props) {
 
   const handleFileChange = async (fileList: FileList) => {
     const files = Array.from(fileList);
-    const images = await Promise.all(files.map((file) => uploadToCF(file)));
+    const images = await Promise.all(files.map((file) => uploadToCF(file))).catch((error) => {
+      console.error(error);
+      window.alert(`Failed to upload image. ${error.message}`);
+      return [];
+    });
 
     if (images.length > 0)
       images.map((image) =>
@@ -38,7 +43,7 @@ export function InsertImageControl(props: Props) {
       <IconPhoto size={16} stroke={1.5} />
       <input
         type="file"
-        accept=".jpg,.jpeg,.png,.gif,.svg,.webp"
+        accept={constants.richTextEditor.accept.join(',')}
         ref={inputRef}
         onChange={(e) => {
           const { files } = e.target;

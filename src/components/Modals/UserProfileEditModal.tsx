@@ -46,7 +46,7 @@ import {
   creatorCardStatsDefaults,
 } from '~/server/common/constants';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { CosmeticType, LinkType } from '@prisma/client';
+import { CosmeticType, LinkType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';

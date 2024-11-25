@@ -12,7 +12,7 @@ export const config = {
     '/moderator/:path*',
     '/api/trpc/:path*',
     '/api/v1/:path*',
-    '/models/:path*',
+    // '/models/:path*',
     '/user/:path*',
   ],
   api: {

@@ -14,7 +14,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { HolidayFrame } from '../Decorations/HolidayFrame';
 import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -74,7 +74,7 @@ function UnroutedImageCard({ data }: Props) {
                           e.preventDefault();
                           e.stopPropagation();
                           generationPanel.open({
-                            type: 'image',
+                            type: data.type,
                             id: data.id,
                           });
                         }}
@@ -150,7 +150,7 @@ function UnroutedImageCard({ data }: Props) {
               targetUserId={data.user.id}
             />
             {data.hasMeta && (
-              <ImageMetaPopover2 imageId={data.id}>
+              <ImageMetaPopover2 imageId={data.id} type={data.type}>
                 <ActionIcon className={sharedClasses.infoChip} variant="light">
                   <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                 </ActionIcon>

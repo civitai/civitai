@@ -1,12 +1,8 @@
-import { create } from 'zustand';
-import { persist } from 'zustand/middleware';
-
-import { GenerateFormModel, generationStatusSchema } from '~/server/schema/generation.schema';
-import React, { useMemo, useCallback, useState, useEffect } from 'react';
+import { generationStatusSchema } from '~/server/schema/generation.schema';
+import React, { useMemo, useCallback } from 'react';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 
 // export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 //   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -15,7 +11,7 @@ import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 const defaultServiceStatus = generationStatusSchema.parse({});
 export const useGenerationStatus = () => {
   const currentUser = useCurrentUser();
-  const { data } = trpc.generation.getStatus.useQuery(undefined, {
+  const { data, isLoading } = trpc.generation.getStatus.useQuery(undefined, {
     cacheTime: 60,
     trpc: { context: { skipBatch: true } },
   });
@@ -26,8 +22,8 @@ export const useGenerationStatus = () => {
     const tier = currentUser?.tier ?? 'free';
     const limits = status.limits[tier];
 
-    return { ...status, tier, limits };
-  }, [data, currentUser]);
+    return { ...status, tier, limits, isLoading };
+  }, [data, currentUser, isLoading]);
 };
 
 export const useUnstableResources = () => {
@@ -213,6 +209,8 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
   target.value = text;
   target.selectionStart = selectionStart;
   target.selectionEnd = selectionEnd;
+
+  return text;
 }
 
 // const workflowDefinitionKey = 'workflow-definition';

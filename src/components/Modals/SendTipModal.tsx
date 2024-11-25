@@ -9,7 +9,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { IconBolt } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { z } from 'zod';

@@ -21,7 +21,7 @@ import {
   IconLayoutList,
   IconPhoto,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
@@ -36,7 +36,7 @@ import {
 } from '~/components/HomeBlocks/HomeBlock.Styles';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
-import { CollectionMode } from '@prisma/client';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
@@ -65,10 +65,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
   );
 
   const rows = metadata.collection?.rows ?? 2;
-  const { classes, cx } = useHomeBlockGridStyles({
-    count: homeBlock?.collection?.items.length ?? 0,
-    rows,
-  });
+
   const { classes: homeBlockClasses } = useHomeBlockStyles();
   const currentUser = useCurrentUser();
 
@@ -93,7 +90,12 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     return filtered.slice(0, itemsToShow);
   }, [filtered, rows]);
 
-  useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
+  const { classes, cx } = useHomeBlockGridStyles({
+    count: items.length ?? 0,
+    rows,
+  });
+
+  // useEffect(() => console.log({ homeBlock, filtered, items }), [homeBlock, filtered, items]);
 
   // useEffect(() => console.log('items'), [items]);
 
@@ -131,7 +133,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                   </Text>
                 )}
                 {metadata.link && (
-                  <Link href={metadata.link} passHref>
+                  <Link legacyBehavior href={metadata.link} passHref>
                     <Anchor size="sm">
                       <Group spacing={4}>
                         <Text inherit>{metadata.linkText ?? 'View All'} </Text>
@@ -145,7 +147,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
           )}
         </Group>
         {metadata.link && (
-          <Link href={metadata.link} passHref>
+          <Link legacyBehavior href={metadata.link} passHref>
             <Button
               className={homeBlockClasses.expandButton}
               component="a"
@@ -188,7 +190,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       )}
       {metadata.link && (
         <div>
-          <Link href={metadata.link} passHref>
+          <Link legacyBehavior href={metadata.link} passHref>
             <Button
               size="md"
               component="a"

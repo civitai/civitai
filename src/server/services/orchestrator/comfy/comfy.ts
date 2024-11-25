@@ -2,7 +2,7 @@ import { ComfyStepTemplate, TimeSpan } from '@civitai/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server.mjs';
-import { generation } from '~/server/common/constants';
+import { generation, maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -11,7 +11,7 @@ import {
   populateWorkflowDefinition,
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import {
-  formatGeneratedImageResponses,
+  formatGenerationResponse,
   parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
@@ -25,15 +25,16 @@ export async function createComfyStep(
   }
 ) {
   input.params.seed =
-    input.params.seed ??
-    getRandomInt(input.params.quantity, generation.maxValues.seed) - input.params.quantity;
+    input.params.seed ?? getRandomInt(input.params.quantity, maxRandomSeed) - input.params.quantity;
 
   const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
   const { resources, params } = await parseGenerateImageInput({ ...input, workflowDefinition });
 
   // additional params modifications
   const { sampler, scheduler } =
-    samplersToComfySamplers[params.sampler as keyof typeof samplersToComfySamplers];
+    samplersToComfySamplers[
+      (params.sampler as keyof typeof samplersToComfySamplers) ?? 'DPM++ 2M Karras'
+    ];
 
   const comfyWorkflow = await populateWorkflowDefinition(input.params.workflow, {
     ...params,
@@ -89,7 +90,7 @@ export async function createComfy(
   const workflow = (await submitWorkflow({
     token: args.token,
     body: {
-      tags: [WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
+      tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
       // @ts-ignore: ignoring until we update the civitai-client package
@@ -106,6 +107,6 @@ export async function createComfy(
   // console.dir(workflow, { depth: null });
 
   // TODO - have this use `formatComfyStep`
-  const [formatted] = await formatGeneratedImageResponses([workflow]);
+  const [formatted] = await formatGenerationResponse([workflow]);
   return formatted;
 }

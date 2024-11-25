@@ -9,7 +9,7 @@ import {
   Menu,
   Title,
 } from '@mantine/core';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { FavoriteBadge } from '~/components/Questions/FavoriteBadge';
 import { ReactionBadge } from '~/components/Questions/ReactionBadge';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -20,7 +20,7 @@ import { useState } from 'react';
 import { IconDotsVertical, IconEdit, IconMessageCircle, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { DeleteQuestion } from '~/components/Questions/DeleteQuestion';
 import { QuestionAnswerComments } from '~/components/Questions/QuestionAnswerComments';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -68,7 +68,7 @@ export function QuestionDetails({ question }: { question: QuestionDetailProps })
                     </DeleteQuestion>
                     {(!isMuted || isModerator) && (
                       <Menu.Item
-                        component={NextLink}
+                        component={Link}
                         href={`/questions/${question.id}/${questionTitle}?edit=true`}
                         icon={<IconEdit size={14} stroke={1.5} />}
                         shallow

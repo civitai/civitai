@@ -1,4 +1,4 @@
-import { ChatMemberStatus, ChatMessageType } from '@prisma/client';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 

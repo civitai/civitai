@@ -10,7 +10,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { IconExclamationMark, IconInfoCircle } from '@tabler/icons-react';
-import JSZip from 'jszip';
 import React, { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -31,6 +30,7 @@ import {
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
+import { getJSZip } from '~/utils/lazy';
 import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 
@@ -79,7 +79,7 @@ const useSubmitImages = ({
       return;
     }
 
-    const zip = new JSZip();
+    const zip = await getJSZip();
     await Promise.all(
       filteredImages.map(async (imgData) => {
         const imgBlob = await fetch(imgData.url).then((res) => res.blob());

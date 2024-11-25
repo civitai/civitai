@@ -1,6 +1,6 @@
 import { ActionIcon, Group, Menu, Text, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { ChatMemberStatus } from '@prisma/client';
+import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import {
   IconArrowsJoin2,
   IconBell,
@@ -13,8 +13,8 @@ import {
 import produce from 'immer';
 import React from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -106,7 +106,7 @@ export const ChatActions = ({ chatObj }: { chatObj?: ChatListMessage }) => {
 
   const reportModal = () => {
     if (!chatObj) return;
-    openContext('report', {
+    openReportModal({
       entityType: ReportEntity.Chat,
       entityId: chatObj.id,
     });

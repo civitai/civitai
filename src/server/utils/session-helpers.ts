@@ -1,4 +1,4 @@
-import { User } from '@prisma/client';
+import { User } from '~/shared/utils/prisma/models';
 import { Session } from 'next-auth';
 import { JWT } from 'next-auth/jwt';
 import { v4 as uuid } from 'uuid';

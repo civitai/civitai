@@ -1,4 +1,4 @@
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';

@@ -18,8 +18,12 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
-import { CollectionType, ModelFileVisibility, ModelModifier, ModelStatus } from '@prisma/client';
+import {
+  CollectionType,
+  ModelFileVisibility,
+  ModelModifier,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import {
   IconBrush,
   IconClock,
@@ -38,7 +42,7 @@ import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
 import { AdUnit } from '~/components/Ads/AdUnit';
@@ -89,7 +93,6 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   baseModelLicenses,
@@ -113,7 +116,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
-import { openCollectionSelectModal } from '~/components/Dialog/dialog-registry';
+import {
+  openCollectionSelectModal,
+  openResourceReviewEditModal,
+} from '~/components/Dialog/dialog-registry';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -375,7 +381,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       value:
         version.baseModel === 'ODOR' ? (
           <Group spacing={8} position="apart" noWrap>
-            <Text component={NextLink} href="/product/odor" target="_blank">
+            <Text component={Link} href="/product/odor" target="_blank">
               {version.baseModel}{' '}
             </Text>
             <HowToButton href="https://youtu.be/7j_sakwGK8M" tooltip="What is this?" />
@@ -943,14 +949,14 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                           <Button
                             size="xs"
                             color="gray"
-                            onClick={() => openContext('resourceReviewEdit', userReview)}
+                            onClick={() => openResourceReviewEditModal(userReview)}
                           >
                             See Review
                           </Button>
                           <Button
                             size="xs"
                             color="gray"
-                            component={NextLink}
+                            component={Link}
                             px={7}
                             href={`/posts/create?modelId=${modelId}&modelVersionId=${modelVersionId}`}
                           >
@@ -1053,14 +1059,14 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       </Menu.Target>
                       <Menu.Dropdown>
                         <Menu.Item
-                          component={NextLink}
+                          component={Link}
                           onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/edit`}
                         >
                           Edit Model Details
                         </Menu.Item>
                         <Menu.Item
-                          component={NextLink}
+                          component={Link}
                           onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                         >
@@ -1131,7 +1137,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     {version.recommendedResources.map((resource) => (
                       <Card
                         key={resource.id}
-                        component={NextLink}
+                        component={Link}
                         href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
                         radius={0}
                         py="xs"
@@ -1250,7 +1256,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     </Text>
                   )}
                   {showAddendumLicense && (
-                    <Link href={`/models/license/${version.id}`} passHref>
+                    <Link legacyBehavior href={`/models/license/${version.id}`} passHref>
                       <Anchor
                         variant="text"
                         td="underline"

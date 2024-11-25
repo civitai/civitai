@@ -1,6 +1,6 @@
 import { Badge, Button, Group, GroupProps, Text, useMantineTheme } from '@mantine/core';
 import { useSessionStorage } from '@mantine/hooks';
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { IconBolt, IconHeart, IconMoodSmile, IconPhoto, IconPlus } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import {
@@ -261,6 +261,7 @@ function ReactionBadge({
         {constants.availableReactions[reaction]}
       </Text>
       {!hideReactionCount && <Text inherit>{count}</Text>}
+      {/* {constants.availableReactions[reaction]} {!hideReactionCount && count} */}
     </Button>
   );
 }

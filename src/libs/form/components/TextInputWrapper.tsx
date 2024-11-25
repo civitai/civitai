@@ -34,7 +34,8 @@ export const TextInputWrapper = forwardRef<HTMLInputElement, ClearableTextInputP
         ref={mergedRef as RefObject<HTMLInputElement>}
         {...props}
         rightSection={
-          (clearable || rightSection) && (
+          (clearable || rightSection) &&
+          props.type !== 'hidden' && (
             <Group spacing={4} noWrap>
               {clearable && !props.disabled && closeButton}
               {rightSection}

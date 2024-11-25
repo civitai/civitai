@@ -6,6 +6,7 @@ import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.s
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
 
+export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
   prompt: z
@@ -13,15 +14,15 @@ export const textToImageParamsSchema = z.object({
     .nonempty('Prompt cannot be empty')
     .max(1500, 'Prompt cannot be longer than 1500 characters'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
-  cfgScale: z.coerce.number().min(1).max(30),
+  cfgScale: z.coerce.number().min(1).max(30).optional(),
   sampler: z
     .string()
     .refine((val) => generation.samplers.includes(val as (typeof generation.samplers)[number]), {
       message: 'invalid sampler',
     }),
-  seed: z.coerce.number().min(0).max(generation.maxValues.seed).optional(),
-  clipSkip: z.coerce.number().optional(),
-  steps: z.coerce.number().min(1).max(100),
+  seed: z.coerce.number().min(1).max(generation.maxValues.seed).optional(),
+  clipSkip: z.coerce.number().max(3).optional(),
+  steps: z.coerce.number().min(1).max(100).optional(),
   quantity: z.coerce
     .number()
     .max(20)
@@ -29,6 +30,7 @@ export const textToImageParamsSchema = z.object({
   nsfw: z.boolean().default(false),
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
+  fluxUltraAspectRatio: z.string().optional(),
   baseModel: z.enum(baseModelSetTypes),
   width: z.number(),
   height: z.number(),
@@ -40,10 +42,13 @@ export const textToImageParamsSchema = z.object({
       isProd ? 'https://orchestration.civitai.com' : 'https://orchestration-dev.civitai.com'
     )
     .optional(),
-  upscale: z.number().max(3).optional(),
+  upscaleWidth: z.number().optional(),
+  upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,
   fluxMode: z.string().optional(),
+  fluxUltraRaw: z.boolean().optional(),
   experimental: z.boolean().optional(),
+  engine: z.string().optional(),
 });
 // #endregion
 

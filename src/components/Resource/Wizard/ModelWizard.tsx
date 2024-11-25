@@ -1,5 +1,5 @@
 import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Title } from '@mantine/core';
-import { ModelUploadType, TrainingStatus } from '@prisma/client';
+import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { NextRouter, useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';

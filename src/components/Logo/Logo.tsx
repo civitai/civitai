@@ -1,12 +1,12 @@
 /* eslint-disable @next/next/no-img-element */
-import { Box, BoxProps, createStyles, keyframes } from '@mantine/core';
+import { createStyles, keyframes } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useMemo } from 'react';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { LiveNowIndicator } from '~/components/Social/LiveNow';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import clsx from 'clsx';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { getThanksgivingDate } from '~/utils/date-helpers';
 
 const gradients = {
   blue: {
@@ -39,6 +39,12 @@ const gradients = {
   },
 };
 
+const today = new Date();
+const year = today.getFullYear();
+const month = today.getMonth();
+const day = today.getDate();
+const thanksgivingDay = getThanksgivingDate(year).getDate();
+
 export function Logo() {
   const { isGreen, isRed } = useFeatureFlags();
   const { classes, cx } = useStyles({ color: isGreen ? 'green' : isRed ? 'red' : 'blue' });
@@ -46,14 +52,11 @@ export function Logo() {
   const holiday = useMemo(() => {
     if (!showHoliday) return null;
 
-    const month = new Date().getMonth();
-    const day = new Date().getDate();
-
     // Halloween
     if (month === 9) return 'halloween';
 
     // Christmas
-    if ((month === 10 && day >= 22) || (month === 11 && day <= 25)) return 'christmas';
+    if ((month === 10 && day >= thanksgivingDay) || (month === 11 && day <= 25)) return 'christmas';
 
     // New Year
     if (month === 11 && day >= 26) return 'newyear';

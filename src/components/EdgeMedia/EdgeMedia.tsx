@@ -1,5 +1,5 @@
 import { createStyles, Text } from '@mantine/core';
-import { MediaType } from '@prisma/client';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPlayerPlayFilled } from '@tabler/icons-react';
 import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -151,6 +151,7 @@ const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) =>
     },
     videoThumbRoot: {
       height: '100%',
+      width: '100%',
       position: 'relative',
       '&:hover': {
         [`& .${ref}`]: {

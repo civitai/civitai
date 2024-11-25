@@ -14,7 +14,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { Availability, CollectionType, EntityType } from '@prisma/client';
+import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -26,6 +26,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconFlag,
+  IconLayoutList,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
@@ -41,6 +42,7 @@ import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
@@ -57,16 +59,13 @@ import { useImageContestCollectionDetails } from '~/components/Image/image.utils
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { TwCard } from '~/components/TwCard/TwCard';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { env } from '~/env/client.mjs';
-import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -74,6 +73,8 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { generationPanel } from '~/store/generation.store';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -125,7 +126,7 @@ export function ImageDetail2() {
 
   const image = images[carouselNavigation.index];
 
-  const { collectionItems = [] } = useImageContestCollectionDetails(
+  const { collectionItems, post } = useImageContestCollectionDetails(
     { id: image?.id as number },
     { enabled: !!image?.id }
   );
@@ -138,7 +139,7 @@ export function ImageDetail2() {
     openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
 
   const handleReportClick = () => {
-    openContext('report', {
+    openReportModal({
       entityType: ReportEntity.Image,
       entityId: image.id,
     });
@@ -161,7 +162,7 @@ export function ImageDetail2() {
         <Button
           {...sharedButtonProps}
           color="blue"
-          onClick={() => generationPanel.open({ type: 'image', id: image.id })}
+          onClick={() => generationPanel.open({ type: image.type, id: image.id })}
           data-activity="remix:image"
         >
           <Group spacing={4} noWrap>
@@ -418,6 +419,17 @@ export function ImageDetail2() {
                   collapsible
                   nsfwLevel={image.nsfwLevel}
                 />
+                {post && post.detail && (
+                  <Card className="flex flex-col gap-3 rounded-xl">
+                    <Text className="flex items-center gap-2 text-xl font-semibold">
+                      <IconLayoutList />
+                      <span>{post.title}</span>
+                    </Text>
+                    <ContentClamp maxHeight={75}>
+                      <RenderHtml html={post.detail} />
+                    </ContentClamp>
+                  </Card>
+                )}
                 <ImageProcess imageId={image.id} />
                 <ImageGenerationData imageId={image.id} />
                 <Card className="flex flex-col gap-3 rounded-xl">
@@ -431,6 +443,7 @@ export function ImageDetail2() {
                   imageId={image.id}
                   isOwner={image.user.id === currentUser?.id}
                   isModerator={currentUser?.isModerator}
+                  userId={currentUser?.id}
                 />
                 <ImageExternalMeta imageId={image.id} />
               </div>

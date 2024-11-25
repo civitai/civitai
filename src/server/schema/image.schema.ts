@@ -4,7 +4,7 @@ import {
   MetricTimeframe,
   ReportStatus,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
@@ -168,6 +168,7 @@ export const imageSchema = z.object({
   metadata: z.object({}).passthrough().optional(),
   externalDetailsUrl: z.string().url().optional(),
   toolIds: z.number().array().optional(),
+  techniqueIds: z.number().array().optional(),
   index: z.number().optional(),
 });
 

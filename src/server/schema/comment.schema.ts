@@ -1,4 +1,4 @@
-import { ReviewReactions } from '@prisma/client';
+import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';

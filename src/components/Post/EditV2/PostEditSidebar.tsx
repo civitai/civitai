@@ -4,7 +4,7 @@ import { trpc } from '~/utils/trpc';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { useRouter } from 'next/router';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
-import { CollectionType } from '@prisma/client';
+import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { useRef, useState } from 'react';
 import { IconClock, IconTrash } from '@tabler/icons-react';
@@ -15,7 +15,7 @@ import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
-import ConfirmDialog  from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 

@@ -1,5 +1,6 @@
 import { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
+import React from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu, SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -99,12 +100,12 @@ function DumbSortFilter({ type, value, onChange, ...props }: DumbProps) {
   props.variant ??= 'menu';
 
   return (
-    <IsClient>
+    <>
       {props.variant === 'menu' && <SelectMenu {...sharedProps} />}
       {props.variant === 'button' && (
         <SelectMenuV2 {...sharedProps} buttonProps={props.buttonProps} />
       )}
-    </IsClient>
+    </>
   );
 }
 

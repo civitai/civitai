@@ -4,13 +4,15 @@ import {
   Badge,
   Card,
   createStyles,
-  MantineColor,
+  Loader,
+  RingProgress,
+  RingProgressProps,
   Text,
   Tooltip,
   TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   IconAlertTriangleFilled,
   IconArrowsShuffle,
@@ -20,13 +22,13 @@ import {
   IconTrash,
 } from '@tabler/icons-react';
 
-import { Currency } from '@prisma/client';
+import { Currency } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { GeneratedImage, GenerationPlaceholder } from '~/components/ImageGeneration/GeneratedImage';
+import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
   useGenerationStatus,
@@ -39,7 +41,7 @@ import {
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
 import { Generation } from '~/server/services/generation/generation.types';
-import { generationPanel, generationStore, useGenerationStore } from '~/store/generation.store';
+import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
@@ -48,18 +50,12 @@ import {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { TimeSpan, WorkflowStatus } from '@civitai/client';
-import {
-  orchestratorPendingStatuses,
-  orchestratorRefundableStatuses,
-} from '~/shared/constants/generation.constants';
+import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
 import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useRouter } from 'next/router';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
-// const FAILED_STATUSES: WorkflowStatus[] = ['failed', 'expired'];
-// const PENDING_STATUSES = [GenerationRequestStatus.Pending, GenerationRequestStatus.Processing];
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
   'processing',
@@ -68,7 +64,6 @@ const LONG_DELAY_TIME = 5; // minutes
 const EXPIRY_TIME = 10; // minutes
 const delayTimeouts = new Map<string, NodeJS.Timeout>();
 
-// export function QueueItem({ data: request, index }: { data: Generation.Request; index: number }) {
 export function QueueItem({
   request,
   step,
@@ -82,18 +77,16 @@ export function QueueItem({
 }) {
   const { classes, cx } = useStyle();
   const features = useFeatureFlags();
-  const { pathname } = useRouter();
   const [ref, inView] = useInViewDynamic({ id });
 
   const generationStatus = useGenerationStatus();
-  const view = useGenerationStore((state) => state.view);
   const { unstableResources } = useUnstableResources();
 
   const { copied, copy } = useClipboard();
 
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status } = request;
-  const { params, resources } = step;
+  const { params, resources = [] } = step;
 
   let { images } = step;
 
@@ -109,21 +102,28 @@ export function QueueItem({
   }
 
   const cost = request.totalCost;
-  const pendingProcessing = status && PENDING_PROCESSING_STATUSES.includes(status);
   const [processing, setProcessing] = useState(status === 'processing');
   useEffect(() => {
     if (!processing && status === 'processing') setProcessing(true);
     else if (!PENDING_PROCESSING_STATUSES.includes(status)) setProcessing(false);
   }, [status]);
 
-  const deleteMutation = useDeleteTextToImageRequest();
-  const cancelMutation = useCancelTextToImageRequest();
-  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading;
+  const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
 
   useEffect(() => {
-    if (!pendingProcessing) return;
+    if (!cancellable) return;
+
     const id = request.id.toString();
-    if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
+
+    function removeTimeout(id: string) {
+      const timeout = delayTimeouts.get(id);
+      if (timeout) {
+        clearTimeout(timeout);
+        delayTimeouts.delete(id);
+      }
+    }
+
+    removeTimeout(id);
     delayTimeouts.set(
       id,
       setTimeout(() => {
@@ -132,18 +132,13 @@ export function QueueItem({
       }, LONG_DELAY_TIME * 60 * 1000)
     );
     return () => {
-      if (delayTimeouts.has(id)) clearTimeout(delayTimeouts.get(id)!);
+      removeTimeout(id);
     };
-  }, [request.id, request.createdAt, pendingProcessing]);
+  }, [request.id, request.createdAt, cancellable]);
+
   const refundTime = dayjs(request.createdAt)
     .add(step.timeout ? new TimeSpan(step.timeout).minutes : EXPIRY_TIME, 'minute')
     .toDate();
-
-  const handleDeleteQueueItem = () => {
-    deleteMutation.mutate({ workflowId: request.id });
-  };
-
-  const handleCancel = () => cancelMutation.mutate({ workflowId: request.id });
 
   const handleCopy = () => {
     copy(images.map((x) => x.jobId).join('\n'));
@@ -151,10 +146,11 @@ export function QueueItem({
 
   const handleGenerate = () => {
     generationStore.setData({
-      resources: step.resources,
+      resources: step.resources ?? [],
       params: { ...step.params, seed: undefined },
       remixOfId: step.metadata?.remixOfId,
-      view: !pathname.includes('generate') ? 'generate' : view,
+      type: images[0].type, // TODO - type based off type of media
+      workflow: step.params.workflow,
     });
   };
 
@@ -177,6 +173,11 @@ export function QueueItem({
 
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
+
+  const engine =
+    step.metadata.params && 'engine' in step.metadata.params
+      ? (step.metadata.params.engine as string)
+      : undefined;
 
   return (
     <Card ref={ref} withBorder px="xs" id={id}>
@@ -226,22 +227,7 @@ export function QueueItem({
                   </ActionIcon>
                 </ButtonTooltip>
               )}
-              <PopConfirm
-                message={`Are you sure you want to ${
-                  pendingProcessing ? 'cancel' : 'delete'
-                } this job?`}
-                position="bottom-end"
-                onConfirm={pendingProcessing ? handleCancel : handleDeleteQueueItem}
-              >
-                <ButtonTooltip
-                  {...tooltipProps}
-                  label={pendingProcessing ? 'Cancel job' : 'Delete job'}
-                >
-                  <ActionIcon size="md" disabled={cancellingDeleting} color="red">
-                    {pendingProcessing ? <IconBan size={20} /> : <IconTrash size={20} />}
-                  </ActionIcon>
-                </ButtonTooltip>
-              </PopConfirm>
+              <CancelOrDeleteWorkflow workflowId={request.id} cancellable={cancellable} />
             </div>
           </div>
         </Card.Section>
@@ -250,7 +236,7 @@ export function QueueItem({
       {inView && (
         <>
           <div className="flex flex-col gap-3 py-3 @container">
-            {showDelayedMessage && pendingProcessing && (
+            {showDelayedMessage && cancellable && request.steps[0]?.$type !== 'videoGen' && (
               <Alert color="yellow" p={0}>
                 <div className="flex items-center gap-2 px-2 py-1">
                   <Text size="xs" color="yellow" lh={1}>
@@ -280,6 +266,11 @@ export function QueueItem({
                   {workflowDefinition.label}
                 </Badge>
               )}
+              {engine && (
+                <Badge radius="sm" color="violet" size="sm">
+                  {engine}
+                </Badge>
+              )}
             </div>
             <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
 
@@ -296,7 +287,21 @@ export function QueueItem({
                   step={step}
                 />
               ))}
-              {processing && <GenerationPlaceholder width={params.width} height={params.height} />}
+              {processing && (
+                <div
+                  className="flex flex-col items-center justify-center border card"
+                  style={{ aspectRatio: images[0].width / images[0].height }}
+                >
+                  {images[0].type === 'video' && images[0].progress && images[0].progress < 1 ? (
+                    <ProgressIndicator progress={images[0].progress} />
+                  ) : (
+                    <Loader size={24} />
+                  )}
+                  <Text color="dimmed" size="xs" align="center">
+                    Generating
+                  </Text>
+                </div>
+              )}
             </div>
           </div>
         </>
@@ -357,7 +362,7 @@ const ResourceBadge = (props: Generation.Resource) => {
       size="sm"
       color={unstable ? 'yellow' : undefined}
       sx={{ maxWidth: 200, cursor: 'pointer' }}
-      component={NextLink}
+      component={Link}
       href={`/models/${modelId}?modelVersionId=${id}`}
       onClick={() => generationPanel.close()}
     >
@@ -368,9 +373,76 @@ const ResourceBadge = (props: Generation.Resource) => {
   return unstable ? <Tooltip label="Unstable resource">{badge}</Tooltip> : badge;
 };
 
+const ProgressIndicator = ({
+  progress,
+  ...ringProgressProps
+}: Omit<RingProgressProps, 'sections'> & { progress: number }) => {
+  const color = progress >= 1 ? 'green' : 'blue';
+  const value = progress * 100;
+
+  return (
+    <RingProgress
+      {...ringProgressProps}
+      size={100}
+      thickness={8}
+      sections={[{ value, color }]}
+      label={
+        <Text color="blue" weight={700} align="center">
+          {value.toFixed(0)}%
+        </Text>
+      }
+    />
+  );
+};
+
 const tooltipProps: Omit<TooltipProps, 'children' | 'label'> = {
   withinPortal: true,
   withArrow: true,
   color: 'dark',
   zIndex: constants.imageGeneration.drawerZIndex + 1,
 };
+
+function CancelOrDeleteWorkflow({
+  workflowId,
+  cancellable,
+}: {
+  workflowId: string;
+  cancellable: boolean;
+}) {
+  // use `cancelling` state so that users don't try to cancel a workflow multiple times
+  const [cancelling, setCancelling] = useState(false);
+  const deleteMutation = useDeleteTextToImageRequest();
+  const cancelMutation = useCancelTextToImageRequest();
+  const cancellingDeleting = deleteMutation.isLoading || cancelMutation.isLoading || cancelling;
+
+  const handleDeleteQueueItem = () => {
+    deleteMutation.mutate({ workflowId });
+  };
+
+  const handleCancel = () => {
+    cancelMutation.mutateAsync({ workflowId }).then(() => {
+      setCancelling(true);
+    });
+  };
+
+  useEffect(() => {
+    if (!cancellable) {
+      setCancelling(false);
+    }
+  }, [cancellable]);
+
+  return (
+    <PopConfirm
+      message={cancellable ? 'Attempt to cancel?' : 'Are you sure?'}
+      position="bottom-end"
+      onConfirm={cancellable ? handleCancel : handleDeleteQueueItem}
+      disabled={cancellingDeleting}
+    >
+      <ButtonTooltip {...tooltipProps} label={cancellable ? 'Cancel' : 'Delete'}>
+        <ActionIcon size="md" disabled={cancellingDeleting} color="red">
+          {cancellable ? <IconBan size={20} /> : <IconTrash size={20} />}
+        </ActionIcon>
+      </ButtonTooltip>
+    </PopConfirm>
+  );
+}

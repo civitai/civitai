@@ -17,7 +17,7 @@ import {
 } from '@mantine/core';
 import { getHotkeyHandler } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { ModelVersionExploration } from '@prisma/client';
+import { ModelVersionExploration } from '~/shared/utils/prisma/models';
 import {
   IconChevronLeft,
   IconChevronRight,

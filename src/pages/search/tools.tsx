@@ -26,15 +26,16 @@ import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { ToolsSearchIndexSortBy } from '~/components/Search/parsers/tool.parser';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { slugit } from '~/utils/string-helpers';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { generationPanel } from '~/store/generation.store';
+import { generationPanel, generationStore } from '~/store/generation.store';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { ToolType } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -225,7 +226,15 @@ export function ToolCard({ data }: { data: ToolSearchIndexRecord }) {
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                // TODO.tool: open the right section in the panel based on the tool type
+
+                const isVideo = data.type === ToolType.Video;
+                generationStore.setData({
+                  resources: [],
+                  params: {},
+                  type: isVideo ? 'video' : 'image',
+                  // TODO.gen: have to think this through on how to get the right workflow
+                  workflow: isVideo ? `${data.name.toLowerCase}-txt2vid` : undefined,
+                });
                 generationPanel.open();
               }}
               fullWidth

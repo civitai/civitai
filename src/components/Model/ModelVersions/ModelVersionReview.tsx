@@ -1,5 +1,5 @@
 import { Group, MantineColor, Text, Tooltip } from '@mantine/core';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbsUpCount }: Props) {
@@ -19,7 +19,7 @@ export function ModelVersionReview({ modelId, versionId, thumbsDownCount, thumbs
       >
         <div>
           <Text
-            component={NextLink}
+            component={Link}
             href={`/models/${modelId}/reviews?modelVersionId=${versionId}`}
             tt="capitalize"
             variant="link"

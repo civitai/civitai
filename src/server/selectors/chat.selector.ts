@@ -1,4 +1,5 @@
-import { ChatMessageType, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ChatMessageType } from '~/shared/utils/prisma/enums';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { profileImageSelect } from '~/server/selectors/image.selector';
 

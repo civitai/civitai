@@ -14,8 +14,7 @@ import {
   ActionIcon,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
-import { BuzzWithdrawalRequestStatus } from '@prisma/client';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconCloudOff, IconEdit, IconPlus } from '@tabler/icons-react';
 import { useState } from 'react';
 import { Meta } from '~/components/Meta/Meta';
@@ -36,7 +35,7 @@ export default function Rewards() {
     page: 1,
     mode: PurchasableRewardModeratorViewMode.Available,
   });
-  const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
+  const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { purchasableRewards, pagination, isLoading, isRefetching } =
     useQueryPurchasableRewardsModerator(debouncedFilters);
 
@@ -53,7 +52,7 @@ export default function Rewards() {
         <Group position="apart" mb="md">
           <Group>
             <Button
-              component={NextLink}
+              component={Link}
               href="/moderator/rewards/create"
               leftIcon={<IconPlus size={16} />}
               radius="xl"
@@ -122,7 +121,7 @@ export default function Rewards() {
                       </td>
                       <td>
                         <ActionIcon
-                          component={NextLink}
+                          component={Link}
                           href={`/moderator/rewards/update/${purchasableReward.id}`}
                         >
                           <IconEdit />

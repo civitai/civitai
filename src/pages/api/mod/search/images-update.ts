@@ -1,4 +1,5 @@
-import { CosmeticSource, CosmeticType, ImageIngestionStatus, Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { CosmeticSource, CosmeticType, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';

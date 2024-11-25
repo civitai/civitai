@@ -30,7 +30,6 @@ import {
 } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { create } from 'zustand';
@@ -43,6 +42,7 @@ import { useMutateComment } from '../commentv2.utils';
 import { CommentReplies } from '../CommentReplies';
 import { constants } from '../../../server/common/constants';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 type Store = {
   id?: number;
@@ -207,7 +207,7 @@ export function CommentContent({
                   <Menu.Item
                     icon={<IconFlag size={14} stroke={1.5} />}
                     onClick={() =>
-                      openContext('report', {
+                      openReportModal({
                         entityType: ReportEntity.CommentV2,
                         entityId: comment.id,
                       })

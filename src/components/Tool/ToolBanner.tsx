@@ -1,4 +1,5 @@
 import { Button, Title, useMantineTheme } from '@mantine/core';
+import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconBrush, IconExternalLink } from '@tabler/icons-react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -6,7 +7,7 @@ import { useImageFilters } from '~/components/Image/image.utils';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { FilterKeys } from '~/providers/FiltersProvider';
-import { generationPanel } from '~/store/generation.store';
+import { generationPanel, generationStore } from '~/store/generation.store';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -57,7 +58,7 @@ export function ToolBanner({
                 <Title order={2} className="font-semibold">
                   {selected.name}
                 </Title>
-                {/* {selected.domain && (
+                {/* {/* {selected.domain && (
                   <Button
                     color="blue"
                     radius="xl"
@@ -75,8 +76,17 @@ export function ToolBanner({
                     color="blue"
                     radius="xl"
                     rightIcon={<IconBrush size={18} />}
-                    // TODO.tool: Open right section in the panel based on the tool type
-                    onClick={() => generationPanel.open()}
+                    onClick={() => {
+                      const isVideo = selected.type === ToolType.Video;
+                      generationStore.setData({
+                        resources: [],
+                        params: {},
+                        type: isVideo ? 'video' : 'image',
+                        // TODO.gen: have to think this through on how to get the right workflow
+                        workflow: isVideo ? `${selected.name.toLowerCase}-txt2vid` : undefined,
+                      });
+                      generationPanel.open();
+                    }}
                   >
                     Generate
                   </Button>

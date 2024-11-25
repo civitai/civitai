@@ -14,11 +14,16 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { Availability, CollectionType, EntityCollaboratorStatus, EntityType } from '@prisma/client';
+import {
+  Availability,
+  CollectionType,
+  EntityCollaboratorStatus,
+  EntityType,
+} from '~/shared/utils/prisma/enums';
 import { IconCheck, IconTrash, IconX } from '@tabler/icons-react';
 import { IconDotsVertical, IconBookmark, IconShare3 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
@@ -346,7 +351,12 @@ export function PostDetailContent({ postId }: Props) {
                     limit={5}
                     badgeProps={{ size: 'xl', p: 'md', radius: 'xl' }}
                     renderItem={(item) => (
-                      <Link key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
+                      <Link
+                        legacyBehavior
+                        key={item.id}
+                        href={`/posts?tags=${item.id}&view=feed`}
+                        passHref
+                      >
                         <Badge
                           component="a"
                           color="gray"

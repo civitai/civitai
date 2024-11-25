@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { imageSchema } from '~/server/schema/image.schema';
 import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { LinkType } from '@prisma/client';
+import { LinkType } from '~/shared/utils/prisma/enums';
 import { creatorCardStatsPreferences, profilePictureSchema } from './user.schema';
 
 export type GetUserProfileSchema = z.infer<typeof getUserProfileSchema>;

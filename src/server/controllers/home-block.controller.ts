@@ -26,7 +26,7 @@ import {
   HomeBlockMetaSchema,
   SetHomeBlocksOrderInputSchema,
 } from '~/server/schema/home-block.schema';
-import { CollectionType, HomeBlockType } from '@prisma/client';
+import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import { TRPCError } from '@trpc/server';
 import { isDefined } from '~/utils/type-guards';

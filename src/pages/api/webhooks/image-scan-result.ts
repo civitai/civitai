@@ -1,4 +1,5 @@
-import { ImageIngestionStatus, Prisma, TagSource, TagTarget, TagType } from '@prisma/client';
+import { Prisma } from '@prisma/client';
+import { ImageIngestionStatus, TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
 import { topLevelModerationCategories } from '~/libs/moderation';

@@ -13,7 +13,12 @@ import {
   ScrollArea,
   Stack,
 } from '@mantine/core';
-import { CheckpointType, MetricTimeframe, ModelStatus, ModelType } from '@prisma/client';
+import {
+  CheckpointType,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { CSSProperties, useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';

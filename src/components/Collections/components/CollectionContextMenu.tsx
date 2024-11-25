@@ -1,20 +1,20 @@
 import { Menu, MenuProps } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconEdit, IconHome, IconPencil, IconTrash } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
-import { CollectionMode } from '@prisma/client';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 export function CollectionContextMenu({
   collectionId,
@@ -157,7 +157,7 @@ export function CollectionContextMenu({
           </Menu.Item>
         )}
         {!isBookmarkCollection && permissions?.manage && (
-          <Link href={`/collections/${collectionId}/review`} passHref>
+          <Link legacyBehavior href={`/collections/${collectionId}/review`} passHref>
             <Menu.Item component="a" icon={<IconPencil size={14} stroke={1.5} />}>
               Review items
             </Menu.Item>
@@ -168,7 +168,7 @@ export function CollectionContextMenu({
             label="Report collection"
             loginReason="report-content"
             onReport={() =>
-              openContext('report', {
+              openReportModal({
                 entityType: ReportEntity.Collection,
                 // Explicitly cast to number because we know it's not undefined
                 entityId: collectionId,

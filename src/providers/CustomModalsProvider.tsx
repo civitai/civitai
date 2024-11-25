@@ -8,25 +8,18 @@ import { openAddToCollectionModal } from '~/components/Collections/AddToCollecti
 import { openManageHomeBlocksModal } from '~/components/HomeBlocks/ManageHomeBlocksModal';
 import { openAssociateModelsModal } from '~/components/Modals/AssociateModelsModal';
 import { openBlockModelTagsModal } from '~/components/Modals/BlockModelTagsModal';
-import { openBuyBuzzModal } from '~/components/Modals/BuyBuzzModal';
 import { openManageClubPostModal } from '~/components/Modals/ManageClubPostModal';
-import { openReportModal } from '~/components/Modals/ReportModal';
 import { openRunStrategyModal } from '~/components/Modals/RunStrategyModal';
 import { openSendTipModal } from '~/components/Modals/SendTipModal';
 import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import { openUnpublishModal } from '~/components/Modals/UnpublishModal';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
-import { openResourceReviewEditModal } from '~/components/ResourceReview/EditResourceReviewModal';
 
 const QuestionsInfoModal = dynamic(() => import('~/components/Questions/QuestionInfoModal'));
 const BlockModelTagsModal = dynamic(() => import('~/components/Modals/BlockModelTagsModal'));
-const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const RunStrategyModal = dynamic(() => import('~/components/Modals/RunStrategyModal'));
 const AssociateModelsModal = dynamic(() => import('~/components/Modals/AssociateModelsModal'));
 const CivitaiLinkWizard = dynamic(() => import('~/components/CivitaiLink/CivitaiLinkWizard'));
-const ResourceReviewEdit = dynamic(
-  () => import('~/components/ResourceReview/EditResourceReviewModal')
-);
 const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
@@ -36,7 +29,6 @@ const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddT
 const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
 );
-const BuyBuzzModal = dynamic(() => import('~/components/Modals/BuyBuzzModal'));
 const SendTipModal = dynamic(() => import('~/components/Modals/SendTipModal'));
 const BountyEntryFilesModal = dynamic(() => import('~/components/Bounty/BountyEntryFilesModal'));
 const StripeTransactionModal = dynamic(() => import('~/components/Modals/StripeTransactionModal'));
@@ -48,10 +40,6 @@ const registry = {
   blockModelTags: {
     Component: BlockModelTagsModal,
     fn: openBlockModelTagsModal,
-  },
-  report: {
-    Component: ReportModal,
-    fn: openReportModal,
   },
   unpublishModel: {
     Component: UnpublishModal,
@@ -65,10 +53,6 @@ const registry = {
     Component: CivitaiLinkWizard,
     fn: openCivitaiLinkModal,
   },
-  resourceReviewEdit: {
-    Component: ResourceReviewEdit,
-    fn: openResourceReviewEditModal,
-  },
   associateModels: {
     Component: AssociateModelsModal,
     fn: openAssociateModelsModal,
@@ -80,10 +64,6 @@ const registry = {
   manageHomeBlocks: {
     Component: ManageHomeBlocksModal,
     fn: openManageHomeBlocksModal,
-  },
-  buyBuzz: {
-    Component: BuyBuzzModal,
-    fn: openBuyBuzzModal,
   },
   sendTip: {
     Component: SendTipModal,

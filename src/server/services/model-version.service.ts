@@ -1,10 +1,10 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   CommercialUse,
   ModelStatus,
   ModelVersionEngagementType,
-  Prisma,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
@@ -1146,9 +1146,9 @@ export const earlyAccessPurchase = async ({
   });
 
   if (
-    access.hasAccess &&
-    access.meta?.[buzzTransactionKey] &&
-    (access.permissions & permission) !== 0
+    access?.hasAccess &&
+    access?.meta?.[buzzTransactionKey] &&
+    (access?.permissions & permission) !== 0
   ) {
     // This user has already purchased early access.
     throw throwBadRequestError('You have already purchased early access for this model.');

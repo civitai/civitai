@@ -25,7 +25,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
 import { PostContestCollectionItem } from '~/types/router';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
-import { CollectionItemStatus } from '@prisma/client';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
@@ -122,7 +122,7 @@ export function PostImages({
                             e.preventDefault();
                             e.stopPropagation();
                             generationPanel.open({
-                              type: 'image',
+                              type: image.type,
                               id: image.id,
                             });
                           }}
@@ -182,7 +182,7 @@ export function PostImages({
                     />
                     {image.hasMeta && (
                       <div className="absolute bottom-2 right-2">
-                        <ImageMetaPopover2 imageId={image.id}>
+                        <ImageMetaPopover2 imageId={image.id} type={image.type}>
                           <ActionIcon variant="transparent" size="lg" component="span">
                             <IconInfoCircle
                               color="white"

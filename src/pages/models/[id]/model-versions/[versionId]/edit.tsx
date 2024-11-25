@@ -1,6 +1,6 @@
 import { Anchor, Button, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconArrowLeft } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -35,7 +35,7 @@ export default function ModelVersionEditPage() {
   return (
     <Container size="sm">
       <Stack spacing="xl">
-        <Link href={`/models/${modelVersion?.model.id}`} passHref shallow>
+        <Link legacyBehavior href={`/models/${modelVersion?.model.id}`} passHref shallow>
           <Anchor size="xs">
             <Group spacing={4}>
               <IconArrowLeft size={18} strokeWidth={1.5} />

@@ -1,4 +1,4 @@
-import { ImportStatus } from '@prisma/client';
+import { ImportStatus } from '~/shared/utils/prisma/enums';
 import { createImporter } from '~/server/importers/importer';
 
 // Find match for URL like: https://huggingface.co/nitrosocke/Arcane-Diffusion

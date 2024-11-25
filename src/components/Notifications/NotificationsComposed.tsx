@@ -5,19 +5,19 @@ import {
   Group,
   Loader,
   Paper,
-  Stack,
   Switch,
   Text,
+  TextInput,
   Title,
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
-import { IconListCheck, IconSettings } from '@tabler/icons-react';
-import { forwardRef, useMemo, useState } from 'react';
+import { IconListCheck, IconSearch, IconSettings, IconX } from '@tabler/icons-react';
+import React, { forwardRef, useMemo, useState } from 'react';
 import { dismissAnnouncements } from '~/components/Announcements/announcements.utils';
 import { AnnouncementsList } from '~/components/Announcements/AnnouncementsList';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 import { NotificationList } from '~/components/Notifications/NotificationList';
 import {
@@ -33,6 +33,7 @@ import { NotificationCategory } from '~/server/common/enums';
 export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () => void }>(
   ({ onClose }, ref) => {
     const [selectedTab, setSelectedTab] = useState<string | null>(null);
+    const [searchText, setSearchText] = useState<string>('');
     const [hideRead, setHideRead] = useLocalStorage<boolean>({
       key: 'notifications-hide-read',
       defaultValue: false,
@@ -110,6 +111,19 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
           <NotificationTabs
             onTabChange={(value: NotificationCategory | null) => setSelectedTab(value)}
           />
+          <TextInput
+            icon={<IconSearch size={16} />}
+            placeholder="Filter by message..."
+            value={searchText}
+            maxLength={150}
+            disabled={!notifications || notifications.length === 0}
+            onChange={(event) => setSearchText(event.currentTarget.value)}
+            rightSection={
+              <ActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
+                <IconX size={16} />
+              </ActionIcon>
+            }
+          />
         </div>
         <ScrollArea className="px-4 pb-4" scrollRestore={{ key: selectedTab ?? 'all' }}>
           {selectedTab === 'announcements' ? (
@@ -124,6 +138,7 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
                 <Paper radius="md" withBorder>
                   <NotificationList
                     items={notifications}
+                    searchText={searchText}
                     onItemClick={(notification, keepOpened) => {
                       if (notification.type === 'announcement' && !notification.read) {
                         dismissAnnouncements(notification.id);

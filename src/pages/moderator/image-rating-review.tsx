@@ -1,30 +1,17 @@
-import {
-  Badge,
-  Button,
-  Center,
-  Loader,
-  MantineColor,
-  Progress,
-  Select,
-  Title,
-} from '@mantine/core';
+import { Button, Center, Loader, MantineColor, Progress, Select, Title } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
-import { ReportStatus } from '@prisma/client';
+import { ReportStatus } from '~/shared/utils/prisma/enums';
 import React, { useMemo, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { getImageRatingRequests } from '~/server/services/image.service';
-import {
-  browsingLevelLabels,
-  browsingLevels,
-  getBrowsingLevelLabel,
-} from '~/shared/constants/browsingLevel.constants';
+import { browsingLevels, getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import clsx from 'clsx'
+import clsx from 'clsx';
+import { NextLink as Link } from '~/components/NextLink/NextLink';;
 
 export default function ImageRatingReview() {
   const [limit, setLimit] = useState<string>('50');
@@ -87,7 +74,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   const [nsfwLevel, setNsfwLevel] = useState(item.nsfwLevel);
   const previous = usePrevious(nsfwLevel);
   const [updated, setUpdated] = useState(false);
-  const queryUtils = trpc.useUtils()
+  const queryUtils = trpc.useUtils();
 
   const { mutate } = trpc.image.updateImageNsfwLevel.useMutation({
     onError: (error) => {
@@ -103,10 +90,10 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   };
 
   return (
-    <div className={clsx(`flex flex-col items-stretch card`, {[' opacity-50']: updated})}>
-      <NextLink href={`/images/${item.id}`} target="_blank">
+    <div className={clsx(`flex flex-col items-stretch card`, {  [' opacity-50']: updated  })}>
+      <Link href={`/images/${item.id}`} target="_blank">
         <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
-      </NextLink>
+      </Link>
       <div className="flex flex-col gap-4 p-4">
         <div className="grid gap-1" style={{ gridTemplateColumns: `min-content 1fr` }}>
           {[...browsingLevels, 32].map((level) => {

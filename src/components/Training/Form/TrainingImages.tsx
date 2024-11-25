@@ -27,10 +27,10 @@ import {
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import type { NotificationProps } from '@mantine/notifications/lib/types';
-import { ModelFileVisibility } from '@prisma/client';
+import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -43,7 +43,6 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
-import JSZip from 'jszip';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
@@ -52,11 +51,8 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { goBack, goNext } from '~/components/Training/Form/TrainingCommon';
-import {
-  TrainingImagesCaptions,
-  TrainingImagesCaptionViewer,
-} from '~/components/Training/Form/TrainingImagesCaptionViewer';
+import { goBack, goNext, getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
+
 import {
   TrainingImagesSwitchLabel,
   TrainingImagesTags,
@@ -78,6 +74,7 @@ import {
 } from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
 import { createImageElement } from '~/utils/image-utils';
+import { getJSZip } from '~/utils/lazy';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -86,6 +83,17 @@ import {
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+
+const TrainingImagesCaptions = dynamic(() =>
+  import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
+    (x) => x.TrainingImagesCaptions
+  )
+);
+const TrainingImagesCaptionViewer = dynamic(() =>
+  import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
+    (x) => x.TrainingImagesCaptionViewer
+  )
+);
 
 const AutoLabelModal = dynamic(() =>
   import('components/Training/Form/TrainingAutoLabelModal').then((m) => m.AutoLabelModal)
@@ -151,13 +159,6 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
       </Text>
     </Stack>
   ),
-};
-
-export const getTextTagsAsList = (txt: string) => {
-  return txt
-    .split(',')
-    .map((c) => c.trim().toLowerCase())
-    .filter((c) => c.length > 0);
 };
 
 const LabelSelectModal = ({ modelId }: { modelId: number }) => {
@@ -381,7 +382,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     const parsedFiles: ImageDataType[] = [];
 
-    const zipReader = new JSZip();
+    const zipReader = await getJSZip();
     const zData = await zipReader.loadAsync(f);
 
     const ret = await Promise.all(
@@ -769,7 +770,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const handleNextAfterCheck = async (dlOnly = false) => {
     setZipping(true);
 
-    const zip = new JSZip();
+    const zip = await getJSZip();
 
     await Promise.all(
       imageList.map(async (imgData, idx) => {
@@ -1326,7 +1327,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     Your dataset is temporarily stored for the purposes of training. After training
                     is complete, the dataset is removed. By default, it is not public. Read our{' '}
                     <Text
-                      component={NextLink}
+                      component={Link}
                       variant="link"
                       href="/content/training/data-policy"
                       target="_blank"

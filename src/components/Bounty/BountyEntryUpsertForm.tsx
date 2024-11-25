@@ -17,7 +17,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { BountyEntryMode, BountyType, Currency } from '@prisma/client';
+import { BountyEntryMode, BountyType, Currency } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle, IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';

@@ -9,14 +9,18 @@ import {
   Group,
   Menu,
   Popover,
-  Select,
   Stack,
   Text,
   ThemeIcon,
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Availability, CollectionMode, CollectionType, MetricTimeframe } from '@prisma/client';
+import {
+  Availability,
+  CollectionMode,
+  CollectionType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -36,7 +40,6 @@ import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
-import { AddUserContentModal } from '~/components/Collections/AddUserContentModal';
 import {
   contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
@@ -73,12 +76,18 @@ import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
-import { removeTags, toPascalCase } from '~/utils/string-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '../Meta/Meta';
 import { ModelContextMenuProvider } from '~/components/Model/Actions/ModelCardContextMenu';
 import { isDefined } from '~/utils/type-guards';
 import { RemoveFromCollectionMenuItem } from '~/components/MenuItems/RemoveFromCollectionMenuItem';
+import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import dynamic from 'next/dynamic';
+const AddUserContentModal = dynamic(() =>
+  import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
+);
 
 const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByIdModel> }) => {
   const { set, ...query } = useModelQueryParams();
@@ -157,24 +166,12 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
             </>
           )}
           {isContestCollection && collection.tags.length > 0 && (
-            <Select
-              label="Collection Categories"
+            <CollectionCategorySelect
+              collectionId={collection.id}
               value={query.collectionTagId?.toString() ?? 'all'}
               onChange={(x) =>
                 set({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
               }
-              placeholder="All"
-              data={[
-                {
-                  value: 'all',
-                  label: 'All',
-                },
-                ...collection.tags.map((tag) => ({
-                  value: tag.id.toString(),
-                  label: toPascalCase(tag.name),
-                })),
-              ]}
-              clearable
             />
           )}
           <ModelsInfinite filters={filters} disableStoreFilters />
@@ -291,24 +288,12 @@ const ImageCollection = ({
           )}
 
           {isContestCollection && collection.tags.length > 0 && (
-            <Select
-              label="Collection Categories"
+            <CollectionCategorySelect
+              collectionId={collection.id}
               value={query.collectionTagId?.toString() ?? 'all'}
               onChange={(x) =>
                 replace({ collectionTagId: x && x !== 'all' ? parseInt(x, 10) : undefined })
               }
-              placeholder="All"
-              data={[
-                {
-                  value: 'all',
-                  label: 'All',
-                },
-                ...collection.tags.map((tag) => ({
-                  value: tag.id.toString(),
-                  label: toPascalCase(tag.name),
-                })),
-              ]}
-              clearable
             />
           )}
           {isContestCollection && (
@@ -470,7 +455,6 @@ export function Collection({
   collectionId,
   ...containerProps
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
-  const [opened, setOpened] = useState(false);
   const router = useRouter();
 
   const { collection, permissions, isLoading } = useCollection(collectionId);
@@ -515,7 +499,6 @@ export function Collection({
         position="bottom-end"
         shadow="md"
         radius={12}
-        onClose={() => setOpened(false)}
         middlewares={{ flip: true, shift: true }}
       >
         <Popover.Target>
@@ -657,7 +640,12 @@ export function Collection({
                             if (!!metadata.existingEntriesDisabled) {
                               router.push(`/posts/create?collectionId=${collection.id}`);
                             } else {
-                              setOpened(true);
+                              dialogStore.trigger({
+                                component: AddUserContentModal,
+                                props: {
+                                  collectionId: collection.id,
+                                },
+                              });
                             }
                           }}
                         >
@@ -726,13 +714,6 @@ export function Collection({
           </MasonryContainer>
         </MasonryProvider>
       </SensitiveShield>
-      {collection && canAddContent && (
-        <AddUserContentModal
-          collectionId={collection.id}
-          opened={opened}
-          onClose={() => setOpened(false)}
-        />
-      )}
     </>
   );
 }

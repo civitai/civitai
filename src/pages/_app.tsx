@@ -9,7 +9,7 @@ import isBetween from 'dayjs/plugin/isBetween';
 import minMax from 'dayjs/plugin/minMax';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
-import { init as linkifyInit, registerCustomProtocol } from 'linkifyjs';
+import { registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
 import { getSession, SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
@@ -19,6 +19,7 @@ import React, { ReactElement } from 'react';
 import { AdsProvider } from '~/components/Ads/AdsProvider';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
+import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { CustomNextPage } from '~/components/AppLayout/Page';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 // import ChadGPT from '~/components/ChadGPT/ChadGPT';
@@ -29,18 +30,26 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
-import { isDev } from '~/env/other';
+import { TrackPageView } from '~/components/TrackView/TrackPageView';
+import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
+import { isDev, isProd } from '~/env/other';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
+import { AppProvider } from '~/providers/AppProvider';
+import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
 import { CookiesProvider } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
 import { FiltersProvider } from '~/providers/FiltersProvider';
+import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { IsClientProvider } from '~/providers/IsClientProvider';
+import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { PaypalProvider } from '~/providers/PaypalProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
@@ -51,15 +60,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
-import { PaddleProvider } from '~/providers/PaddleProvider';
-import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
-import { TrackPageView } from '~/components/TrackView/TrackPageView';
-import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
-import { AppProvider } from '~/providers/AppProvider';
-import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -69,8 +69,6 @@ dayjs.extend(utc);
 
 registerCustomProtocol('civitai', true);
 // registerCustomProtocol('urn', true);
-// TODO fix this from initializing again in dev
-linkifyInit();
 
 type CustomAppProps = {
   Component: CustomNextPage;
@@ -80,12 +78,21 @@ type CustomAppProps = {
   cookies: ParsedCookies;
   flags?: FeatureAccess;
   seed: number;
+  hasAuthCookie: boolean;
 }>;
 
 function MyApp(props: CustomAppProps) {
   const {
     Component,
-    pageProps: { session, colorScheme, cookies, flags, seed = Date.now(), ...pageProps },
+    pageProps: {
+      session,
+      colorScheme,
+      cookies,
+      flags,
+      seed = Date.now(),
+      hasAuthCookie,
+      ...pageProps
+    },
   } = props;
 
   if (typeof window !== 'undefined' && !window.authChecked) {
@@ -135,7 +142,7 @@ function MyApp(props: CustomAppProps) {
             <RouterTransition />
             {/* <ChadGPT isAuthed={!!session} /> */}
             <SessionProvider
-              session={session}
+              session={session ? session : !hasAuthCookie ? null : undefined}
               refetchOnWindowFocus={false}
               refetchWhenOffline={false}
             >
@@ -161,7 +168,7 @@ function MyApp(props: CustomAppProps) {
                                             <GenerationProvider>
                                               <IntersectionObserverProvider>
                                                 <BaseLayout>
-                                                  <TrackPageView />
+                                                  {isProd && <TrackPageView />}
                                                   <ChatContextProvider>
                                                     <CustomModalsProvider>
                                                       {getLayout(<Component {...pageProps} />)}
@@ -201,34 +208,37 @@ function MyApp(props: CustomAppProps) {
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
-  const url = appContext.ctx?.req?.url;
-  const isClient = !url || url?.startsWith('/_next/data');
+  if (!appContext.ctx.req) return initialProps;
+
+  // const url = appContext.ctx?.req?.url;
+  // const isClient = !url || url?.startsWith('/_next/data');
 
   const { pageProps, ...appProps } = initialProps;
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
   const cookies = getCookies(appContext.ctx);
   const parsedCookies = parseCookies(cookies);
 
-  const hasAuthCookie = !isClient && Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = hasAuthCookie ? await getSession(appContext.ctx) : null;
-  const flags = appContext.ctx?.req
-    ? getFeatureFlags({ user: session?.user, host: appContext.ctx?.req?.headers.host })
-    : undefined;
+  const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+  // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+  const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
 
-  // Pass this via the request so we can use it in SSR
-  if (session) {
-    (appContext.ctx.req as any)['session'] = session;
-    // (appContext.ctx.req as any)['flags'] = flags;
-  }
+  // // Pass this via the request so we can use it in SSR
+  // if (session) {
+  //   (appContext.ctx.req as any)['session'] = session;
+  //   // (appContext.ctx.req as any)['flags'] = flags;
+  // }
 
   return {
     pageProps: {
       ...pageProps,
       colorScheme,
       cookies: parsedCookies,
-      session,
+      // cookieKeys: Object.keys(cookies),
+      // session,
       flags,
       seed: Date.now(),
+      hasAuthCookie,
     },
     ...appProps,
   };

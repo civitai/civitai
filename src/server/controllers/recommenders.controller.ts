@@ -1,4 +1,4 @@
-import { MetricTimeframe, ModelModifier } from '@prisma/client';
+import { MetricTimeframe, ModelModifier } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { ModelSort } from '~/server/common/enums';
 import { Context } from '~/server/createContext';

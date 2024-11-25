@@ -3,7 +3,11 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import React from 'react';
 
 export const HomeBlockWrapper = ({ children, ...props }: Props) => {
-  return <MasonryContainer {...props}>{children}</MasonryContainer>;
+  return (
+    <div>
+      <MasonryContainer {...props}>{children}</MasonryContainer>
+    </div>
+  );
 };
 
 type Props = ContainerProps;

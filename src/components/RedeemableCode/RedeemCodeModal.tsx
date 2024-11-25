@@ -1,4 +1,5 @@
 import { Modal, Stack, Group, Button, createStyles, Text } from '@mantine/core';
+import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { Form, InputText, useForm } from '~/libs/form';
@@ -9,7 +10,11 @@ import {
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { SuccessAnimation } from '~/components/Animations/SuccesAnimation';
+
+const SuccessAnimation = dynamic(
+  () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
+  { ssr: false }
+);
 
 const useStyles = createStyles(() => ({
   cancelButton: {

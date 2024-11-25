@@ -11,7 +11,7 @@ import {
   Box,
 } from '@mantine/core';
 import { AnnouncementDTO } from '~/server/services/announcement.service';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ButtonVariant } from '@mantine/core/lib/Button/Button.styles';
 import { IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -138,7 +138,7 @@ const AnnouncementHomeBlockAnnouncementItem = ({ announcement, onAnnouncementDis
               if (action.type === 'button') {
                 return (
                   <ContainerGrid.Col key={index} span="auto">
-                    <Link href={action.link} passHref>
+                    <Link legacyBehavior href={action.link} passHref>
                       <Button
                         component="a"
                         className={classes.action}

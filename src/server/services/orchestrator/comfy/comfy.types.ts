@@ -9,46 +9,8 @@ export type WorkflowDefinition = {
   selectable?: boolean;
   template: string;
   features?: (typeof workflowDefinitionFeatures)[number][];
-  inputs?: InputSchema[];
-  remix?: WorkflowDefinitionKey;
   status?: 'mod-only' | 'published' | 'disabled';
 };
-
-// TODO - these will need to be defined as an input schema first, then as a workflow input schema
-type InputBase = {
-  key: string;
-  label: string;
-  defaultValue: any;
-  required: boolean;
-};
-
-type NumberInput = InputBase & {
-  type: 'number';
-  variant?: 'stepper' | 'slider';
-  min?: number;
-  max?: number;
-  step?: number;
-};
-
-type TextInput = InputBase & {
-  type: 'text';
-  maxLength?: number;
-  minLength?: number;
-};
-
-type SelectInput = InputBase & {
-  type: 'select';
-  options: { label: string; value: string }[];
-};
-
-type ImageInput = InputBase & {
-  type: 'image';
-  maxWidth?: number;
-  maxHeight?: number;
-  resizeToFit?: boolean;
-};
-
-export type InputSchema = NumberInput | TextInput | SelectInput | ImageInput;
 
 export const workflowDefinitionLabel: Record<WorkflowDefinitionType, string> = {
   txt2img: 'Text-to-image',
@@ -125,7 +87,6 @@ export const workflowDefinitions: WorkflowDefinition[] = [
     name: 'Upscale',
     features: ['upscale', 'image'],
     selectable: false,
-    remix: 'txt2img',
     template:
       '{"12": { "inputs": { "filename_prefix": "ComfyUI", "images": [ "24", 0 ]}, "class_type": "SaveImage", "_meta": { "title": "Save Image" }}, "22": { "inputs": { "upscale_model": [ "23", 0 ], "image": [ "26", 0 ]}, "class_type": "ImageUpscaleWithModel", "_meta": { "title": "Upscale Image (using Model)" }}, "23": { "inputs": { "model_name": "urn:air:multi:upscaler:civitai:147759@164821" }, "class_type": "UpscaleModelLoader", "_meta": { "title": "Load Upscale Model" }}, "24": { "inputs": { "upscale_method": "bilinear", "width": {{upscaleWidth}}, "height": {{upscaleHeight}}, "crop": "disabled", "image": [ "22", 0 ]}, "class_type": "ImageScale", "_meta": { "title": "Upscale Image" }}, "26": { "inputs": { "image": "{{image}}", "upload": "image" }, "class_type": "LoadImage", "_meta": { "title": "Load Image" }}}',
   },

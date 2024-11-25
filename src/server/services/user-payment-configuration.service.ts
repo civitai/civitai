@@ -7,7 +7,7 @@ import { logToAxiom } from '../logging/client';
 import { throwBadRequestError } from '../utils/errorHandling';
 import { getServerStripe } from '../utils/get-server-stripe';
 import { createNotification } from './notification.service';
-import { UserPaymentConfiguration } from '@prisma/client';
+import { UserPaymentConfiguration } from '~/shared/utils/prisma/models';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
 

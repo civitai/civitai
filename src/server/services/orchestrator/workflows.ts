@@ -23,6 +23,7 @@ import {
   throwAuthorizationError,
   throwBadRequestError,
   throwInsufficientFundsError,
+  throwInternalServerError,
 } from '~/server/utils/errorHandling';
 
 export async function queryWorkflows({
@@ -37,7 +38,20 @@ export async function queryWorkflows({
   }).catch((error) => {
     throw error;
   });
-  if (!data) throw (error as any).errors?.messages?.join('\n');
+  if (!data) {
+    switch (error.status) {
+      case 400:
+        throw throwBadRequestError(error.detail);
+      case 401:
+        throw throwAuthorizationError(error.detail);
+      case 403:
+        throw throwInsufficientFundsError(error.detail);
+      default:
+        if (error.detail?.startsWith('<!DOCTYPE'))
+          throw throwInternalServerError('Generation services down');
+        throw error;
+    }
+  }
   const { next, items = [] } = data;
 
   return { nextCursor: next, items };
@@ -50,7 +64,20 @@ export async function getWorkflow({
 }: $OpenApiTs['/v2/consumer/workflows/{workflowId}']['get']['req'] & { token: string }) {
   const client = createOrchestratorClient(token);
   const { data, error } = await clientGetWorkflow({ client, path, query });
-  if (!data) throw (error as any).errors?.messages?.join('\n');
+  if (!data) {
+    switch (error.status) {
+      case 400:
+        throw throwBadRequestError(error.detail);
+      case 401:
+        throw throwAuthorizationError(error.detail);
+      case 403:
+        throw throwInsufficientFundsError(error.detail);
+      default:
+        if (error.detail?.startsWith('<!DOCTYPE'))
+          throw throwInternalServerError('Generation services down');
+        throw error;
+    }
+  }
 
   return data;
 }
@@ -69,7 +96,7 @@ export async function submitWorkflow({
     query,
   });
   if (!data) {
-    const message = (error as any).errors?.messages?.join('\n');
+    const message = error.detail;
     if (!isProd) {
       console.log('----Workflow Error----');
       console.log({ token });
@@ -86,6 +113,8 @@ export async function submitWorkflow({
       case 403:
         throw throwInsufficientFundsError(message);
       default:
+        if (message?.startsWith('<!DOCTYPE'))
+          throw throwInternalServerError('Generation services down');
         throw error;
     }
   }

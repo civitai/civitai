@@ -13,7 +13,6 @@ import {
   JsonInput,
   PasswordInput,
   Radio,
-  SegmentedControl,
   Slider,
   Switch,
   Textarea,
@@ -38,6 +37,8 @@ import { FlagInput } from '~/libs/form/components/FlagInput';
 import { SectionItemsInput } from '~/components/CosmeticShop/SectionItemsInput';
 import { CosmeticSelect } from '~/libs/form/components/CosmeticSelect';
 import { CollectionSelectInput } from '~/libs/form/components/CollectionSelectInput';
+import { CustomRadioGroup } from '~/libs/form/components/RadioGroupWrapper';
+import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
 
 export * from './Form';
 
@@ -51,7 +52,7 @@ export const InputTextArea = withWatcher(withController(Textarea));
 export const InputTransferList = withWatcher(withController(TransferList));
 export const InputSelect = withWatcher(withController(SelectWrapper));
 export const InputMultiSelect = withWatcher(withController(MultiSelectWrapper));
-export const InputSegmentedControl = withWatcher(withController(SegmentedControl));
+export const InputSegmentedControl = withWatcher(withController(SegmentedControlWrapper));
 export const InputRadioGroup = withWatcher(withController(Radio.Group));
 export const InputCheckboxGroup = withWatcher(withController(Checkbox.Group));
 export const InputChipGroup = withWatcher(withController(Chip.Group));
@@ -99,3 +100,4 @@ export const InputFlag = withWatcher(withController(FlagInput));
 export const InputSectionItems = withWatcher(withController(SectionItemsInput));
 export const InputCosmeticSelect = withWatcher(withController(CosmeticSelect));
 export const InputCollectionSelect = withWatcher(withController(CollectionSelectInput));
+export const InputCustomRadioGroup = withController(CustomRadioGroup);

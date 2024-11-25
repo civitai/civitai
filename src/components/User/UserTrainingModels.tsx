@@ -21,7 +21,7 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
   IconCheck,
@@ -34,7 +34,7 @@ import {
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -463,7 +463,7 @@ export default function UserTrainingModels() {
                     <td>
                       <Group position="right" spacing={8} pr="xs" noWrap>
                         {mv.trainingStatus === TrainingStatus.InReview && (
-                          <Link href={getModelTrainingWizardUrl(mv)} passHref>
+                          <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
                             <Button
                               component="a"
                               radius="xl"

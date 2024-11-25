@@ -14,7 +14,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { ImageGenerationProcess, ModelType } from '@prisma/client';
+import { ImageGenerationProcess, ModelType } from '~/shared/utils/prisma/enums';
 import { IconBrush, IconCheck, IconCopy } from '@tabler/icons-react';
 import { cloneElement, useMemo, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -122,7 +122,7 @@ export function ImageMeta({
                   {label}
                 </Text>
 
-                {label === 'Prompt' && (
+                {/* {label === 'Prompt' && (
                   <>
                     {!hideSoftware && (
                       <Badge size="xs" radius="sm">
@@ -138,7 +138,7 @@ export function ImageMeta({
                       {metas.hasControlNet && ' + ControlNet'}
                     </Badge>
                   </>
-                )}
+                )} */}
                 {(label === 'Prompt' || label === 'Negative prompt') && (
                   <CopyButton value={value as string}>
                     {({ copied, copy }) => (

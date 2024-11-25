@@ -29,7 +29,7 @@ import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { CollectionType, CosmeticEntity, ModelModifier } from '@prisma/client';
+import { CollectionType, CosmeticEntity, ModelModifier } from '~/shared/utils/prisma/enums';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { generationPanel } from '~/store/generation.store';
@@ -53,6 +53,7 @@ import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -87,9 +88,7 @@ export function ModelCard({ data, forceInView }: Props) {
       <ReportMenuItem
         key="report-model"
         loginReason="report-model"
-        onReport={() =>
-          openContext('report', { entityType: ReportEntity.Model, entityId: data.id })
-        }
+        onReport={() => openReportModal({ entityType: ReportEntity.Model, entityId: data.id })}
       />
     ),
   };
@@ -102,7 +101,7 @@ export function ModelCard({ data, forceInView }: Props) {
             key="report-image"
             label="Report image"
             onReport={() =>
-              openContext('report', {
+              openReportModal({
                 entityType: ReportEntity.Image,
                 entityId: image.id,
               })

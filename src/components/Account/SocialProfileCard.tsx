@@ -1,5 +1,5 @@
 import { Alert, Button, Card, Center, Divider, Group, Loader, Stack, Title } from '@mantine/core';
-import { LinkType } from '@prisma/client';
+import { LinkType } from '~/shared/utils/prisma/enums';
 import React, { useState } from 'react';
 
 import { SocialLink } from '~/components/Account/SocialLink';

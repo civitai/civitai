@@ -279,7 +279,7 @@ type ImageScores = {
   score: number;
   metrics: Record<string, number>;
 };
-const IMAGE_SCORE_BATCH_SIZE = 10000;
+const IMAGE_SCORE_BATCH_SIZE = 100000;
 const IMAGE_SCORE_FALLOFF = 120;
 const IMAGE_SCORE_MULTIPLIER = 100;
 async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [number, number]) {
@@ -297,14 +297,33 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       const key = `Leaderboard ${ctx.id} - Fetching scores - ${startIndex} to ${endIndex}`;
       log(key);
       // console.time(key);
-      const batchScores = await pgDbReadLong.query<ImageScores>(
-        `${ctx.query} SELECT * FROM image_scores`,
-        [startIndex, endIndex]
-      );
-      // console.timeEnd(key);
-      appendScore(userScores, batchScores.rows);
+      const isClickhouseQuery = ctx.query.includes('ch_image_scores');
+      if (isClickhouseQuery) {
+        if (!clickhouse) return;
+
+        const response = await clickhouse.query({
+          query: ctx.query,
+          query_params: { from: startIndex, to: endIndex },
+          format: 'JSONEachRow',
+        });
+
+        const scores = (await response?.json<(ImageScores & { metrics: string })[]>()).map((s) => ({
+          ...s,
+          metrics: JSON.parse(s.metrics) as Record<string, number>,
+        }));
+
+        appendScore(userScores, scores);
+      } else {
+        const batchScores = await pgDbReadLong.query<ImageScores>(
+          `${ctx.query} SELECT * FROM image_scores`,
+          [startIndex, endIndex]
+        );
+        // console.timeEnd(key);
+        appendScore(userScores, batchScores.rows);
+      }
     });
   }
+
   await limitConcurrency(tasks, 2);
 
   // Add up scores

@@ -1,14 +1,14 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   CollectionContributorPermission,
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
-  ImageResource,
-  Prisma,
   TagTarget,
   TagType,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
+import { ImageResource } from '~/shared/utils/prisma/models';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { PostSort } from '~/server/common/enums';
@@ -66,6 +66,8 @@ import {
 import { getPeriods } from '~/server/utils/enum-helpers';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { getTechniqueByName } from '~/server/services/technique.service';
+import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 
 type GetAllPostsRaw = {
   id: number;
@@ -500,7 +502,27 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
       id,
       OR: user?.isModerator
         ? undefined
-        : [{ userId: user?.id }, { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } }],
+        : [
+            { userId: user?.id },
+            { publishedAt: { lt: new Date() }, nsfwLevel: { not: 0 } },
+            // Support judges of a collection to view any post in the collection
+            // regardless of NSFW level and published status.
+            {
+              collectionId: {
+                not: null,
+              },
+              collection: {
+                contributors: {
+                  some: {
+                    userId: user?.id,
+                    permissions: {
+                      has: CollectionContributorPermission.MANAGE,
+                    },
+                  },
+                },
+              },
+            },
+          ],
     },
     select: postSelect,
   });
@@ -797,7 +819,9 @@ export const addPostImage = async ({
 
   let toolId: number | undefined;
   const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
-  if (sourceName || sourceHomepage) {
+  if (meta && 'engine' in meta) {
+    toolId = (await getToolByName(meta.engine as string))?.id;
+  } else if (sourceName || sourceHomepage) {
     if (sourceName) {
       toolId = (await getToolByName(sourceName))?.id;
     }
@@ -806,11 +830,20 @@ export const addPostImage = async ({
     }
   }
 
+  let techniqueId: number | undefined;
+  if (meta && 'workflow' in meta) {
+    const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
+    if (workflow) {
+      techniqueId = (await getTechniqueByName(workflow.subType))?.id;
+    }
+  }
+
   const partialResult = await createImage({
     ...props,
     meta,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
+    techniqueIds: techniqueId ? [techniqueId] : undefined,
   });
 
   try {

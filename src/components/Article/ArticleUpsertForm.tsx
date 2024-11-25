@@ -14,7 +14,7 @@ import {
   Paper,
   Input,
 } from '@mantine/core';
-import { ArticleStatus, TagTarget } from '@prisma/client';
+import { ArticleStatus, TagTarget } from '~/shared/utils/prisma/enums';
 import { IconQuestionMark, IconTrash } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';

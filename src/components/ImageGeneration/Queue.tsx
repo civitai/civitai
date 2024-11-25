@@ -1,48 +1,26 @@
-import OneKeyMap from '@essentials/one-key-map';
-import trieMemoize from 'trie-memoize';
-import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
+import { Alert, Center, Loader, Stack, Text, Code } from '@mantine/core';
 import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
 import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { MarkerType } from '~/server/common/enums';
-
 export function Queue() {
-  const { filters } = useFiltersContext((state) => ({
-    filters: state.markers,
-    setFilters: state.setMarkerFilters,
-  }));
+  const filters = useFiltersContext((state) => state.markers);
 
-  let workflowTagsFilter = undefined;
-
-  switch (filters.marker) {
-    case MarkerType.Favorited:
-      workflowTagsFilter = [WORKFLOW_TAGS.FAVORITE];
-      break;
-
-    case MarkerType.Liked:
-      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.LIKED];
-      break;
-
-    case MarkerType.Disliked:
-      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
-      break;
-  }
-
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError } =
-    useGetTextToImageRequests({
-      tags: workflowTagsFilter,
-    });
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError, error } =
+    useGetTextToImageRequests();
 
   if (isError)
     return (
       <Alert color="red">
-        <Text align="center">Could not retrieve image generation requests</Text>
+        <Text align="center">Could not retrieve generation requests</Text>
+        {error && (
+          <Text align="center" size="xs">
+            {error.data && `Status ${error.data?.httpStatus}:`} {error.message}
+          </Text>
+        )}
       </Alert>
     );
 

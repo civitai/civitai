@@ -17,7 +17,7 @@ import {
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { IconArrowLeft, IconCalendar, IconPlus } from '@tabler/icons-react';
 import { forwardRef, useEffect, useState } from 'react';
 import { z } from 'zod';

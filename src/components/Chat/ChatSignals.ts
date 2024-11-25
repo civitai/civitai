@@ -1,4 +1,4 @@
-import { ChatMessageType } from '@prisma/client';
+import { ChatMessageType } from '~/shared/utils/prisma/enums';
 import produce from 'immer';
 import { useCallback } from 'react';
 import useSound from 'use-sound';

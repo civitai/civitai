@@ -1,5 +1,7 @@
-import { ActionIcon, Checkbox, createStyles, Group, Loader, Menu, Text } from '@mantine/core';
-import { useClipboard } from '@mantine/hooks';
+import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
+import { ActionIcon, Checkbox, createStyles, Group, Menu, Modal } from '@mantine/core';
+import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { useClipboard, useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowsShuffle,
@@ -16,18 +18,21 @@ import {
   IconHeart,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useRouter } from 'next/router';
-import { useState, useRef } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
+import { useState } from 'react';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
+// import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
+import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
-import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useGetTextToImageRequestsImages,
+  useUpdateImageStepMetadata,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TextToImageQualityFeedbackModal } from '~/components/Modals/GenerationQualityFeedbackModal';
 import { UpscaleImageModal } from '~/components/Orchestrator/components/UpscaleImageModal';
 import { TwCard } from '~/components/TwCard/TwCard';
-import images from '~/pages/api/v1/images';
 import { constants } from '~/server/common/constants';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
@@ -36,9 +41,11 @@ import {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
-import { generationStore, useGenerationStore } from '~/store/generation.store';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { generationStore } from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { MediaType } from '~/shared/utils/prisma/enums';
+import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -64,8 +71,6 @@ export function GeneratedImage({
     stepName: step.name,
     imageId: image.id,
   });
-  const { pathname } = useRouter();
-  const view = useGenerationStore((state) => state.view);
 
   const { updateImages, isLoading } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
@@ -86,26 +91,40 @@ export function GeneratedImage({
     );
   const { copied, copy } = useClipboard();
 
+  const isLightbox = useDialogStore((state) =>
+    state.dialogs.some((x) => x.id === 'generated-image')
+  );
   const handleImageClick = () => {
-    if (!image || !available) return;
+    if (!image || !available || isLightbox) return;
 
     dialogStore.trigger({
+      id: 'generated-image',
       component: GeneratedImageLightbox,
       props: { image, request },
-      // options: { zIndex: 300 },
     });
   };
+  function handleCloseImageLightbox() {
+    dialogStore.closeById('generated-image');
+  }
 
   const handleAuxClick = () => {
     if (image) window.open(image.url, '_blank');
   };
 
-  const handleGenerate = ({ seed, ...rest }: Partial<TextToImageParams> = {}) => {
+  const handleGenerate = (
+    { seed, ...rest }: Partial<TextToImageParams> = {},
+    { type, workflow: workflow }: { type: MediaType; workflow?: string } = {
+      type: image.type,
+      workflow: step.params.workflow,
+    }
+  ) => {
+    handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources,
       params: { ...step.params, seed, ...rest },
       remixOfId: step.metadata?.remixOfId,
-      view: !pathname.includes('/generate') ? 'generate' : view,
+      type,
+      workflow: workflow ?? step.params.workflow,
     });
   };
 
@@ -118,7 +137,7 @@ export function GeneratedImage({
         'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
       labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
       confirmProps: { color: 'red' },
-      onConfirm: () =>
+      onConfirm: () => {
         updateImages([
           {
             workflowId: request.id,
@@ -129,28 +148,30 @@ export function GeneratedImage({
               },
             },
           },
-        ]),
+        ]);
+        handleCloseImageLightbox();
+      },
       zIndex: constants.imageGeneration.drawerZIndex + 2,
       centered: true,
     });
   };
 
   const handleUpscale = (workflow: string) => {
-    dialogStore.trigger({
-      component: UpscaleImageModal,
-      props: {
-        resources: step.resources,
-        params: {
-          ...step.params,
-          image: image.url,
-          seed: image.seed ?? step.params.seed,
-          workflow,
+    handleCloseImageLightbox();
+    if (step.$type !== 'videoGen')
+      dialogStore.trigger({
+        component: UpscaleImageModal,
+        props: {
+          resources: step.resources,
+          params: {
+            ...step.params,
+            image: image.url,
+            seed: image.seed,
+            workflow,
+          },
         },
-      },
-    });
+      });
   };
-
-  const imageRef = useRef<HTMLImageElement>(null);
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
   const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
@@ -222,50 +243,60 @@ export function GeneratedImage({
     );
   }
 
+  const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
+  const img2vidConfigs = availableEngineConfigurations?.filter((x) => x.subType === 'img2vid');
+
   if (!available) return <></>;
 
   const isUpscale = step.params.workflow === 'img2img-upscale';
-  const isFlux = getIsFlux(step.params.baseModel);
-  const isSD3 = getIsSD3(step.params.baseModel);
+  const isVideo = step.$type === 'videoGen';
+  const isFlux = !isVideo && getIsFlux(step.params.baseModel);
+  const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
   const canRemix = !isUpscale;
-  const canImg2Img = !isFlux && !isUpscale && !isSD3;
-  const { params } = step;
+  const canImg2Img = !isFlux && !isUpscale && !isSD3 && !isVideo;
+  // const canRemix = true;
+  // const canImg2Img = true;
 
   return (
     <TwCard
       ref={ref}
-      className={classes.imageWrapper}
-      style={{ aspectRatio: params.width / params.height }}
+      className={clsx('max-h-full max-w-full', classes.imageWrapper)}
+      style={{ aspectRatio: image.width / image.height }}
     >
       {inView && (
         <>
           <div
-            className="relative flex flex-1 cursor-pointer flex-col items-center justify-center"
+            className={clsx('relative flex flex-1 flex-col items-center justify-center', {
+              ['cursor-pointer']: !isLightbox,
+            })}
             onClick={handleImageClick}
             onMouseDown={(e) => {
               if (e.button === 1) return handleAuxClick();
             }}
           >
-            {/* eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element */}
-            <img
-              ref={imageRef}
-              alt=""
+            <EdgeMedia2
               src={image.url}
-              onDragStart={(e) => {
-                if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
-              }}
+              type={image.type}
+              alt=""
+              wrapperProps={{ style: { height: '100%' } }}
+              className="max-h-full w-auto max-w-full"
+              // onDragStart={(e) => {
+              //   if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
+              // }}
             />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
-          <label className="absolute left-3 top-3 ">
-            <Checkbox
-              className={classes.checkbox}
-              checked={selected}
-              onChange={(e) => {
-                toggleSelect(e.target.checked);
-              }}
-            />
-          </label>
+          {!isLightbox && (
+            <label className="absolute left-3 top-3 ">
+              <Checkbox
+                className={classes.checkbox}
+                checked={selected}
+                onChange={(e) => {
+                  toggleSelect(e.target.checked);
+                }}
+              />
+            </label>
+          )}
           <Menu zIndex={400} withinPortal>
             <Menu.Target>
               <div className="absolute right-3 top-3">
@@ -302,19 +333,45 @@ export function GeneratedImage({
               >
                 Delete
               </Menu.Item>
-              {!!img2imgWorkflows?.length && canImg2Img && (
+              {!!img2imgWorkflows?.length && (
                 <>
                   <Menu.Divider />
                   <Menu.Label>Image-to-image workflows</Menu.Label>
-                  {img2imgWorkflows?.map((workflow) => (
+                  {!isVideo &&
+                    img2imgWorkflows
+                      ?.filter((x) => x.key === 'img2img-upscale')
+                      .map((workflow) => (
+                        <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
+                          {workflow.name}
+                        </Menu.Item>
+                      ))}
+                  {canImg2Img &&
+                    img2imgWorkflows
+                      ?.filter((x) => x.key !== 'img2img-upscale')
+                      .map((workflow) => (
+                        <Menu.Item
+                          key={workflow.key}
+                          onClick={() => handleSelectWorkflow(workflow.key)}
+                        >
+                          {workflow.name}
+                        </Menu.Item>
+                      ))}
+                </>
+              )}
+              {!isVideo && !!img2vidConfigs?.length && (
+                <>
+                  <Menu.Divider />
+                  {img2vidConfigs.map(({ name, key, type }) => (
                     <Menu.Item
-                      key={workflow.key}
-                      onClick={() => {
-                        if (workflow.key === 'img2img-upscale') handleUpscale(workflow.key);
-                        else handleSelectWorkflow(workflow.key);
-                      }}
+                      key={key}
+                      onClick={() =>
+                        handleGenerate({ sourceImageUrl: image.url } as any, {
+                          type,
+                          workflow: key,
+                        })
+                      }
                     >
-                      {workflow.name}
+                      {name}
                     </Menu.Item>
                   ))}
                 </>
@@ -342,7 +399,12 @@ export function GeneratedImage({
             </Menu.Dropdown>
           </Menu>
 
-          <Group spacing={4} className={clsx(classes.actionsWrapper, 'absolute bottom-2 left-2')}>
+          <div
+            className={clsx(
+              classes.actionsWrapper,
+              'absolute bottom-1 left-1 flex flex-wrap items-center gap-1 p-1'
+            )}
+          >
             <ActionIcon
               size="md"
               className={buttonState.favorite ? classes.favoriteButton : undefined}
@@ -352,8 +414,7 @@ export function GeneratedImage({
             >
               <IconHeart size={16} />
             </ActionIcon>
-
-            {!!img2imgWorkflows?.length && canImg2Img && (
+            {!!img2imgWorkflows?.length && (
               <Menu
                 zIndex={400}
                 trigger="hover"
@@ -370,15 +431,36 @@ export function GeneratedImage({
                   </ActionIcon>
                 </Menu.Target>
                 <Menu.Dropdown className={classes.improveMenu}>
-                  {img2imgWorkflows?.map((workflow) => (
+                  {!isVideo &&
+                    img2imgWorkflows
+                      ?.filter((x) => x.key === 'img2img-upscale')
+                      .map((workflow) => (
+                        <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
+                          {workflow.name}
+                        </Menu.Item>
+                      ))}
+                  {canImg2Img &&
+                    img2imgWorkflows
+                      ?.filter((x) => x.key !== 'img2img-upscale')
+                      .map((workflow) => (
+                        <Menu.Item
+                          key={workflow.key}
+                          onClick={() => handleSelectWorkflow(workflow.key)}
+                        >
+                          {workflow.name}
+                        </Menu.Item>
+                      ))}
+                  {img2vidConfigs?.map(({ name, key, type }) => (
                     <Menu.Item
-                      key={workflow.key}
-                      onClick={() => {
-                        if (workflow.key === 'img2img-upscale') handleUpscale(workflow.key);
-                        else handleSelectWorkflow(workflow.key);
-                      }}
+                      key={key}
+                      onClick={() =>
+                        handleGenerate({ sourceImageUrl: image.url } as any, {
+                          type,
+                          workflow: key,
+                        })
+                      }
                     >
-                      {workflow.name}
+                      {name}
                     </Menu.Item>
                   ))}
                 </Menu.Dropdown>
@@ -402,41 +484,29 @@ export function GeneratedImage({
             >
               <IconThumbDown size={16} />
             </ActionIcon>
-          </Group>
-          <div className="absolute bottom-2 right-2">
-            <ImageMetaPopover
-              meta={step.params}
-              zIndex={constants.imageGeneration.drawerZIndex + 1}
-              hideSoftware
-            >
-              <ActionIcon variant="transparent" size="md">
-                <IconInfoCircle
-                  color="white"
-                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                  opacity={0.8}
-                  strokeWidth={2.5}
-                  size={26}
-                />
-              </ActionIcon>
-            </ImageMetaPopover>
           </div>
+          {!isLightbox && (
+            <div className="absolute bottom-2 right-2">
+              <ImageMetaPopover
+                meta={step.params}
+                zIndex={constants.imageGeneration.drawerZIndex + 1}
+                hideSoftware
+              >
+                <ActionIcon variant="transparent" size="md">
+                  <IconInfoCircle
+                    color="white"
+                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                    opacity={0.8}
+                    strokeWidth={2.5}
+                    size={26}
+                  />
+                </ActionIcon>
+              </ImageMetaPopover>
+            </div>
+          )}
         </>
       )}
     </TwCard>
-  );
-}
-
-export function GenerationPlaceholder({ width, height }: { width: number; height: number }) {
-  return (
-    <div
-      className="flex flex-col items-center justify-center border card"
-      style={{ aspectRatio: width / height }}
-    >
-      <Loader size={24} />
-      <Text color="dimmed" size="xs" align="center">
-        Generating
-      </Text>
-    </div>
   );
 }
 
@@ -459,35 +529,34 @@ const useStyles = createStyles((theme, _params, getRef) => {
       },
     },
     imageWrapper: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
       [`&:hover .${thumbActionRef}`]: buttonBackground,
-      [`&:hover .${thumbActionRef} button`]: {
+      [`&:hover .${thumbActionRef}`]: {
         opacity: 1,
-        transition: 'opacity .3s',
       },
     },
     actionsWrapper: {
       ref: thumbActionRef,
       borderRadius: theme.radius.sm,
-      padding: 4,
       transition: 'opacity .3s',
+      ...buttonBackground,
+      opacity: 0,
 
       [`@container (max-width: 420px)`]: {
-        ...buttonBackground,
         width: 68,
+        opacity: 1,
       },
 
-      ['button']: {
-        opacity: 0,
+      // ['button']: {
+      //   opacity: 0,
 
-        [`&.${favoriteButtonRef}`]: {
-          opacity: 1,
-        },
+      //   [`&.${favoriteButtonRef}`]: {
+      //     opacity: 1,
+      //   },
 
-        [`@container (max-width: 420px)`]: {
-          opacity: 1,
-        },
-      },
+      //   [`@container (max-width: 420px)`]: {
+      //     opacity: 1,
+      //   },
+      // },
     },
     favoriteButton: {
       ref: favoriteButtonRef,
@@ -506,3 +575,101 @@ const useStyles = createStyles((theme, _params, getRef) => {
     },
   };
 });
+
+const TRANSITION_DURATION = 200;
+
+export function GeneratedImageLightbox({
+  image,
+  request,
+}: {
+  image: NormalizedGeneratedImage;
+  request: NormalizedGeneratedImageResponse;
+}) {
+  const dialog = useDialogContext();
+  const { steps } = useGetTextToImageRequestsImages();
+
+  const [embla, setEmbla] = useState<Embla | null>(null);
+  useAnimationOffsetEffect(embla, TRANSITION_DURATION);
+
+  useHotkeys([
+    ['ArrowLeft', () => embla?.scrollPrev()],
+    ['ArrowRight', () => embla?.scrollNext()],
+  ]);
+
+  const images = steps.flatMap((step) =>
+    step.images
+      .filter((x) => x.status === 'succeeded')
+      .map((image) => ({ ...image, params: { ...step.params, seed: image.seed } }))
+  );
+
+  const [slide, setSlide] = useState(() => {
+    const initialSlide = images.findIndex((item) => item.id === image.id);
+    return initialSlide > -1 ? initialSlide : 0;
+  });
+
+  return (
+    <Modal {...dialog} closeButtonLabel="Close lightbox" fullScreen>
+      <IntersectionObserverProvider id="generated-image-lightbox">
+        <Carousel
+          align="center"
+          slideGap="md"
+          slidesToScroll={1}
+          controlSize={40}
+          initialSlide={slide}
+          getEmblaApi={setEmbla}
+          withKeyboardEvents={false}
+          onSlideChange={setSlide}
+          loop
+        >
+          {steps.flatMap((step) =>
+            step.images
+              .filter((x) => x.status === 'succeeded')
+              .map((image) => (
+                <Carousel.Slide
+                  key={`${image.workflowId}_${image.id}`}
+                  style={{
+                    height: 'calc(100vh - 84px)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {image.url && (
+                    <GeneratedImage
+                      image={{ ...image, params: { ...step.params, seed: image.seed } } as any} // TODO - fix this
+                      request={request}
+                      step={step}
+                    />
+                  )}
+                </Carousel.Slide>
+              ))
+          )}
+        </Carousel>
+      </IntersectionObserverProvider>
+      <div
+        style={{
+          position: 'fixed',
+          bottom: 0,
+          right: 0,
+          width: '100%',
+          maxWidth: 450,
+          zIndex: 10,
+        }}
+      >
+        <GenerationDetails
+          label="Generation Details"
+          params={images?.[slide]?.params}
+          labelWidth={150}
+          paperProps={{ radius: 0 }}
+          controlProps={{
+            sx: (theme) => ({
+              backgroundColor:
+                theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
+            }),
+          }}
+          upsideDown
+        />
+      </div>
+    </Modal>
+  );
+}

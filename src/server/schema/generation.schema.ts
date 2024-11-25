@@ -1,4 +1,4 @@
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { BaseModel, constants, generation } from '~/server/common/constants';
 import { userTierSchema } from '~/server/schema/user.schema';
@@ -262,6 +262,8 @@ export const checkResourcesCoverageSchema = z.object({
 export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
+  z.object({ type: z.literal('video'), id: z.coerce.number() }),
+  z.object({ type: z.literal('audio'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
   z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);

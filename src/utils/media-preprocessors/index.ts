@@ -7,7 +7,9 @@ export * from './video.preprocessor';
 
 type SharedProps = { name: string; mimeType: string };
 type ProcessedImage = { type: 'image' } & AsyncReturnType<typeof preprocessImage>;
-type ProcessedVideo = { type: 'video' } & AsyncReturnType<typeof preprocessVideo>;
+type ProcessedVideo = { type: 'video'; meta?: Record<string, unknown> } & AsyncReturnType<
+  typeof preprocessVideo
+>;
 
 export type PreprocessFileReturnType = SharedProps & (ProcessedImage | ProcessedVideo);
 
@@ -26,6 +28,6 @@ export async function preprocessFile(file: File): Promise<PreprocessFileReturnTy
       const videoData = await preprocessVideo(file);
       return { type, ...data, ...videoData };
     default:
-      throw new Error(`unhandled file type: ${file.name.split('.').pop()}`);
+      throw new Error(`Unhandled file type: ${file.name.split('.').pop()}`);
   }
 }

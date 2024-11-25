@@ -13,7 +13,7 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useCallback, useRef } from 'react';
-import { TagType } from '@prisma/client';
+import { TagType } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBigDown,
   IconArrowBigUp,
@@ -25,7 +25,7 @@ import {
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { getTagDisplayName } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { NsfwLevel } from '~/server/common/enums';
 import {
@@ -245,7 +245,7 @@ export function VotableTag({
           />
         )}
         <Text
-          component={NextLink}
+          component={Link}
           href={`/images?tags=${tagId}&view=feed`}
           data-activity="tag-click:image"
           title={!isVoting ? `Score: ${score}` : undefined}

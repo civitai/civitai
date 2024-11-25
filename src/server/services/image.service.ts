@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   BlockImageReason,
@@ -7,11 +8,10 @@ import {
   ImageIngestionStatus,
   MediaType,
   ModelType,
-  Prisma,
   ReportReason,
   ReportStatus,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
@@ -42,6 +42,7 @@ import { leakingContentCounter } from '~/server/prom/client';
 import {
   imageMetaCache,
   imagesForModelVersionsCache,
+  resourceDataCache,
   tagCache,
   tagIdsForImagesCache,
   userContentOverviewCache,
@@ -127,6 +128,10 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import {
+  formatGenerationResources,
+  generationFormWorkflowConfigurations,
+} from '~/shared/constants/generation.constants';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -1111,10 +1116,13 @@ export const getAllImages = async (
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
+    ${Prisma.raw(
+      ids?.length ? 'LEFT' : ''
+    )} JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const queryWith = WITH.length > 0 ? Prisma.sql`WITH ${Prisma.join(WITH, ', ')}` : Prisma.sql``;
   const query = Prisma.sql`
     ${queryWith}
@@ -1137,6 +1145,9 @@ export const getAllImages = async (
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2086,12 +2097,22 @@ export const getImage = async ({
       Prisma.sql`(${Prisma.join(
         [
           Prisma.sql`i."needsReview" IS NULL AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
+          withoutPost
+            ? null
+            : Prisma.sql`
+              p."collectionId" IS NOT NULL AND EXISTS (
+                SELECT 1 FROM "CollectionContributor" cc
+                WHERE cc."collectionId" = p."collectionId"
+                  AND cc."userId" = ${userId}
+                  AND cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[]
+              )`,
           Prisma.sql`i."userId" = ${userId}`,
-        ],
+        ].filter(isDefined),
         ' OR '
       )})`
     );
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
     SELECT
       i.id,
@@ -2121,6 +2142,9 @@ export const getImage = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2228,6 +2252,47 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
   return resources;
 };
 
+export async function getImageGenerationResources(id: number) {
+  const imageResources = await dbRead.imageResource.findMany({
+    where: { imageId: id },
+    select: { imageId: true, modelVersionId: true, hash: true, strength: true },
+  });
+  const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
+  const resourceData = await resourceDataCache
+    .fetch(versionIds)
+    .then((resourceData) => formatGenerationResources(resourceData));
+
+  // TODO - determine a good way to return resources when some resources are unavailable
+  // const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
+  // if (index > -1 && !resourceData[index].available) {
+  //   const checkpoint = resourceData[index];
+  //   const latestVersion = await dbRead.modelVersion.findFirst({
+  //     where: {
+  //       modelId: checkpoint.model.id,
+  //       availability: { in: ['Public', 'EarlyAccess'] },
+  //       generationCoverage: { covered: true },
+  //     },
+  //     select: { id: true },
+  //     orderBy: { index: 'asc' },
+  //   });
+  //   if (latestVersion) {
+  //     const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
+  //     if (newCheckpoint) resourceData[index] = newCheckpoint;
+  //   }
+  // }
+
+  return resourceData
+    .map((resource) => {
+      const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
+      return {
+        ...resource,
+        hash: imageResource?.hash ?? undefined,
+        strength: imageResource?.strength ? imageResource.strength / 100 : resource.strength,
+      };
+    })
+    .filter((x) => x.available);
+}
+
 export type ImagesForModelVersions = {
   id: number;
   userId: number;
@@ -2318,6 +2383,7 @@ export const getImagesForModelVersion = async ({
     );
   }
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const query = Prisma.sql`
     WITH targets AS (
       SELECT
@@ -2362,6 +2428,9 @@ export const getImagesForModelVersion = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+              ${Prisma.join(workflows)}
+            ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2498,6 +2567,7 @@ export const getImagesForPosts = async ({
     );
   }
 
+  const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const images = await dbRead.$queryRaw<
     {
       id: number;
@@ -2538,6 +2608,9 @@ export const getImagesForPosts = async ({
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
+            OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
+                ${Prisma.join(workflows)}
+              ]::text[])
           THEN TRUE
           ELSE FALSE
         END
@@ -2832,16 +2905,21 @@ export const getImagesByEntity = async ({
   }));
 };
 
-export async function createImage({ toolIds, ...image }: ImageSchema & { userId: number }) {
+export async function createImage({
+  toolIds,
+  techniqueIds,
+  ...image
+}: ImageSchema & { userId: number }) {
   const result = await dbWrite.image.create({
     data: {
       ...image,
       meta: (image.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
-      generationProcess: image.meta
-        ? getImageGenerationProcess(image.meta as Prisma.JsonObject)
-        : null,
+      generationProcess: image.meta ? getImageGenerationProcess(image.meta) : null,
       tools: !!toolIds?.length
         ? { createMany: { data: toolIds.map((toolId) => ({ toolId })) } }
+        : undefined,
+      techniques: !!techniqueIds?.length
+        ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
     },
     select: { id: true },
@@ -4134,7 +4212,38 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const meta =
     parsedMeta.success && !image.hideMeta ? removeEmpty({ ...rest, clipSkip }) : undefined;
 
+  let onSite = false;
+  let process: string | null = null;
+  let hasControlNet = false;
+  if (meta) {
+    if ('civitaiResources' in meta) onSite = true;
+    else if ('workflow' in meta) {
+      const workflow = generationFormWorkflowConfigurations.find((x) => x.key === meta.workflow);
+      if (workflow) {
+        onSite = true;
+        process = workflow.subType;
+      }
+    }
+
+    if (meta.comfy) {
+      hasControlNet = !!meta.controlNets?.length;
+    } else {
+      hasControlNet = Object.keys(meta).some((x) => x.toLowerCase().startsWith('controlnet'));
+    }
+
+    if (!process) {
+      if (meta.comfy) process = 'comfy';
+      else if (image.generationProcess === 'txt2imgHiRes') process = 'txt2img + Hi-Res';
+      else process = image.generationProcess;
+
+      if (process && hasControlNet) process += ' + ControlNet';
+    }
+  }
+
   return {
+    type: image.type,
+    onSite,
+    process,
     meta,
     resources: resources.map((resource) => ({
       ...resource,
@@ -4147,7 +4256,6 @@ export async function getImageGenerationData({ id }: { id: number }) {
     techniques,
     external,
     canRemix: !image.hideMeta && !!meta?.prompt,
-    generationProcess: image.generationProcess,
   };
 }
 
@@ -4165,9 +4273,8 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
       status: true,
       createdAt: true,
       reviewedAt: true,
-      collection: {
-        select: collectionSelect,
-      },
+      collection: { select: collectionSelect },
+      scores: { select: { userId: true, score: true } },
       tag: true,
     },
   });
@@ -4271,4 +4378,20 @@ export async function queueImageSearchIndexUpdate({
 }) {
   await imagesSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
   await imagesMetricsSearchIndex.queueUpdate(ids.map((id) => ({ id, action })));
+}
+
+export async function getPostDetailByImageId({ imageId }: { imageId: number }) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { postId: true },
+  });
+  if (!image || !image.postId) return null;
+
+  const post = await dbRead.post.findUnique({
+    where: { id: image.postId },
+    select: { title: true, detail: true },
+  });
+  if (!post) return null;
+
+  return post;
 }

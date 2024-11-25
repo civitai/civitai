@@ -2,6 +2,8 @@ import dynamic from 'next/dynamic';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { ResourceSelectModalProps } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal2';
 import type { CollectionSelectModalProps } from '~/components/CollectionSelectModal/CollectionSelectModal';
+import type { EditResourceReviewModalProps } from '~/components/ResourceReview/EditResourceReviewModal';
+import type { ReportModalProps } from '~/components/Modals/ReportModal';
 
 const BrowsingLevelGuide = dynamic(() => import('~/components/BrowsingLevel/BrowsingLevelGuide'));
 const SetBrowsingLevelModal = dynamic(
@@ -17,6 +19,10 @@ const CollectionSelectModal = dynamic(
 const MigrateModelToCollection = dynamic(
   () => import('~/components/Model/Actions/MigrateModelToCollection')
 );
+const EditResourceReviewModal = dynamic(
+  () => import('~/components/ResourceReview/EditResourceReviewModal')
+);
+const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
@@ -35,4 +41,12 @@ export function openCollectionSelectModal(props: CollectionSelectModalProps) {
 
 export function openMigrateModelToCollectionModal(props: { modelId: number }) {
   dialogStore.trigger({ component: MigrateModelToCollection, props });
+}
+
+export function openResourceReviewEditModal(props: EditResourceReviewModalProps) {
+  dialogStore.trigger({ component: EditResourceReviewModal, props });
+}
+
+export function openReportModal(props: ReportModalProps) {
+  dialogStore.trigger({ component: ReportModal, props });
 }

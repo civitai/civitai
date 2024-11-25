@@ -31,7 +31,7 @@ import {
   SimpleCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import { applyCosmeticThemeColors } from '~/libs/sx-helpers';
-import { CosmeticType } from '@prisma/client';
+import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { BadgeDisplay, Username } from '../User/Username';
 import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

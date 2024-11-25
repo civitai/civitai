@@ -1,6 +1,7 @@
+import { Prisma } from '@prisma/client';
 import { hfModelImporter } from '~/server/importers/huggingFaceModel';
 import { dbWrite } from '~/server/db/client';
-import { ImportStatus, Prisma } from '@prisma/client';
+import { ImportStatus } from '~/shared/utils/prisma/enums';
 import { hfAuthorImporter } from '~/server/importers/huggingFaceAuthor';
 import { ImportDependency, ImportRunInput } from '~/server/importers/importer';
 import { chunk } from 'lodash-es';
@@ -11,7 +12,8 @@ export async function processImport(input: ImportRunInput) {
   const { id, source } = input;
   const importer = importers.find((i) => i.canHandle(source));
 
-  const updateStatus = async (status: ImportStatus, data: any = null) => { // eslint-disable-line
+  const updateStatus = async (status: ImportStatus, data: any = null) => {
+    // eslint-disable-line
     await dbWrite.import.update({
       where: { id },
       data: { status, data: data ?? Prisma.JsonNull },
@@ -28,7 +30,8 @@ export async function processImport(input: ImportRunInput) {
     const { status, data, dependencies } = await importer.run(input);
     if (dependencies) await processDependencies(input, dependencies);
     return await updateStatus(status, data);
-  } catch (error: any) { // eslint-disable-line
+  } catch (error: any) {
+    // eslint-disable-line
     console.error(error);
     return await updateStatus(ImportStatus.Failed, { error: error.message, stack: error.stack });
   }

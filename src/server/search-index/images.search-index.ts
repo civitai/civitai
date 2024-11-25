@@ -1,5 +1,10 @@
-import { ImageGenerationProcess, ImageIngestionStatus, MediaType, Prisma } from '@prisma/client';
-import { chunk } from 'lodash';
+import { Prisma } from '@prisma/client';
+import {
+  ImageGenerationProcess,
+  ImageIngestionStatus,
+  MediaType,
+} from '~/shared/utils/prisma/enums';
+import { chunk } from 'lodash-es';
 import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -178,7 +183,7 @@ const transformData = async ({
 
   const records = images
     .map(({ userId, id, nsfwLevelLocked, promptNsfw, ...imageRecord }) => {
-      const user = userId ? users[userId] ?? null : null;
+      const user = userId ? users?.[userId] ?? null : null;
 
       if (!user || !userId) {
         return null;

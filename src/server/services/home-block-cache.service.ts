@@ -1,4 +1,4 @@
-import { HomeBlockType } from '@prisma/client';
+import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { redis } from '~/server/redis/client';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { getHomeBlockData, HomeBlockWithData } from '~/server/services/home-block.service';

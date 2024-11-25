@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import {
   Availability,
   CollectionReadConfiguration,
@@ -5,10 +6,9 @@ import {
   CosmeticSource,
   CosmeticType,
   ModelStatus,
-  Prisma,
   TagSource,
   TagType,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
@@ -27,6 +27,7 @@ import { CachedObject, createCachedArray, createCachedObject } from '~/server/ut
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { fluxUltraAir } from '~/shared/constants/generation.constants';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -345,10 +346,12 @@ export const tagCache = createCachedObject<TagLookup>({
   ttl: CacheTTL.day,
 });
 
+const explicitCoveredModelAirs = [fluxUltraAir];
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   lookupFn: async (ids) => {
+    if (!ids.length) return {};
     const [modelVersions, modelVersionFiles] = await Promise.all([
       dbWrite.modelVersion.findMany({
         where: { id: { in: ids as number[] } },
@@ -361,7 +364,11 @@ export const resourceDataCache = createCachedArray({
     ]);
 
     const dbResults = modelVersions.map(({ generationCoverage, settings = {}, ...result }) => {
-      const covered = generationCoverage?.covered ?? false;
+      const covered =
+        explicitCoveredModelAirs.some((air) =>
+          air.includes(`civitai:${result.model.id}@${result.id}`)
+        ) ||
+        (generationCoverage?.covered ?? false);
       const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
         id: number;
         sizeKB: number;

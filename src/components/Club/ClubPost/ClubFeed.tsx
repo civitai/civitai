@@ -35,12 +35,12 @@ import {
 } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { isDefined } from '~/utils/type-guards';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ClubPostDiscussion } from '~/components/Club/ClubPost/ClubPostDiscussion';
 import { useInView } from '~/hooks/useInView';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { SupportedClubPostEntities } from '~/server/schema/club.schema';
@@ -130,7 +130,7 @@ export function ClubPostContextMenu({
         key="edit"
         icon={<IconPencilMinus size={14} stroke={1.5} />}
         href={`/clubs/${clubPost.clubId}/posts/${clubPost.id}/edit`}
-        component={NextLink}
+        component={Link}
       >
         Edit
       </Menu.Item>
@@ -143,7 +143,7 @@ export function ClubPostContextMenu({
         key="edit"
         icon={<IconPencilMinus size={14} stroke={1.5} />}
         href={`/posts/${clubPost.entityId}/edit`}
-        component={NextLink}
+        component={Link}
       >
         Edit Image Post
       </Menu.Item>

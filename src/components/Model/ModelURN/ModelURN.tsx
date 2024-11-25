@@ -1,6 +1,6 @@
 import { ActionIcon, Code, Group, Popover, Stack, Text, Tooltip } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { ModelType } from '@prisma/client';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { BaseModel, baseModelSets } from '~/server/common/constants';

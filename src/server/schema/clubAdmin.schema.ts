@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { paginationSchema } from '~/server/schema/base.schema';
-import { ClubAdminPermission } from '@prisma/client';
+import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 
 export const getPagedClubAdminInviteSchema = paginationSchema.merge(
   z.object({

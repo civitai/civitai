@@ -66,6 +66,14 @@ export function throwDbError(error: unknown) {
   });
 }
 
+export function throwInternalServerError(error: unknown) {
+  throw new TRPCError({
+    code: 'INTERNAL_SERVER_ERROR',
+    message: (error as any).message ?? 'An unexpected error ocurred, please try again later',
+    cause: error,
+  });
+}
+
 export const handleTRPCError = (error: Error): TRPCError => {
   const isTrpcError = error instanceof TRPCError;
   if (!isTrpcError) {

@@ -7,10 +7,11 @@ import {
   IconFlag,
   IconArrowBackUp,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
 
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -18,7 +19,6 @@ import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ReactionDetails } from '~/server/selectors/reaction.selector';
 import { CommentGetCommentsById } from '~/types/router';
@@ -157,7 +157,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
           <Stack spacing={0}>
             <Group spacing={8} align="center">
               {!comment.user.deletedAt ? (
-                <Link href={`/user/${comment.user.username}`} passHref>
+                <Link legacyBehavior href={`/user/${comment.user.username}`} passHref>
                   <Anchor variant="text" size="sm" weight="bold">
                     <Username {...comment.user} />
                   </Anchor>
@@ -262,7 +262,7 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 <Menu.Item
                   icon={<IconFlag size={14} stroke={1.5} />}
                   onClick={() =>
-                    openContext('report', {
+                    openReportModal({
                       entityType: ReportEntity.Comment,
                       entityId: comment.id,
                     })

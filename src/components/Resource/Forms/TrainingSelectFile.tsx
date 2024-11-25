@@ -12,7 +12,7 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
-import { TrainingStatus } from '@prisma/client';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconFileDownload, IconSend } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
@@ -247,7 +247,10 @@ export default function TrainingSelectFile({
             ?.sample_images?.map((si) => si.image_url);
 
     if (publishImages?.length) {
-      orchestratorMediaTransmitter.setUrls(TRANSMITTER_KEY, publishImages);
+      orchestratorMediaTransmitter.setUrls(
+        TRANSMITTER_KEY,
+        publishImages.map((url) => ({ url }))
+      );
       await router.replace({ query: { ...router.query, src: TRANSMITTER_KEY } }, undefined, {
         shallow: true,
         scroll: false,

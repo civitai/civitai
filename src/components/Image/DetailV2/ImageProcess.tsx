@@ -1,9 +1,9 @@
 import { Card, Text, Badge, UnstyledButton, Popover } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { IconChartBubble, IconMessage } from '@tabler/icons-react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export function ImageProcess({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
@@ -34,13 +34,13 @@ export function ImageProcess({ imageId }: { imageId: number }) {
                 }`}
                 classNames={{ inner: 'flex gap-1 h-full' }}
               >
-                <NextLink
+                <Link
                   href={`/tools/${slugit(name)}?tools=${id}`}
                   as={`/tools/${slugit(name)}`}
                   data-activity={`tool-click:${id}`}
                 >
                   {name}
-                </NextLink>
+                </Link>
                 {notes && (
                   <>
                     <div className="h-full border-l border-blue-8 border-opacity-30"></div>

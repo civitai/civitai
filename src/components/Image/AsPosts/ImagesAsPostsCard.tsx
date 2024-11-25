@@ -23,7 +23,7 @@ import {
   IconPinnedOff,
   IconProps,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useEffect, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
@@ -318,7 +318,7 @@ export function ImagesAsPostsCard({
                                   e.preventDefault();
                                   e.stopPropagation();
                                   generationPanel.open({
-                                    type: 'image',
+                                    type: image.type,
                                     id: image.id,
                                   });
                                 }}
@@ -370,7 +370,7 @@ export function ImagesAsPostsCard({
                         />
                         {image.hasMeta && (
                           <div className="absolute bottom-0.5 right-0.5 z-10">
-                            <ImageMetaPopover2 imageId={image.id}>
+                            <ImageMetaPopover2 imageId={image.id} type={image.type}>
                               <ActionIcon className={classes.info} variant="transparent" size="lg">
                                 <IconInfoCircle
                                   color="white"
@@ -440,7 +440,7 @@ export function ImagesAsPostsCard({
                                             e.preventDefault();
                                             e.stopPropagation();
                                             generationPanel.open({
-                                              type: 'image',
+                                              type: image.type,
                                               id: image.id,
                                             });
                                           }}
@@ -494,7 +494,7 @@ export function ImagesAsPostsCard({
                                   />
                                   {image.hasMeta && (
                                     <div className="absolute bottom-0.5 right-0.5 z-10">
-                                      <ImageMetaPopover2 imageId={image.id}>
+                                      <ImageMetaPopover2 imageId={image.id} type={image.type}>
                                         <ActionIcon variant="transparent" size="lg">
                                           <IconInfoCircle
                                             color="white"

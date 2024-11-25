@@ -20,7 +20,7 @@ import {
 import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/collection.schema';
 import { trpc } from '~/utils/trpc';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { CollectionMode, CollectionType, TagTarget } from '@prisma/client';
+import { CollectionMode, CollectionType, TagTarget } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
 import { IconCalendar } from '@tabler/icons-react';

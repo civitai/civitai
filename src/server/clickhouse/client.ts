@@ -7,7 +7,7 @@ import {
   ReportReason,
   ReportStatus,
   ReviewReactions,
-} from '@prisma/client';
+} from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';

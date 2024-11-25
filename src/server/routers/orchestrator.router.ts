@@ -3,10 +3,13 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
 import { CacheTTL } from '~/server/common/constants';
+import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
+import { generationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import {
   generateImageSchema,
   generateImageWhatIfSchema,
@@ -45,9 +48,14 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
+const TOKEN_STORE: 'redis' | 'cookie' = 'redis';
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   if (!ctx.user) throw throwAuthorizationError();
-  let token = getEncryptedCookie(ctx, generationServiceCookie.name);
+  const redisKey = ctx.user.id.toString();
+  let token: string | null =
+    TOKEN_STORE === 'redis'
+      ? await redis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
+      : getEncryptedCookie(ctx, generationServiceCookie.name);
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
     token = await getTemporaryUserApiKey({
@@ -58,11 +66,17 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
       type: 'System',
       userId: ctx.user.id,
     });
-    setEncryptedCookie(ctx, {
-      name: generationServiceCookie.name,
-      maxAge: generationServiceCookie.maxAge,
-      value: token,
-    });
+    if (TOKEN_STORE === 'redis') {
+      await Promise.all([
+        redis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
+        redis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
+      ]);
+    } else
+      setEncryptedCookie(ctx, {
+        name: generationServiceCookie.name,
+        maxAge: generationServiceCookie.maxAge,
+        value: token,
+      });
   }
   return next({ ctx: { token } });
 });
@@ -220,6 +234,13 @@ export const orchestratorRouter = router({
         throw e;
       }
     }),
+  whatIf: orchestratorGuardedProcedure
+    .input(generationSchema)
+    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .query(({ ctx, input }) => whatIf({ ...input, userId: ctx.user.id, token: ctx.token })),
+  generate: orchestratorGuardedProcedure
+    .input(generationSchema)
+    .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
   // #endregion
 
   // #region [image training]

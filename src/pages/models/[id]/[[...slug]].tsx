@@ -21,8 +21,13 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { NextLink } from '@mantine/next';
-import { Availability, CollectionType, ModelModifier, ModelStatus } from '@prisma/client';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  Availability,
+  CollectionType,
+  ModelModifier,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import {
   IconArchive,
   IconArrowsLeftRight,
@@ -52,7 +57,6 @@ import {
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
-import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -65,7 +69,10 @@ import {
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { Collection } from '~/components/Collection/Collection';
-import { openMigrateModelToCollectionModal } from '~/components/Dialog/dialog-registry';
+import {
+  openMigrateModelToCollectionModal,
+  openReportModal,
+} from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -145,15 +152,15 @@ export const getServerSideProps = createServerSideProps({
     }
 
     if (ssg) {
-      if (version)
-        await ssg.image.getInfinite.prefetchInfinite({
-          modelVersionId: version.id,
-          prioritizedUserIds: [version.model.userId],
-          period: 'AllTime',
-          sort: ImageSort.MostReactions,
-          limit: CAROUSEL_LIMIT,
-          pending: true,
-        });
+      // if (version)
+      //   await ssg.image.getInfinite.prefetchInfinite({
+      //     modelVersionId: version.id,
+      //     prioritizedUserIds: [version.model.userId],
+      //     period: 'AllTime',
+      //     sort: ImageSort.MostReactions,
+      //     limit: CAROUSEL_LIMIT,
+      //     pending: true,
+      //   });
       await ssg.hiddenPreferences.getHidden.prefetch();
 
       if (modelVersionIdParsed) {
@@ -749,7 +756,7 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                             <Menu.Item
                               icon={<IconEdit size={14} stroke={1.5} />}
-                              component={NextLink}
+                              component={Link}
                               href={`/models/${model.id}/edit`}
                             >
                               Edit Model
@@ -809,7 +816,7 @@ export default function ModelDetailsV2({
                             <Menu.Item
                               icon={<IconFlag size={14} stroke={1.5} />}
                               onClick={() =>
-                                openContext('report', {
+                                openReportModal({
                                   entityType: ReportEntity.Model,
                                   entityId: model.id,
                                 })
@@ -887,6 +894,7 @@ export default function ModelDetailsV2({
                       <Divider orientation="vertical" />
                       <Link
                         href={`/tag/${encodeURIComponent(category.name.toLowerCase())}`}
+                        legacyBehavior
                         passHref
                       >
                         <Badge component="a" size="sm" color="blue" sx={{ cursor: 'pointer' }}>
@@ -900,7 +908,11 @@ export default function ModelDetailsV2({
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
-                      <Link href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                      <Link
+                        legacyBehavior
+                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                        passHref
+                      >
                         <Badge
                           component="a"
                           size="sm"
