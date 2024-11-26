@@ -1,4 +1,4 @@
-import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
+import { Alert, Center, Loader, Stack, Text, Code } from '@mantine/core';
 import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
@@ -9,13 +9,18 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 export function Queue() {
   const filters = useFiltersContext((state) => state.markers);
 
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError, error } =
     useGetTextToImageRequests();
 
   if (isError)
     return (
       <Alert color="red">
         <Text align="center">Could not retrieve generation requests</Text>
+        {error && (
+          <Text align="center" size="xs">
+            {error.data && `Status ${error.data?.httpStatus}:`} {error.message}
+          </Text>
+        )}
       </Alert>
     );
 

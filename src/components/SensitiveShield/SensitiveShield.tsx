@@ -34,7 +34,7 @@ export function SensitiveShield({
         <Text>This content is not available on this site</Text>
       </div>
     );
-  if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel))
+  if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel)) {
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex flex-col items-center gap-2 p-3">
@@ -53,6 +53,7 @@ export function SensitiveShield({
         </div>
       </div>
     );
+  }
 
   return <>{children}</>;
 }

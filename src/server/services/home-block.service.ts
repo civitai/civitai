@@ -185,6 +185,7 @@ export const getHomeBlockData = async ({
               collectionId: collection.id,
               limit: input.limit || metadata.collection.limit,
               browsingLevel: sfwBrowsingLevelsFlag,
+              collectionTagId: metadata.collection.tagId,
             },
           });
 

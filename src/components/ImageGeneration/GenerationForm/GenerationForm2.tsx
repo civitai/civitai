@@ -59,8 +59,11 @@ import { generation, getGenerationConfig, samplerOffsets } from '~/server/common
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModeOptions,
+  fluxModelId,
+  fluxUltraAspectRatios,
   getBaseModelResourceTypes,
   getIsFlux,
+  getIsFluxUltra,
   getIsSD3,
   getIsSdxl,
   getWorkflowDefinitionFeatures,
@@ -273,8 +276,9 @@ export function GenerationFormContent() {
   };
 
   const [hasMinorResources, setHasMinorResources] = useState(false);
+
   useEffect(() => {
-    const subscription = form.watch(({ model, resources = [], vae }, { name }) => {
+    const subscription = form.watch(({ model, resources = [], vae, fluxMode }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
         setHasMinorResources([model, ...resources, vae].filter((x) => x?.minor).length > 0);
       }
@@ -316,6 +320,7 @@ export function GenerationFormContent() {
             cfgScaleMin = isDraft ? 1 : 2;
             cfgScaleMax = isDraft ? 1 : 20;
           }
+          const isFluxUltra = getIsFluxUltra({ modelId: model?.modelId, fluxMode });
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
           if (!resourceTypes) return <></>;
@@ -394,14 +399,18 @@ export function GenerationFormContent() {
                   </InfoPopover>
                 </div>
 
-                <Watch {...form} fields={['model', 'resources', 'vae']}>
-                  {({ model, resources = [], vae }) => {
+                <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
+                  {({ model, resources = [], vae, fluxMode }) => {
                     const selectedResources = [...resources, vae, model].filter(isDefined);
                     const minorFlaggedResources = selectedResources.filter((x) => x.minor);
                     const unstableResources = selectedResources.filter((x) =>
                       allUnstableResources.includes(x.id)
                     );
                     const atLimit = resources.length >= status.limits.resources;
+
+                    const disableAdditionalResources =
+                      model.modelId === fluxModelId &&
+                      fluxMode !== 'urn:air:flux1:checkpoint:civitai:618692@691639';
 
                     return (
                       <Card
@@ -433,101 +442,107 @@ export function GenerationFormContent() {
                               : undefined
                           }
                         />
-                        <Card.Section
-                          className={cx(
-                            { [classes.formError]: form.formState.errors.resources },
-                            'border-b-0 mt-3'
-                          )}
-                          withBorder
-                        >
-                          <PersistentAccordion
-                            storeKey="generation-form-resources"
-                            classNames={{
-                              item: classes.accordionItem,
-                              control: classes.accordionControl,
-                              content: classes.accordionContent,
-                            }}
+                        {!disableAdditionalResources && (
+                          <Card.Section
+                            className={cx(
+                              { [classes.formError]: form.formState.errors.resources },
+                              'border-b-0 mt-3'
+                            )}
+                            withBorder
                           >
-                            <Accordion.Item value="resources" className="border-b-0">
-                              <Accordion.Control
-                                className={cx({
-                                  [classes.formError]: form.formState.errors.resources,
-                                })}
-                              >
-                                <div className="flex flex-col gap-1">
-                                  <div className="flex items-center gap-1">
-                                    <Text size="sm" weight={590}>
-                                      Additional Resources
-                                    </Text>
-                                    {resources.length > 0 && (
-                                      <Badge className="font-semibold">
-                                        {resources.length}/{status.limits.resources}
-                                      </Badge>
+                            <PersistentAccordion
+                              storeKey="generation-form-resources"
+                              classNames={{
+                                item: classes.accordionItem,
+                                control: classes.accordionControl,
+                                content: classes.accordionContent,
+                              }}
+                            >
+                              <Accordion.Item value="resources" className="border-b-0">
+                                <Accordion.Control
+                                  className={cx({
+                                    [classes.formError]: form.formState.errors.resources,
+                                  })}
+                                >
+                                  <div className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-1">
+                                      <Text size="sm" weight={590}>
+                                        Additional Resources
+                                      </Text>
+                                      {resources.length > 0 && (
+                                        <Badge className="font-semibold">
+                                          {resources.length}/{status.limits.resources}
+                                        </Badge>
+                                      )}
+
+                                      <Button
+                                        component="span"
+                                        compact
+                                        variant="light"
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          setOpened(true);
+                                        }}
+                                        radius="xl"
+                                        ml="auto"
+                                        disabled={atLimit}
+                                        classNames={{ inner: 'flex gap-1' }}
+                                      >
+                                        <IconPlus size={16} />
+                                        <Text size="sm" weight={500}>
+                                          Add
+                                        </Text>
+                                      </Button>
+                                    </div>
+
+                                    {atLimit && (!currentUser || currentUser.tier === 'free') && (
+                                      <Text size="xs">
+                                        <Link legacyBehavior href="/pricing" passHref>
+                                          <Anchor
+                                            color="yellow"
+                                            rel="nofollow"
+                                            onClick={(e) => e.stopPropagation()}
+                                          >
+                                            Become a member
+                                          </Anchor>
+                                        </Link>{' '}
+                                        <Text inherit span>
+                                          to use more resources at once
+                                        </Text>
+                                      </Text>
                                     )}
-
-                                    <Button
-                                      component="span"
-                                      compact
-                                      variant="light"
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        setOpened(true);
-                                      }}
-                                      radius="xl"
-                                      ml="auto"
-                                      disabled={atLimit}
-                                      classNames={{ inner: 'flex gap-1' }}
-                                    >
-                                      <IconPlus size={16} />
-                                      <Text size="sm" weight={500}>
-                                        Add
-                                      </Text>
-                                    </Button>
                                   </div>
+                                </Accordion.Control>
+                                <Accordion.Panel>
+                                  <InputResourceSelectMultiple
+                                    name="resources"
+                                    limit={status.limits.resources}
+                                    buttonLabel="Add additional resource"
+                                    modalOpened={opened}
+                                    onCloseModal={() => setOpened(false)}
+                                    options={{
+                                      canGenerate: true,
+                                      resources: resourceTypes.filter(
+                                        (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
+                                      ),
+                                    }}
+                                    hideButton
+                                  />
+                                </Accordion.Panel>
+                              </Accordion.Item>
+                            </PersistentAccordion>
+                          </Card.Section>
+                        )}
 
-                                  {atLimit && (!currentUser || currentUser.tier === 'free') && (
-                                    <Text size="xs">
-                                      <Link legacyBehavior href="/pricing" passHref>
-                                        <Anchor
-                                          color="yellow"
-                                          rel="nofollow"
-                                          onClick={(e) => e.stopPropagation()}
-                                        >
-                                          Become a member
-                                        </Anchor>
-                                      </Link>{' '}
-                                      <Text inherit span>
-                                        to use more resources at once
-                                      </Text>
-                                    </Text>
-                                  )}
-                                </div>
-                              </Accordion.Control>
-                              <Accordion.Panel>
-                                <InputResourceSelectMultiple
-                                  name="resources"
-                                  limit={status.limits.resources}
-                                  buttonLabel="Add additional resource"
-                                  modalOpened={opened}
-                                  onCloseModal={() => setOpened(false)}
-                                  options={{
-                                    canGenerate: true,
-                                    resources: resourceTypes.filter(
-                                      (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
-                                    ),
-                                  }}
-                                  hideButton
-                                />
-                              </Accordion.Panel>
-                            </Accordion.Item>
-                          </PersistentAccordion>
-                        </Card.Section>
                         {unstableResources.length > 0 && (
                           <Card.Section>
                             <Alert color="yellow" title="Unstable Resources" radius={0}>
                               <Text size="xs">
-                                The following resources are experiencing a high generation failure rate, possibly due to temporary generator instability. This usually resolves with time and does not require action from you. This notice will be removed once performance stabilizes.
+                                The following resources are experiencing a high generation failure
+                                rate, possibly due to temporary generator instability. This usually
+                                resolves with time and does not require action from you. This notice
+                                will be removed once performance stabilizes.
                               </Text>
                               <List size="xs">
                                 {unstableResources.map((resource) => (
@@ -718,14 +733,43 @@ export function GenerationFormContent() {
                     autosize
                   />
                 )}
-
-                <div className="flex flex-col gap-0.5">
-                  <Input.Label>Aspect Ratio</Input.Label>
-                  <InputSegmentedControl
-                    name="aspectRatio"
-                    data={getAspectRatioControls(baseModel)}
+                {isFluxUltra && (
+                  <InputSwitch
+                    name="fluxUltraRaw"
+                    labelPosition="left"
+                    label={
+                      <div className="relative flex items-center gap-1">
+                        <Input.Label>Raw mode</Input.Label>
+                        <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                          Generates images with a more natural, less synthetic aesthetic, enhancing
+                          diversity in human subjects and improving the realism of nature
+                          photography.
+                        </InfoPopover>
+                      </div>
+                    }
                   />
-                </div>
+                )}
+
+                {!isFluxUltra && (
+                  <div className="flex flex-col gap-0.5">
+                    <Input.Label>Aspect Ratio</Input.Label>
+                    <InputSegmentedControl
+                      name="aspectRatio"
+                      data={getAspectRatioControls(getGenerationConfig(baseModel).aspectRatios)}
+                    />
+                  </div>
+                )}
+
+                {isFluxUltra && (
+                  <InputSelect
+                    name="fluxUltraAspectRatio"
+                    label="Aspect Ratio"
+                    data={fluxUltraAspectRatios.map((ratio, i) => ({
+                      label: ratio.label,
+                      value: `${i}`,
+                    }))}
+                  />
+                )}
 
                 {!isFlux && !isSD3 && featureFlags.canViewNsfw && (
                   <div className="my-2 flex flex-wrap justify-between gap-3">
@@ -760,26 +804,28 @@ export function GenerationFormContent() {
                   </div>
                 )}
 
-                <PersistentAccordion
-                  storeKey="generation-form-advanced"
-                  variant="contained"
-                  classNames={{
-                    item: classes.accordionItem,
-                    control: classes.accordionControl,
-                    content: classes.accordionContent,
-                  }}
-                >
-                  <Accordion.Item value="advanced">
-                    <Accordion.Control>
-                      <Text size="sm" weight={590}>
-                        Advanced
-                      </Text>
-                    </Accordion.Control>
-                    <Accordion.Panel>
-                      <div className="flex flex-col gap-3">
-                        {!isDraft && (
-                          <div className="relative flex flex-col gap-3">
-                            {/* <LoadingOverlay
+                {isFluxUltra && <InputSeed name="seed" label="Seed" />}
+                {!isFluxUltra && (
+                  <PersistentAccordion
+                    storeKey="generation-form-advanced"
+                    variant="contained"
+                    classNames={{
+                      item: classes.accordionItem,
+                      control: classes.accordionControl,
+                      content: classes.accordionContent,
+                    }}
+                  >
+                    <Accordion.Item value="advanced">
+                      <Accordion.Control>
+                        <Text size="sm" weight={590}>
+                          Advanced
+                        </Text>
+                      </Accordion.Control>
+                      <Accordion.Panel>
+                        <div className="flex flex-col gap-3">
+                          {!isDraft && (
+                            <div className="relative flex flex-col gap-3">
+                              {/* <LoadingOverlay
                             color={theme.colorScheme === 'dark' ? theme.colors.dark[7] : '#fff'}
                             opacity={0.8}
                             m={-8}
@@ -792,16 +838,167 @@ export function GenerationFormContent() {
                             zIndex={2}
                             visible={isDraft}
                           /> */}
+                              {!isFluxUltra && (
+                                <InputNumberSlider
+                                  name="cfgScale"
+                                  label={
+                                    <div className="flex items-center gap-1">
+                                      <Input.Label>CFG Scale</Input.Label>
+                                      <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                        Controls how closely the image generation follows the text
+                                        prompt.{' '}
+                                        <Anchor
+                                          href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                                          target="_blank"
+                                          rel="nofollow noreferrer"
+                                          span
+                                        >
+                                          Learn more
+                                        </Anchor>
+                                        .
+                                      </InfoPopover>
+                                    </div>
+                                  }
+                                  min={cfgScaleMin}
+                                  max={cfgScaleMax}
+                                  step={0.5}
+                                  precision={1}
+                                  sliderProps={sharedSliderProps}
+                                  numberProps={sharedNumberProps}
+                                  presets={
+                                    isFlux || isSD3
+                                      ? undefined
+                                      : [
+                                          { label: 'Creative', value: '4' },
+                                          { label: 'Balanced', value: '7' },
+                                          { label: 'Precise', value: '10' },
+                                        ]
+                                  }
+                                  reverse
+                                  disabled={cfgDisabled}
+                                />
+                              )}
+                              {!isFlux && !isSD3 && (
+                                <InputSelect
+                                  name="sampler"
+                                  disabled={samplerDisabled}
+                                  label={
+                                    <div className="flex items-center gap-1">
+                                      <Input.Label>Sampler</Input.Label>
+                                      <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                        Each will produce a slightly (or significantly) different
+                                        image result.{' '}
+                                        <Anchor
+                                          href="https://wiki.civitai.com/wiki/Sampler"
+                                          target="_blank"
+                                          rel="nofollow noreferrer"
+                                          span
+                                        >
+                                          Learn more
+                                        </Anchor>
+                                        .
+                                      </InfoPopover>
+                                    </div>
+                                  }
+                                  data={generation.samplers}
+                                  presets={[
+                                    { label: 'Fast', value: 'Euler a' },
+                                    { label: 'Popular', value: 'DPM++ 2M Karras' },
+                                  ]}
+                                />
+                              )}
+                              {!isFluxUltra && (
+                                <Watch {...form} fields={['cfgScale', 'sampler']}>
+                                  {({ cfgScale, sampler }) => {
+                                    const castedSampler = sampler as keyof typeof samplerOffsets;
+                                    const samplerOffset = samplerOffsets[castedSampler] ?? 0;
+                                    const cfgOffset = Math.max((cfgScale ?? 0) - 4, 0) * 2;
+                                    const samplerCfgOffset = samplerOffset + cfgOffset;
+
+                                    return (
+                                      <InputNumberSlider
+                                        name="steps"
+                                        disabled={stepsDisabled}
+                                        label={
+                                          <div className="flex items-center gap-1">
+                                            <Input.Label>Steps</Input.Label>
+                                            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+                                              The number of iterations spent generating an image.{' '}
+                                              <Anchor
+                                                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                                                target="_blank"
+                                                rel="nofollow noreferrer"
+                                                span
+                                              >
+                                                Learn more
+                                              </Anchor>
+                                              .
+                                            </InfoPopover>
+                                          </div>
+                                        }
+                                        min={stepsMin}
+                                        max={stepsMax}
+                                        sliderProps={sharedSliderProps}
+                                        numberProps={sharedNumberProps}
+                                        presets={
+                                          isFlux || isSD3
+                                            ? undefined
+                                            : [
+                                                {
+                                                  label: 'Fast',
+                                                  value: Number(10 + samplerCfgOffset).toString(),
+                                                },
+                                                {
+                                                  label: 'Balanced',
+                                                  value: Number(20 + samplerCfgOffset).toString(),
+                                                },
+                                                {
+                                                  label: 'High',
+                                                  value: Number(30 + samplerCfgOffset).toString(),
+                                                },
+                                              ]
+                                        }
+                                        reverse
+                                      />
+                                    );
+                                  }}
+                                </Watch>
+                              )}
+                            </div>
+                          )}
+                          <InputSeed name="seed" label="Seed" />
+                          {!isSDXL && !isFlux && !isSD3 && (
                             <InputNumberSlider
-                              name="cfgScale"
+                              name="clipSkip"
+                              label="Clip Skip"
+                              min={1}
+                              max={generation.maxValues.clipSkip}
+                              sliderProps={{
+                                ...sharedSliderProps,
+                                marks: clipSkipMarks,
+                              }}
+                              numberProps={sharedNumberProps}
+                            />
+                          )}
+                          {features.denoise && (
+                            <InputNumberSlider
+                              name="denoise"
+                              label="Denoise"
+                              min={0}
+                              max={0.75}
+                              step={0.05}
+                            />
+                          )}
+                          {!isFlux && !isSD3 && (
+                            <InputResourceSelect
+                              name="vae"
                               label={
                                 <div className="flex items-center gap-1">
-                                  <Input.Label>CFG Scale</Input.Label>
+                                  <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
                                   <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                    Controls how closely the image generation follows the text
-                                    prompt.{' '}
+                                    These provide additional color and detail improvements.{' '}
                                     <Anchor
-                                      href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                                      href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
                                       target="_blank"
                                       rel="nofollow noreferrer"
                                       span
@@ -812,164 +1009,18 @@ export function GenerationFormContent() {
                                   </InfoPopover>
                                 </div>
                               }
-                              min={cfgScaleMin}
-                              max={cfgScaleMax}
-                              step={0.5}
-                              precision={1}
-                              sliderProps={sharedSliderProps}
-                              numberProps={sharedNumberProps}
-                              presets={
-                                isFlux || isSD3
-                                  ? undefined
-                                  : [
-                                      { label: 'Creative', value: '4' },
-                                      { label: 'Balanced', value: '7' },
-                                      { label: 'Precise', value: '10' },
-                                    ]
-                              }
-                              reverse
-                              disabled={cfgDisabled}
-                            />
-                            {!isFlux && !isSD3 && (
-                              <InputSelect
-                                name="sampler"
-                                disabled={samplerDisabled}
-                                label={
-                                  <div className="flex items-center gap-1">
-                                    <Input.Label>Sampler</Input.Label>
-                                    <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                      Each will produce a slightly (or significantly) different
-                                      image result.{' '}
-                                      <Anchor
-                                        href="https://wiki.civitai.com/wiki/Sampler"
-                                        target="_blank"
-                                        rel="nofollow noreferrer"
-                                        span
-                                      >
-                                        Learn more
-                                      </Anchor>
-                                      .
-                                    </InfoPopover>
-                                  </div>
-                                }
-                                data={generation.samplers}
-                                presets={[
-                                  { label: 'Fast', value: 'Euler a' },
-                                  { label: 'Popular', value: 'DPM++ 2M Karras' },
-                                ]}
-                              />
-                            )}
-                            <Watch {...form} fields={['cfgScale', 'sampler']}>
-                              {({ cfgScale, sampler }) => {
-                                const castedSampler = sampler as keyof typeof samplerOffsets;
-                                const samplerOffset = samplerOffsets[castedSampler] ?? 0;
-                                const cfgOffset = Math.max((cfgScale ?? 0) - 4, 0) * 2;
-                                const samplerCfgOffset = samplerOffset + cfgOffset;
-
-                                return (
-                                  <InputNumberSlider
-                                    name="steps"
-                                    disabled={stepsDisabled}
-                                    label={
-                                      <div className="flex items-center gap-1">
-                                        <Input.Label>Steps</Input.Label>
-                                        <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                          The number of iterations spent generating an image.{' '}
-                                          <Anchor
-                                            href="https://wiki.civitai.com/wiki/Sampling_Steps"
-                                            target="_blank"
-                                            rel="nofollow noreferrer"
-                                            span
-                                          >
-                                            Learn more
-                                          </Anchor>
-                                          .
-                                        </InfoPopover>
-                                      </div>
-                                    }
-                                    min={stepsMin}
-                                    max={stepsMax}
-                                    sliderProps={sharedSliderProps}
-                                    numberProps={sharedNumberProps}
-                                    presets={
-                                      isFlux || isSD3
-                                        ? undefined
-                                        : [
-                                            {
-                                              label: 'Fast',
-                                              value: Number(10 + samplerCfgOffset).toString(),
-                                            },
-                                            {
-                                              label: 'Balanced',
-                                              value: Number(20 + samplerCfgOffset).toString(),
-                                            },
-                                            {
-                                              label: 'High',
-                                              value: Number(30 + samplerCfgOffset).toString(),
-                                            },
-                                          ]
-                                    }
-                                    reverse
-                                  />
-                                );
+                              buttonLabel="Add VAE"
+                              options={{
+                                canGenerate: true,
+                                resources: resourceTypes.filter((x) => x.type === 'VAE'),
                               }}
-                            </Watch>
-                          </div>
-                        )}
-                        <InputSeed name="seed" label="Seed" />
-                        {!isSDXL && !isFlux && !isSD3 && (
-                          <InputNumberSlider
-                            name="clipSkip"
-                            label="Clip Skip"
-                            min={1}
-                            max={generation.maxValues.clipSkip}
-                            sliderProps={{
-                              ...sharedSliderProps,
-                              marks: clipSkipMarks,
-                            }}
-                            numberProps={sharedNumberProps}
-                          />
-                        )}
-                        {features.denoise && (
-                          <InputNumberSlider
-                            name="denoise"
-                            label="Denoise"
-                            min={0}
-                            max={0.75}
-                            step={0.05}
-                          />
-                        )}
-                        {!isFlux && !isSD3 && (
-                          <InputResourceSelect
-                            name="vae"
-                            label={
-                              <div className="flex items-center gap-1">
-                                <Input.Label>{getDisplayName(ModelType.VAE)}</Input.Label>
-                                <InfoPopover size="xs" iconProps={{ size: 14 }}>
-                                  These provide additional color and detail improvements.{' '}
-                                  <Anchor
-                                    href="https://wiki.civitai.com/wiki/Variational_Autoencoder"
-                                    target="_blank"
-                                    rel="nofollow noreferrer"
-                                    span
-                                  >
-                                    Learn more
-                                  </Anchor>
-                                  .
-                                </InfoPopover>
-                              </div>
-                            }
-                            buttonLabel="Add VAE"
-                            options={{
-                              canGenerate: true,
-                              resources: resourceTypes.filter((x) => x.type === 'VAE'),
-                            }}
-                          />
-                        )}
-                      </div>
-                    </Accordion.Panel>
-                  </Accordion.Item>
-                </PersistentAccordion>
+                            />
+                          )}
+                        </div>
+                      </Accordion.Panel>
+                    </Accordion.Item>
+                  </PersistentAccordion>
+                )}
               </div>
               <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
@@ -1253,8 +1304,9 @@ const sharedNumberProps: NumberInputProps = {
   size: 'sm',
 };
 
-const getAspectRatioControls = (baseModel?: string) => {
-  const aspectRatios = getGenerationConfig(baseModel).aspectRatios;
+const getAspectRatioControls = (
+  aspectRatios: { label: string; width: number; height: number }[]
+) => {
   return aspectRatios.map(({ label, width, height }, index) => ({
     label: (
       <Stack spacing={2}>

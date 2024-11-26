@@ -20,7 +20,6 @@ import {
   TextInput,
   Tooltip,
 } from '@mantine/core';
-import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import {
   IconCirclePlus,
   IconCloudOff,
@@ -40,10 +39,11 @@ import * as m from 'motion/react-m';
 import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { loadMotion } from '~/components/Chat/util';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import { ChatListMessage } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -85,7 +85,7 @@ export function ChatList() {
   const [activeTab, setActiveTab] = useState<StatusValues>('Active');
   const [filteredData, setFilteredData] = useState<ChatListMessage[]>([]);
   const { connected } = useSignalContext();
-  const isMobile = useIsMobile();
+  const isMobile = useContainerSmallerThan(700);
   const userSettings = queryUtils.chat.getUserSettings.getData();
   // const { data: userSettings } = trpc.chat.getUserSettings.useQuery(undefined, { enabled: !!currentUser });
 

@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
-import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
+import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

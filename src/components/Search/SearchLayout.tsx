@@ -18,7 +18,7 @@ import { env } from '~/env/client.mjs';
 import { SearchIndex } from '~/components/Search/parsers/base';
 import { Configure, InstantSearch, InstantSearchProps } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
-import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
+import { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useRouter } from 'next/router';
 import { useTrackEvent } from '../TrackView/track.utils';
