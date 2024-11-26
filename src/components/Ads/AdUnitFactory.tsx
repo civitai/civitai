@@ -1,14 +1,14 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
 import { CSSObject, Text, createStyles } from '@mantine/core';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { getRandomId } from '~/utils/string-helpers';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
