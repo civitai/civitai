@@ -95,11 +95,6 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
-  if (typeof window !== 'undefined' && !window.authChecked) {
-    window.authChecked = true;
-    window.isAuthed = !!session;
-  }
-
   // const getLayout =
   //   Component.getLayout ??
   //   ((page: ReactElement) => {
