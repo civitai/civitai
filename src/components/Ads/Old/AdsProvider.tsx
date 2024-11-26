@@ -9,7 +9,7 @@ import { create } from 'zustand';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { devtools } from 'zustand/middleware';
-import { AdConfig, getAdConfig } from '~/components/Ads/ads.utils';
+import { AdConfig, getAdConfig } from '~/components/Ads/Old/ads.utils';
 // const isProd = true;
 
 type AdProvider = 'ascendeum' | 'exoclick' | 'adsense' | 'pubgalaxy';
@@ -178,13 +178,13 @@ function GoogletagManager() {
 
 declare global {
   interface Window {
-    __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
+    // __tcfapi: (command: string, version: number, callback: (...args: any[]) => void) => void;
     pgHB: {
       que: Array<() => void>;
       requestWebRewardedAd?: (args: unknown) => void;
       setUserAudienceData: (args: { email: string }) => void;
     };
-    googletag: any;
+    // googletag: any;
   }
 }
 

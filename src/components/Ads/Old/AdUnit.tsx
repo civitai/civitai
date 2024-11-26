@@ -1,4 +1,4 @@
-import { AdUnitDetail, AdUnitKey, getAdUnitDetails } from '~/components/Ads/ads.utils';
+import { AdUnitDetail, AdUnitKey, getAdUnitDetails } from '~/components/Ads/Old/ads.utils';
 import { Text } from '@mantine/core';
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
