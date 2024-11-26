@@ -139,12 +139,12 @@ function useOutsideClick<T extends HTMLElement>(callback: (event: Event) => void
 
 function PopoverContent() {
   const userSwitching = useMenuStore((state) => state.accountSwitching);
-  const ref = useOutsideClick<HTMLDivElement>(handleClose);
+  // const ref = useOutsideClick<HTMLDivElement>(handleClose);
   useHotkeys([['Escape', handleClose]]);
 
   return (
     <div
-      ref={ref}
+      // ref={ref}
       className="flex h-full flex-1 flex-col @md:max-h-[calc(90vh-var(--header-height))]"
     >
       {userSwitching ? <AccountSwitcher /> : <UserMenuContent />}
