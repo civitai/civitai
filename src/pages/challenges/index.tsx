@@ -2,6 +2,7 @@ import { Center, Loader, Stack } from '@mantine/core';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { ArticleCard } from '~/components/Cards/ArticleCard';
+import { ChallengeHero } from '~/components/Challenges/ChallengeHero';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { Meta } from '~/components/Meta/Meta';
@@ -31,7 +32,7 @@ function ChallengesPage() {
         description="Test your AI Art Skills by participating in our community challenges."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/events`, rel: 'canonical' }]}
       />
-
+      <ChallengeHero />
       <MasonryContainer>
         <Stack spacing="xs">
           {isLoading ? (
