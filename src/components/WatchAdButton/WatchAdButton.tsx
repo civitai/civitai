@@ -24,21 +24,21 @@ export function WatchAdButton({ children, ...props }: Props) {
     try {
       const adToken = await requestAdTokenMutation.mutateAsync();
 
-      window.pgHB = window.pgHB || { que: [] };
-      window.pgHB.que.push(() => {
-        try {
-          window.pgHB?.requestWebRewardedAd?.({
-            slotId: 'rewarded-ad',
-            callback: (success: boolean) => {
-              if (success) claimWatchedAdRewardMutation.mutate({ key: adToken });
-              setLoading(false);
-            },
-          });
-        } catch (e) {
-          // Handle uncaught errors
-          console.error('BOOOM', e);
-        }
-      });
+      // window.pgHB = window.pgHB || { que: [] };
+      // window.pgHB.que.push(() => {
+      //   try {
+      //     window.pgHB?.requestWebRewardedAd?.({
+      //       slotId: 'rewarded-ad',
+      //       callback: (success: boolean) => {
+      //         if (success) claimWatchedAdRewardMutation.mutate({ key: adToken });
+      //         setLoading(false);
+      //       },
+      //     });
+      //   } catch (e) {
+      //     // Handle uncaught errors
+      //     console.error('BOOOM', e);
+      //   }
+      // });
     } catch {
       setLoading(false);
       showErrorNotification({

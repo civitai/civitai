@@ -445,7 +445,11 @@ export const saveItemInCollections = async ({
           return null;
         }
 
-        if (collection.tags.length > 0 && !tagId) {
+        if (
+          collection.tags.length > 0 &&
+          !tagId &&
+          !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
+        ) {
           throw throwBadRequestError('Collection requires a tag');
         }
 
@@ -468,7 +472,11 @@ export const saveItemInCollections = async ({
           id: collectionId,
         });
 
-        if (!permission.isContributor && !permission.isOwner) {
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !metadata?.disableFollowOnSubmission
+        ) {
           // Make sure to follow the collection
           await addContributorToCollection({
             targetUserId: userId,
@@ -1692,7 +1700,11 @@ export const bulkSaveItems = async ({
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  if (collection.tags.length > 0 && !tagId) {
+  if (
+    collection.tags.length > 0 &&
+    !tagId &&
+    !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
+  ) {
     throw throwBadRequestError(
       'It is required to tag your entry in order for it to be added to this collection'
     );
@@ -1706,7 +1718,11 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
-  if (!permissions.isContributor && !permissions.isOwner) {
+  if (
+    !permissions.isContributor &&
+    !permissions.isOwner &&
+    !(collection.metadata as CollectionMetadataSchema)?.disableFollowOnSubmission
+  ) {
     // Make sure to follow the collection
     await addContributorToCollection({
       targetUserId: userId,
