@@ -1,4 +1,5 @@
 import { adUnitFactory } from '~/components/Ads/AdUnitFactory';
+import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 
 export const AdUnitIncontent_1 = adUnitFactory({
   adUnit: 'incontent_1',
@@ -63,11 +64,19 @@ export const AdUnitSide_3 = adUnitFactory({
   ],
 });
 
-export const AdUnitOutstream = adUnitFactory({
-  adUnit: 'outstream',
-  sizes: null,
-  id: 'adngin-outstream-0',
-});
+// export const AdUnitOutstream = adUnitFactory({
+//   adUnit: 'outstream',
+//   sizes: null,
+//   id: 'adngin-outstream-0',
+// });
+
+export function AdUnitOutstream() {
+  return (
+    <AdUnitRenderable>
+      <div id="adngin-outstream-0"></div>
+    </AdUnitRenderable>
+  );
+}
 
 export const AdUnitTop = adUnitFactory({
   adUnit: 'top',

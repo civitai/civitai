@@ -1,6 +1,6 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
 import { CSSObject, Text, createStyles } from '@mantine/core';
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
 import { NextLink } from '@mantine/next';
@@ -26,13 +26,13 @@ function AdUnitContent({
   lazyLoad?: boolean;
   id?: string;
 }) {
-  const loadedRef = useRef(!initialId ? false : true);
+  const loadedRef = useRef(false);
   const [id, setId] = useState<string | null>(initialId ?? null);
 
   useEffect(() => {
     if (loadedRef.current) return;
     loadedRef.current = true;
-    const id = getRandomId();
+    const id = initialId ?? getRandomId();
     setId(id);
 
     if (!adUnitDictionary[adUnit]) adUnitDictionary[adUnit] = id;
@@ -46,7 +46,6 @@ function AdUnitContent({
           lazyLoad,
           sizes,
         };
-        console.log(payload);
         window.adngin.cmd.startAuction([payload]);
       });
     }

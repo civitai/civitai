@@ -55,11 +55,11 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     function callback() {
       // check for cmp consent
       window.__tcfapi('addEventListener', 2, function (tcData: any, success: boolean) {
-        console.log({ tcData, success });
+        // console.log({ tcData, success });
         if (['tcloaded', 'useractioncomplete'].includes(tcData.eventStatus)) {
           window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
           // AdConsent finished asking for consent, do something that is dependend on user consent ...
-          console.log('This code is triggered only once', tcData);
+          // console.log('This code is triggered only once', tcData);
           if (!success) useAdProviderStore.setState({ adsBlocked: true });
           else useAdProviderStore.setState({ ready: true });
         }
@@ -69,7 +69,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         window.googletag.pubads().addEventListener('impressionViewable', function (event: any) {
           const slot = event.slot;
           const adUnit = slot.getAdUnitPath()?.split('/')?.reverse()?.[0];
-          console.log('Ad visible in slot: ', adUnit);
+          // console.log('Ad visible in slot: ', adUnit);
           if (adUnit) dispatchEvent(new CustomEvent('civitai-ad-impression', { detail: adUnit }));
         });
       });
@@ -163,7 +163,7 @@ function ImpressionTracker() {
       const adUnit = e.detail;
       adUnitsLoaded[adUnit] = true;
       if (worker && currentUser) {
-        console.log('recording ad impression:', adUnit);
+        // console.log('recording ad impression:', adUnit);
         worker.send('recordAdImpression', {
           userId: currentUser.id,
           fingerprint,
