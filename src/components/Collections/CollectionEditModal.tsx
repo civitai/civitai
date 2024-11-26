@@ -197,6 +197,12 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         placeholder="Makes it so that the + button takes you directly to the create flow."
                       />
                     )}
+                    {data?.collection?.type === CollectionType.Image && (
+                      <InputCheckbox
+                        name="metadata.disableFollowOnSubmission"
+                        label="Submitting an entry will not follow the collection"
+                      />
+                    )}
                     <InputDatePicker
                       name="metadata.votingPeriodStart"
                       label="When voting for this contest will start"
@@ -221,6 +227,11 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         </Group>
                       }
                       target={[TagTarget.Collection]}
+                    />
+                    <InputCheckbox
+                      name="metadata.disableTagRequired"
+                      label="Tags are not required"
+                      description="If enabled, users will be able to submit items without a tag even when tags are setup."
                     />
                   </>
                 )}
