@@ -123,6 +123,7 @@ export function CollectionContextMenu({
         {permissions && (
           <Menu.Item>
             <CollectionFollowAction
+              // @ts-ignore eslint-disable-next-line
               variant="transparent"
               collectionId={collectionId}
               permissions={permissions}

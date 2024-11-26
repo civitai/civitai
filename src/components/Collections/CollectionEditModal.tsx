@@ -231,7 +231,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     <InputCheckbox
                       name="metadata.disableTagRequired"
                       label="Tags are not required"
-                      details="If enabled, users will be able to submit items without a tag even when tags are setup."
+                      description="If enabled, users will be able to submit items without a tag even when tags are setup."
                     />
                   </>
                 )}
