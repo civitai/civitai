@@ -43,7 +43,7 @@ export default function Account({ providers }: Props) {
           <SettingsCard />
           <ContentControlsCard />
           {canViewNsfw && <ModerationCard />}
-          <AccountsCard providers={providers} />
+          <AccountsCard />
           <UserPaymentConfigurationCard />
           {currentUser?.subscriptionId && <SubscriptionCard />}
           <PaymentMethodsCard />
