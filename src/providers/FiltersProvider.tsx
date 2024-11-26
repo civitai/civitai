@@ -131,8 +131,6 @@ const clubFilterSchema = z
   })
   .merge(
     getInfiniteClubSchema.omit({
-      query: true,
-      period: true,
       sort: true,
       limit: true,
       cursor: true,

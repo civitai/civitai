@@ -51,23 +51,26 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { create } from 'zustand';
 import { useHotkeys } from '@mantine/hooks';
 import { Burger } from '~/components/AppLayout/AppHeader/Burger';
+import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 
 const useMenuStore = create<{
   open: boolean;
   accountSwitching: boolean;
   lastClosed: number;
-  toggle: () => void;
+  toggle: (value: boolean) => void;
 }>((set) => ({
   open: false,
   accountSwitching: false,
   lastClosed: Date.now(),
-  toggle: () => {
+  toggle: (value: boolean) => {
     set((state) => {
-      if (state.open) {
-        return { lastClosed: Date.now(), open: false, accountSwitching: false };
-      } else if (state.lastClosed + 150 < Date.now()) {
-        return { open: true };
-      } else return {};
+      if (value) return { open: true };
+      else return { open: false, accountSwitching: false };
+      // if (state.open) {
+      //   return { lastClosed: Date.now(), open: false, accountSwitching: false };
+      // } else if (state.lastClosed + 150 < Date.now()) {
+      //   return { open: true };
+      // } else return {};
     });
   },
 }));
@@ -86,14 +89,9 @@ export function UserMenu() {
   const isMobile = useIsMobile({ breakpoint: 'md' });
 
   return (
-    <Popover
-      width={isMobile ? '100%' : 260}
-      position="bottom-end"
-      opened={open}
-      closeOnClickOutside={false}
-    >
+    <Popover width={isMobile ? '100%' : 260} position="bottom-end" onChange={toggle}>
       <Popover.Target>
-        <UnstyledButton onClick={toggle} className="@md:rounded-[32px] @max-md:p-1.5" type="button">
+        <UnstyledButton className="flex items-center @md:rounded-[32px]" type="button">
           <div
             className={clsx('flex items-center gap-2 @max-md:hidden', {
               ['hidden']: !currentUser,
@@ -106,7 +104,7 @@ export function UserMenu() {
         </UnstyledButton>
       </Popover.Target>
       <Popover.Dropdown
-        className="flex flex-col p-0 @md:max-h-[calc(90vh-var(--header-height))] @max-md:mt-5 @max-md:h-[calc(100%-var(--header-height))]"
+        className="flex flex-col p-0 @max-md:mt-3 @max-md:h-[calc(100%-var(--header-height))]"
         onClick={(e) => {
           e.stopPropagation();
           e.preventDefault();
@@ -142,11 +140,14 @@ function useOutsideClick<T extends HTMLElement>(callback: (event: Event) => void
 
 function PopoverContent() {
   const userSwitching = useMenuStore((state) => state.accountSwitching);
-  const ref = useOutsideClick<HTMLDivElement>(handleClose);
+  // const ref = useOutsideClick<HTMLDivElement>(handleClose);
   useHotkeys([['Escape', handleClose]]);
 
   return (
-    <div ref={ref} className="flex h-full flex-1 flex-col">
+    <div
+      // ref={ref}
+      className="flex h-full flex-1 flex-col @md:max-h-[calc(90vh-var(--header-height))]"
+    >
       {userSwitching ? <AccountSwitcher /> : <UserMenuContent />}
     </div>
   );
@@ -441,6 +442,7 @@ function BuzzMenuItem() {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile({ breakpoint: 'md' });
+  const onBuyBuzz = useBuyBuzz();
 
   if (!features.buzz) return null;
   if (!currentUser) return null;
@@ -466,7 +468,19 @@ function BuzzMenuItem() {
           accountType="generation"
         />
       </div>
-      <Button component="div" variant="white" radius="xl" size="xs" px={12} compact>
+      <Button
+        component="div"
+        variant="white"
+        radius="xl"
+        size="xs"
+        px={12}
+        compact
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onBuyBuzz({});
+        }}
+      >
         Buy Buzz
       </Button>
     </MenuItemLink>

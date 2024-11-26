@@ -70,6 +70,7 @@ import { recommendersRouter } from './recommenders.router';
 import { paddleRouter } from '~/server/routers/paddle.router';
 import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
 import { blocklistRouter } from '~/server/routers/blocklist.router';
+import { dailyChallengeRouter } from '~/server/routers/daily-challenge.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -142,6 +143,7 @@ export const appRouter = router({
   games: gamesRouter,
   paddle: paddleRouter,
   blocklist: blocklistRouter,
+  dailyChallenge: dailyChallengeRouter,
 });
 
 // export type definition of API
