@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { useAdUnitLoadedStore } from '~/components/Ads/AdsProvider';
+import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -91,7 +91,7 @@ export function TrackPageView() {
 function trackPageView({ path, duration }: { path: string; duration: number }) {
   if (duration < 1000) return;
 
-  const ads = Object.keys(useAdUnitLoadedStore.getState()).length > 0;
+  const ads = Object.keys(adUnitsLoaded).length > 0;
 
   fetch('/api/page-view', {
     method: 'post',
@@ -107,5 +107,7 @@ function trackPageView({ path, duration }: { path: string; duration: number }) {
     ),
   });
 
-  useAdUnitLoadedStore.setState({});
+  for (const key in adUnitsLoaded) {
+    delete adUnitsLoaded[key];
+  }
 }
