@@ -445,7 +445,11 @@ export const saveItemInCollections = async ({
           return null;
         }
 
-        if (collection.tags.length > 0 && !tagId) {
+        if (
+          collection.tags.length > 0 &&
+          !tagId &&
+          !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
+        ) {
           throw throwBadRequestError('Collection requires a tag');
         }
 
@@ -1696,7 +1700,11 @@ export const bulkSaveItems = async ({
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
 
-  if (collection.tags.length > 0 && !tagId) {
+  if (
+    collection.tags.length > 0 &&
+    !tagId &&
+    !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
+  ) {
     throw throwBadRequestError(
       'It is required to tag your entry in order for it to be added to this collection'
     );
