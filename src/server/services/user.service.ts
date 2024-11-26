@@ -73,7 +73,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { redis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { SessionUser } from 'next-auth';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import {
@@ -681,7 +681,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   // Get from cache
   // ----------------------------------
-  const cacheKey = `session:data2:${userId}`;
+  const cacheKey = `${REDIS_KEYS.USER.SESSION}:${userId}`;
   const cachedResult = await redis.packed.get<SessionUser | null>(cacheKey);
   if (cachedResult && !('clearedAt' in cachedResult)) return cachedResult;
 
