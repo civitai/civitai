@@ -51,6 +51,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { create } from 'zustand';
 import { useHotkeys } from '@mantine/hooks';
 import { Burger } from '~/components/AppLayout/AppHeader/Burger';
+import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 
 const useMenuStore = create<{
   open: boolean;
@@ -441,6 +442,7 @@ function BuzzMenuItem() {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile({ breakpoint: 'md' });
+  const onBuyBuzz = useBuyBuzz();
 
   if (!features.buzz) return null;
   if (!currentUser) return null;
@@ -466,7 +468,19 @@ function BuzzMenuItem() {
           accountType="generation"
         />
       </div>
-      <Button component="div" variant="white" radius="xl" size="xs" px={12} compact>
+      <Button
+        component="div"
+        variant="white"
+        radius="xl"
+        size="xs"
+        px={12}
+        compact
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onBuyBuzz({});
+        }}
+      >
         Buy Buzz
       </Button>
     </MenuItemLink>
