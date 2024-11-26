@@ -7,13 +7,13 @@ import { IconMinus, IconPlus, IconProgress } from '@tabler/icons-react';
 import { CollectionByIdModel } from '~/types/router';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
-const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props) => {
+const CollectionFollowAction = ({ collectionId, permissions, ...btnProps }: Props) => {
   const utils = trpc.useContext();
 
   const { isLoading: creatingFollow, mutate: followCollection } =
     trpc.collection.follow.useMutation({
       async onSuccess() {
-        await utils.collection.getById.invalidate({ id: collection.id });
+        await utils.collection.getById.invalidate({ id: collectionId });
         await utils.collection.getAllUser.refetch();
       },
       onError(error) {
@@ -27,7 +27,7 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
   const { isLoading: removingFollow, mutate: unfollowCollection } =
     trpc.collection.unfollow.useMutation({
       async onSuccess() {
-        await utils.collection.getById.invalidate({ id: collection.id });
+        await utils.collection.getById.invalidate({ id: collectionId });
         await utils.collection.getAllUser.refetch();
       },
       onError(error) {
@@ -70,9 +70,9 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
         {...btnProps}
         onClick={() => {
           if (permissions.isContributor) {
-            unfollowCollection({ collectionId: collection.id });
+            unfollowCollection({ collectionId: collectionId });
           } else {
-            followCollection({ collectionId: collection.id });
+            followCollection({ collectionId: collectionId });
           }
         }}
       >
@@ -86,7 +86,7 @@ const CollectionFollowAction = ({ collection, permissions, ...btnProps }: Props)
 };
 
 type Props = {
-  collection: NonNullable<CollectionByIdModel>;
+  collectionId: number;
   permissions: CollectionContributorPermissionFlags;
 };
 

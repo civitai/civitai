@@ -15,6 +15,7 @@ import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { CollectionFollowAction } from './CollectionFollow';
 
 export function CollectionContextMenu({
   collectionId,
@@ -119,6 +120,27 @@ export function CollectionContextMenu({
     <Menu {...menuProps} withArrow>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
+        {permissions && (
+          <Menu.Item>
+            <CollectionFollowAction
+              variant="transparent"
+              collectionId={collectionId}
+              permissions={permissions}
+              p={0}
+              pl={0}
+              pr={0}
+              py={0}
+              h={14}
+              w="100%"
+              align="left"
+              style={{
+                display: 'flex',
+                alignItems: 'start',
+              }}
+            />
+          </Menu.Item>
+        )}
+
         {!isBookmarkCollection && (isOwner || isMod) && (
           <>
             <Menu.Item

@@ -116,6 +116,7 @@ export const collectionMetadataSchema = z
       })
       .optional(),
     bannerPosition: z.string().optional(),
+    disableFollowOnSubmission: z.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

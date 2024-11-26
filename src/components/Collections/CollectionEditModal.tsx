@@ -197,6 +197,12 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         placeholder="Makes it so that the + button takes you directly to the create flow."
                       />
                     )}
+                    {data?.collection?.type === CollectionType.Image && (
+                      <InputCheckbox
+                        name="metadata.disableFollowOnSubmission"
+                        label="Submitting an entry will not follow the collection"
+                      />
+                    )}
                     <InputDatePicker
                       name="metadata.votingPeriodStart"
                       label="When voting for this contest will start"
