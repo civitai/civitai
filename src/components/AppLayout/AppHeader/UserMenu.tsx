@@ -91,9 +91,15 @@ export function UserMenu() {
   const features = useFeatureFlags();
   const creator = useGetCreator();
   const isMobile = useIsMobile({ breakpoint: 'md' });
+  const router = useRouter();
 
   return (
-    <Popover width={isMobile ? '100%' : 260} position="bottom-end" onChange={toggle}>
+    <Popover
+      key={router.asPath}
+      width={isMobile ? '100%' : 260}
+      position="bottom-end"
+      onChange={toggle}
+    >
       <Popover.Target>
         <UnstyledButton className="flex items-center @md:rounded-[32px]" type="button">
           <div
