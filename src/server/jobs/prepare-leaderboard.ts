@@ -35,8 +35,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
   });
 
   // Get latest results for date
-  // const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
-  const addDays = 1;
+  const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
   let imageRange: [number, number] | undefined;
   log('Leaderboards - Starting');
   const tasks = leaderboards.map(

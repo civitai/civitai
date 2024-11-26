@@ -142,6 +142,10 @@ export function removeTags(str: string) {
   return stringWithoutExtraSpaces.trim();
 }
 
+export function stripLeadingWhitespace(str: string) {
+  return str.replace(/^[ \t]+/gm, '');
+}
+
 export function postgresSlugify(str?: string) {
   if (!str) return '';
 
