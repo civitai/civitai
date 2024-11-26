@@ -513,6 +513,31 @@ export function getBaseModelSetTypes({
 // #endregion
 
 // #region [workflows]
+type EnginesDictionary = Record<
+  string,
+  {
+    label: string;
+    description: string | (() => React.ReactNode);
+    whatIf?: string[];
+  }
+>;
+export const engineDefinitions: EnginesDictionary = {
+  haiper: {
+    label: 'Haiper',
+    description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
+    whatIf: ['duration'],
+  },
+  mochi: {
+    label: 'Mochi',
+    description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
+  },
+  kling: {
+    label: 'Kling',
+    description: ``,
+    whatIf: ['mode', 'duration'],
+  },
+};
+
 export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = [
   {
     type: 'video',
@@ -559,6 +584,41 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       enablePromptEnhancer: true,
     },
     metadataDisplayProps: ['seed'],
+  },
+  {
+    type: 'video',
+    subType: 'txt2vid',
+    name: 'Text to video',
+    category: 'service',
+    engine: 'kling',
+    key: 'kling-txt2vid',
+    defaultValues: {
+      prompt: '',
+      negativePrompt: '',
+      aspectRatio: '1:1', // custom aspect ratios
+      cfgScale: 0.5, // custom cfgScale
+      mode: 'std', // custom mode
+      duration: 5, // custom duration
+      seed: undefined,
+    },
+    metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
+  },
+  {
+    type: 'video',
+    subType: 'img2vid',
+    name: 'Image to video',
+    category: 'service',
+    engine: 'kling',
+    key: 'kling-img2vid',
+    defaultValues: {
+      prompt: '',
+      negativePrompt: '',
+      cfgScale: 0.5, // custom cfgScale
+      mode: 'std', // custom mode
+      duration: 5, // custom duration
+      seed: undefined,
+    },
+    metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
   },
 ];
 // #endregion

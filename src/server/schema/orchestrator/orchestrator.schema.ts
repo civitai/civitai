@@ -24,7 +24,14 @@ export const haiperVideoGenerationSchema = baseVideoSchema.extend({
 
 export const klingVideoGenerationSchema = baseVideoSchema.extend({
   engine: z.literal('kling'),
-  // negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
+  model: z.string().default('kling-v1'),
+  negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
+  cfgScale: z.number().min(0).max(1).optional(),
+  mode: z.string().optional(),
+  duration: z.number().optional(),
+  seed: z.number().optional(),
+  aspectRatio: z.string().optional(),
+  sourceImageUrl: z.string().optional(),
   // image: z.string().optional(),
   // cameraMovement: z.string().optional(),
   // duration: z.number().optional(),

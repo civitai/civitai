@@ -421,6 +421,16 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           height = ratio * rh;
         }
       }
+      case 'kling': {
+        const { aspectRatio } = params;
+        const resolution = 1080;
+        if (aspectRatio && resolution && (!width || !height)) {
+          const [rw, rh] = aspectRatio.split(':').map(Number);
+          width = resolution;
+          const ratio = width / rw;
+          height = ratio * rh;
+        }
+      }
     }
   }
 
