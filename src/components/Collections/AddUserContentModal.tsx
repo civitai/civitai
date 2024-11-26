@@ -139,6 +139,7 @@ export function AddUserContentModal({ collectionId }: Props) {
 
   const uploading = files.some((file) => file.status === 'uploading');
   const loading = uploading || addSimpleImagePostCollectionMutation.isLoading;
+  const availableTags = (collection?.tags ?? []).filter((t) => !t.filterableOnly);
 
   return (
     <Modal {...dialog} title="Add images to collection" size="80%" onClose={handleClose} centered>
@@ -180,12 +181,12 @@ export function AddUserContentModal({ collectionId }: Props) {
             </MasonryProvider>
           </ScrollArea.Autosize>
         </ScrollAreaProvider>
-        {(collection?.tags?.length ?? 0) > 0 && (
+        {(availableTags?.length ?? 0) > 0 && (
           <Select
             label="Please select what category of the contest you are participating in."
-            withAsterisk
+            withAsterisk={!collection?.metadata?.disableTagRequired}
             placeholder="Select a category for your submission"
-            data={(collection?.tags ?? []).map((tag) => ({
+            data={(availableTags ?? []).map((tag) => ({
               value: tag.id.toString(),
               label: tag.name,
             }))}
