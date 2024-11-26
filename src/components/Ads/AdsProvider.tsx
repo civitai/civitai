@@ -7,6 +7,7 @@ import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { create } from 'zustand';
+import { isDev } from '~/env/other';
 
 declare global {
   interface Window {
@@ -94,12 +95,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       {children}
       {adsEnabled && (
         <>
-          <Script
-            id="snigel-config"
-            data-cfasync="false"
-            type="text/javascript"
-            dangerouslySetInnerHTML={{
-              __html: `
+          {isDev && (
+            <Script
+              id="snigel-ads-domain-spoof"
+              data-cfasync="false"
+              type="text/javascript"
+              dangerouslySetInnerHTML={{
+                __html: `
                 // Spoofing domain to 'civitai.com' --> ONLY FOR TESTING PURPOSES.
                 // This is required when the test environment domain differs from the production domain.
                 window.addEventListener("adnginLoaderReady", function () {
@@ -109,7 +111,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                     });
                   });
                 });
-                // END OF domain spoofing.
+              `,
+              }}
+            ></Script>
+          )}
+          <Script
+            id="snigel-config"
+            data-cfasync="false"
+            type="text/javascript"
+            dangerouslySetInnerHTML={{
+              __html: `
 
                 window.snigelPubConf = {
                   "adengine": {
