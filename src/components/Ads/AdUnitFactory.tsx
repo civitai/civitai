@@ -8,6 +8,7 @@ import { getRandomId } from '~/utils/string-helpers';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
+import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -95,34 +96,45 @@ function AdWrapper({
 
   const { classes } = useAdWrapperStyles({ sizes, lutSizes });
   const adSizes = useAdSizes({ sizes, lutSizes });
+  const [ref, inView] = useInView();
 
   return (
     <div
+      ref={ref}
       className={clsx(
         classes.root,
         'relative box-content flex flex-col items-center justify-center gap-2',
         className
       )}
     >
-      {adsBlocked ? (
-        <SupportUsImage sizes={adSizes ?? undefined} />
-      ) : ready && adSizes !== undefined ? (
-        <AdUnitContent adUnit={adUnit} sizes={adSizes ?? undefined} lazyLoad={lazyLoad} id={id} />
-      ) : null}
-      {withFeedback && !isMember && (
+      {inView && (
         <>
-          <div className="flex w-full justify-end">
-            <Text
-              component={NextLink}
-              td="underline"
-              href="/pricing"
-              color="dimmed"
-              size="xs"
-              align="center"
-            >
-              Remove ads
-            </Text>
-          </div>
+          {adsBlocked ? (
+            <SupportUsImage sizes={adSizes ?? undefined} />
+          ) : ready && adSizes !== undefined ? (
+            <AdUnitContent
+              adUnit={adUnit}
+              sizes={adSizes ?? undefined}
+              lazyLoad={lazyLoad}
+              id={id}
+            />
+          ) : null}
+          {withFeedback && !isMember && (
+            <>
+              <div className="flex w-full justify-end">
+                <Text
+                  component={NextLink}
+                  td="underline"
+                  href="/pricing"
+                  color="dimmed"
+                  size="xs"
+                  align="center"
+                >
+                  Remove ads
+                </Text>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
