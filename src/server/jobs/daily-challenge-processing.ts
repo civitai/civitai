@@ -29,6 +29,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { markdownToHtml } from '~/utils/markdown-helpers';
 import { createLogger } from '~/utils/logging';
+import { logToAxiom } from '~/server/logging/client';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -210,7 +211,8 @@ export const processDailyChallengeEntries = createJob(
           WHEN "isSafe" AND "hasResource" THEN 'ACCEPTED'::"CollectionItemStatus"
           ELSE 'REJECTED'::"CollectionItemStatus"
         END,
-        "reviewedAt" = now()
+        "reviewedAt" = now(),
+        "reviewedById" = ${config.challengeRunnerUserId}
       FROM source s
       WHERE s.id = ci."imageId";
     `;
@@ -221,11 +223,11 @@ export const processDailyChallengeEntries = createJob(
     // Get last time reviewed
     const [article] = await dbRead.$queryRaw<{ reviewedAt: number }[]>`
       SELECT
-        coalesce(cast(metadata->'reviewedAt' as int), 0) as "reviewedAt"
+        coalesce(cast(metadata->'reviewedAt' as bigint), 0) as "reviewedAt"
       FROM "Article"
       WHERE id = ${currentChallenge.articleId}
     `;
-    const lastReviewedAt = new Date(article.reviewedAt);
+    const lastReviewedAt = new Date(Number(article.reviewedAt));
     log('Last reviewed at:', lastReviewedAt);
 
     // Get entries approved since last reviewed
@@ -241,6 +243,7 @@ export const processDailyChallengeEntries = createJob(
       JOIN "User" u ON u.id = i."userId"
       WHERE ci."collectionId" = ${currentChallenge.collectionId}
       AND ci.status = 'ACCEPTED'
+      AND ci."tagId" IS NULL
       AND ci."reviewedAt" >= ${lastReviewedAt}
     `;
     log('Recent entries:', recentEntries.length);
@@ -269,6 +272,20 @@ export const processDailyChallengeEntries = createJob(
         });
         log('Review prepared', entry.imageId, review);
 
+        // Add tag and score note to collection item
+        const note = JSON.stringify({
+          score: review.score,
+          summary: review.summary,
+        });
+        await dbWrite.$executeRaw`
+          UPDATE "CollectionItem"
+          SET "tagId" = ${config.judgedTagId}, note = ${note}
+          WHERE
+            "collectionId" = ${currentChallenge.collectionId}
+            AND "imageId" = ${entry.imageId};
+        `;
+        log('Tag and note added', entry.imageId);
+
         // Send comment
         await upsertComment({
           userId: config.challengeRunnerUserId,
@@ -290,21 +307,9 @@ export const processDailyChallengeEntries = createJob(
         } catch (error) {
           log('Failed to send reaction', entry.imageId, review.reaction);
         }
-
-        // Add tag and score note to collection item
-        const note = JSON.stringify({
-          score: review.score,
-          summary: review.summary,
-        });
-        await dbWrite.$executeRaw`
-          UPDATE "CollectionItem"
-          SET "tagId" = ${config.judgedTagId}, note = ${note}
-          WHERE
-            "collectionId" = ${currentChallenge.collectionId}
-            AND "imageId" = ${entry.imageId};
-        `;
-        log('Tag and note added', entry.imageId);
       } catch (error) {
+        const err = error as Error;
+        logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
         log('Failed to review entry', entry.imageId, error);
       }
     });
@@ -419,6 +424,7 @@ export const pickDailyChallengeWinners = createJob(
       JOIN "User" u ON u.id = i."userId"
       WHERE ci."collectionId" = ${currentChallenge.collectionId}
       AND ci."tagId" = ${config.judgedTagId}
+      AND ci.note IS NOT NULL -- Since people can apply judged tag atm...
       AND ci.status = 'ACCEPTED'
     `;
     log('Judged entries:', judgedEntriesRaw?.length);
