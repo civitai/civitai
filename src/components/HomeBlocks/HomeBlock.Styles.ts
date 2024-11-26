@@ -32,6 +32,9 @@ export const useHomeBlockStyles = createStyles((theme, _, getRef) => {
 export const useHomeBlockGridStyles = createStyles<string, { count: number; rows: number }>(
   (theme, { count, rows }, getRef) => {
     return {
+      gridRow: {
+        gridAutoFlow: 'row',
+      },
       grid: {
         display: 'grid',
         gridAutoFlow: 'column',
