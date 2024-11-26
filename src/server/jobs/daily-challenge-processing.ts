@@ -123,6 +123,8 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
         challengeDate,
         maxItemsPerUser: config.entryPrizeRequirement,
         endsAt: dayjs(challengeDate).add(1, 'day').toDate(),
+        disableTagRequired: true,
+        disableFollowOnSubmission: true,
       },
     },
     select: { id: true },
@@ -130,8 +132,8 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
 
   // Add Judged tag
   await dbWrite.$executeRaw`
-    INSERT INTO "TagsOnCollection" ("collectionId", "tagId")
-    VALUES (${collection.id}, ${config.judgedTagId});
+    INSERT INTO "TagsOnCollection" ("collectionId", "tagId", "filterableOnly")
+    VALUES (${collection.id}, ${config.judgedTagId}, true);
   `;
 
   // Setup Article

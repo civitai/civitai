@@ -3,7 +3,7 @@ import { CSSObject, Text, createStyles } from '@mantine/core';
 import React, { useEffect, useRef, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
-import { NextLink } from '@mantine/next';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { getRandomId } from '~/utils/string-helpers';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';

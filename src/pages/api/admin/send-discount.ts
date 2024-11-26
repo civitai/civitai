@@ -62,8 +62,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         });
       });
 
-      i++;
       await limitConcurrency(tasks, 1);
+      i++;
     } catch (e) {
       console.log((e as Error).message);
     }

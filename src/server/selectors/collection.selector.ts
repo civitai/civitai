@@ -26,11 +26,7 @@ export const collectionSelect = Prisma.validator<Prisma.CollectionSelect>()({
           name: true,
         },
       },
-    },
-    where: {
-      tag: {
-        adminOnly: false,
-      },
+      filterableOnly: true,
     },
   },
 });
