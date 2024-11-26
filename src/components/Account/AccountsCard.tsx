@@ -17,6 +17,8 @@ import { SocialLabel } from '~/components/Social/SocialLabel';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
+type NextAuthProviders = AsyncReturnType<typeof getProviders>;
+
 export function AccountsCard() {
   const utils = trpc.useContext();
   const currentUser = useCurrentUser();
