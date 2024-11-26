@@ -52,13 +52,13 @@ function AdUnitContent({
     }
 
     return () => {
-      const slot = window.googletag
-        .pubads()
-        .getSlots()
-        .find((x: any) => x.getSlotElementId() === id);
-      if (slot) window.googletag.destroySlots([slot]);
-      // window.googletag.cmd.push(function () {
-      // });
+      window.googletag.cmd.push(function () {
+        const slot = window.googletag
+          .pubads()
+          .getSlots()
+          .find((x: any) => x.getSlotElementId() === id);
+        if (slot) window.googletag.destroySlots([slot]);
+      });
     };
   }, []);
 
