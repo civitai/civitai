@@ -27,12 +27,12 @@ function AdUnitContent({
   lazyLoad?: boolean;
   id?: string;
 }) {
-  const loadedRef = useRef(false);
+  // const loadedRef = useRef(false);
   const [id, setId] = useState<string | null>(initialId ?? null);
 
   useEffect(() => {
-    if (loadedRef.current) return;
-    loadedRef.current = true;
+    // if (loadedRef.current) return;
+    // loadedRef.current = true;
     const id = initialId ?? getRandomId();
     setId(id);
 
@@ -50,6 +50,16 @@ function AdUnitContent({
         window.adngin.cmd.startAuction([payload]);
       });
     }
+
+    return () => {
+      const slot = window.googletag
+        .pubads()
+        .getSlots()
+        .find((x: any) => x.getSlotElementId() === id);
+      if (slot) window.googletag.destroySlots([slot]);
+      // window.googletag.cmd.push(function () {
+      // });
+    };
   }, []);
 
   return id ? <div className="flex items-center justify-center" id={id}></div> : null;
