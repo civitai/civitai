@@ -13,6 +13,7 @@ export function ChallengeHero() {
             alt="daily challenge banner with cookies flying and a coffee making machine made out of cookies"
             width={1600}
             height={400}
+            className="mx-auto rounded-lg"
           />
         </div>
         <div className="flex h-full flex-col gap-2 py-6">
