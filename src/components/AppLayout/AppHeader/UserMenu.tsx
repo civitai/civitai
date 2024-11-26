@@ -93,7 +93,11 @@ export function UserMenu() {
       closeOnClickOutside={false}
     >
       <Popover.Target>
-        <UnstyledButton onClick={toggle} className="@md:rounded-[32px] @max-md:p-1.5" type="button">
+        <UnstyledButton
+          onClick={toggle}
+          className="flex items-center @md:rounded-[32px]"
+          type="button"
+        >
           <div
             className={clsx('flex items-center gap-2 @max-md:hidden', {
               ['hidden']: !currentUser,
@@ -146,7 +150,10 @@ function PopoverContent() {
   useHotkeys([['Escape', handleClose]]);
 
   return (
-    <div ref={ref} className="flex h-full flex-1 flex-col @md:max-h-[calc(90vh-var(--header-height))]">
+    <div
+      ref={ref}
+      className="flex h-full flex-1 flex-col @md:max-h-[calc(90vh-var(--header-height))]"
+    >
       {userSwitching ? <AccountSwitcher /> : <UserMenuContent />}
     </div>
   );
