@@ -75,6 +75,10 @@ const useMenuStore = create<{
   },
 }));
 
+function handleOpen() {
+  useMenuStore.setState({ open: true });
+}
+
 function handleClose() {
   useMenuStore.setState({ open: false, lastClosed: Date.now(), accountSwitching: false });
 }
@@ -103,13 +107,7 @@ export function UserMenu() {
           <Burger opened={open} size="sm" className={clsx({ ['@md:hidden']: !!currentUser })} />
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown
-        className="flex flex-col p-0 @max-md:mt-3 @max-md:h-[calc(100%-var(--header-height))]"
-        onClick={(e) => {
-          e.stopPropagation();
-          e.preventDefault();
-        }}
-      >
+      <Popover.Dropdown className="flex flex-col p-0 @max-md:mt-3 @max-md:h-[calc(100%-var(--header-height))]">
         <PopoverContent />
       </Popover.Dropdown>
     </Popover>
