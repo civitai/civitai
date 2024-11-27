@@ -409,3 +409,9 @@ export const updateImageTechniqueSchema = z.object({
   data: baseImageTechniqueSchema.extend({ notes: z.string().nullish() }).array(),
 });
 // #endregion
+
+export type SetVideoThumbnailInput = z.infer<typeof setVideoThumbnailSchema>;
+export const setVideoThumbnailSchema = z.object({
+  imageId: z.number(),
+  frame: z.number().nullable(),
+});

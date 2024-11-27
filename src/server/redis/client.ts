@@ -202,7 +202,8 @@ export const REDIS_KEYS = {
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
     IMAGE_META: 'packed:caches:image-meta',
-    ANNOUNCEMENTS: 'packed:caches:image-meta',
+    IMAGE_METADATA: 'packed:caches:image-metadata',
+    ANNOUNCEMENTS: 'packed:caches:announcement',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

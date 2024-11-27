@@ -37,7 +37,7 @@ export function getSkipValue({
 
   if (type !== 'video' || !meta || !meta.duration) return undefined;
 
-  return meta.duration > MAX_ANIMATION_DURATION_SECONDS ? 4 : undefined;
+  return meta.duration > MAX_ANIMATION_DURATION_SECONDS ? meta.thumbnailFrame ?? 4 : undefined;
 }
 
 export const shouldDisplayHtmlControls = ({

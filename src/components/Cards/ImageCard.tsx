@@ -3,26 +3,23 @@ import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import HoverActionButton from './components/HoverActionButton';
 import { generationPanel } from '~/store/generation.store';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { CosmeticType } from '~/shared/utils/prisma/enums';
-import { HolidayFrame } from '../Decorations/HolidayFrame';
-import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 
 function UnroutedImageCard({ data }: Props) {
   const { classes: sharedClasses, cx } = useCardStyles({
@@ -59,7 +56,15 @@ function UnroutedImageCard({ data }: Props) {
                 className="absolute inset-x-2 top-2 z-10"
                 style={{ pointerEvents: 'none' }}
               >
-                <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
+                <div className="flex gap-1">
+                  <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
+                  {safe &&
+                    data.type === 'video' &&
+                    data.metadata &&
+                    'duration' in data.metadata && (
+                      <DurationBadge duration={data.metadata.duration ?? 0} />
+                    )}
+                </div>
                 {safe && (
                   <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
                     <ImageContextMenu image={data} />

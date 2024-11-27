@@ -41,6 +41,7 @@ import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
   imageMetaCache,
+  imageMetadataCache,
   imagesForModelVersionsCache,
   resourceDataCache,
   tagCache,
@@ -62,6 +63,7 @@ import {
   ImageSchema,
   ImageUploadProps,
   ReportCsamImagesInput,
+  SetVideoThumbnailInput,
   UpdateImageNsfwLevelOutput,
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
@@ -1350,12 +1352,13 @@ export const getAllImages = async (
 // TODO split this into image-index.service because this file is a giant
 
 const getMetaForImages = async (imageIds: number[]) => {
-  if (imageIds.length === 0) {
-    return {};
-  }
+  if (imageIds.length === 0) return {};
+  return imageMetaCache.fetch(imageIds);
+};
 
-  const data = await imageMetaCache.fetch(imageIds);
-  return data;
+const getMetadataForImages = async (imageIds: number[]) => {
+  if (imageIds.length === 0) return {};
+  return imageMetadataCache.fetch(imageIds);
 };
 
 type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
@@ -1450,31 +1453,34 @@ export const getAllImagesIndex = async (
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  const [userDatas, profilePictures, userCosmetics, imageCosmetics, imageMeta] = await Promise.all([
-    await getBasicDataForUsers(userIds),
-    include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
-    include?.includes('cosmetics')
-      ? await getCosmeticsForEntity({
-          ids: imageIds,
-          entity: 'Image',
-        })
-      : undefined,
-    include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
-  ]);
+  const [userDatas, profilePictures, userCosmetics, imageCosmetics, imageMeta, imageMetadata] =
+    await Promise.all([
+      await getBasicDataForUsers(userIds),
+      include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+      include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+      include?.includes('cosmetics')
+        ? await getCosmeticsForEntity({
+            ids: imageIds,
+            entity: 'Image',
+          })
+        : undefined,
+      include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
+      await getMetadataForImages(imageIds),
+    ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
     const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
       userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
     const meta = imageMeta?.[sr.id]?.meta ?? null;
+    const metadata = imageMetadata?.[sr.id]?.metadata ?? null;
 
     return {
       ...sr,
       modelVersionId: sr.postedToId,
       type: sr.type as MediaType,
       createdAt: sr.sortAt,
-      metadata: { width: sr.width, height: sr.height },
+      metadata: { ...metadata, width: sr.width, height: sr.height },
       publishedAt: !publishedAtUnix ? undefined : sr.sortAt,
       //
       user: {
@@ -4394,4 +4400,32 @@ export async function getPostDetailByImageId({ imageId }: { imageId: number }) {
   if (!post) return null;
 
   return post;
+}
+
+export async function setVideoThumbnail({
+  imageId,
+  frame,
+  userId,
+  isModerator,
+}: SetVideoThumbnailInput & { userId: number; isModerator?: boolean }) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId, userId: !isModerator ? userId : undefined },
+    select: { id: true, type: true, metadata: true },
+  });
+  if (!image)
+    throw throwAuthorizationError("You don't have permission to set the thumbnail for this video.");
+  if (image.type !== MediaType.video) throw throwBadRequestError('This is not a video.');
+
+  const videoMetadata = image.metadata as VideoMetadata;
+  const updated = await dbWrite.image.update({
+    where: { id: imageId },
+    data: { metadata: { ...videoMetadata, thumbnailFrame: frame } },
+  });
+
+  await queueImageSearchIndexUpdate({
+    ids: [imageId],
+    action: SearchIndexUpdateQueueAction.Update,
+  });
+
+  return updated;
 }
