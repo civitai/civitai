@@ -1913,6 +1913,7 @@ export interface TagsOnCollection {
   createdAt: Date | null;
   collection?: Collection;
   tag?: Tag;
+  filterableOnly: boolean;
 }
 
 export interface HomeBlock {

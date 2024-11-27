@@ -358,7 +358,12 @@ export const getUserCollectionsWithPermissions = async <
       ...collection,
       isOwner: collection.userId === userId,
       image: images.find((i) => i.id === collection.imageId),
-      tags: collectionTags.filter((t) => t.collectionId === collection.id).map((t) => t.tag),
+      tags: collectionTags
+        .filter((t) => t.collectionId === collection.id)
+        .map((t) => ({
+          ...t.tag,
+          filterableOnly: t.filterableOnly,
+        })),
     }))
     .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
@@ -387,6 +392,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
     metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
     tags: collection.tags.map((t) => ({
       ...t.tag,
+      filterableOnly: t.filterableOnly,
     })),
   };
 };
@@ -445,8 +451,10 @@ export const saveItemInCollections = async ({
           return null;
         }
 
+        const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
+
         if (
-          collection.tags.length > 0 &&
+          inputTags.length > 0 &&
           !tagId &&
           !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
         ) {
@@ -1699,9 +1707,10 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
 
   if (
-    collection.tags.length > 0 &&
+    inputTags.length > 0 &&
     !tagId &&
     !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
   ) {

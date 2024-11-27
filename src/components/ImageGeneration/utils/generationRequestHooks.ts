@@ -386,7 +386,11 @@ export function usePatchTags() {
   return { patchTags, isLoading };
 }
 
-type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & { $type: 'job'; completed?: Date };
+type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & {
+  $type: 'job';
+  completed?: Date;
+  reason?: string;
+};
 type CustomWorkflowEvent = Omit<WorkflowEvent, '$type'> & { $type: 'workflow' };
 const debouncer = createDebouncer(100);
 const signalJobEventsDictionary: Record<string, CustomJobEvent> = {};
@@ -441,7 +445,10 @@ function updateFromEvents() {
             for (const image of images) {
               image.status = signalEvent.status!;
               image.completed = signalEvent.completed;
-              if (image.type === 'video') image.progress = signalEvent.progress ?? 0;
+              if (image.type === 'video') {
+                image.progress = signalEvent.progress ?? 0;
+                image.reason = image.reason ?? signalEvent.reason;
+              }
             }
 
             if (status === signalJobEventsDictionary[jobId].status) {
