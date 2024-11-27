@@ -1542,6 +1542,9 @@ export const validateContestCollectionEntry = async ({
       where: {
         collectionId,
         addedById: userId,
+        status: {
+          in: [CollectionItemStatus.ACCEPTED, CollectionItemStatus.REVIEW],
+        },
       },
     });
 
