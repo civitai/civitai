@@ -89,6 +89,7 @@ export function QueueItem({
   const { params, resources = [] } = step;
 
   let { images } = step;
+  const failureReason = images.find((x) => x.status === 'failed' && x.reason)?.reason;
 
   if (filter && filter.marker) {
     images = images.filter((image) => {
@@ -273,6 +274,7 @@ export function QueueItem({
               )}
             </div>
             <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
+            {failureReason && <Alert color="red">{failureReason}</Alert>}
 
             <div
               className={cx(classes.grid, {

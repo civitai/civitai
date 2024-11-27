@@ -9,6 +9,7 @@ import {
   hasPublicBrowsingLevel,
   hasSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
+import { useSession } from 'next-auth/react';
 
 export function SensitiveShield({
   children,
@@ -22,6 +23,9 @@ export function SensitiveShield({
   const currentUser = useCurrentUser();
   const router = useRouter();
   const { canViewNsfw } = useFeatureFlags();
+  const { status } = useSession();
+
+  if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
 
   // this content is not available on this site
   if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel)))
@@ -30,7 +34,7 @@ export function SensitiveShield({
         <Text>This content is not available on this site</Text>
       </div>
     );
-  if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel))
+  if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel)) {
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex flex-col items-center gap-2 p-3">
@@ -49,6 +53,7 @@ export function SensitiveShield({
         </div>
       </div>
     );
+  }
 
   return <>{children}</>;
 }

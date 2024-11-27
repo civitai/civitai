@@ -63,7 +63,7 @@ import { Fragment } from 'react';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { Flags } from '~/shared/utils';
@@ -402,19 +402,8 @@ export function PostDetailContent({ postId }: Props) {
               >
                 <div className="sticky left-0 top-0 ">
                   <div className="flex w-full flex-col gap-3 py-3">
-                    {scrollHeight >= 600 && (
-                      <AdUnit
-                        keys={['300x600:StickySidebar_A']}
-                        browsingLevel={aggregateBrowsingLevel}
-                      />
-                    )}
-                    {scrollHeight > 900 && (
-                      <AdUnit
-                        keys={['300x250:Sidebar_A']}
-                        withFeedback
-                        browsingLevel={aggregateBrowsingLevel}
-                      />
-                    )}
+                    {scrollHeight >= 600 && <AdUnitSide_1 browsingLevel={aggregateBrowsingLevel} />}
+                    {scrollHeight > 900 && <AdUnitSide_2 browsingLevel={aggregateBrowsingLevel} />}
                   </div>
                 </div>
               </div>

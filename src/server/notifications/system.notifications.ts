@@ -28,4 +28,13 @@ export const systemNotifications = createNotificationProcessor({
       url: details.url,
     }),
   },
+  'system-message': {
+    displayName: 'Heads Up!',
+    category: NotificationCategory.Other,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: details.message,
+      url: details.url,
+    }),
+  },
 });

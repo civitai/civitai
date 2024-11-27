@@ -1,7 +1,7 @@
 import { Carousel, Embla } from '@mantine/carousel';
 import { useHotkeys, useLocalStorage, useOs } from '@mantine/hooks';
 
-import { useState, useEffect, useRef, createContext, useContext } from 'react';
+import { useState, useEffect, createContext, useContext } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
 import { ConnectProps, ImageGuardContent } from '~/components/ImageGuard/ImageGuard2';

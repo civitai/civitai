@@ -11,6 +11,7 @@ import {
   IconVideo,
   IconProps,
   IconCake,
+  IconTrophy,
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
@@ -57,6 +58,10 @@ const homeOptions: Record<string, HomeOption> = {
     url: '/bounties',
     icon: (props: IconProps) => <IconMoneybag {...props} />,
     grouped: true,
+  },
+  challenges: {
+    url: '/challenges',
+    icon: (props: IconProps) => <IconTrophy {...props} />,
   },
   events: {
     url: '/events',

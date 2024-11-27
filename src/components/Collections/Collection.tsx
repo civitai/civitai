@@ -2,6 +2,7 @@ import {
   ActionIcon,
   AspectRatio,
   Box,
+  Button,
   Center,
   ContainerProps,
   createStyles,
@@ -629,12 +630,11 @@ export function Collection({
                 </Stack>
                 {collection && permissions && (
                   <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
-                    <CollectionFollowAction collection={collection} permissions={permissions} />
-                    {canAddContent && (
-                      <Tooltip label="Add from your library." position="bottom" withArrow>
-                        <ActionIcon
+                    {collection.mode === CollectionMode.Contest &&
+                    collection.type === CollectionType.Image ? (
+                      <>
+                        <Button
                           color="blue"
-                          variant="subtle"
                           radius="xl"
                           onClick={() => {
                             if (!!metadata.existingEntriesDisabled) {
@@ -649,9 +649,39 @@ export function Collection({
                             }
                           }}
                         >
-                          <IconCirclePlus />
-                        </ActionIcon>
-                      </Tooltip>
+                          Submit an entry
+                        </Button>
+                      </>
+                    ) : (
+                      <>
+                        <CollectionFollowAction
+                          collectionId={collection.id}
+                          permissions={permissions}
+                        />
+                        {canAddContent && (
+                          <Tooltip label="Add from your library." position="bottom" withArrow>
+                            <ActionIcon
+                              color="blue"
+                              variant="subtle"
+                              radius="xl"
+                              onClick={() => {
+                                if (!!metadata.existingEntriesDisabled) {
+                                  router.push(`/posts/create?collectionId=${collection.id}`);
+                                } else {
+                                  dialogStore.trigger({
+                                    component: AddUserContentModal,
+                                    props: {
+                                      collectionId: collection.id,
+                                    },
+                                  });
+                                }
+                              }}
+                            >
+                              <IconCirclePlus />
+                            </ActionIcon>
+                          </Tooltip>
+                        )}
+                      </>
                     )}
                     <CollectionContextMenu
                       collectionId={collection.id}

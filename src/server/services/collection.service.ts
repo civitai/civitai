@@ -360,7 +360,12 @@ export const getUserCollectionsWithPermissions = async <
       ...collection,
       isOwner: collection.userId === userId,
       image: images.find((i) => i.id === collection.imageId),
-      tags: collectionTags.filter((t) => t.collectionId === collection.id).map((t) => t.tag),
+      tags: collectionTags
+        .filter((t) => t.collectionId === collection.id)
+        .map((t) => ({
+          ...t.tag,
+          filterableOnly: t.filterableOnly,
+        })),
     }))
     .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
@@ -389,6 +394,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
     metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
     tags: collection.tags.map((t) => ({
       ...t.tag,
+      filterableOnly: t.filterableOnly,
     })),
   };
 };
@@ -447,7 +453,13 @@ export const saveItemInCollections = async ({
           return null;
         }
 
-        if (collection.tags.length > 0 && !tagId) {
+        const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
+
+        if (
+          inputTags.length > 0 &&
+          !tagId &&
+          !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
+        ) {
           throw throwBadRequestError('Collection requires a tag');
         }
 
@@ -470,7 +482,11 @@ export const saveItemInCollections = async ({
           id: collectionId,
         });
 
-        if (!permission.isContributor && !permission.isOwner) {
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !metadata?.disableFollowOnSubmission
+        ) {
           // Make sure to follow the collection
           await addContributorToCollection({
             targetUserId: userId,
@@ -1705,8 +1721,13 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
 
-  if (collection.tags.length > 0 && !tagId) {
+  if (
+    inputTags.length > 0 &&
+    !tagId &&
+    !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
+  ) {
     throw throwBadRequestError(
       'It is required to tag your entry in order for it to be added to this collection'
     );
@@ -1720,7 +1741,11 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
-  if (!permissions.isContributor && !permissions.isOwner) {
+  if (
+    !permissions.isContributor &&
+    !permissions.isOwner &&
+    !(collection.metadata as CollectionMetadataSchema)?.disableFollowOnSubmission
+  ) {
     // Make sure to follow the collection
     await addContributorToCollection({
       targetUserId: userId,

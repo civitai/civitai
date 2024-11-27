@@ -26,6 +26,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconFlag,
+  IconLayoutList,
   IconLayoutSidebarRightCollapse,
   IconLayoutSidebarRightExpand,
   IconPhoto,
@@ -33,7 +34,7 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2, AdUnitImageDetailBanner } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
@@ -72,6 +73,8 @@ import { useIsClient } from '~/providers/IsClientProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { generationPanel } from '~/store/generation.store';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -123,7 +126,7 @@ export function ImageDetail2() {
 
   const image = images[carouselNavigation.index];
 
-  const { collectionItems = [] } = useImageContestCollectionDetails(
+  const { collectionItems, post } = useImageContestCollectionDetails(
     { id: image?.id as number },
     { enabled: !!image?.id }
   );
@@ -339,11 +342,7 @@ export function ImageDetail2() {
                     </div>
                     <CarouselIndicators {...carouselNavigation} />
                     {viewportHeight >= 1050 && (
-                      <AdUnit
-                        keys={['728x90:Leaderboard']}
-                        justify="center"
-                        browsingLevel={image.nsfwLevel}
-                      />
+                      <AdUnitImageDetailBanner browsingLevel={image.nsfwLevel} />
                     )}
                   </div>
                 </>
@@ -404,11 +403,12 @@ export function ImageDetail2() {
                     {`This image won't be visible to other users until it's reviewed by our moderators.`}
                   </AlertWithIcon>
                 )}
-                <AdUnit
+                {/* <AdUnit
                   keys={['300x250:model_image_pages']}
                   justify="center"
                   browsingLevel={image.nsfwLevel}
-                />
+                /> */}
+                <AdUnitSide_2 browsingLevel={image.nsfwLevel} />
                 <VotableTags
                   entityType="image"
                   entityId={image.id}
@@ -416,6 +416,17 @@ export function ImageDetail2() {
                   collapsible
                   nsfwLevel={image.nsfwLevel}
                 />
+                {post && post.detail && (
+                  <Card className="flex flex-col gap-3 rounded-xl">
+                    <Text className="flex items-center gap-2 text-xl font-semibold">
+                      <IconLayoutList />
+                      <span>{post.title}</span>
+                    </Text>
+                    <ContentClamp maxHeight={75}>
+                      <RenderHtml html={post.detail} />
+                    </ContentClamp>
+                  </Card>
+                )}
                 <ImageProcess imageId={image.id} />
                 <ImageGenerationData imageId={image.id} />
                 <Card className="flex flex-col gap-3 rounded-xl">

@@ -554,6 +554,7 @@ export const getPermissionDetailsHandler = async ({
       mode: true,
       tags: {
         select: {
+          filterableOnly: true,
           tag: {
             select: {
               id: true,
@@ -578,7 +579,10 @@ export const getPermissionDetailsHandler = async ({
 
   return collections.map((c) => ({
     ...c,
-    tags: c.tags.map((t) => t.tag),
+    tags: c.tags.map((t) => ({
+      ...t.tag,
+      filterableOnly: t.filterableOnly,
+    })),
     metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
     permissions: permissions.find((p) => p.collectionId === c.id),
   }));

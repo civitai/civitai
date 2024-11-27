@@ -19,6 +19,7 @@ import {
   bulkRemoveBlockedImages,
   deleteImageById,
   getAllImagesIndex,
+  getPostDetailByImageId,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -563,10 +564,15 @@ export const getImageContestCollectionDetailsHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getImageContestCollectionDetails({
+    const collectionItems = await getImageContestCollectionDetails({
       ...input,
       userId: ctx.user?.id,
     });
+    const imageId = collectionItems?.[0]?.imageId;
+    if (!imageId) return { collectionItems, post: null };
+
+    const post = await getPostDetailByImageId({ imageId });
+    return { collectionItems, post };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

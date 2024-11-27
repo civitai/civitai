@@ -1,6 +1,7 @@
 import { createGetInitialProps } from '@mantine/next';
 import { readFileSync } from 'fs';
 import Document, { Html, Main, NextScript, Head } from 'next/document';
+import Script from 'next/script';
 import { join } from 'path';
 
 const getInitialProps = createGetInitialProps();

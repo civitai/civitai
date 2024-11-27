@@ -152,15 +152,15 @@ export const getServerSideProps = createServerSideProps({
     }
 
     if (ssg) {
-      if (version)
-        await ssg.image.getInfinite.prefetchInfinite({
-          modelVersionId: version.id,
-          prioritizedUserIds: [version.model.userId],
-          period: 'AllTime',
-          sort: ImageSort.MostReactions,
-          limit: CAROUSEL_LIMIT,
-          pending: true,
-        });
+      // if (version)
+      //   await ssg.image.getInfinite.prefetchInfinite({
+      //     modelVersionId: version.id,
+      //     prioritizedUserIds: [version.model.userId],
+      //     period: 'AllTime',
+      //     sort: ImageSort.MostReactions,
+      //     limit: CAROUSEL_LIMIT,
+      //     pending: true,
+      //   });
       await ssg.hiddenPreferences.getHidden.prefetch();
 
       if (modelVersionIdParsed) {
@@ -894,6 +894,7 @@ export default function ModelDetailsV2({
                       <Divider orientation="vertical" />
                       <Link
                         href={`/tag/${encodeURIComponent(category.name.toLowerCase())}`}
+                        legacyBehavior
                         passHref
                       >
                         <Badge component="a" size="sm" color="blue" sx={{ cursor: 'pointer' }}>
@@ -907,7 +908,11 @@ export default function ModelDetailsV2({
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
-                      <Link legacyBehavior href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                      <Link
+                        legacyBehavior
+                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                        passHref
+                      >
                         <Badge
                           component="a"
                           size="sm"
