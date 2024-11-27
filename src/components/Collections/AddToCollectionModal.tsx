@@ -230,6 +230,10 @@ function CollectionListForm({
                         (c) => c.collectionId === collection.id
                       );
 
+                      const availableTags = (collection?.tags ?? []).filter(
+                        (t) => !t.filterableOnly || t.id === selectedItem?.tagId
+                      );
+
                       return (
                         <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
                           <Checkbox
@@ -262,7 +266,7 @@ function CollectionListForm({
                               </Group>
                             }
                           />
-                          {selectedItem && collection.tags?.length > 0 && (
+                          {selectedItem && availableTags?.length > 0 && (
                             <Select
                               withinPortal
                               withAsterisk
@@ -282,7 +286,7 @@ function CollectionListForm({
                               }}
                               clearable
                               autoFocus
-                              data={collection.tags.map((tag) => ({
+                              data={availableTags.map((tag) => ({
                                 value: tag.id.toString(),
                                 label: tag.name,
                               }))}
@@ -312,6 +316,10 @@ function CollectionListForm({
                         const Icon = collectionReadPrivacyData[collection.read].icon;
                         const selectedItem = selectedCollections.find(
                           (c) => c.collectionId === collection.id
+                        );
+
+                        const availableTags = (collection?.tags ?? []).filter(
+                          (t) => !t.filterableOnly || t.id === selectedItem?.tagId
                         );
 
                         return (
@@ -348,7 +356,7 @@ function CollectionListForm({
                                 </Group>
                               }
                             />
-                            {selectedItem && collection.tags?.length > 0 && (
+                            {selectedItem && availableTags?.length > 0 && (
                               <Select
                                 withinPortal
                                 withAsterisk
@@ -372,7 +380,7 @@ function CollectionListForm({
                                 }}
                                 clearable
                                 autoFocus
-                                data={collection.tags.map((tag) => ({
+                                data={availableTags.map((tag) => ({
                                   value: tag.id.toString(),
                                   label: tag.name,
                                 }))}

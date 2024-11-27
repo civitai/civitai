@@ -7,7 +7,7 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createMessage, upsertChat } from '~/server/services/chat.service';
 import { getUserById } from '~/server/services/user.service';
 import { ChatMessageType } from '@prisma/client';
-// import targetUsers from './data.json';
+// import data from './data.json';
 
 const targetUsers: number[] = [];
 
@@ -62,8 +62,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         });
       });
 
+      await limitConcurrency(tasks, 3);
       i++;
-      await limitConcurrency(tasks, 1);
     } catch (e) {
       console.log((e as Error).message);
     }

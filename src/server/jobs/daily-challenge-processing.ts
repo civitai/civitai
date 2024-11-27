@@ -1,34 +1,34 @@
-import { createNotification } from '~/server/services/notification.service';
-import { createJob } from './job';
+import { CollectionReadConfiguration, Prisma } from '@prisma/client';
+import dayjs from 'dayjs';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
-import { Random } from '~/utils/random';
-import {
-  generateArticle,
-  generateCollectionDetails,
-  generateReview,
-  generateWinners,
-} from '~/server/games/daily-challenge/generative-content';
 import {
   dailyChallengeConfig as config,
   getCurrentChallenge,
   getUpcomingChallenge,
   setCurrentChallenge,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import dayjs from 'dayjs';
-import { CollectionReadConfiguration, Prisma } from '@prisma/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
-import { getRandom, shuffle } from '~/utils/array-helpers';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { upsertComment } from '~/server/services/commentsv2.service';
-import { toggleReaction } from '~/server/services/reaction.service';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import {
+  generateArticle,
+  generateCollectionDetails,
+  generateReview,
+  generateWinners,
+} from '~/server/games/daily-challenge/generative-content';
+import { logToAxiom } from '~/server/logging/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { upsertComment } from '~/server/services/commentsv2.service';
+import { createNotification } from '~/server/services/notification.service';
+import { toggleReaction } from '~/server/services/reaction.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { getRandom, shuffle } from '~/utils/array-helpers';
 import { withRetries } from '~/utils/errorHandling';
-import { isDefined } from '~/utils/type-guards';
-import { markdownToHtml } from '~/utils/markdown-helpers';
 import { createLogger } from '~/utils/logging';
+import { markdownToHtml } from '~/utils/markdown-helpers';
+import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { createJob } from './job';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -122,6 +122,8 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
         challengeDate,
         maxItemsPerUser: config.entryPrizeRequirement,
         endsAt: dayjs(challengeDate).add(1, 'day').toDate(),
+        disableTagRequired: true,
+        disableFollowOnSubmission: true,
       },
     },
     select: { id: true },
@@ -129,8 +131,8 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
 
   // Add Judged tag
   await dbWrite.$executeRaw`
-    INSERT INTO "TagsOnCollection" ("collectionId", "tagId")
-    VALUES (${collection.id}, ${config.judgedTagId});
+    INSERT INTO "TagsOnCollection" ("collectionId", "tagId", "filterableOnly")
+    VALUES (${collection.id}, ${config.judgedTagId}, true);
   `;
 
   // Setup Article
@@ -210,7 +212,8 @@ export const processDailyChallengeEntries = createJob(
           WHEN "isSafe" AND "hasResource" THEN 'ACCEPTED'::"CollectionItemStatus"
           ELSE 'REJECTED'::"CollectionItemStatus"
         END,
-        "reviewedAt" = now()
+        "reviewedAt" = now(),
+        "reviewedById" = ${config.challengeRunnerUserId}
       FROM source s
       WHERE s.id = ci."imageId";
     `;
@@ -221,16 +224,16 @@ export const processDailyChallengeEntries = createJob(
     // Get last time reviewed
     const [article] = await dbRead.$queryRaw<{ reviewedAt: number }[]>`
       SELECT
-        coalesce(cast(metadata->'reviewedAt' as int), 0) as "reviewedAt"
+        coalesce(cast(metadata->'reviewedAt' as bigint), 0) as "reviewedAt"
       FROM "Article"
       WHERE id = ${currentChallenge.articleId}
     `;
-    const lastReviewedAt = new Date(article.reviewedAt);
+    const lastReviewedAt = new Date(Number(article.reviewedAt));
     log('Last reviewed at:', lastReviewedAt);
 
     // Get entries approved since last reviewed
     const reviewing = Date.now();
-    const recentEntries = await dbRead.$queryRaw<RecentEntry[]>`
+    const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
       SELECT
         ci."imageId",
         i."userId",
@@ -241,6 +244,7 @@ export const processDailyChallengeEntries = createJob(
       JOIN "User" u ON u.id = i."userId"
       WHERE ci."collectionId" = ${currentChallenge.collectionId}
       AND ci.status = 'ACCEPTED'
+      AND ci."tagId" IS NULL
       AND ci."reviewedAt" >= ${lastReviewedAt}
     `;
     log('Recent entries:', recentEntries.length);
@@ -258,6 +262,23 @@ export const processDailyChallengeEntries = createJob(
     }
     log('Entries to review:', toReview.length);
 
+    // Get forced to review entries
+    const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
+      SELECT
+        ci."imageId",
+        i."userId",
+        u."username",
+        i."url"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      JOIN "User" u ON u.id = i."userId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+      AND ci.status = 'ACCEPTED'
+      AND ci."tagId" = ${config.reviewMeTagId}
+    `;
+    log('Requested review:', requestReview.length);
+    toReview.push(...requestReview);
+
     // Rate entries
     const tasks = toReview.map((entry) => async () => {
       try {
@@ -268,6 +289,20 @@ export const processDailyChallengeEntries = createJob(
           imageUrl: getEdgeUrl(entry.url, { width: 1024 }),
         });
         log('Review prepared', entry.imageId, review);
+
+        // Add tag and score note to collection item
+        const note = JSON.stringify({
+          score: review.score,
+          summary: review.summary,
+        });
+        await dbWrite.$executeRaw`
+          UPDATE "CollectionItem"
+          SET "tagId" = ${config.judgedTagId}, note = ${note}
+          WHERE
+            "collectionId" = ${currentChallenge.collectionId}
+            AND "imageId" = ${entry.imageId};
+        `;
+        log('Tag and note added', entry.imageId);
 
         // Send comment
         await upsertComment({
@@ -290,21 +325,9 @@ export const processDailyChallengeEntries = createJob(
         } catch (error) {
           log('Failed to send reaction', entry.imageId, review.reaction);
         }
-
-        // Add tag and score note to collection item
-        const note = JSON.stringify({
-          score: review.score,
-          summary: review.summary,
-        });
-        await dbWrite.$executeRaw`
-          UPDATE "CollectionItem"
-          SET "tagId" = ${config.judgedTagId}, note = ${note}
-          WHERE
-            "collectionId" = ${currentChallenge.collectionId}
-            AND "imageId" = ${entry.imageId};
-        `;
-        log('Tag and note added', entry.imageId);
       } catch (error) {
+        const err = error as Error;
+        logToAxiom({ type: 'daily-challenge-review-error', message: err.message });
         log('Failed to review entry', entry.imageId, error);
       }
     });
@@ -315,7 +338,7 @@ export const processDailyChallengeEntries = createJob(
     // Get users that have recently added new entries
     const userIds = [...new Set(recentEntries.map((entry) => entry.userId))];
     if (userIds.length > 0) {
-      const earnedPrizes = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
+      const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
         SELECT
         i."userId",
         COUNT(*) as count
@@ -345,6 +368,7 @@ export const processDailyChallengeEntries = createJob(
             }))
           )
         );
+
         log('Prizes sent');
 
         // Notify them
@@ -419,6 +443,7 @@ export const pickDailyChallengeWinners = createJob(
       JOIN "User" u ON u.id = i."userId"
       WHERE ci."collectionId" = ${currentChallenge.collectionId}
       AND ci."tagId" = ${config.judgedTagId}
+      AND ci.note IS NOT NULL -- Since people can apply judged tag atm...
       AND ci.status = 'ACCEPTED'
     `;
     log('Judged entries:', judgedEntriesRaw?.length);

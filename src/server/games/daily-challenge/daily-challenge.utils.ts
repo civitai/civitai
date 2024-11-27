@@ -1,4 +1,3 @@
-import { NotificationCategory } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
@@ -7,6 +6,7 @@ export const dailyChallengeConfig = {
   challengeRunnerUserId: 6235605,
   challengeCollectionId: 6236625,
   judgedTagId: 299729,
+  reviewMeTagId: 301770,
   cooldownPeriod: '7 day',
   prizes: [
     { buzz: 5000, points: 150 },

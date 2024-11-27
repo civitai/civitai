@@ -1234,6 +1234,7 @@ enum ImageIngestionStatus {
   Error
   Blocked
   NotFound
+  PendingManualAssignment
 }
 
 enum MediaType {
@@ -2469,11 +2470,12 @@ model CollectionContributor {
 }
 
 model TagsOnCollection {
-  collectionId Int
-  tagId        Int
-  createdAt    DateTime?  @default(now())
-  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  tag          Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  collectionId   Int
+  tagId          Int
+  createdAt      DateTime?  @default(now())
+  collection     Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  tag            Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  filterableOnly Boolean    @default(false)
 
   @@id([tagId, collectionId])
   @@index([collectionId], type: Hash)

@@ -560,12 +560,15 @@ export const getModeratorReviewQueueHandler = async ({
 
 export const getImageContestCollectionDetailsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetByIdInput;
+  ctx: Context;
 }) => {
   try {
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
+      userId: ctx.user?.id,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };

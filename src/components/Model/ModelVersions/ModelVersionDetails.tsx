@@ -45,7 +45,7 @@ import { startCase } from 'lodash-es';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { useCivitaiLink } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -120,6 +120,7 @@ import {
   openCollectionSelectModal,
   openResourceReviewEditModal,
 } from '~/components/Dialog/dialog-registry';
+import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -1305,11 +1306,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           )}
           {model.poi && <PoiAlert />}
           {!model.nsfw && (
-            <AdUnit keys={['300x250:model_image_pages']}>
+            <AdUnitRenderable>
               <TwCard className="mx-auto border p-2 shadow">
-                <AdUnit.Content />
+                <AdUnitSide_2 />
               </TwCard>
-            </AdUnit>
+            </AdUnitRenderable>
           )}
         </Stack>
       </ContainerGrid.Col>

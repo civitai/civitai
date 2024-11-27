@@ -12,15 +12,23 @@ import {
 import { BuiltInProviderType } from 'next-auth/providers';
 import { getProviders, signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
+import { useEffect, useState } from 'react';
 import { SocialLabel } from '~/components/Social/SocialLabel';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
 
-export function AccountsCard({ providers }: { providers: AsyncReturnType<typeof getProviders> }) {
+type NextAuthProviders = AsyncReturnType<typeof getProviders>;
+
+export function AccountsCard() {
   const utils = trpc.useContext();
   const currentUser = useCurrentUser();
   const { error } = useRouter().query;
   const { data: accounts = [] } = trpc.account.getAll.useQuery();
+
+  const [providers, setProviders] = useState<NextAuthProviders | null>(null);
+  useEffect(() => {
+    if (!providers) getProviders().then((providers) => setProviders(providers));
+  }, []);
 
   const { mutate: deleteAccount, isLoading: deletingAccount } = trpc.account.delete.useMutation({
     onSuccess: async () => {

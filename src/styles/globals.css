@@ -398,3 +398,57 @@ div[data-youtube-video] > iframe {
   display: flex;
   flex-direction: column;
 }
+
+/* SNIGEL CMP CONSENT OVERRIDES */
+#snigel-cmp-framework .sn-b-def.sn-blue {
+  color: #ffffff !important;
+  background-color: #1971c2 !important;
+  border-color: #1971c2 !important;
+}
+
+#snigel-cmp-framework .sn-b-def {
+  border-color: #1971c2 !important;
+  color: #1971c2 !important;
+}
+
+#snigel-cmp-framework .sn-selector ul li {
+  color: #1971c2 !important;
+}
+
+#snigel-cmp-framework .sn-selector ul li:after {
+  background-color: #1971c2 !important;
+}
+
+#snigel-cmp-framework .sn-footer-tab .sn-privacy a {
+  color: #1971c2 !important;
+}
+
+#snigel-cmp-framework .sn-arrow:after,
+#snigel-cmp-framework .sn-arrow:before {
+  background-color: #1971c2 !important;
+}
+
+#snigel-cmp-framework .sn-switch input:checked + span::before {
+  background-color: #1971c2 !important;
+}
+
+#adconsent-usp-link {
+  border: 1px solid #1971c2 !important;
+  color: #1971c2 !important;
+}
+
+#adconsent-usp-banner-optout input:checked + .adconsent-usp-slider {
+  background-color: #1971c2 !important;
+}
+
+#adconsent-usp-banner-btn {
+  color: #ffffff;
+  border: solid 1px #1971c2 !important;
+  background-color: #1971c2 !important;
+}
+
+/* SNIGEL ADS REMOVE EMPTY 1X1 PIXEL IFRAME */
+div[id*='google_ads_iframe'][id$='outstream_0__container__'] {
+  height: 0;
+  width: 0;
+}

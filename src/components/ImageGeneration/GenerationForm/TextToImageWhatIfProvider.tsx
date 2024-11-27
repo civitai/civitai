@@ -19,6 +19,7 @@ import { trpc } from '~/utils/trpc';
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -33,6 +34,7 @@ export function useTextToImageWhatIfContext() {
 
 export function TextToImageWhatIfProvider({ children }: { children: React.ReactNode }) {
   const form = useGenerationForm();
+  const currentUser = useCurrentUser();
   const watched = useWatch({ control: form.control });
   const [enabled, setEnabled] = useState(false);
   const defaultModel =
@@ -77,7 +79,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const [debounced] = useDebouncedValue(query, 100);
 
   const result = trpc.orchestrator.getImageWhatIf.useQuery(debounced, {
-    enabled: debounced && enabled,
+    enabled: !!currentUser && debounced && enabled,
   });
 
   return <Context.Provider value={result}>{children}</Context.Provider>;
