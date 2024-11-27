@@ -237,7 +237,7 @@ export const orchestratorRouter = router({
     }),
   whatIf: orchestratorGuardedProcedure
     .input(generationSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .use(edgeCacheIt({ ttl: 60 }))
     .query(({ ctx, input }) => whatIf({ ...input, userId: ctx.user.id, token: ctx.token })),
   generate: orchestratorGuardedProcedure
     .input(generationSchema)
