@@ -368,6 +368,7 @@ export const processDailyChallengeEntries = createJob(
             }))
           )
         );
+
         log('Prizes sent');
 
         // Notify them
