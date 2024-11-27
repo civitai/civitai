@@ -420,6 +420,12 @@ export const pickDailyChallengeWinners = createJob(
     `;
     log('Collection closed');
 
+    // Remove all contributors
+    await dbWrite.$executeRaw`
+      DELETE FROM "CollectionContributor"
+      WHERE "collectionId" = ${currentChallenge.collectionId}
+    `;
+
     // Pick Winners
     // ----------------------------------------------
     // Get all judged entries
