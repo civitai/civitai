@@ -1,35 +1,34 @@
-import { createNotification } from '~/server/services/notification.service';
-import { createJob } from './job';
+import { CollectionReadConfiguration, Prisma } from '@prisma/client';
+import dayjs from 'dayjs';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
-import { Random } from '~/utils/random';
-import {
-  generateArticle,
-  generateCollectionDetails,
-  generateReview,
-  generateWinners,
-} from '~/server/games/daily-challenge/generative-content';
 import {
   dailyChallengeConfig as config,
   getCurrentChallenge,
   getUpcomingChallenge,
   setCurrentChallenge,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
-import dayjs from 'dayjs';
-import { CollectionReadConfiguration, Prisma } from '@prisma/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
-import { getRandom, shuffle } from '~/utils/array-helpers';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { upsertComment } from '~/server/services/commentsv2.service';
-import { toggleReaction } from '~/server/services/reaction.service';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { withRetries } from '~/utils/errorHandling';
-import { isDefined } from '~/utils/type-guards';
-import { markdownToHtml } from '~/utils/markdown-helpers';
-import { createLogger } from '~/utils/logging';
+import {
+  generateArticle,
+  generateCollectionDetails,
+  generateReview,
+  generateWinners,
+} from '~/server/games/daily-challenge/generative-content';
 import { logToAxiom } from '~/server/logging/client';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransactionMany } from '~/server/services/buzz.service';
+import { upsertComment } from '~/server/services/commentsv2.service';
+import { createNotification } from '~/server/services/notification.service';
+import { toggleReaction } from '~/server/services/reaction.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { getRandom, shuffle } from '~/utils/array-helpers';
+import { withRetries } from '~/utils/errorHandling';
+import { createLogger } from '~/utils/logging';
+import { markdownToHtml } from '~/utils/markdown-helpers';
+import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { createJob } from './job';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -232,7 +231,7 @@ export const processDailyChallengeEntries = createJob(
 
     // Get entries approved since last reviewed
     const reviewing = Date.now();
-    const recentEntries = await dbRead.$queryRaw<RecentEntry[]>`
+    const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
       SELECT
         ci."imageId",
         i."userId",
@@ -320,7 +319,7 @@ export const processDailyChallengeEntries = createJob(
     // Get users that have recently added new entries
     const userIds = [...new Set(recentEntries.map((entry) => entry.userId))];
     if (userIds.length > 0) {
-      const earnedPrizes = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
+      const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
         SELECT
         i."userId",
         COUNT(*) as count

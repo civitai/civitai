@@ -1,4 +1,3 @@
-import { NotificationCategory } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
