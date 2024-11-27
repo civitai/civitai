@@ -262,6 +262,23 @@ export const processDailyChallengeEntries = createJob(
     }
     log('Entries to review:', toReview.length);
 
+    // Get forced to review entries
+    const requestReview = await dbWrite.$queryRaw<RecentEntry[]>`
+      SELECT
+        ci."imageId",
+        i."userId",
+        u."username",
+        i."url"
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      JOIN "User" u ON u.id = i."userId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+      AND ci.status = 'ACCEPTED'
+      AND ci."tagId" = ${config.reviewMeTagId}
+    `;
+    log('Requested review:', requestReview.length);
+    toReview.push(...requestReview);
+
     // Rate entries
     const tasks = toReview.map((entry) => async () => {
       try {

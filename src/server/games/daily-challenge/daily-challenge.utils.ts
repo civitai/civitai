@@ -6,6 +6,7 @@ export const dailyChallengeConfig = {
   challengeRunnerUserId: 6235605,
   challengeCollectionId: 6236625,
   judgedTagId: 299729,
+  reviewMeTagId: 301770,
   cooldownPeriod: '7 day',
   prizes: [
     { buzz: 5000, points: 150 },
