@@ -1097,7 +1097,7 @@ export const getAllImages = async (
     } else if (userId) {
       AND.push(Prisma.sql`(i."needsReview" IS NULL OR i."userId" = ${userId})`);
       AND.push(
-        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}))`
+        Prisma.sql`((i."nsfwLevel" & ${browsingLevel}) != 0 OR (i."nsfwLevel" = 0 AND i."userId" = ${userId}) OR (p."collectionId" IS NOT NULL AND EXISTS (SELECT 1 FROM "CollectionContributor" cc WHERE cc."permissions" && ARRAY['MANAGE']::"CollectionContributorPermission"[] AND cc."collectionId" = p."collectionId" AND cc."userId" = ${userId})))`
       );
     }
   } else {
@@ -2908,8 +2908,9 @@ export const getImagesByEntity = async ({
 export async function createImage({
   toolIds,
   techniqueIds,
+  skipIngestion,
   ...image
-}: ImageSchema & { userId: number }) {
+}: ImageSchema & { userId: number; skipIngestion?: boolean }) {
   const result = await dbWrite.image.create({
     data: {
       ...image,
@@ -2921,21 +2922,24 @@ export async function createImage({
       techniques: !!techniqueIds?.length
         ? { createMany: { data: techniqueIds.map((techniqueId) => ({ techniqueId })) } }
         : undefined,
+      ingestion: skipIngestion ? ImageIngestionStatus.PendingManualAssignment : undefined,
     },
     select: { id: true },
   });
 
-  await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
-  await ingestImage({
-    image: {
-      id: result.id,
-      url: image.url,
-      type: image.type,
-      height: image.height,
-      width: image.width,
-      prompt: image?.meta?.prompt,
-    },
-  });
+  if (!skipIngestion) {
+    await upsertImageFlag({ imageId: result.id, prompt: image.meta?.prompt });
+    await ingestImage({
+      image: {
+        id: result.id,
+        url: image.url,
+        type: image.type,
+        height: image.height,
+        width: image.width,
+        prompt: image?.meta?.prompt,
+      },
+    });
+  }
 
   await userContentOverviewCache.bust(image.userId);
 
@@ -4259,7 +4263,10 @@ export async function getImageGenerationData({ id }: { id: number }) {
   };
 }
 
-export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => {
+export const getImageContestCollectionDetails = async ({
+  id,
+  userId,
+}: { userId?: number } & GetByIdInput) => {
   const items = await dbRead.collectionItem.findMany({
     where: {
       collection: {
@@ -4279,8 +4286,20 @@ export const getImageContestCollectionDetails = async ({ id }: GetByIdInput) => 
     },
   });
 
+  const permissions = await Promise.all(
+    items.map(async (item) => {
+      const permissions = await getUserCollectionPermissionsById({
+        id: item.collection.id as number,
+        userId,
+      });
+
+      return permissions;
+    })
+  );
+
   return items.map((i) => ({
     ...i,
+    permissions: permissions.find((p) => p.collectionId === i.collection.id),
     collection: {
       ...i.collection,
       metadata: (i.collection.metadata ?? {}) as CollectionMetadataSchema,

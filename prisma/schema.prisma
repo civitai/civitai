@@ -1234,6 +1234,7 @@ enum ImageIngestionStatus {
   Error
   Blocked
   NotFound
+  PendingManualAssignment
 }
 
 enum MediaType {

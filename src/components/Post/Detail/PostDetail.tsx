@@ -67,6 +67,7 @@ import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { Flags } from '~/shared/utils';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
 type Props = { postId: number };
 
@@ -86,15 +87,30 @@ export function PostDetailContent({ postId }: Props) {
   const { query } = useBrowserRouter();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
   const {
+    collectionItems = [],
+    permissions,
+    collection,
+  } = usePostContestCollectionDetails({ id: postId }, { enabled: !!post?.collectionId });
+
+  const collectionMetadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
+  const requiresCollectionJudgement =
+    collectionMetadata?.judgesApplyBrowsingLevel && permissions?.manage;
+
+  const {
     flatData: unfilteredImages,
     images,
     isLoading: imagesLoading,
-  } = useQueryImages({ postId, pending: true });
-  const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
-  const { collectionItems = [] } = usePostContestCollectionDetails(
-    { id: postId },
-    { enabled: !!post?.collectionId }
+  } = useQueryImages(
+    {
+      postId,
+      pending: true,
+    },
+    {
+      applyHiddenPreferences: !requiresCollectionJudgement,
+    }
   );
+
+  const { data: postResources = [] } = trpc.post.getResources.useQuery({ id: postId });
 
   const isOwnerOrMod = currentUser?.id === post?.user.id || currentUser?.isModerator;
 

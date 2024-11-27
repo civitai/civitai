@@ -437,7 +437,7 @@ export function ImageDetail2() {
                   <ImageDetailComments imageId={image.id} userId={image.user.id} />
                 </Card>
                 <ImageContestCollectionDetails
-                  imageId={image.id}
+                  image={image}
                   isOwner={image.user.id === currentUser?.id}
                   isModerator={currentUser?.isModerator}
                   userId={currentUser?.id}

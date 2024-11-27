@@ -30,6 +30,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import {
   GetByIdInput,
+  getByIdSchema,
   UserPreferencesInput,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
@@ -42,6 +43,7 @@ import {
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
@@ -49,7 +51,7 @@ import {
 } from '~/server/schema/collection.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { collectionsSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
@@ -955,6 +957,7 @@ export type CollectionItemExpanded = {
   id: number;
   status?: CollectionItemStatus;
   createdAt: Date | null;
+  scores?: { userId: number; score: number }[] | null;
 } & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
 export const getCollectionItemsByCollectionId = async ({
@@ -1034,6 +1037,17 @@ export const getCollectionItemsByCollectionId = async ({
       status: input.forReview,
       createdAt: true,
       randomId: true,
+      scores: input.forReview
+        ? {
+            select: {
+              userId: true,
+              score: true,
+            },
+            where: {
+              userId: user?.id,
+            },
+          }
+        : undefined,
     },
     where,
     orderBy,
@@ -2140,24 +2154,93 @@ export async function checkUserOwnsCollectionAndItem({
 }
 
 export const setItemScore = async ({
-  itemId,
-  collectionId,
+  collectionItemId,
   userId,
   score,
 }: SetItemScoreInput & { userId: number }) => {
-  const collection = await dbRead.collection.findUnique({
-    where: { id: collectionId },
-    select: { id: true, mode: true },
+  const collectionItem = await dbRead.collectionItem.findUnique({
+    where: { id: collectionItemId },
+    select: {
+      id: true,
+      collection: {
+        select: { id: true, mode: true },
+      },
+    },
   });
-  if (!collection) throw throwNotFoundError('Collection not found');
-  if (collection.mode !== CollectionMode.Contest)
+  if (!collectionItem) throw throwNotFoundError('Collection item not found');
+  if (!collectionItem.collection) throw throwNotFoundError('Collection not found');
+  if (collectionItem.collection.mode !== CollectionMode.Contest)
     throw throwBadRequestError('This collection is not a contest collection');
 
   const itemScore = await dbWrite.collectionItemScore.upsert({
-    where: { userId_collectionItemId: { userId, collectionItemId: itemId } },
-    create: { userId, collectionItemId: itemId, score },
+    where: { userId_collectionItemId: { userId, collectionItemId: collectionItem.id } },
+    create: { userId, collectionItemId: collectionItem.id, score },
     update: { score },
   });
 
   return itemScore;
+};
+
+export const getCollectionItemById = ({ id }: GetByIdInput) => {
+  return dbRead.collectionItem.findUniqueOrThrow({
+    where: { id },
+    include: {
+      collection: true,
+    },
+  });
+};
+
+export const setCollectionItemNsfwLevel = async ({
+  collectionItemId,
+  nsfwLevel,
+}: SetCollectionItemNsfwLevelInput) => {
+  const collectionItem = await getCollectionItemById({ id: collectionItemId });
+
+  if (!collectionItem) {
+    throw throwNotFoundError('Collection item not found');
+  }
+
+  if (collectionItem.collection.type !== CollectionType.Image || !collectionItem.imageId) {
+    throw throwBadRequestError(
+      'NSFW Level assignment support is only available on image collections.'
+    );
+  }
+
+  const metadata = (collectionItem.collection.metadata ?? {}) as CollectionMetadataSchema;
+
+  if (!metadata?.judgesApplyBrowsingLevel) {
+    throw throwBadRequestError('This collection does not support NSFW level assignment.');
+  }
+
+  const image = await dbRead.image.findUnique({
+    where: { id: collectionItem.imageId as number },
+    select: {
+      post: {
+        select: {
+          collectionId: true,
+        },
+      },
+    },
+  });
+
+  if (!image) {
+    throw throwNotFoundError('Image not found');
+  }
+
+  if (image.post?.collectionId !== collectionItem.collectionId) {
+    throw throwBadRequestError(
+      'The image you are trying to apply an NSFW level to was not created for this collection. NSFW level assignment is only available for images created for this collection.'
+    );
+  }
+
+  if (!nsfwLevel) throw throwBadRequestError();
+
+  await dbWrite.image.update({
+    where: { id: collectionItem.imageId as number },
+    data: { nsfwLevel, scannedAt: new Date(), ingestion: ImageIngestionStatus.Scanned },
+  });
+
+  await imagesSearchIndex.queueUpdate([
+    { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
 };

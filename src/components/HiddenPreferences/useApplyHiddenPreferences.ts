@@ -139,11 +139,19 @@ function filterPreferences<
     noImages: 0,
   };
 
-  if (!data || disabled || hiddenPreferences.hiddenLoading)
+  if (!data || hiddenPreferences.hiddenLoading)
     return {
       items: [],
       hidden,
     };
+
+  if (disabled) {
+    hidden.unprocessed = data.length;
+    return {
+      items: data,
+      hidden,
+    };
+  }
 
   const isModerator = !!currentUser?.isModerator;
   const { key, value } = paired<BaseDataTypeMap>(type, data);
