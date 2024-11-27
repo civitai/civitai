@@ -31,7 +31,7 @@ export const CollectionItemNSFWLevelSelector = ({
           onNsfwLevelUpdated?.(value);
         },
       }
-    );
+    ).catch(() => null);
   };
 
   if (loadingCollection) return null;

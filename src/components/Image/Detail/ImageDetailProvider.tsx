@@ -104,6 +104,7 @@ export function ImageDetailProvider({
           for (const item of page.items) {
             if (item.id === id) {
               Object.assign(item, data);
+              break;
             }
           }
       })

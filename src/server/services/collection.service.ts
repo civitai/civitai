@@ -2229,7 +2229,7 @@ export const setCollectionItemNsfwLevel = async ({
 
   if (image.post?.collectionId !== collectionItem.collectionId) {
     throw throwBadRequestError(
-      'Image you are trying to apply an NSFW level to was not created for this collection. NSFW level assignment is only available for images created for this collection.'
+      'The image you are trying to apply an NSFW level to was not created for this collection. NSFW level assignment is only available for images created for this collection.'
     );
   }
 
@@ -2240,7 +2240,7 @@ export const setCollectionItemNsfwLevel = async ({
     data: { nsfwLevel, scannedAt: new Date(), ingestion: ImageIngestionStatus.Scanned },
   });
 
-  await imagesSearchIndex.updateSync([
+  await imagesSearchIndex.queueUpdate([
     { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
 };

@@ -32,7 +32,7 @@ export function ContestCollectionItemScorer({
             });
         },
       }
-    );
+    ).catch(() => null);
   };
 
   if (layout === 'minimal') {
