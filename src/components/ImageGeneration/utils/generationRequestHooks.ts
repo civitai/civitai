@@ -76,8 +76,7 @@ export function useGetTextToImageRequests(
     { ...input, tags: [WORKFLOW_TAGS.GENERATION, ...tags] },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
-      enabled: !!currentUser,
-      ...options,
+      enabled: !!currentUser && options?.enabled,
     }
   );
 
