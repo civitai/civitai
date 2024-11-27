@@ -7,9 +7,9 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createMessage, upsertChat } from '~/server/services/chat.service';
 import { getUserById } from '~/server/services/user.service';
 import { ChatMessageType } from '@prisma/client';
-import data from './data.json';
+// import data from './data.json';
 
-const targetUsers: number[] = data;
+const targetUsers: number[] = [];
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const batches = chunk(targetUsers, 10000);
