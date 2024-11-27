@@ -1,5 +1,18 @@
-import { Alert, Button, Card, Grid, Group, Input, Paper, Stack, Title } from '@mantine/core';
-import { IconPencilMinus } from '@tabler/icons-react';
+import {
+  Alert,
+  Button,
+  Card,
+  Grid,
+  Group,
+  Input,
+  Paper,
+  Stack,
+  Title,
+  Text,
+  TextInput,
+  Popover,
+} from '@mantine/core';
+import { IconPencilMinus, IconInfoSquareRounded } from '@tabler/icons-react';
 import { z } from 'zod';
 
 import { useSession } from 'next-auth/react';
@@ -75,6 +88,42 @@ export function ProfileCard() {
           <Grid>
             <Grid.Col xs={12}>
               <InputText name="username" label="Name" required />
+            </Grid.Col>
+            <Grid.Col xs={12}>
+              <TextInput
+                value={currentUser?.email ?? ''}
+                label={
+                  <Group spacing="sm">
+                    <Text size="sm">Account Email</Text>
+                    <Popover width={300} withArrow withinPortal shadow="sm">
+                      <Popover.Target>
+                        <IconInfoSquareRounded
+                          size={16}
+                          style={{ cursor: 'pointer', opacity: 0.7 }}
+                        />
+                      </Popover.Target>
+                      <Popover.Dropdown>
+                        <Stack spacing="xs">
+                          <Text size="sm" weight={500}>
+                            What is this email?
+                          </Text>
+                          <Text size="xs" lh={1.3}>
+                            This is the email address associated with your account. You cannot edit
+                            it here.
+                          </Text>
+                          <Text size="xs" lh={1.3} color="dimmed">
+                            If you need to update this address, please contact support@civitai.com
+                          </Text>
+                        </Stack>
+                      </Popover.Dropdown>
+                    </Popover>
+                  </Group>
+                }
+                disabled
+                styles={{
+                  root: { flex: 1 },
+                }}
+              />
             </Grid.Col>
             <Grid.Col span={12}>
               <Button
