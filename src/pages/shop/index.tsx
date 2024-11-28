@@ -245,14 +245,10 @@ function ProductItem({
         )}
       </div>
       <div className="flex flex-col gap-2">
-        <Text size={28} weight="bold">
+        <Text size={22} weight="bold">
           {name}
         </Text>
-        {description && (
-          <Text size={24} color="dimmed">
-            {description}
-          </Text>
-        )}
+        {description && <Text size={16}>{description}</Text>}
       </div>
       <Button
         component="a"
