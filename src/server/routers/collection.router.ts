@@ -3,6 +3,7 @@ import {
   bulkSaveItemsHandler,
   collectionItemsInfiniteHandler,
   deleteUserCollectionHandler,
+  enableCollectionYoutubeSupportHandler,
   followHandler,
   getAllCollectionsInfiniteHandler,
   getAllUserCollectionsHandler,
@@ -23,6 +24,7 @@ import { GetByIdInput, getByIdSchema } from '~/server/schema/base.schema';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
+  enableCollectionYoutubeSupportInput,
   followCollectionInputSchema,
   getAllCollectionItemsSchema,
   getAllCollectionsInfiniteSchema,
@@ -146,12 +148,15 @@ export const collectionRouter = router({
     .input(setCollectionItemNsfwLevelInput)
     .use(isFlagProtected('collections'))
     .mutation(setCollectionItemNsfwLevelHandler),
-  getYoutubeLoginUrl: moderatorProcedure
+  getYoutubeAuthUrl: moderatorProcedure
     .input(getByIdSchema)
     .mutation(({ input }: { input: GetByIdInput }) => {
       return getYoutubeAuthUrl({
-        redirectUri: `/collections/${input.id}/youtube/callback`,
+        redirectUri: `/collections/youtube/auth`,
         collectionId: input.id,
       });
     }),
+  enableYoutubeSupport: moderatorProcedure
+    .input(enableCollectionYoutubeSupportInput)
+    .mutation(enableCollectionYoutubeSupportHandler),
 });

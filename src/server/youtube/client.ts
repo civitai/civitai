@@ -13,15 +13,19 @@ export const getYoutubeAuthUrl = ({
     throw new Error('Missing YouTube client ID or secret');
   }
 
+  console.log({
+    redirectUri: `${env.NEXT_PUBLIC_BASE_URL}${redirectUri}`,
+  });
+
   const oauth2Client = new OAuth2({
     clientId: env.YOUTUBE_APP_CLIENT_ID,
     clientSecret: env.YOUTUBE_APP_CLIENT_SECRET,
-    redirectUri: `${env.NEXT_PUBLIC_BASE_URL}/${redirectUri}`,
+    redirectUri: `${env.NEXT_PUBLIC_BASE_URL}${redirectUri}`,
   });
 
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
     scope: ['https://www.googleapis.com/auth/youtube.upload'],
-    state: JSON.stringify({ state }),
+    state: JSON.stringify(state),
   });
 };

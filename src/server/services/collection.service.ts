@@ -38,6 +38,7 @@ import {
   AddCollectionItemInput,
   BulkSaveCollectionItemsInput,
   CollectionMetadataSchema,
+  EnableCollectionYoutubeSupportInput,
   GetAllCollectionItemsSchema,
   GetAllCollectionsInfiniteSchema,
   GetAllUserCollectionsInputSchema,
@@ -2243,4 +2244,66 @@ export const setCollectionItemNsfwLevel = async ({
   await imagesSearchIndex.queueUpdate([
     { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
+};
+
+export const enableCollectionYoutubeSupport = async ({
+  collectionId,
+  userId,
+  authenticationCode,
+}: EnableCollectionYoutubeSupportInput & { userId: number }) => {
+  const user = await dbRead.user.findUnique({ where: { id: userId } });
+  if (!user?.isModerator) {
+    throw throwAuthorizationError('You do not have permission to enable youtube support');
+  }
+
+  const collection = await getCollectionById({ input: { id: collectionId } });
+
+  if (collection.mode !== CollectionMode.Contest) {
+    throw throwBadRequestError('Only contest collections can have youtube support enabled');
+  }
+
+  if (collection.type !== CollectionType.Image) {
+    throw throwBadRequestError('Only image collections can have youtube support enabled');
+  }
+
+  const metadata = collection.metadata as CollectionMetadataSchema;
+
+  if (metadata.youtubeSupportEnabled) {
+    throw throwBadRequestError('Youtube support is already enabled for this collection');
+  }
+
+  // Attempt to save the auth code on the key-value store.
+  const collectionKey = `collection:${collectionId}:youtube-authentication-code`;
+  try {
+    await dbWrite.$transaction(async (tx) => {
+      await tx.keyValue.upsert({
+        where: {
+          key: collectionKey,
+        },
+        update: {
+          value: authenticationCode,
+        },
+        create: {
+          key: collectionKey,
+          value: authenticationCode,
+        },
+      });
+
+      await tx.collection.update({
+        where: {
+          id: collection.id,
+        },
+        data: {
+          metadata: {
+            ...metadata,
+            youtubeSupportEnabled: true,
+          },
+        },
+      });
+    });
+
+    return { collectionId, youtubeSupportEnabled: true };
+  } catch (error) {
+    throw throwBadRequestError('Failed to save youtube authentication code');
+  }
 };
