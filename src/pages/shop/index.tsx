@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import { IconBell, IconBellOff, IconPencilMinus } from '@tabler/icons-react';
 import { useState } from 'react';
+import { isEmpty } from 'lodash-es';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { env } from '~/env/client.mjs';
@@ -24,13 +25,15 @@ import {
 import { CosmeticShopSectionMeta, GetShopInput } from '~/server/schema/cosmetic-shop.schema';
 import { openUserProfileEditModal } from '~/components/Modals/UserProfileEditModal';
 import { ShopFiltersDropdown } from '~/components/CosmeticShop/ShopFiltersDropdown';
-import { useDebouncedValue } from '@mantine/hooks';
+import { useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { useEffect } from 'react';
 import { NotificationToggle } from '~/components/Notifications/NotificationToggle';
 import { ShopItem } from '~/components/Shop/ShopItem';
 import { ShopSection } from '~/components/Shop/ShopSection';
 import Image from 'next/image';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
+
+import merchProducts from '~/utils/civitai-merch-producst.json';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -113,7 +116,7 @@ export default function CosmeticShopMain() {
           <div className="ml-auto">
             <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </div>
-          {/* {isEmpty(filters) && <ArtistShowcaseSection />} */}
+          {isEmpty(filters) && <MerchShowcaseSection />}
           {isLoading ? (
             <Center p="xl">
               <Loader />
@@ -155,61 +158,31 @@ export default function CosmeticShopMain() {
   );
 }
 
-const showcaseProducts = [
-  {
-    name: 'Digital Feline I',
-    description: '',
-    price: 3000,
-    imageUrl: '/images/shop/civitai-air/digital-feline-i.png',
-    hoverImageUrl: '/images/shop/civitai-air/digital-feline-i-alt.png',
-    url: 'https://shop.civitai.com/products/digital-feline-i',
-  },
-  {
-    name: 'Digital Feline II',
-    description: '',
-    price: 3000,
-    imageUrl: '/images/shop/civitai-air/digital-feline-ii.png',
-    hoverImageUrl: '/images/shop/civitai-air/digital-feline-ii-alt.png',
-    url: 'https://shop.civitai.com/products/digital-felines-ii',
-  },
-  {
-    name: 'Digital Feline III',
-    description: '',
-    price: 3000,
-    imageUrl: '/images/shop/civitai-air/digital-feline-iii.png',
-    hoverImageUrl: '/images/shop/civitai-air/digital-feline-iii-alt.png',
-    url: 'https://shop.civitai.com/products/digital-feline-iii',
-  },
-  {
-    name: 'Digital Feline IV',
-    description: '',
-    price: 3000,
-    imageUrl: '/images/shop/civitai-air/digital-feline-iv.png',
-    hoverImageUrl: '/images/shop/civitai-air/digital-feline-iv-alt.png',
-    url: 'https://shop.civitai.com/products/digital-feline-iv',
-  },
-];
+function MerchShowcaseSection() {
+  const [opened, { open, close }] = useDisclosure();
+  const displayedItems = merchProducts.slice(0, 6);
+  const collapsedItems = merchProducts.slice(6);
 
-function ArtistShowcaseSection() {
   return (
     <section className="flex flex-col gap-8">
       <div className="hidden w-full overflow-hidden rounded-[20px] md:block">
         <Image
-          src="/images/shop/civitai-air/anne-horel-banner.png"
-          width={2400}
-          height={800}
+          src="/images/shop/civitai-merch/civitai-merch-banner.png"
+          width={2040}
+          height={392}
           alt="banner depicting several AI generated picture from artist Anne Horel"
         />
       </div>
-      <div className="block w-full overflow-hidden rounded-[20px] md:hidden">
+      <div className="block h-44 w-full overflow-hidden rounded-[20px] md:hidden">
         <Image
-          src="/images/shop/civitai-air/anne-horel-mobile.png"
-          width={1087}
-          height={960}
+          src="/images/shop/civitai-merch/civitai-merch-banner.png"
+          className="h-full object-cover object-center"
+          width={2040}
+          height={392}
           alt="banner depicting several AI generated picture from artist Anne Horel"
         />
       </div>
-      <div className="flex flex-col lg:px-11">
+      {/* <div className="flex flex-col lg:px-11">
         <Text size={32} weight={600}>
           The backstory
         </Text>
@@ -218,54 +191,82 @@ function ArtistShowcaseSection() {
           featuring her AI generated masks. Part of her upcoming exhibition at Julie Caredda Gallery
           in Paris, each unique design is limited to an edition of 25.
         </Text>
-      </div>
+      </div> */}
       <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-10 lg:px-11">
-        {showcaseProducts.map((product) => (
-          <div
-            key={product.imageUrl}
-            className="flex flex-col items-center justify-center gap-6 rounded-[20px] bg-[#2F2F2F] p-6"
-          >
-            <div className="relative">
-              <Image
-                src={product.imageUrl}
-                alt="t-shirt with an AI generated face of a cat"
-                width={598}
-                height={560}
-              />
-              <div className="absolute left-0 top-0 opacity-0 transition-opacity duration-300 hover:opacity-100">
-                <Image
-                  src={product.hoverImageUrl}
-                  alt="t-shirt with an AI generated face of a cat"
-                  width={598}
-                  height={560}
-                />
-              </div>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Text size={28} weight="bold">
-                {product.name}
-              </Text>
-              {product.description && (
-                <Text size={24} color="dimmed">
-                  {product.description}
-                </Text>
-              )}
-            </div>
-            <Button
-              component="a"
-              href={product.url}
-              rel="nofollow noreferrer"
-              size="xl"
-              target="_blank"
-              color="dark.4"
-              radius="xl"
-              fullWidth
-            >
-              ${formatPriceForDisplay(product.price)} - Buy Now
-            </Button>
-          </div>
+        {displayedItems.map((product) => (
+          <ProductItem key={product.imageUrl} {...product} />
         ))}
+        {opened
+          ? collapsedItems.map((product) => <ProductItem key={product.imageUrl} {...product} />)
+          : null}
       </div>
+      {collapsedItems.length > 0 && (
+        <Button
+          onClick={opened ? close : open}
+          size="xl"
+          color="dark.4"
+          radius="xl"
+          fullWidth
+          className="mt-auto"
+        >
+          {opened ? 'Show Less' : `View all (${collapsedItems.length} more)`}
+        </Button>
+      )}
     </section>
+  );
+}
+
+function ProductItem({
+  name,
+  description,
+  imageUrl,
+  hoverImageUrl,
+  price,
+  url,
+}: (typeof merchProducts)[number]) {
+  return (
+    <div key={imageUrl} className="flex flex-col gap-6 rounded-[20px] bg-[#2F2F2F] p-6">
+      <div className="relative overflow-hidden rounded-lg">
+        <Image
+          src={imageUrl}
+          alt="t-shirt with an AI generated face of a cat"
+          width={1000}
+          height={1000}
+        />
+        {hoverImageUrl && (
+          <div className="absolute left-0 top-0 opacity-0 transition-opacity duration-300 hover:opacity-100">
+            <Image
+              src={hoverImageUrl}
+              alt="t-shirt with an AI generated face of a cat"
+              width={1000}
+              height={1000}
+            />
+          </div>
+        )}
+      </div>
+      <div className="flex flex-col gap-2">
+        <Text size={28} weight="bold">
+          {name}
+        </Text>
+        {description && (
+          <Text size={24} color="dimmed">
+            {description}
+          </Text>
+        )}
+      </div>
+      <Button
+        component="a"
+        className="mt-auto"
+        href={url}
+        rel="nofollow noreferrer"
+        size="xl"
+        target="_blank"
+        color="dark.4"
+        radius="xl"
+        fullWidth
+      >
+        ${formatPriceForDisplay(price)} - Buy Now
+      </Button>
+    </div>
   );
 }
