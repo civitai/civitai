@@ -3,10 +3,10 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 export const dailyChallengeConfig = {
   collectionId: 2930699,
-  challengeRunnerUserId: 6235605,
-  challengeCollectionId: 6236625,
-  judgedTagId: 299729,
-  reviewMeTagId: 301770,
+  challengeRunnerUserId: 18085, // 6235605,
+  challengeCollectionId: 294768, // 6236625,
+  judgedTagId: 128643, // 299729,
+  reviewMeTagId: 128643, // 301770,
   cooldownPeriod: '7 day',
   prizes: [
     { buzz: 5000, points: 150 },
@@ -18,6 +18,7 @@ export const dailyChallengeConfig = {
   reviewAmount: { min: 8, max: 12 },
   finalReviewAmount: 10,
   resourceCosmeticId: null,
+  articleTagId: 128643, // Announcement.
 };
 
 export type Prize = {

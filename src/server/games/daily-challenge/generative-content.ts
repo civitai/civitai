@@ -138,25 +138,27 @@ export async function generateArticle({
     ${config.prizes
       .map(
         (prize, i) =>
-          `- **${asOrdinal(i + 1)}**: ${numberWithCommas(prize.buzz)} Buzz, ${
-            prize.points
-          } Challenge Points`
+          `- **${asOrdinal(i + 1)}**: <span style="color:#fab005">${numberWithCommas(
+            prize.buzz
+          )} Buzz</span>, ${prize.points} Challenge Points`
       )
       .join('\n')}
 
     Winners will be announced at 12am UTC in this article and notified via on-site notification.
 
     **Full participants will receive**:
-    - ${config.entryPrize.buzz} Buzz, ${config.entryPrize.points} Challenge Points
+    - <span style="color:#228be6">${config.entryPrize.buzz} Buzz</span>, ${
+    config.entryPrize.points
+  } Challenge Points
 
-    To be considered a full participant, you must **submit at least ${
+    To be considered a full participant, you must **submit ${
       config.entryPrizeRequirement
     } entries**.
 
 
     ## 📝 How to Enter
-    Simply follow the [image collection](/collections/${collectionId}) by clicking the blue +Follow button on the [collection page](/collections/${collectionId}).
-    You'll then be able to click the blue plus ( + ) sign, to upload your submissions to the Contest collection.
+    Simply head to the [image collection](/collections/${collectionId}) then click the blue **Submit an Entry** button!
+
 
     ### 👉 [Submit Entries](/collections/${collectionId}) 👈
 
