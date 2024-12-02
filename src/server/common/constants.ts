@@ -1041,3 +1041,5 @@ export const banReasonDetails: Record<
     privateBanReasonLabel: 'Other',
   },
 };
+
+export const HOLIDAY_PROMO_VALUE = 0.2;
