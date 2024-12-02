@@ -62,12 +62,12 @@ export function useCreateAdFeed() {
 type AdDensity = [columns: number, interval: [min: number, max: number]];
 const adDensity: AdDensity[] = [
   [1, [5, 7]],
-  [2, [6, 9]],
-  [3, [7, 10]],
-  [4, [7, 11]],
-  [5, [8, 12]],
-  [6, [9, 14]],
-  [7, [10, 16]],
+  [2, [5, 7]],
+  [3, [5, 8]],
+  [4, [5, 9]],
+  [5, [6, 11]],
+  [6, [7, 12]],
+  [7, [8, 12]],
 ];
 
 export const supportUsImageSizes = [
