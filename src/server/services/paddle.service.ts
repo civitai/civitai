@@ -53,6 +53,7 @@ import dayjs from 'dayjs';
 import { original } from 'immer';
 import { logToAxiom } from '~/server/logging/client';
 import { PaginationInput } from '~/server/schema/base.schema';
+import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -564,13 +565,13 @@ export const manageSubscriptionTransactionComplete = async (
           });
 
           const date = dayjs().subtract(12, 'hours'); // Subtract 12 hrs to ensure that we cover for all timezones.. Max UTC is -12.
-          if (date.month() === 11 && date.year() === 2024) {
+          if (date.month() === 11) {
             await createBuzzTransaction({
               fromAccountId: 0,
               toAccountId: user.id,
               type: TransactionType.Purchase,
               externalTransactionId: `christmas-2024: ${externalTransactionId}`,
-              amount: Math.floor((meta.monthlyBuzz ?? 3000) * 0.2), // assume a min of 3000.
+              amount: Math.floor((meta.monthlyBuzz ?? 3000) * HOLIDAY_PROMO_VALUE), // assume a min of 3000.
               description: `20% additional Blue Buzz for being a member! Happy Holidays from Civitai`,
               toAccountType: 'generation',
               details: {
