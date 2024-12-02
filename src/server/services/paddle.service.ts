@@ -565,12 +565,12 @@ export const manageSubscriptionTransactionComplete = async (
           });
 
           const date = dayjs().subtract(12, 'hours'); // Subtract 12 hrs to ensure that we cover for all timezones.. Max UTC is -12.
-          if (date.month() === 11) {
+          if (date.month() === 11 && (meta.monthlyBuzz ?? 3000) > 0) {
             await createBuzzTransaction({
               fromAccountId: 0,
               toAccountId: user.id,
               type: TransactionType.Purchase,
-              externalTransactionId: `christmas-2024: ${externalTransactionId}`,
+              externalTransactionId: `christmas-2024:${externalTransactionId}`,
               amount: Math.floor((meta.monthlyBuzz ?? 3000) * HOLIDAY_PROMO_VALUE), // assume a min of 3000.
               description: `20% additional Blue Buzz for being a member! Happy Holidays from Civitai`,
               toAccountType: 'generation',
