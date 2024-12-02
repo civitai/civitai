@@ -610,7 +610,26 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
   });
 
   if (!subscription) {
-    throw throwNotFoundError('No active subscription found');
+    // Attempt to cancel the subscription on Paddle
+    const user = await dbRead.user.findUnique({ where: { id: userId } });
+
+    if (!user?.paddleCustomerId) {
+      return;
+    }
+
+    const customerSubscriptions = await getPaddleCustomerSubscriptions({
+      customerId: user?.paddleCustomerId,
+    });
+
+    if (customerSubscriptions.length === 0) {
+      throw throwNotFoundError('No active subscription found');
+    }
+
+    await Promise.all(
+      customerSubscriptions.map((sub) => cancelPaddleSubscription(sub.id, 'immediately'))
+    );
+
+    return;
   }
 
   const paddleSubscription = await getPaddleSubscription({ subscriptionId: subscription.id });
