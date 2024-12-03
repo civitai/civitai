@@ -217,6 +217,10 @@ export function GenerationFormContent() {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
       }
+    } else {
+      delete params.fluxMode;
+      delete params.engine;
+      delete params.fluxUltraAspectRatio;
     }
     const isSD3 = getIsSD3(params.baseModel);
     if (isSD3) {
