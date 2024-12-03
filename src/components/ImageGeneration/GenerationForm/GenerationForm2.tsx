@@ -218,9 +218,10 @@ export function GenerationFormContent() {
         modelClone.id = version;
       }
     } else {
-      delete params.fluxMode;
-      delete params.engine;
-      delete params.fluxUltraAspectRatio;
+      const keys = ['fluxMode', 'engine', 'fluxUltraAspectRatio'];
+      for (const key in params) {
+        if (keys.includes(key)) delete params[key as keyof typeof params];
+      }
     }
     const isSD3 = getIsSD3(params.baseModel);
     if (isSD3) {
