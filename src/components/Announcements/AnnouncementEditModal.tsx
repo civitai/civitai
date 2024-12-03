@@ -1,5 +1,6 @@
 import { Button, ColorSwatch, MantineColor, Modal, useMantineTheme } from '@mantine/core';
-import { forwardRef } from 'react';
+import dayjs from 'dayjs';
+import { forwardRef, useRef } from 'react';
 import { z } from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import {
@@ -20,7 +21,7 @@ const schema = z.object({
   content: z.string(),
   color: z.string(),
   startsAt: z.date(),
-  endsAt: z.date(),
+  endsAt: z.date().nullish(),
   image: z.string().optional(),
   disabled: z.boolean().optional(),
   linkText: z.string().optional(),
@@ -37,16 +38,17 @@ export function AnnouncementEditModal({
   const startsAt = announcement?.startsAt ?? new Date();
   const date = new Date(startsAt);
   if (!announcement?.endsAt) date.setDate(startsAt.getDate() + 1);
-  const endsAt = announcement?.endsAt ?? date;
+  const endsAt = announcement?.endsAt;
   const action = announcement?.metadata?.actions?.[0];
   const queryUtils = trpc.useUtils();
+  const startsAtRef = useRef<Date | null>(null);
 
   const form = useForm({
     schema,
     defaultValues: {
       ...announcement,
-      startsAt: startOfDay(dateWithoutTimezone(startsAt)),
-      endsAt: startOfDay(dateWithoutTimezone(endsAt)),
+      startsAt: startsAt,
+      endsAt: endsAt ? startOfDay(dateWithoutTimezone(endsAt)) : null,
       image: announcement?.metadata?.image,
       linkText: action?.linkText,
       linkUrl: action?.link,
@@ -63,12 +65,16 @@ export function AnnouncementEditModal({
   });
 
   function handleSubmit(data: z.infer<typeof schema>) {
+    const startsAtUtc = dayjs.utc(data.startsAt).toDate();
+    const isToday = startsAtUtc.toDateString() === new Date().toDateString();
     mutate({
       ...announcement,
       ...data,
       title: data.title.trim(),
       content: data.content.trim(),
-      startsAt: startOfDay(data.startsAt, { utc: true }),
+      startsAt: isToday
+        ? startsAtRef.current ?? startsAtUtc
+        : startOfDay(data.startsAt, { utc: true }),
       endsAt: endOfDay(data.endsAt, { utc: true }),
       metadata: {
         actions:
@@ -99,7 +105,13 @@ export function AnnouncementEditModal({
         </div>
 
         <div className="grid grid-cols-1 gap-3 @sm:grid-cols-2">
-          <InputDatePicker name="startsAt" label="Starts At" />
+          <InputDatePicker
+            name="startsAt"
+            label="Starts At"
+            onChange={(value) => {
+              startsAtRef.current = value ? new Date() : null;
+            }}
+          />
           <InputDatePicker name="endsAt" label="Ends At" />
         </div>
 

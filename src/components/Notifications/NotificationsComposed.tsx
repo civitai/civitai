@@ -60,18 +60,15 @@ export const NotificationsComposed = forwardRef<HTMLDivElement, { onClose?: () =
     const announcements = useGetAnnouncementsAsNotifications({ hideRead });
     const notifications = useMemo(() => {
       return !selectedTab
-        ? [...announcements, ...data].sort(
-            (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-          )
+        ? data.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
         : data;
-    }, [data, selectedTab, announcements]);
+    }, [data, selectedTab]);
 
     const readNotificationMutation = useMarkReadNotification();
     const categoryName = !selectedTab ? 'all' : getCategoryDisplayName(selectedTab);
 
     function handleMarkAsRead() {
-      if (!selectedTab || selectedTab === 'announcements')
-        dismissAnnouncements(announcements.map((x) => x.id));
+      if (selectedTab === 'announcements') dismissAnnouncements(announcements.map((x) => x.id));
       if (selectedTab !== 'announcements')
         readNotificationMutation.mutate({
           all: true,
