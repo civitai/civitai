@@ -60,7 +60,9 @@ export function useMasonryColumns<TData>(
             },
             item.data
           ) ?? ratioHeight;
-        height = maxItemHeight ? Math.min(adjustedHeight, maxItemHeight) : adjustedHeight;
+        height = Math.floor(
+          maxItemHeight ? Math.min(adjustedHeight, maxItemHeight) : adjustedHeight
+        );
       }
 
       // look for the shortest column on each iteration
