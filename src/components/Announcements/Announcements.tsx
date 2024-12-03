@@ -5,6 +5,7 @@ import {
 import React, { useEffect, useMemo } from 'react';
 import { Announcement } from '~/components/Announcements/Announcement';
 import { trpc } from '~/utils/trpc';
+import { Carousel } from '@mantine/carousel';
 
 export function Announcements() {
   const { data } = trpc.announcement.getAnnouncements.useQuery();
@@ -40,10 +41,14 @@ export function Announcements() {
   return (
     // Required custom class to apply certain styles based on peer elements
     // eslint-disable-next-line tailwindcss/no-custom-classname
-    <div className="announcements peer mb-3">
-      <div className="container">
-        <Announcement announcement={announcements[0]} />
-      </div>
+    <div className="announcements peer container mb-3">
+      <Carousel withIndicators={announcements.length > 1} withControls={false} slideGap="md">
+        {announcements.map((announcement) => (
+          <Carousel.Slide key={announcement.id}>
+            <Announcement announcement={announcement} className="h-full" />
+          </Carousel.Slide>
+        ))}
+      </Carousel>
     </div>
   );
 }
