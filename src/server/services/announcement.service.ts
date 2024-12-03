@@ -41,7 +41,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
       metadata: true,
       emoji: true,
     },
-    orderBy: { id: 'desc' },
+    orderBy: { startsAt: { sort: 'desc', nulls: 'last' } },
   });
 
   const count = await dbRead.announcement.count();
@@ -112,7 +112,7 @@ async function getAnnouncements() {
       emoji: true,
       metadata: true,
     },
-    orderBy: { endsAt: 'asc' },
+    orderBy: { startsAt: { sort: 'desc', nulls: 'last' } },
   });
 
   return announcements.map(({ createdAt, metadata, startsAt, ...x }) => ({
@@ -122,45 +122,3 @@ async function getAnnouncements() {
     metadata: (metadata ?? {}) as AnnouncementMetaSchema,
   }));
 }
-// export const announcementsCache = createCachedArray({
-//   key: REDIS_KEYS.CACHES.ANNOUNCEMENTS,
-//   idKey: 'id',
-//   lookupFn: async () => {
-//     const now = new Date();
-//     const announcements = await dbRead.announcement.findMany({
-//       where: {
-//         AND: [
-//           {
-//             OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
-//           },
-//           {
-//             OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
-//           },
-//         ],
-//       },
-//       select: {
-//         createdAt: true,
-//         startsAt: true,
-//         endsAt: true,
-//         id: true,
-//         title: true,
-//         content: true,
-//         color: true,
-//         emoji: true,
-//         metadata: true,
-//       },
-//     });
-
-//     return Object.fromEntries(
-//       announcements.map(({ createdAt, metadata, startsAt, ...x }) => [
-//         x.id,
-//         {
-//           ...x,
-//           startsAt: startsAt ?? createdAt,
-//           metadata: (metadata ?? {}) as AnnouncementMetaSchema,
-//         },
-//       ])
-//     );
-//   },
-//   ttl: CacheTTL.day,
-// });
