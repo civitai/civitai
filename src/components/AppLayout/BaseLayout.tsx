@@ -5,7 +5,6 @@ import { GenerationSidebar } from '~/components/ImageGeneration/GenerationSideba
 import { MetaPWA } from '~/components/Meta/MetaPWA';
 import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsClient } from '~/providers/IsClientProvider';
 import { Flags } from '~/shared/utils';
 
 const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
@@ -41,7 +40,6 @@ export function BaseLayout({ children }: { children: React.ReactNode }) {
           )}
         </ContainerProvider>
       </div>
-      {/* <div className="h-[100px] w-full bg-red-300"></div> */}
     </>
   );
 }

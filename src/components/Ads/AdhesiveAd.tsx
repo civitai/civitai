@@ -49,7 +49,7 @@ function AdhesiveAdContent({
 
   return (
     <AdUnitRenderable hideOnBlocked>
-      <div className="relative border-t border-gray-3 dark:border-dark-4">
+      <div className="relative border-t border-gray-3 bg-gray-2 dark:border-dark-4 dark:bg-dark-9">
         <AdUnitAdhesive maxHeight={90} preserveLayout={preserveLayout} />
         {canClose && onClose && (
           <button
