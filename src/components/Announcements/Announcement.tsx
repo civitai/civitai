@@ -73,21 +73,21 @@ export function Announcement({
           {actions && (
             <div className="flex gap-2">
               {actions.map((action, index) => (
-                <Link key={index} href={action.link} passHref>
-                  <Button
-                    component="a"
-                    variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
-                    color={action.color ?? announcement.color}
-                    // onClick={handleDismiss}
-                    // onMouseUp={(e) => {
-                    //   if (e.button === 1) {
-                    //     handleDismiss();
-                    //   }
-                    // }}
-                  >
-                    {action.linkText}
-                  </Button>
-                </Link>
+                <Button
+                  key={index}
+                  component={Link}
+                  href={action.link}
+                  variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
+                  color={action.color ?? announcement.color}
+                  // onClick={handleDismiss}
+                  // onMouseUp={(e) => {
+                  //   if (e.button === 1) {
+                  //     handleDismiss();
+                  //   }
+                  // }}
+                >
+                  {action.linkText}
+                </Button>
               ))}
             </div>
           )}

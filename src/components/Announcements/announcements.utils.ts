@@ -22,7 +22,14 @@ export function dismissAnnouncements(ids: number | number[]) {
 
 export function useGetAnnouncements() {
   const dismissed = useAnnouncementsStore((state) => state.dismissed);
-  const { data, ...rest } = trpc.announcement.getAnnouncements.useQuery();
+  const { data, ...rest } = trpc.announcement.getAnnouncements.useQuery(undefined, {
+    onSettled: (data) => {
+      if (!data?.length) return;
+      const announcementIds = data.map((x) => x.id);
+      const newDismissed = dismissed.filter((dismissedId) => announcementIds.includes(dismissedId));
+      useAnnouncementsStore.setState({ dismissed: newDismissed });
+    },
+  });
 
   const announcements = useMemo(
     () =>
