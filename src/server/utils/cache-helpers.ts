@@ -185,7 +185,8 @@ export type CachedArray<T extends object> = ReturnType<typeof createCachedArray<
 export function createCachedObject<T extends object>(lookupOptions: CachedLookupOptions<T>) {
   const cachedArray = createCachedArray<T>(lookupOptions);
 
-  async function fetch(ids: number[]) {
+  async function fetch(ids: number | number[]) {
+    if (!Array.isArray(ids)) ids = [ids];
     const results = await cachedArray.fetch(ids);
     return Object.fromEntries(
       results.map((x) => [(x[lookupOptions.idKey] as number | string).toString(), x])

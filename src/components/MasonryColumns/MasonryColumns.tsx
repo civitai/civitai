@@ -1,6 +1,5 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { createStyles } from '@mantine/core';
 import React from 'react';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
@@ -9,7 +8,7 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
 
@@ -73,11 +72,11 @@ export function MasonryColumns<TData>({
                   />
                 )}
                 {data.type === 'ad' && (
-                  <AdUnit className="justify-center" keys={[data.data.key]} withFeedback>
-                    <TwCard className="border p-2 shadow">
-                      <AdUnit.Content />
+                  <AdUnitRenderable>
+                    <TwCard className="w-full items-center justify-center shadow">
+                      <data.data.AdUnit />
                     </TwCard>
-                  </AdUnit>
+                  </AdUnitRenderable>
                 )}
               </React.Fragment>
             );

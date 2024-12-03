@@ -206,19 +206,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
     </Stack>
   );
 
-  // const ref = useResizeObserver<HTMLDivElement>((entry) => {
-  //   const children = [...entry.target.childNodes] as HTMLElement[];
-  //   for (const child of children) {
-  //     const elementStyle = getComputedStyle(child);
-  //     const paddingTop = parseFloat(elementStyle.paddingTop ?? '0');
-  //     const paddingBottom = parseFloat(elementStyle.paddingBottom ?? '0');
-
-  //     const height = child.clientHeight - paddingTop - paddingBottom;
-  //     if (height === 0) child.style.visibility = 'hidden';
-  //     else child.style.removeProperty('visibility');
-  //   }
-  // });
-
   const useGrid =
     metadata.description &&
     !metadata.stackedHeader &&

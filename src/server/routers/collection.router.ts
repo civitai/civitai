@@ -11,6 +11,7 @@ import {
   getUserCollectionItemsByItemHandler,
   removeCollectionItemHandler,
   saveItemHandler,
+  setCollectionItemNsfwLevelHandler,
   setItemScoreHandler,
   unfollowHandler,
   updateCollectionCoverImageHandler,
@@ -30,6 +31,7 @@ import {
   getUserCollectionItemsByItemSchema,
   removeCollectionItemInput,
   saveCollectionItemInputSchema,
+  setCollectionItemNsfwLevelInput,
   setItemScoreInput,
   updateCollectionCoverImageInput,
   updateCollectionItemsStatusInput,
@@ -138,4 +140,8 @@ export const collectionRouter = router({
     .input(setItemScoreInput)
     .use(isFlagProtected('collections'))
     .mutation(setItemScoreHandler),
+  updateCollectionItemNSFWLevel: guardedProcedure
+    .input(setCollectionItemNsfwLevelInput)
+    .use(isFlagProtected('collections'))
+    .mutation(setCollectionItemNsfwLevelHandler),
 });

@@ -151,6 +151,9 @@ export const REDIS_KEYS = {
     COUNT: 'download:count',
     LIMITS: 'download:limits',
   },
+  USER: {
+    SESSION: 'session:data2',
+  },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
     RESOURCE_DATA: 'packed:generation:resource-data',
@@ -226,5 +229,8 @@ export const REDIS_KEYS = {
   LIVE_NOW: 'live-now',
   INDEXES: {
     IMAGE_DELETED: 'indexes:image-deleted',
+  },
+  DAILY_CHALLENGE: {
+    DETAILS: 'daily-challenge:details',
   },
 } as const;

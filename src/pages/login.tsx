@@ -45,11 +45,10 @@ export default function Login() {
     { userReferralCode: code as string },
     { enabled: !!code }
   );
-  const [providers, setProviders] = useState<NextAuthProviders | null>(null);
   const observedReason = useRef<string | null>(null);
   const { trackAction } = useTrackEvent();
+  const [providers, setProviders] = useState<NextAuthProviders | null>(null);
   useEffect(() => {
-    console.log(providers);
     if (!providers) getProviders().then((providers) => setProviders(providers));
   }, []);
 

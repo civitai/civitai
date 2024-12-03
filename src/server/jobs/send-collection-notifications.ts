@@ -3,6 +3,7 @@ import { dbRead } from '~/server/db/client';
 import { createJob, getJobDate } from './job';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
+import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 
 const CUTOFF_DATE = '2024-09-25';
 
@@ -19,11 +20,12 @@ export const sendCollectionNotifications = createJob(
     const updatedCollections = await dbRead.$queryRaw<
       { id: number; name: string; users: number[] }[]
     >`
-      SELECT DISTINCT(ci."collectionId") "id", c.name, array_agg(cc."userId") "users" FROM "CollectionItem" ci 
-      JOIN "Collection" c ON ci."collectionId" = c.id 
+      SELECT DISTINCT(ci."collectionId") "id", c.name, array_agg(cc."userId") "users" FROM "CollectionItem" ci
+      JOIN "Collection" c ON ci."collectionId" = c.id
       JOIN "CollectionContributor" cc ON c.id = cc."collectionId" AND cc."userId" != c."userId"
-      WHERE ci."createdAt" >= ${lastRun} 
+      WHERE ci."createdAt" >= ${lastRun}
         AND ci."status" = 'ACCEPTED'
+        AND c."userId" != ${dailyChallengeConfig.challengeRunnerUserId}
       GROUP BY ci."collectionId", c.name
     `;
 

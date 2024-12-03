@@ -73,7 +73,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { redis } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { SessionUser } from 'next-auth';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import {
@@ -681,7 +681,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   // Get from cache
   // ----------------------------------
-  const cacheKey = `session:data:${userId}`;
+  const cacheKey = `${REDIS_KEYS.USER.SESSION}:${userId}`;
   const cachedResult = await redis.packed.get<SessionUser | null>(cacheKey);
   if (cachedResult && !('clearedAt' in cachedResult)) return cachedResult;
 
@@ -717,7 +717,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   // nb: doing this because these fields are technically nullable, but prisma
   // likes returning them as undefined. that messes with the typing.
-  const userMeta = (response.meta ?? {}) as UserMeta;
+  const { banDetails, ...userMeta } = (response.meta ?? {}) as UserMeta;
 
   const user = {
     ...response,
@@ -737,10 +737,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
     autoplayGifs: response.autoplayGifs ?? undefined,
     leaderboardShowcase: response.leaderboardShowcase ?? undefined,
     filePreferences: (response.filePreferences ?? undefined) as UserFilePreferences | undefined,
-    meta: {
-      ...userMeta,
-      banDetails: undefined,
-    },
+    meta: userMeta,
     banDetails: getUserBanDetails({ meta: userMeta }),
   };
 

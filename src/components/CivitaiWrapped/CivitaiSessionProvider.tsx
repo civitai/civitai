@@ -61,6 +61,10 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     if (data?.error === 'RefreshAccessTokenError') signIn();
   }, [data?.error]);
 
+  if (typeof window !== 'undefined') {
+    window.isAuthed = sessionUser.type === 'authed';
+  }
+
   useEffect(() => {
     deleteCookie('level');
     deleteCookie('blur');

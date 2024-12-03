@@ -39,7 +39,7 @@ import { getInitials } from '~/utils/string-helpers';
 import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import { showErrorNotification } from '~/utils/notifications';
 import { getLoginLink } from '~/utils/login-helpers';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { LinkProps } from 'next/link';
@@ -48,52 +48,30 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { create } from 'zustand';
 import { useHotkeys } from '@mantine/hooks';
 import { Burger } from '~/components/AppLayout/AppHeader/Burger';
+import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 
-const useMenuStore = create<{
-  open: boolean;
-  accountSwitching: boolean;
-  lastClosed: number;
-  toggle: () => void;
-}>((set) => ({
-  open: false,
-  accountSwitching: false,
-  lastClosed: Date.now(),
-  toggle: () => {
-    set((state) => {
-      if (state.open) {
-        return { lastClosed: Date.now(), open: false, accountSwitching: false };
-      } else if (state.lastClosed + 150 < Date.now()) {
-        return { open: true };
-      } else return {};
-    });
-  },
-}));
-
-function handleClose() {
-  useMenuStore.setState({ open: false, lastClosed: Date.now(), accountSwitching: false });
+const UserMenuCtx = createContext<{ handleClose: () => void }>({ handleClose: () => undefined });
+function useUserMenuContext() {
+  return useContext(UserMenuCtx);
 }
 
 export function UserMenu() {
-  const open = useMenuStore((state) => state.open);
-
-  const toggle = useMenuStore((state) => state.toggle);
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const creator = useGetCreator();
   const isMobile = useIsMobile({ breakpoint: 'md' });
+  const [open, setOpen] = useState(false);
 
   return (
-    <Popover
-      width={isMobile ? '100%' : 260}
-      position="bottom-end"
-      opened={open}
-      closeOnClickOutside={false}
-    >
+    <Popover width={isMobile ? '100%' : 260} position="bottom-end" opened={open} onChange={setOpen}>
       <Popover.Target>
-        <UnstyledButton onClick={toggle} className="@md:rounded-[32px] @max-md:p-1.5" type="button">
+        <UnstyledButton
+          className="flex items-center @md:rounded-[32px]"
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+        >
           <div
             className={clsx('flex items-center gap-2 @max-md:hidden', {
               ['hidden']: !currentUser,
@@ -105,14 +83,10 @@ export function UserMenu() {
           <Burger opened={open} size="sm" className={clsx({ ['@md:hidden']: !!currentUser })} />
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown
-        className="flex flex-col p-0 @md:max-h-[calc(90vh-var(--header-height))] @max-md:mt-5 @max-md:h-[calc(100%-var(--header-height))]"
-        onClick={(e) => {
-          e.stopPropagation();
-          e.preventDefault();
-        }}
-      >
-        <PopoverContent />
+      <Popover.Dropdown className="flex flex-col p-0 @max-md:mt-2 @max-md:h-[calc(100%-var(--header-height))]">
+        <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
+          <PopoverContent />
+        </UserMenuCtx.Provider>
       </Popover.Dropdown>
     </Popover>
   );
@@ -141,24 +115,35 @@ function useOutsideClick<T extends HTMLElement>(callback: (event: Event) => void
 }
 
 function PopoverContent() {
-  const userSwitching = useMenuStore((state) => state.accountSwitching);
-  const ref = useOutsideClick<HTMLDivElement>(handleClose);
+  const { handleClose } = useUserMenuContext();
+  const [accountSwitching, setAccountSwitching] = useState(false);
+  function handleToggleAccountSwitching() {
+    setAccountSwitching((o) => !o);
+  }
   useHotkeys([['Escape', handleClose]]);
 
   return (
-    <div ref={ref} className="flex h-full flex-1 flex-col">
-      {userSwitching ? <AccountSwitcher /> : <UserMenuContent />}
+    <div
+      // ref={ref}
+      className="flex h-full flex-1 flex-col @md:max-h-[calc(90vh-var(--header-height))]"
+    >
+      {accountSwitching ? (
+        <AccountSwitcher onAccountClick={handleToggleAccountSwitching} />
+      ) : (
+        <UserMenuContent onAccountClick={handleToggleAccountSwitching} />
+      )}
     </div>
   );
 }
 
-function UserMenuContent() {
+function UserMenuContent({ onAccountClick }: { onAccountClick: () => void }) {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
   const creator = useGetCreator();
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const { logout } = useAccountContext();
 
+  const { handleClose } = useUserMenuContext();
   const menuItems = useGetMenuItems();
   const actionItems = useGetActionMenuItems();
 
@@ -168,10 +153,7 @@ function UserMenuContent() {
     <>
       <div className="flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-1 scrollbar-thin">
         {currentUser && (
-          <MenuItemButton
-            className="flex items-center justify-between"
-            onClick={() => useMenuStore.setState({ accountSwitching: true })}
-          >
+          <MenuItemButton className="flex items-center justify-between" onClick={onAccountClick}>
             <UserAvatar user={creator ?? currentUser} withUsername />
             <IconChevronRight />
           </MenuItemButton>
@@ -273,12 +255,13 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
   );
 }
 
-function AccountSwitcher() {
+function AccountSwitcher({ onAccountClick }: { onAccountClick: () => void }) {
   const { accounts, swapAccount } = useAccountContext();
+  const { handleClose } = useUserMenuContext();
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto overflow-x-hidden p-1 scrollbar-thin">
-      <MenuItemButton onClick={() => useMenuStore.setState({ accountSwitching: false })}>
+      <MenuItemButton onClick={onAccountClick}>
         <IconChevronLeft />
         <span className="text-sm leading-none">Back</span>
       </MenuItemButton>
@@ -404,6 +387,7 @@ function MenuItemButton({
   className,
   ...props
 }: React.HTMLAttributes<HTMLButtonElement>) {
+  const { handleClose } = useUserMenuContext();
   return (
     <button
       className={clsx(
@@ -423,6 +407,7 @@ function MenuItemLink({
   className,
   ...props
 }: LinkProps & { children: React.ReactNode; className?: string; rel?: string }) {
+  const { handleClose } = useUserMenuContext();
   return (
     <NextLink
       className={clsx(
@@ -441,6 +426,8 @@ function BuzzMenuItem() {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile({ breakpoint: 'md' });
+  const onBuyBuzz = useBuyBuzz();
+  const { handleClose } = useUserMenuContext();
 
   if (!features.buzz) return null;
   if (!currentUser) return null;
@@ -466,7 +453,19 @@ function BuzzMenuItem() {
           accountType="generation"
         />
       </div>
-      <Button component="div" variant="white" radius="xl" size="xs" px={12} compact>
+      <Button
+        component="div"
+        variant="white"
+        radius="xl"
+        size="xs"
+        px={12}
+        compact
+        onClick={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onBuyBuzz({});
+        }}
+      >
         Buy Buzz
       </Button>
     </MenuItemLink>

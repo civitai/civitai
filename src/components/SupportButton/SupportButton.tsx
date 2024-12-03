@@ -1,10 +1,16 @@
 import { Button, ButtonProps, HoverCard, Text } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconChevronRight, IconHeart } from '@tabler/icons-react';
+import {
+  IconChevronRight,
+  IconChristmasBall,
+  IconChristmasTree,
+  IconHeart,
+} from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useAppContext } from '~/providers/AppProvider';
 import { constants } from '~/server/common/constants';
 import { Random } from '~/utils/random';
+import { isHolidaysTime } from '~/utils/date-helpers';
 
 type SupportButtonOption = Partial<ButtonProps> & { href: string };
 const options: SupportButtonOption[] = [
@@ -40,10 +46,19 @@ const options: SupportButtonOption[] = [
   },
 ];
 
+const holidayButton: Partial<ButtonProps> & { href: string } = {
+  variant: 'light',
+  color: 'green',
+  href: '/pricing?utm_campaign=holiday_promo',
+  children: <IconChristmasBall color="red" />,
+};
+
 // const random = getRandom(options);
 export const SupportButton = () => {
   const { seed } = useAppContext();
-  const { children, ...buttonProps } = new Random(seed).fromArray(options);
+  const { children, ...buttonProps } = isHolidaysTime()
+    ? holidayButton
+    : new Random(seed).fromArray(options);
 
   return (
     <HoverCard withArrow openDelay={500}>

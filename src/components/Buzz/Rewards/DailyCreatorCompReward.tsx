@@ -13,18 +13,17 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import { Currency } from '~/shared/utils/prisma/enums';
 import {
   BarElement,
   CategoryScale,
   Chart as ChartJS,
   ChartOptions,
-  Tooltip as ChartTooltip,
   Colors,
   Legend,
   LinearScale,
   PointElement,
   TimeScale,
+  Tooltip as ChartTooltip,
 } from 'chart.js';
 import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import dayjs from 'dayjs';
@@ -34,6 +33,7 @@ import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -344,8 +344,7 @@ function NoData({ message }: { message?: string }) {
   return (
     <Center>
       <Text color="dimmed">
-        {message ??
-          'Whoops! Looks like we are still collecting data on your models for this month. Come back later'}
+        {message ?? 'Looks like we are still collecting data. Check back later.'}
       </Text>
     </Center>
   );

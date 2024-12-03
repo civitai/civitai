@@ -25,13 +25,13 @@ const useStyles = createStyles((theme, { size, color, transitionDuration }: Burg
   const _color = color || (theme.colorScheme === 'dark' ? theme.white : theme.black);
 
   return {
-    // root: {
-    //   borderRadius: theme.radius.sm,
-    //   width: `calc(${sizeValue}px + ${theme.spacing.xs}px)`,
-    //   height: `calc(${sizeValue}px + ${theme.spacing.xs}px)`,
-    //   padding: `calc(${theme.spacing.xs}px / 2)`,
-    //   cursor: 'pointer',
-    // },
+    root: {
+      borderRadius: theme.radius.sm,
+      width: `calc(${sizeValue}px + ${theme.spacing.xs}px)`,
+      height: `calc(${sizeValue}px + ${theme.spacing.xs}px)`,
+      padding: `calc(${theme.spacing.xs}px / 2)`,
+      cursor: 'pointer',
+    },
 
     burger: {
       position: 'relative',
@@ -98,11 +98,6 @@ export interface BurgerProps {
   className?: string;
 }
 
-const defaultProps: Partial<BurgerProps> = {
-  size: 'md',
-  transitionDuration: 300,
-};
-
 export function Burger({
   opened,
   color,
@@ -112,5 +107,9 @@ export function Burger({
 }: BurgerProps) {
   const { classes, cx } = useStyles({ color, size, transitionDuration });
 
-  return <div data-opened={opened || undefined} className={cx(classes.burger, className)} />;
+  return (
+    <div className={cx(classes.root, 'flex items-center', className)}>
+      <div data-opened={opened || undefined} className={cx(classes.burger)} />
+    </div>
+  );
 }

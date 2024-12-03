@@ -171,7 +171,11 @@ export const updatePostHandler = async ({
         );
       }
 
-      if (collection.tags.length > 0 && !collectionTagId) {
+      if (
+        collection.tags.length > 0 &&
+        !collectionTagId &&
+        !collection.metadata?.disableTagRequired
+      ) {
         throw throwBadRequestError('You must select a tag for this collection');
       }
 
