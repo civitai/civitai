@@ -1,4 +1,4 @@
-import React, { CSSProperties, forwardRef, useRef } from 'react';
+import React, { CSSProperties, useRef } from 'react';
 import clsx from 'clsx';
 
 type Cosmetic = {
@@ -10,13 +10,18 @@ type Cosmetic = {
   texture?: { url: string; size: { width: number; height: number } };
 };
 
-export const TwCosmeticWrapper = forwardRef<
-  HTMLDivElement,
-  React.HTMLProps<HTMLDivElement> & {
-    cosmetic?: Cosmetic;
-  }
->(({ children, className, cosmetic, ...props }, ref) => {
+export function TwCosmeticWrapper({
+  children,
+  className,
+  cosmetic,
+  ...props
+}: Omit<React.HTMLProps<HTMLDivElement>, 'children'> & {
+  cosmetic?: Cosmetic;
+  children: React.ReactElement;
+}) {
   const styleRef = useRef<CSSProperties | undefined>();
+  if (!cosmetic) return children;
+
   if (!styleRef.current && cosmetic) {
     const { cssFrame, texture } = cosmetic;
     const frameBackground = [texture?.url, cssFrame].filter(Boolean).join(', ');
@@ -32,7 +37,6 @@ export const TwCosmeticWrapper = forwardRef<
 
   return (
     <div
-      ref={ref}
       style={styleRef.current}
       className={clsx(
         cosmetic &&
@@ -46,6 +50,4 @@ export const TwCosmeticWrapper = forwardRef<
       {children}
     </div>
   );
-});
-
-TwCosmeticWrapper.displayName = 'TwCard';
+}
