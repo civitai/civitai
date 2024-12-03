@@ -404,7 +404,7 @@ export const POST_TAG_LIMIT = 5;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
-export const MAX_POST_IMAGES_WIDTH = 700;
+export const MAX_POST_IMAGES_WIDTH = 800;
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
