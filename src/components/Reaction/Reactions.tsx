@@ -81,7 +81,13 @@ export function Reactions({
   targetUserId,
   className,
   showAll: initialShowAll,
-}: ReactionsProps & { className?: string; targetUserId?: number; showAll?: boolean }) {
+  invisibleEmpty,
+}: ReactionsProps & {
+  className?: string;
+  targetUserId?: number;
+  showAll?: boolean;
+  invisibleEmpty?: boolean;
+}) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
@@ -159,6 +165,7 @@ export function Reactions({
           noEmpty={!(initialShowAll ?? showAll)}
           readonly={readonly}
           available={available}
+          invisibleEmpty={invisibleEmpty}
         />
         {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge
@@ -176,6 +183,16 @@ export function Reactions({
 }
 
 const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
+const keyMap = keys.reduce<Record<string, keyof ReactionMetrics>>(
+  (acc, key) => ({ ...acc, [key]: `${key.toLowerCase()}Count` as keyof ReactionMetrics }),
+  {}
+);
+
+function getReactionCount(key: ReviewReactions, metrics: ReactionMetrics) {
+  const reactionMetricType = keyMap[key];
+  return metrics[reactionMetricType] ?? 0;
+}
+
 function ReactionsList({
   reactions,
   metrics = {},
@@ -184,21 +201,26 @@ function ReactionsList({
   available = availableReactions[entityType],
   noEmpty,
   readonly,
+  invisibleEmpty,
 }: Omit<ReactionsProps, 'popoverPosition'> & {
   noEmpty?: boolean;
   available?: ReviewReactions[];
 
   readonly?: boolean;
+  invisibleEmpty?: boolean;
 }) {
   const currentUser = useCurrentUser();
-
   return (
     <>
       {keys
         .filter((reaction) => (available ? available.includes(reaction) : true))
+        .sort((a, b) => {
+          if (!invisibleEmpty && !noEmpty) return 0;
+          const countA = getReactionCount(a, metrics);
+          return !countA ? 1 : -1;
+        })
         .map((reaction) => {
-          const reactionMetricType = `${reaction.toLowerCase()}Count` as keyof ReactionMetrics;
-          const count = metrics[reactionMetricType] ?? 0;
+          const count = getReactionCount(reaction, metrics);
           const userReaction = reactions.find(
             (x) => x.userId === currentUser?.id && x.reaction === reaction
           );
@@ -213,6 +235,7 @@ function ReactionsList({
               entityId={entityId}
               readonly={!currentUser || currentUser.muted || readonly}
               noEmpty={noEmpty}
+              invisibleEmpty={invisibleEmpty}
             >
               {ReactionBadge}
             </ReactionButton>
