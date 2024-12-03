@@ -3,7 +3,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import {
   AnnouncementMetaSchema,
-  GetAnnouncementsInput,
   GetAnnouncementsPagedSchema,
   UpsertAnnouncementSchema,
 } from '~/server/schema/announcement.schema';
@@ -60,17 +59,11 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
   );
 }
 
-export async function getCurrentAnnouncements({
-  dismissed,
-  limit,
-  ids,
-  userId,
-}: GetAnnouncementsInput & { userId?: number }) {
+export async function getCurrentAnnouncements({ userId }: { userId?: number }) {
   const announcements = await getAnnouncementsCached();
   const now = Date.now();
 
   return announcements.filter((announcement) => {
-    if (ids && !ids.includes(announcement.id)) return false;
     if (!userId && announcement.metadata.targetAudience === 'authenticated') return false;
     if (!!userId && announcement.metadata.targetAudience === 'unauthenticated') return false;
     const startsAt = new Date(announcement.startsAt ?? now).getTime();
