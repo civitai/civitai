@@ -1,5 +1,6 @@
 import OpenAI from 'openai';
 import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
 
 type GetJsonCompletionInput =
   Partial<OpenAI.Chat.Completions.ChatCompletionCreateParamsNonStreaming> & { retries?: number };
@@ -13,7 +14,7 @@ declare global {
 
 function createOpenAiClient() {
   const client = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
+    apiKey: env.OPENAI_API_KEY,
   });
 
   const customClient = client as CustomOpenAI;
@@ -41,15 +42,15 @@ function createOpenAiClient() {
   return customClient;
 }
 
-export let openai: CustomOpenAI;
-if (isProd) {
-  openai = createOpenAiClient();
-} else {
-  if (!global.globalOpenAI) {
-    global.globalOpenAI = createOpenAiClient();
+export let openai: CustomOpenAI | undefined;
+const shouldConnect = env.OPENAI_API_KEY;
+if (shouldConnect) {
+  if (isProd) {
+    openai = createOpenAiClient();
+  } else {
+    if (!global.globalOpenAI) global.globalOpenAI = createOpenAiClient();
+    openai = global.globalOpenAI;
   }
-
-  openai = global.globalOpenAI;
 }
 
 // Helpers

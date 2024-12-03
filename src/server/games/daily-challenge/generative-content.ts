@@ -1,8 +1,5 @@
 import dayjs from 'dayjs';
 import { ChatCompletionMessageParam } from 'openai/resources';
-import { json } from 'stream/consumers';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { dbRead } from '~/server/db/client';
 import {
   Score,
   dailyChallengeConfig as config,
@@ -29,6 +26,8 @@ type CollectionDetails = {
   description: string;
 };
 export async function generateCollectionDetails(input: GenerateCollectionDetailsInput) {
+  if (!openai) throw new Error('OpenAI not connected');
+
   const results = await openai.getJsonCompletion<CollectionDetails>({
     retries: 3,
     model: 'gpt-4o',
@@ -86,6 +85,8 @@ export async function generateArticle({
   collectionId,
   challengeDate,
 }: GenerateArticleInput) {
+  if (!openai) throw new Error('OpenAI not connected');
+
   const result = await openai.getJsonCompletion<GeneratedArticle>({
     retries: 3,
     model: 'gpt-4o',
@@ -192,6 +193,8 @@ type GeneratedReview = {
   summary: string;
 };
 export async function generateReview(input: GenerateReviewInput) {
+  if (!openai) throw new Error('OpenAI not connected');
+
   const result = await openai.getJsonCompletion<GeneratedReview>({
     retries: 3,
     model: 'gpt-4o',
@@ -248,6 +251,8 @@ type GeneratedWinners = {
   outcome: string;
 };
 export async function generateWinners(input: GenerateWinnersInput) {
+  if (!openai) throw new Error('OpenAI not connected');
+
   const result = await openai.getJsonCompletion<GeneratedWinners>({
     retries: 3,
     model: 'gpt-4o',
