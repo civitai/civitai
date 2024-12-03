@@ -152,7 +152,7 @@ export function RenderHtml({ html, withMentions = false, ...props }: Props) {
                 };
           },
           a: function (tagName, attribs) {
-            if (typeof window !== 'undefined')
+            if (typeof window !== 'undefined' && attribs.href)
               attribs.href = attribs.href.replace('//civitai.com', `//${location.host}`);
 
             return {

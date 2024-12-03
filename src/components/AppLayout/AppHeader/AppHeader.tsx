@@ -19,7 +19,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserMenu } from '~/components/AppLayout/AppHeader/UserMenu';
 import { CreateMenu } from '~/components/AppLayout/AppHeader/CreateMenu';
 
-const HEADER_HEIGHT = 70;
+const HEADER_HEIGHT = 60;
 
 function defaultRenderSearchComponent({ onSearchDone, isMobile, ref }: RenderSearchComponentProps) {
   if (isMobile) {

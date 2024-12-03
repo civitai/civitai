@@ -152,6 +152,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
       content: articleDetails.content,
       nsfw: false,
       nsfwLevel: 1,
+      userNsfwLevel: 1,
       userId: config.challengeRunnerUserId,
       coverId: coverImageId,
       metadata: {
@@ -167,6 +168,13 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
     },
     select: { id: true },
   });
+
+  // Add relevant tag:
+  await dbWrite.$executeRaw`
+    INSERT INTO "TagsOnArticle" ("articleId", "tagId")
+    VALUES (${article.id}, ${config.articleTagId});
+  `;
+
   log('Article created:', article);
 
   // Add to challenge collection
@@ -419,6 +427,12 @@ export const pickDailyChallengeWinners = createJob(
       WHERE id = ${currentChallenge.collectionId};
     `;
     log('Collection closed');
+
+    // Remove all contributors
+    await dbWrite.$executeRaw`
+      DELETE FROM "CollectionContributor"
+      WHERE "collectionId" = ${currentChallenge.collectionId}
+    `;
 
     // Pick Winners
     // ----------------------------------------------

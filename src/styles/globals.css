@@ -1,5 +1,5 @@
 :root {
-  --header-height: 70px;
+  --header-height: 60px;
   --footer-height: 45px;
 }
 
@@ -397,6 +397,12 @@ div[data-youtube-video] > iframe {
   scrollbar-width: thin;
   display: flex;
   flex-direction: column;
+}
+
+::selection {
+  background: #1864AB;
+  color: #fff;
+  text-shadow: 1px 1px 1px black;
 }
 
 /* SNIGEL CMP CONSENT OVERRIDES */

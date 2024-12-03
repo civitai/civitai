@@ -7,14 +7,17 @@ import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 export function AdUnitRenderable({
   browsingLevel: browsingLevelOverride,
   children,
+  hideOnBlocked,
 }: {
   browsingLevel?: number;
   children?: React.ReactElement;
+  hideOnBlocked?: boolean;
 }) {
-  const { adsEnabled } = useAdsContext();
+  const { adsEnabled, adsBlocked } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
   const nsfw = !getIsSafeBrowsingLevel(browsingLevelOverride ?? browsingLevel);
 
   if (!adsEnabled || nsfw) return null;
+  if (hideOnBlocked && adsBlocked) return null;
   return children ?? null;
 }

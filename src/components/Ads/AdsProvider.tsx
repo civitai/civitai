@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import Script from 'next/script';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -37,7 +37,6 @@ const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean }>(() =>
 }));
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
-  // const [ready, setReady] = useState(false);
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const currentUser = useCurrentUser();
@@ -70,7 +69,6 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
         window.googletag.pubads().addEventListener('impressionViewable', function (event: any) {
           const slot = event.slot;
           const adUnit = slot.getAdUnitPath()?.split('/')?.reverse()?.[0];
-          // console.log('Ad visible in slot: ', adUnit);
           if (adUnit) dispatchEvent(new CustomEvent('civitai-ad-impression', { detail: adUnit }));
         });
       });
@@ -124,7 +122,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
                 window.snigelPubConf = {
                   "adengine": {
-                    "activeAdUnits": ["incontent_1", "outstream", "side_1", "side_2", "side_3", "top"]
+                    "activeAdUnits": ["incontent_1", "outstream", "side_1", "side_2", "side_3", "top", "adhesive"]
                   }
                 }
               `,
@@ -174,7 +172,6 @@ function ImpressionTracker() {
       const adUnit = e.detail;
       adUnitsLoaded[adUnit] = true;
       if (worker && currentUser) {
-        // console.log('recording ad impression:', adUnit);
         worker.send('recordAdImpression', {
           userId: currentUser.id,
           fingerprint,
