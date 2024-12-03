@@ -7,7 +7,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { Redirect } from '~/components/Redirect/Redirect';
 import { useDebouncer } from '~/utils/debouncer';
-  
+
 const collectionQueryParamSchema = z.object({
   state: z.preprocess((x) => {
     return x ? (JSON.parse(x as string) as { collectionId: number }) : undefined;
@@ -22,7 +22,7 @@ export default function YoutubeAuthentication() {
   const { enableYoutubeSupport, enableYoutubeSupportLoading } = useMutateCollection();
   const debouncer = useDebouncer(1000);
 
-  const enableYoutubeSupportHandler = (async () => {
+  const enableYoutubeSupportHandler = async () => {
     const data = parsedQuery.data;
     if (!data || enableYoutubeSupportLoading) {
       return;
@@ -43,14 +43,14 @@ export default function YoutubeAuthentication() {
     } catch (error) {
       showErrorNotification({
         title: 'There was an error while trying to enable YouTube support',
-        error: new Error((error as { message: string})?.message),
+        error: new Error((error as { message: string })?.message),
       });
     }
-  });
- 
+  };
+
   useEffect(() => {
     if (parsedQuery.success && parsedQuery.data) {
-       debouncer(() => enableYoutubeSupportHandler());
+      debouncer(() => enableYoutubeSupportHandler());
     }
   }, []);
 

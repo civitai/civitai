@@ -71,6 +71,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { getYoutubeRefreshToken } from '~/server/youtube/client';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -2276,8 +2277,12 @@ export const enableCollectionYoutubeSupport = async ({
   }
 
   // Attempt to save the auth code on the key-value store.
-  const collectionKey = `collection:${collectionId}:youtube-authentication-code`;
   try {
+    const { tokens } = await getYoutubeRefreshToken(
+      authenticationCode,
+      '/collections/youtube/auth'
+    );
+    const collectionKey = `collection:${collectionId}:youtube-authentication-code`;
     await dbWrite.$transaction(async (tx) => {
       await tx.keyValue.upsert({
         where: {
@@ -2288,7 +2293,7 @@ export const enableCollectionYoutubeSupport = async ({
         },
         create: {
           key: collectionKey,
-          value: authenticationCode,
+          value: tokens.refresh_token as string,
         },
       });
 
@@ -2307,6 +2312,7 @@ export const enableCollectionYoutubeSupport = async ({
 
     return { collectionId, youtubeSupportEnabled: true };
   } catch (error) {
+    console.log(error);
     throw throwBadRequestError('Failed to save youtube authentication code');
   }
 };

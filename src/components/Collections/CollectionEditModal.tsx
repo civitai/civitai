@@ -286,17 +286,19 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         <Input.Wrapper
                           label="Add Youtube Support"
                           description="By enabling youtube support, videos that are longer than 30s will be uploaded to youtube and youtube will be used to play them on the site."
-                          descriptionProps={{ mb: 12}}
+                          descriptionProps={{ mb: 12 }}
                         >
                           {collection.metadata?.youtubeSupportEnabled ? (
                             <Text size="sm" color="primary">
                               Youtube support is enabled for this collection.
                             </Text>
                           ) : (
-
-                            <Button onClick={getYoutubeUrlHandler} loading={getYoutubeAuthUrlLoading}>
+                            <Button
+                              onClick={getYoutubeUrlHandler}
+                              loading={getYoutubeAuthUrlLoading}
+                            >
                               {youtubeAuthUrl ? 'Sign in with Youtube' : 'Enable Youtube Support'}
-                            </Button> 
+                            </Button>
                           )}
                         </Input.Wrapper>
                       </>
