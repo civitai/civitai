@@ -1,8 +1,9 @@
-import { GetTransactionsReportSchema, TransactionType } from '~/server/schema/buzz.schema';
 import {
+  Anchor,
   Center,
   Grid,
   Group,
+  List,
   Loader,
   Paper,
   Popover,
@@ -11,12 +12,8 @@ import {
   Stack,
   Text,
   Title,
-  List,
-  Anchor,
 } from '@mantine/core';
-import { UserBuzz } from '~/components/User/UserBuzz';
-import { Bar } from 'react-chartjs-2';
-import React, { useCallback, useMemo } from 'react';
+import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
@@ -25,13 +22,15 @@ import {
   PointElement,
   Tooltip as ChartTooltip,
 } from 'chart.js';
-import { formatDate } from '~/utils/date-helpers';
+import React, { useMemo } from 'react';
+import { Bar } from 'react-chartjs-2';
 import { useBuzzTransactions, useTransactionsReport } from '~/components/Buzz/useBuzz';
-import { IconArrowRight, IconBolt, IconInfoCircle } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { UserBuzz } from '~/components/User/UserBuzz';
+import { GetTransactionsReportSchema, TransactionType } from '~/server/schema/buzz.schema';
+import { formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useBuzzDashboardStyles } from '../buzz.styles';
-import { CurrencyConfig } from '~/server/common/constants';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, ChartTooltip);
 
@@ -285,7 +284,7 @@ export const BuzzDashboardOverview = ({ accountId }: { accountId: number }) => {
               </Group>
             </Text>
             {transactions.length ? (
-              <ScrollArea.Autosize maxHeight={400} mt="md" key={transactionType}>
+              <ScrollArea.Autosize maxHeight={480} mt="md" key={transactionType}>
                 <Stack spacing={8} mr={14}>
                   {transactions.map((transaction, index) => {
                     const { amount, date } = transaction;
