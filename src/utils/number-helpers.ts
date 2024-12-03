@@ -186,3 +186,19 @@ export const formatDuration = (seconds: number) => {
 
   return [hourString, minuteString, secondString].filter(Boolean).join(':');
 };
+
+// Help from ChatGPT :^) -Manuel
+export function roundDownToPowerOfTwo(value: number) {
+  if (value < 1) return 0; // Powers of 2 start from 1 in practical use cases
+
+  // Check if the value is already a power of 2
+  if ((value & (value - 1)) === 0) return value;
+
+  // Round down to the nearest power of 2 using bit shifting
+  let result = 1;
+  while (result <= value) {
+    result <<= 1; // Double the result (equivalent to result *= 2)
+  }
+
+  return result >> 1; // Divide by 2 to get the largest power of 2 less than or equal to the value
+}

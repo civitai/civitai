@@ -1,12 +1,14 @@
-import { ActionIcon, Button, Modal, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Button, Modal, Skeleton, UnstyledButton } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import produce from 'immer';
+import { uniq } from 'lodash-es';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { showErrorNotification } from '~/utils/notifications';
+import { roundDownToPowerOfTwo } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 
 type Props = {
@@ -14,16 +16,23 @@ type Props = {
   src: string;
   duration: number;
   width: number;
+  height: number;
   postId?: number;
   thumbnailFrame?: number | null;
 };
 
-const getSkipFrames = (duration: number) => [4, Math.floor(duration / 2), Math.floor(duration)];
+const getSkipFrames = (duration: number) =>
+  uniq([
+    4,
+    roundDownToPowerOfTwo(Math.floor(duration / 2)),
+    roundDownToPowerOfTwo(Math.floor(duration)),
+  ]);
 
 export function PostImageThumbnailSelect({
   src,
   duration,
   width,
+  height,
   imageId,
   postId,
   thumbnailFrame,
@@ -44,29 +53,18 @@ export function PostImageThumbnailSelect({
   return (
     <Modal title="Select Thumbnail" size="lg" {...dialog}>
       <div className="flex flex-col gap-8">
-        <div className="flex gap-4">
+        <div className="flex flex-wrap gap-4">
           {skipFrames.map((frame) => (
-            <UnstyledButton
+            <ThumbnailImageButton
               key={frame}
-              className={clsx(
-                'rounded-lg',
-                selectedFrame === frame && 'border-[3px] border-solid border-blue-5'
-              )}
-              style={{
-                width: `calc(100%/${skipFrames.length || 1} - 16px)`,
-              }}
+              frame={frame}
+              src={src}
+              width={width}
+              height={height}
+              frameCount={skipFrames.length}
+              selected={selectedFrame === frame}
               onClick={() => setSelectedFrame((current) => (current !== frame ? frame : null))}
-            >
-              <EdgeMedia
-                src={src}
-                className="rounded-[4px]"
-                type="image"
-                anim={false}
-                skip={frame}
-                width={width ?? DEFAULT_EDGE_IMAGE_WIDTH}
-                transcode
-              />
-            </UnstyledButton>
+            />
           ))}
         </div>
         <div className="flex w-full justify-end">
@@ -76,6 +74,65 @@ export function PostImageThumbnailSelect({
         </div>
       </div>
     </Modal>
+  );
+}
+
+function ThumbnailImageButton({
+  frame,
+  width,
+  height,
+  src,
+  selected,
+  frameCount,
+  onClick,
+}: {
+  frame: number;
+  width: number;
+  height: number;
+  src: string;
+  selected: boolean;
+  frameCount: number;
+  onClick: VoidFunction;
+}) {
+  const [status, setStatus] = useState<'loading' | 'error' | 'loaded'>('loading');
+  // if (status === 'error') return null;
+
+  const aspectRatio = width / height;
+
+  return (
+    <div
+      className={clsx(
+        'flex-1 overflow-hidden rounded-lg mx-auto',
+        selected && 'border-[3px] border-solid border-blue-5',
+        status === 'error' && 'hidden'
+      )}
+      style={{
+        aspectRatio,
+        maxHeight: 400,
+      }}
+    >
+      <Skeleton
+        className={clsx('size-full', status !== 'loading' && 'hidden')}
+        width="100%"
+        // height={400 / frameCount}
+        visible={status === 'loading'}
+        animate
+      />
+      <UnstyledButton className="size-full" onClick={onClick}>
+        <EdgeMedia
+          src={src}
+          className={clsx('h-full rounded-[4px] object-cover', status !== 'loaded' && 'hidden')}
+          type="image"
+          anim={false}
+          skip={frame}
+          width={width ?? DEFAULT_EDGE_IMAGE_WIDTH}
+          onLoad={() => setStatus('loaded')}
+          onError={() => setStatus('error')}
+          transcode
+          fadeIn
+        />
+      </UnstyledButton>
+    </div>
   );
 }
 

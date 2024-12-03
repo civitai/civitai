@@ -610,8 +610,9 @@ function EditDetail() {
                         props: {
                           imageId: image.id,
                           src: image.url,
-                          duration: metadata?.duration ?? 0,
+                          duration: metadata?.duration ?? 1,
                           width: metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH,
+                          height: metadata?.height ?? 1,
                           postId,
                           thumbnailFrame: metadata?.thumbnailFrame,
                         },
