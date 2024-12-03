@@ -65,7 +65,6 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { Flags } from '~/shared/utils';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
@@ -80,7 +79,6 @@ export function PostDetail(props: Props) {
 }
 
 export function PostDetailContent({ postId }: Props) {
-  const { adsEnabled } = useAdsContext();
   const theme = useMantineTheme();
   const scrollRef = useScrollAreaRef();
   const currentUser = useCurrentUser();
@@ -159,245 +157,245 @@ export function PostDetailContent({ postId }: Props) {
       />
       <SensitiveShield contentNsfwLevel={post.nsfwLevel}>
         <TrackView entityId={post.id} entityType="Post" type="PostView" />
-        <ReactionSettingsProvider
-          settings={{
-            hideReactions: collectionItems.some((ci) =>
-              contestCollectionReactionsHidden(ci.collection)
-            ),
-          }}
-        >
-          <div className="flex justify-center gap-8 px-3">
-            <div className="flex w-full max-w-[700px] flex-col gap-3 @lg:my-3">
-              <div className="flex flex-col">
-                <div className="flex items-center justify-between">
-                  {post.title && (
-                    <Title order={1} lineClamp={2} size={26}>
-                      {post.title}
-                    </Title>
-                  )}
-                  {query.dialog && (
-                    <NavigateBack url="/posts">
-                      {({ onClick }) => <CloseButton onClick={onClick} size="lg" ml="auto" />}
-                    </NavigateBack>
-                  )}
-                </div>
-                <div className="flex flex-wrap justify-between gap-2 @md:items-center @max-md:flex-col">
-                  <Text size="xs" color="dimmed">
-                    {relatedResource && (
-                      <>
-                        Posted to{' '}
-                        <Link
-                          href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
-                          passHref
-                        >
-                          <Anchor>
-                            {relatedResource.modelName} - {relatedResource.modelVersionName}
-                          </Anchor>
-                        </Link>{' '}
-                      </>
+        <BrowsingModeOverrideProvider browsingLevel={aggregateBrowsingLevel}>
+          <ReactionSettingsProvider
+            settings={{
+              hideReactions: collectionItems.some((ci) =>
+                contestCollectionReactionsHidden(ci.collection)
+              ),
+            }}
+          >
+            <div className="flex justify-center gap-8 px-3">
+              <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3">
+                <div className="flex flex-col">
+                  <div className="flex items-center justify-between">
+                    {post.title && (
+                      <Title order={1} lineClamp={2} size={26}>
+                        {post.title}
+                      </Title>
                     )}
-                    {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
-                  </Text>
-                  <div className="flex gap-2 ">
-                    <Button
-                      size="md"
-                      radius="xl"
-                      color="gray"
-                      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                      leftIcon={<IconBookmark size={14} />}
-                      onClick={() =>
-                        openContext('addToCollection', {
-                          postId: post.id,
-                          type: CollectionType.Post,
-                        })
-                      }
-                      compact
-                    >
-                      <Text size="xs">Save</Text>
-                    </Button>
-                    <ShareButton
-                      url={`/posts/${post.id}`}
-                      title={post.title ?? `Post by ${post.user.username}`}
-                      collect={{ type: CollectionType.Post, postId: post.id }}
-                    >
+                    {query.dialog && (
+                      <NavigateBack url="/posts">
+                        {({ onClick }) => <CloseButton onClick={onClick} size="lg" ml="auto" />}
+                      </NavigateBack>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap justify-between gap-2 @md:items-center @max-md:flex-col">
+                    <Text size="xs" color="dimmed">
+                      {relatedResource && (
+                        <>
+                          Posted to{' '}
+                          <Link
+                            href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
+                            passHref
+                          >
+                            <Anchor>
+                              {relatedResource.modelName} - {relatedResource.modelVersionName}
+                            </Anchor>
+                          </Link>{' '}
+                        </>
+                      )}
+                      {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
+                    </Text>
+                    <div className="flex gap-2 ">
                       <Button
+                        size="md"
                         radius="xl"
                         color="gray"
                         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        size="md"
-                        leftIcon={<IconShare3 size={14} />}
+                        leftIcon={<IconBookmark size={14} />}
+                        onClick={() =>
+                          openContext('addToCollection', {
+                            postId: post.id,
+                            type: CollectionType.Post,
+                          })
+                        }
                         compact
                       >
-                        <Text size="xs">Share</Text>
+                        <Text size="xs">Save</Text>
                       </Button>
-                    </ShareButton>
-                    <PostControls
-                      postId={post.id}
-                      userId={post.user.id}
-                      isModelVersionPost={post.modelVersionId}
-                    >
-                      <ActionIcon
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        size={30}
-                        radius="xl"
-                        className="@max-md:ml-auto"
+                      <ShareButton
+                        url={`/posts/${post.id}`}
+                        title={post.title ?? `Post by ${post.user.username}`}
+                        collect={{ type: CollectionType.Post, postId: post.id }}
                       >
-                        <IconDotsVertical size={16} />
-                      </ActionIcon>
-                    </PostControls>
+                        <Button
+                          radius="xl"
+                          color="gray"
+                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          size="md"
+                          leftIcon={<IconShare3 size={14} />}
+                          compact
+                        >
+                          <Text size="xs">Share</Text>
+                        </Button>
+                      </ShareButton>
+                      <PostControls
+                        postId={post.id}
+                        userId={post.user.id}
+                        isModelVersionPost={post.modelVersionId}
+                      >
+                        <ActionIcon
+                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          size={30}
+                          radius="xl"
+                          className="@max-md:ml-auto"
+                        >
+                          <IconDotsVertical size={16} />
+                        </ActionIcon>
+                      </PostControls>
+                    </div>
                   </div>
                 </div>
-              </div>
-              <div className="mt-4 flex flex-wrap items-center gap-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <UserAvatar
-                    user={post.user}
-                    avatarProps={{ size: 32 }}
-                    size="md"
-                    subTextSize="sm"
-                    textSize="md"
-                    withUsername
-                    linkToProfile
-                  />
-                  <Group spacing={8} noWrap>
-                    <TipBuzzButton
-                      toUserId={post.user.id}
-                      entityId={post.id}
-                      entityType="Post"
+                <div className="mt-4 flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <UserAvatar
+                      user={post.user}
+                      avatarProps={{ size: 32 }}
                       size="md"
-                      compact
+                      subTextSize="sm"
+                      textSize="md"
+                      withUsername
+                      linkToProfile
                     />
-                    <ChatUserButton user={post.user} size="md" compact />
-                    <FollowUserButton userId={post.user.id} size="md" compact />
-                  </Group>
-                </div>
-                {postCollaborators.length > 0 &&
-                  postCollaborators.map((collaborator) => {
-                    return (
-                      <Group key={collaborator.user.id} spacing={4} noWrap>
-                        <UserAvatar
-                          user={collaborator.user}
-                          avatarProps={{ size: 32 }}
-                          size="md"
-                          subTextSize="sm"
-                          textSize="md"
-                          withUsername
-                          linkToProfile
-                        />
-                        <Group spacing={4} noWrap>
-                          {collaborator.user.id === currentUser?.id &&
-                            collaborator.status === EntityCollaboratorStatus.Pending && (
-                              <Fragment key={collaborator.user.id}>
-                                <Tooltip label="Accept collaboration">
-                                  <ActionIcon
-                                    onClick={() => {
-                                      actionEntityCollaborator({
-                                        entityId: postId,
-                                        entityType: EntityType.Post,
-                                        status: EntityCollaboratorStatus.Approved,
-                                      });
-                                    }}
-                                    loading={actioningEntityCollaborator}
-                                  >
-                                    <IconCheck size={20} />
-                                  </ActionIcon>
-                                </Tooltip>
-                                <Tooltip label="Reject collaboration">
-                                  <ActionIcon
-                                    onClick={() => {
-                                      actionEntityCollaborator({
-                                        entityId: postId,
-                                        entityType: EntityType.Post,
-                                        status: EntityCollaboratorStatus.Rejected,
-                                      });
-                                    }}
-                                    loading={actioningEntityCollaborator}
-                                  >
-                                    <IconX size={20} />
-                                  </ActionIcon>
-                                </Tooltip>
-                              </Fragment>
-                            )}
+                    <Group spacing={8} noWrap>
+                      <TipBuzzButton
+                        toUserId={post.user.id}
+                        entityId={post.id}
+                        entityType="Post"
+                        size="md"
+                        compact
+                      />
+                      <ChatUserButton user={post.user} size="md" compact />
+                      <FollowUserButton userId={post.user.id} size="md" compact />
+                    </Group>
+                  </div>
+                  {postCollaborators.length > 0 &&
+                    postCollaborators.map((collaborator) => {
+                      return (
+                        <Group key={collaborator.user.id} spacing={4} noWrap>
+                          <UserAvatar
+                            user={collaborator.user}
+                            avatarProps={{ size: 32 }}
+                            size="md"
+                            subTextSize="sm"
+                            textSize="md"
+                            withUsername
+                            linkToProfile
+                          />
+                          <Group spacing={4} noWrap>
+                            {collaborator.user.id === currentUser?.id &&
+                              collaborator.status === EntityCollaboratorStatus.Pending && (
+                                <Fragment key={collaborator.user.id}>
+                                  <Tooltip label="Accept collaboration">
+                                    <ActionIcon
+                                      onClick={() => {
+                                        actionEntityCollaborator({
+                                          entityId: postId,
+                                          entityType: EntityType.Post,
+                                          status: EntityCollaboratorStatus.Approved,
+                                        });
+                                      }}
+                                      loading={actioningEntityCollaborator}
+                                    >
+                                      <IconCheck size={20} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                  <Tooltip label="Reject collaboration">
+                                    <ActionIcon
+                                      onClick={() => {
+                                        actionEntityCollaborator({
+                                          entityId: postId,
+                                          entityType: EntityType.Post,
+                                          status: EntityCollaboratorStatus.Rejected,
+                                        });
+                                      }}
+                                      loading={actioningEntityCollaborator}
+                                    >
+                                      <IconX size={20} />
+                                    </ActionIcon>
+                                  </Tooltip>
+                                </Fragment>
+                              )}
 
-                          {isOwnerOrMod && (
-                            <Tooltip label="Remove collaborator">
-                              <ActionIcon
-                                onClick={() => {
-                                  removeEntityCollaborator({
-                                    entityId: postId,
-                                    entityType: EntityType.Post,
-                                    targetUserId: collaborator.user.id,
-                                  });
-                                }}
-                                loading={removingEntityCollaborator}
-                                color="red"
-                              >
-                                <IconTrash size={20} />
-                              </ActionIcon>
-                            </Tooltip>
-                          )}
+                            {isOwnerOrMod && (
+                              <Tooltip label="Remove collaborator">
+                                <ActionIcon
+                                  onClick={() => {
+                                    removeEntityCollaborator({
+                                      entityId: postId,
+                                      entityType: EntityType.Post,
+                                      targetUserId: collaborator.user.id,
+                                    });
+                                  }}
+                                  loading={removingEntityCollaborator}
+                                  color="red"
+                                >
+                                  <IconTrash size={20} />
+                                </ActionIcon>
+                              </Tooltip>
+                            )}
+                          </Group>
                         </Group>
-                      </Group>
-                    );
-                  })}
-              </div>
-              {!imagesLoading && !unfilteredImages?.length ? (
-                <Alert>Unable to load images</Alert>
-              ) : (
-                <>
-                  <PostImages
-                    postId={post.id}
-                    images={images}
-                    isLoading={imagesLoading}
-                    collectionItems={collectionItems}
-                    isOwner={currentUser?.id === post.user.id}
-                    isModerator={currentUser?.isModerator}
-                  />
-                  {hiddenExplained.hasHidden && !imagesLoading && (
-                    <Paper component={Center} p="xl" mih={300} withBorder>
-                      <ExplainHiddenImages {...hiddenExplained} />
-                    </Paper>
-                  )}
-                </>
-              )}
-              <Stack spacing="xl" mt="xl" id="comments" mb={90}>
-                {!!post.tags.length && (
-                  <Collection
-                    items={post.tags}
-                    limit={5}
-                    badgeProps={{ size: 'xl', p: 'md', radius: 'xl' }}
-                    renderItem={(item) => (
-                      <Link
-                        legacyBehavior
-                        key={item.id}
-                        href={`/posts?tags=${item.id}&view=feed`}
-                        passHref
-                      >
-                        <Badge
-                          component="a"
-                          color="gray"
-                          radius="xl"
-                          size="xl"
-                          p="md"
-                          style={{ cursor: 'pointer' }}
-                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        >
-                          <Text size="xs" transform="capitalize" weight={500}>
-                            {item.name}
-                          </Text>
-                        </Badge>
-                      </Link>
+                      );
+                    })}
+                </div>
+                {!imagesLoading && !unfilteredImages?.length ? (
+                  <Alert>Unable to load images</Alert>
+                ) : (
+                  <>
+                    <PostImages
+                      postId={post.id}
+                      images={images}
+                      isLoading={imagesLoading}
+                      collectionItems={collectionItems}
+                      isOwner={currentUser?.id === post.user.id}
+                      isModerator={currentUser?.isModerator}
+                    />
+                    {hiddenExplained.hasHidden && !imagesLoading && (
+                      <Paper component={Center} p="xl" mih={300} withBorder>
+                        <ExplainHiddenImages {...hiddenExplained} />
+                      </Paper>
                     )}
-                    grouped
-                  />
+                  </>
                 )}
-                {post.detail && <RenderHtml html={post.detail} withMentions />}
-                <PostComments postId={postId} userId={post.user.id} />
-              </Stack>
-            </div>
-            {adsEnabled && (
+                <Stack spacing="xl" mt="xl" id="comments" mb={90}>
+                  {!!post.tags.length && (
+                    <Collection
+                      items={post.tags}
+                      limit={5}
+                      badgeProps={{ size: 'xl', p: 'md', radius: 'xl' }}
+                      renderItem={(item) => (
+                        <Link
+                          legacyBehavior
+                          key={item.id}
+                          href={`/posts?tags=${item.id}&view=feed`}
+                          passHref
+                        >
+                          <Badge
+                            component="a"
+                            color="gray"
+                            radius="xl"
+                            size="xl"
+                            p="md"
+                            style={{ cursor: 'pointer' }}
+                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          >
+                            <Text size="xs" transform="capitalize" weight={500}>
+                              {item.name}
+                            </Text>
+                          </Badge>
+                        </Link>
+                      )}
+                      grouped
+                    />
+                  )}
+                  {post.detail && <RenderHtml html={post.detail} withMentions />}
+                  <PostComments postId={postId} userId={post.user.id} />
+                </Stack>
+              </div>
               <div
-                className="relative flex w-[300px] flex-col gap-3 @lg:my-3 @max-lg:hidden"
+                className="relative flex w-[336px] flex-col gap-3 @lg:my-3 @max-lg:hidden"
                 style={scrollHeight < 600 ? { display: 'none' } : undefined}
               >
                 <div className="sticky left-0 top-0 ">
@@ -407,9 +405,9 @@ export function PostDetailContent({ postId }: Props) {
                   </div>
                 </div>
               </div>
-            )}
-          </div>
-        </ReactionSettingsProvider>
+            </div>
+          </ReactionSettingsProvider>
+        </BrowsingModeOverrideProvider>
       </SensitiveShield>
     </>
   );

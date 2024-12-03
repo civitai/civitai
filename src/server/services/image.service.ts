@@ -1048,7 +1048,15 @@ export const getAllImages = async (
     if (modelVersionId) AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
 
     // If system user, show community images
-    if (prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1)
+    const prioritizseIsSystemUser = prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1;
+
+    // Confirm system user has posts:
+    const hasSystemPosts =
+      prioritizseIsSystemUser && modelVersionId
+        ? await dbRead.post.findFirst({ where: { userId: -1, modelVersionId } })
+        : false;
+
+    if (prioritizseIsSystemUser && !hasSystemPosts)
       orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`;
     else {
       // For everyone else, only show their images.

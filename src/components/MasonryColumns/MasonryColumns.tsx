@@ -65,7 +65,7 @@ export function MasonryColumns<TData>({
                   createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
                 {data.type === 'ad' && (
                   <AdUnitRenderable>
-                    <TwCard className="w-full items-center justify-center py-2 shadow">
+                    <TwCard className="w-full items-center justify-center shadow">
                       <data.data.AdUnit />
                     </TwCard>
                   </AdUnitRenderable>

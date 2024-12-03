@@ -18,6 +18,7 @@ export const dailyChallengeConfig = {
   reviewAmount: { min: 8, max: 12 },
   finalReviewAmount: 10,
   resourceCosmeticId: null,
+  articleTagId: 128643, // Announcement.
 };
 
 export type Prize = {

@@ -9,6 +9,7 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
+import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 
 export function AppLayout({
   children,
@@ -59,6 +60,7 @@ export function AppLayout({
           )}
         </div>
       )}
+      <AdhesiveAd />
     </>
   );
 }

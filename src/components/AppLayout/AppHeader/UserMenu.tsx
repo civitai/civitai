@@ -83,7 +83,7 @@ export function UserMenu() {
           <Burger opened={open} size="sm" className={clsx({ ['@md:hidden']: !!currentUser })} />
         </UnstyledButton>
       </Popover.Target>
-      <Popover.Dropdown className="flex flex-col p-0 @max-md:mt-3 @max-md:h-[calc(100%-var(--header-height))]">
+      <Popover.Dropdown className="flex flex-col p-0 @max-md:mt-2 @max-md:h-[calc(100%-var(--header-height))]">
         <UserMenuCtx.Provider value={{ handleClose: () => setOpen(false) }}>
           <PopoverContent />
         </UserMenuCtx.Provider>
