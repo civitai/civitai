@@ -215,9 +215,12 @@ function ReactionsList({
       {keys
         .filter((reaction) => (available ? available.includes(reaction) : true))
         .sort((a, b) => {
-          if (!invisibleEmpty && !noEmpty) return 0;
+          if (!invisibleEmpty || !noEmpty) return 0;
           const countA = getReactionCount(a, metrics);
-          return !countA ? 1 : -1;
+          const countB = getReactionCount(b, metrics);
+          if (countA === 0 && countB > 0) return 1;
+          else if (countB === 0 && countA > 0) return -1;
+          return 0;
         })
         .map((reaction) => {
           const count = getReactionCount(reaction, metrics);
