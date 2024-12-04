@@ -1,6 +1,11 @@
 import { Box, BoxProps } from '@mantine/core';
 
-export const YoutubeEmbed = ({ videoId, sx, ...props }: { videoId: string } & BoxProps) => (
+export const YoutubeEmbed = ({
+  videoId,
+  autoPlay,
+  sx,
+  ...props
+}: { videoId: string; autoPlay?: boolean } & BoxProps) => (
   <Box
     {...props}
     sx={{
@@ -20,7 +25,7 @@ export const YoutubeEmbed = ({ videoId, sx, ...props }: { videoId: string } & Bo
     <iframe
       width="853"
       height="480"
-      src={`https://www.youtube.com/embed/${videoId}`}
+      src={`https://www.youtube.com/embed/${videoId}?autoplay=${autoPlay ? 1 : 0}`}
       frameBorder="0"
       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
       allowFullScreen

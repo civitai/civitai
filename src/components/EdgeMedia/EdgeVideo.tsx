@@ -66,6 +66,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         <YoutubeEmbed
           style={{ display: 'block', width: '100%', height: 'auto', ...style }}
           videoId={youtubeVideoId}
+          autoPlay
         />
       );
     }

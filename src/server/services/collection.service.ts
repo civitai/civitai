@@ -2312,7 +2312,6 @@ export const enableCollectionYoutubeSupport = async ({
 
     return { collectionId, youtubeSupportEnabled: true };
   } catch (error) {
-    console.log(error);
     throw throwBadRequestError('Failed to save youtube authentication code');
   }
 };

@@ -27,7 +27,7 @@ type ImageProps = {
   width: number | null;
   type: MediaType;
   name: string | null;
-  metadata?: ImageMetadata | VideoMetadata | null;
+  metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
 };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];

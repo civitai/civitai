@@ -71,7 +71,6 @@ export const getYoutubeVideos = (client: OAuth2Client) => {
       },
       (err, response) => {
         if (err) {
-          console.error('The API returned an error: ' + err);
           reject(err);
           return;
         }
@@ -129,12 +128,9 @@ export const uploadYoutubeVideo = async ({
       },
       (err, response) => {
         if (err) {
-          console.error('The API returned an error: ' + err);
           reject(err);
           return;
         }
-
-        console.log(response);
 
         resolve(response?.data);
       }
