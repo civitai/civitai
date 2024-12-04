@@ -70,8 +70,6 @@ export function VideoGenerationForm() {
     engine,
   });
 
-  console.log({ availableWorkflows });
-
   const { data: engines, isLoading } = useGetGenerationEngines();
   const engineData = engines?.find((x) => x.engine === engine);
 

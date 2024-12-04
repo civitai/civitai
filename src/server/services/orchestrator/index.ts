@@ -1,4 +1,4 @@
-import { WorkflowStatus } from '@civitai/client';
+import type { WorkflowStatus, WorkflowStepJobQueuePosition } from '@civitai/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 
 export type NormalizedGeneratedImageResponse = AsyncReturnType<
@@ -19,6 +19,7 @@ interface BaseGeneratedMedia {
   width: number;
   height: number;
   reason?: string;
+  queuePosition?: WorkflowStepJobQueuePosition;
 }
 
 export interface GeneratedVideo extends BaseGeneratedMedia {

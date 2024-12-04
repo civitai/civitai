@@ -457,6 +457,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             url: image.url + '.mp4',
             width: width ?? 1080,
             height: height ?? 1080,
+            queuePosition: job.queuePosition,
           })) ?? [],
     }),
     {}
