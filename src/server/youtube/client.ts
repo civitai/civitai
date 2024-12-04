@@ -30,10 +30,7 @@ export const getYoutubeAuthUrl = ({
   const client = getClient();
   return client.generateAuthUrl({
     access_type: 'offline',
-    scope: [
-      'https://www.googleapis.com/auth/youtube',
-      'https://www.googleapis.com/auth/youtube.upload',
-    ],
+    scope: ['https://www.googleapis.com/auth/youtube.upload'],
     state: JSON.stringify(state),
     redirect_uri: `${env.NEXT_PUBLIC_BASE_URL}${redirectUri}`,
     include_granted_scopes: true,
