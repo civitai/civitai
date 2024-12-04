@@ -1,3 +1,4 @@
+import { KlingModel } from '@civitai/client';
 import { z } from 'zod';
 
 const baseVideoSchema = z.object({
@@ -15,7 +16,7 @@ export const haiperVideoGenerationSchema = baseVideoSchema.extend({
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   image: z.string().optional(),
   // cameraMovement: z.string().optional(),
-  duration: z.number().optional(),
+  duration: z.coerce.number().optional(),
   aspectRatio: z.string().optional(),
   sourceImageUrl: z.string().optional(),
   resolution: z.number().default(1080),
@@ -24,11 +25,11 @@ export const haiperVideoGenerationSchema = baseVideoSchema.extend({
 
 export const klingVideoGenerationSchema = baseVideoSchema.extend({
   engine: z.literal('kling'),
-  model: z.string().default('kling-v1'),
+  model: z.string().default(KlingModel.V1_5),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.number().min(0).max(1).optional(),
   mode: z.string().optional(),
-  duration: z.number().optional(),
+  duration: z.coerce.number().optional(),
   seed: z.number().optional(),
   aspectRatio: z.string().optional(),
   sourceImageUrl: z.string().optional(),

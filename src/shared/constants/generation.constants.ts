@@ -1,4 +1,4 @@
-import { WorkflowStatus } from '@civitai/client';
+import { KlingMode, WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { Sampler, generation, getGenerationConfig } from '~/server/common/constants';
@@ -597,29 +597,29 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       negativePrompt: '',
       aspectRatio: '1:1', // custom aspect ratios
       cfgScale: 0.5, // custom cfgScale
-      mode: 'std', // custom mode
+      mode: KlingMode.STANDARD, // custom mode
       duration: 5, // custom duration
       seed: undefined,
     },
     metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
   },
-  {
-    type: 'video',
-    subType: 'img2vid',
-    name: 'Image to video',
-    category: 'service',
-    engine: 'kling',
-    key: 'kling-img2vid',
-    defaultValues: {
-      prompt: '',
-      negativePrompt: '',
-      cfgScale: 0.5, // custom cfgScale
-      mode: 'std', // custom mode
-      duration: 5, // custom duration
-      seed: undefined,
-    },
-    metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
-  },
+  // {
+  //   type: 'video',
+  //   subType: 'img2vid',
+  //   name: 'Image to video',
+  //   category: 'service',
+  //   engine: 'kling',
+  //   key: 'kling-img2vid',
+  //   defaultValues: {
+  //     prompt: '',
+  //     negativePrompt: '',
+  //     cfgScale: 0.5, // custom cfgScale
+  //     mode: KlingMode.STANDARD, // custom mode
+  //     duration: 5, // custom duration
+  //     seed: undefined,
+  //   },
+  //   metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
+  // },
 ];
 // #endregion
 

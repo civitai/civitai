@@ -51,6 +51,7 @@ import { useGetGenerationEngines } from '~/components/Generate/hooks/useGetGener
 import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { KlingMode, KlingVideoGenDuration } from '@civitai/client';
 
 const schema = videoGenerationSchema;
 
@@ -106,12 +107,13 @@ export function VideoGenerationForm() {
         <Select
           label="Tool"
           value={engine}
+          description={
+            engineData?.message && !engineData?.disabled ? engineData.message : undefined
+          }
           onChange={(value) => generationFormStore.setEngine(value!)}
           data={availableEngines.map(({ key, label }) => ({ label, value: key }))}
         />
-        {engineData?.message && !engineData?.disabled && (
-          <Alert color="blue">{engineData.message}</Alert>
-        )}
+
         {workflows.length > 1 ? (
           <Select
             label="Workflow"
@@ -198,7 +200,10 @@ function KlingTextToVideoForm() {
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={[5, 10].map((value) => ({ label: `${value}s`, value }))}
+          data={Object.values(KlingVideoGenDuration).map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
         />
       </div>
       <div className="flex flex-col gap-0.5">
@@ -212,8 +217,8 @@ function KlingTextToVideoForm() {
         <InputSegmentedControl
           name="mode"
           data={[
-            { label: 'Standard', value: 'std' },
-            { label: 'Pro', value: 'pro' },
+            { label: 'Standard', value: KlingMode.STANDARD },
+            { label: 'Professional', value: KlingMode.PROFESSIONAL },
           ]}
         />
       </div>
@@ -256,7 +261,10 @@ function KlingImageToVideoForm() {
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={[5, 10].map((value) => ({ label: `${value}s`, value }))}
+          data={Object.values(KlingVideoGenDuration).map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
         />
       </div>
       <div className="flex flex-col gap-0.5">
@@ -270,8 +278,8 @@ function KlingImageToVideoForm() {
         <InputSegmentedControl
           name="mode"
           data={[
-            { label: 'Standard', value: 'std' },
-            { label: 'Pro', value: 'pro' },
+            { label: 'Standard', value: KlingMode.STANDARD },
+            { label: 'Professional', value: KlingMode.PROFESSIONAL },
           ]}
         />
       </div>
@@ -376,6 +384,7 @@ function FormWrapper({
     [status.message]
   );
 
+  const { data: engines } = useGetGenerationEngines();
   const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
 
   const form = usePersistForm(workflow.key, {
@@ -402,7 +411,8 @@ function FormWrapper({
       localStorage.removeItem(workflow.key);
     }
     form.reset(defaultValues);
-    const engineConfig = availableEngineConfigurations?.[0];
+    const engine = engines?.[0];
+    const engineConfig = availableEngineConfigurations?.find((x) => x.engine === engine?.engine);
     if (engineConfig) generationFormStore.setWorkflow(engineConfig.key);
   }
 
@@ -489,6 +499,7 @@ function FormWrapper({
 function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }) {
   const [query, setQuery] = useState<VideoGenerationSchema | null>(null);
   const { getValues, watch } = useFormContext();
+  const [error, setError] = useState<string | null>(null);
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
     { type: 'video', data: query as VideoGenerationSchema },
     { keepPreviousData: false, enabled: !!query }
@@ -509,14 +520,20 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
         {}
       );
 
-      const result = schema.safeParse({
-        engine,
-        workflow: workflow.key,
-        ...defaultValues,
-        ...whatIfData,
-      });
-      if (!result.success) setQuery(null);
-      else setQuery(result.data);
+      try {
+        const result = schema.parse({
+          engine,
+          workflow: workflow.key,
+          ...defaultValues,
+          ...whatIfData,
+        });
+        setQuery(result);
+        setError(null);
+      } catch (e: any) {
+        const { message, path } = JSON.parse(e.message)?.[0] as any;
+        setQuery(null);
+        setError(`${path?.[0]}: ${message}`);
+      }
     });
     return subscription.unsubscribe;
   }, [workflow, engine]);

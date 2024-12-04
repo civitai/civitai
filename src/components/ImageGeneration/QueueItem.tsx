@@ -314,6 +314,11 @@ export function QueueItem({
                   {pending &&
                     (queuePosition ? (
                       <>
+                        {queuePosition.support === 'unavailable' && (
+                          <Text color="dimmed" size="xs" align="center">
+                            Currently unavailable
+                          </Text>
+                        )}
                         {queuePosition.precedingJobs && (
                           <Text color="dimmed" size="xs" align="center">
                             Your position in queue: {queuePosition.precedingJobs}
