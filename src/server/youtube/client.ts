@@ -1,6 +1,10 @@
 import { OAuth2Client } from 'google-auth-library';
 import { google, youtube_v3 } from 'googleapis';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server.mjs';
+import { fetchBlob } from '~/utils/file-utils';
+import { Readable } from 'node:stream';
+import sanitize from 'sanitize-html';
 
 const OAuth2 = google.auth.OAuth2;
 
@@ -71,6 +75,66 @@ export const getYoutubeVideos = (client: OAuth2Client) => {
           reject(err);
           return;
         }
+
+        resolve(response?.data);
+      }
+    );
+  });
+};
+
+type S3ToYoutubeInput = {
+  url: string;
+  title: string;
+  description: string;
+  mimeType?: string;
+  client: OAuth2Client;
+};
+
+export const uploadYoutubeVideo = async ({
+  url,
+  mimeType = 'video/mp4',
+  client,
+  title,
+  description,
+}: S3ToYoutubeInput) => {
+  const service = google.youtube('v3');
+  const blob = await fetchBlob(getEdgeUrl(url, { type: 'video', original: true }));
+  if (!blob) return;
+
+  const stream = (blob as Blob).stream();
+
+  return new Promise<youtube_v3.Schema$Video | undefined>((resolve, reject) => {
+    service.videos.insert(
+      {
+        auth: client,
+        part: ['snippet', 'status'],
+        requestBody: {
+          snippet: {
+            title: title,
+            // Youtube doesn't like HTML into their descriptions.
+            description: sanitize(description, {
+              allowedTags: [],
+              allowedAttributes: {},
+            }),
+          },
+          status: {
+            privacyStatus: 'unlisted',
+          },
+        },
+        media: {
+          mimeType: mimeType,
+          // @ts-ignore - Readable stream is supported here.
+          body: Readable.fromWeb(stream),
+        },
+      },
+      (err, response) => {
+        if (err) {
+          console.error('The API returned an error: ' + err);
+          reject(err);
+          return;
+        }
+
+        console.log(response);
 
         resolve(response?.data);
       }
