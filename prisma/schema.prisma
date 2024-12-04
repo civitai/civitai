@@ -108,7 +108,7 @@ model UserPaymentConfiguration {
   stripeAccountId        String? @unique
   stripeAccountStatus    String  @default("PendingOnboarding")
   stripePaymentsEnabled  Boolean @default(false)
-  // 
+  //
   meta                   Json    @default("{}")
 }
 
@@ -1234,6 +1234,7 @@ enum ImageIngestionStatus {
   Error
   Blocked
   NotFound
+  PendingManualAssignment
 }
 
 enum MediaType {
@@ -1696,6 +1697,7 @@ model Partner {
   token              String?             @unique
   tier               Int                 @default(0)
   logo               String?
+  disabled           Boolean             @default(false)
   runStrategies      RunStrategy[]
 }
 
@@ -2469,11 +2471,12 @@ model CollectionContributor {
 }
 
 model TagsOnCollection {
-  collectionId Int
-  tagId        Int
-  createdAt    DateTime?  @default(now())
-  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  tag          Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  collectionId   Int
+  tagId          Int
+  createdAt      DateTime?  @default(now())
+  collection     Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  tag            Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  filterableOnly Boolean    @default(false)
 
   @@id([tagId, collectionId])
   @@index([collectionId], type: Hash)

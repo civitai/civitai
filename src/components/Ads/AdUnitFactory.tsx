@@ -1,14 +1,14 @@
 import { supportUsImageSizes } from '~/components/Ads/ads.utils';
 import { CSSObject, Text, createStyles } from '@mantine/core';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import Image from 'next/image';
-import { NextLink } from '@mantine/next';
 import { getRandomId } from '~/utils/string-helpers';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -19,12 +19,10 @@ const adUnitDictionary: Record<string, string> = {};
 function AdUnitContent({
   adUnit,
   sizes,
-  lazyLoad,
   id: initialId,
 }: {
   adUnit: string;
   sizes?: AdSize[];
-  lazyLoad?: boolean;
   id?: string;
 }) {
   // const loadedRef = useRef(false);
@@ -44,7 +42,6 @@ function AdUnitContent({
           adUnit,
           placement: id,
           gpIdUniquifier: adUnitDictionary[adUnit],
-          lazyLoad,
           sizes,
         };
         window.adngin.cmd.startAuction([payload]);
@@ -52,13 +49,13 @@ function AdUnitContent({
     }
 
     return () => {
-      const slot = window.googletag
-        .pubads()
-        .getSlots()
-        .find((x: any) => x.getSlotElementId() === id);
-      if (slot) window.googletag.destroySlots([slot]);
-      // window.googletag.cmd.push(function () {
-      // });
+      window.googletag.cmd.push(function () {
+        const slot = window.googletag
+          .pubads()
+          .getSlots()
+          .find((x: any) => x.getSlotElementId() === id);
+        if (slot) window.googletag.destroySlots([slot]);
+      });
     };
   }, []);
 
@@ -90,29 +87,35 @@ function AdWrapper({
   sizes,
   lutSizes,
   withFeedback,
-  lazyLoad,
   className,
   id,
+  maxHeight,
+  maxWidth,
+  preserveLayout,
 }: {
   adUnit: string;
   sizes?: AdSize[] | null;
   lutSizes?: AdSizeLUT[];
   withFeedback?: boolean;
-  lazyLoad?: boolean;
   className?: string;
   id?: string;
+  maxHeight?: number;
+  maxWidth?: number;
+  preserveLayout?: boolean;
 }) {
   const { adsBlocked, ready, isMember } = useAdsContext();
 
-  const { classes } = useAdWrapperStyles({ sizes, lutSizes });
-  const adSizes = useAdSizes({ sizes, lutSizes });
+  const { classes } = useAdWrapperStyles({ sizes, lutSizes, maxHeight, maxWidth });
+  const adSizes = useAdSizes({ sizes, lutSizes, maxHeight, maxWidth });
   const [ref, inView] = useInView();
+
+  if (adSizes && !adSizes.length) return null;
 
   return (
     <div
       ref={ref}
       className={clsx(
-        classes.root,
+        { [classes.root]: preserveLayout !== false },
         'relative box-content flex flex-col items-center justify-center gap-2',
         className
       )}
@@ -122,12 +125,7 @@ function AdWrapper({
           {adsBlocked ? (
             <SupportUsImage sizes={adSizes ?? undefined} />
           ) : ready && adSizes !== undefined ? (
-            <AdUnitContent
-              adUnit={adUnit}
-              sizes={adSizes ?? undefined}
-              lazyLoad={lazyLoad}
-              id={id}
-            />
+            <AdUnitContent adUnit={adUnit} sizes={adSizes ?? undefined} id={id} />
           ) : null}
           {withFeedback && !isMember && (
             <>
@@ -158,59 +156,100 @@ export function adUnitFactory(factoryArgs: {
   id?: string;
 }) {
   return function AdUnit({
-    lazyLoad,
     withFeedback,
     browsingLevel,
     className,
+    maxHeight,
+    maxWidth,
+    preserveLayout,
   }: {
-    lazyLoad?: boolean;
     withFeedback?: boolean;
     browsingLevel?: number;
     className?: string;
+    maxHeight?: number;
+    maxWidth?: number;
+    preserveLayout?: boolean;
   }) {
     return (
       <AdUnitRenderable browsingLevel={browsingLevel}>
         <AdWrapper
           {...factoryArgs}
-          lazyLoad={lazyLoad}
           withFeedback={withFeedback}
           className={className}
+          maxHeight={maxHeight}
+          maxWidth={maxWidth}
+          preserveLayout={preserveLayout}
         />
       </AdUnitRenderable>
     );
   };
 }
 
-function getMaxHeight(sizes: AdSize[]) {
-  return Math.max(...sizes.map(([_, height]) => Math.max(height)));
+function getMaxHeight(sizes: AdSize[], args?: { maxHeight?: number; maxWidth?: number }) {
+  const { maxHeight, maxWidth } = args ?? {};
+  const filteredSizes = maxWidth ? sizes.filter(([w]) => w <= maxWidth) : sizes;
+  const height = Math.max(...filteredSizes.map(([_, height]) => Math.max(height)));
+  return maxHeight ? Math.min(maxHeight, height) : height;
 }
 
 const useAdWrapperStyles = createStyles(
-  (theme, { sizes, lutSizes }: { sizes?: AdSize[] | null; lutSizes?: AdSizeLUT[] }) => ({
-    root: {
-      minHeight: sizes ? getMaxHeight(sizes) : undefined,
-      ...lutSizes?.reduce<Record<string, CSSObject>>((acc, [[minWidth, maxWidth], sizes]) => {
-        const queries: string[] = [];
-        if (minWidth) queries.push(`(min-width: ${minWidth}px)`);
-        if (maxWidth) queries.push(`(max-width: ${maxWidth}px)`);
+  (
+    theme,
+    {
+      sizes,
+      lutSizes,
+      maxHeight,
+      maxWidth: maxOuterWidth,
+    }: { sizes?: AdSize[] | null; lutSizes?: AdSizeLUT[]; maxHeight?: number; maxWidth?: number }
+  ) => {
+    return {
+      root: {
+        minHeight: sizes ? getMaxHeight(sizes, { maxHeight, maxWidth: maxOuterWidth }) : undefined,
+        ...lutSizes?.reduce<Record<string, CSSObject>>((acc, [[minWidth, maxWidth], sizes]) => {
+          const queries: string[] = [];
+          if (minWidth) queries.push(`(min-width: ${minWidth}px)`);
+          if (maxWidth) queries.push(`(max-width: ${maxWidth}px)`);
 
-        return {
-          ...acc,
-          [`@container ${queries.join(' and ')}`]: {
-            minHeight: getMaxHeight(sizes),
-          },
-        };
-      }, {}),
-    },
-  })
+          return {
+            ...acc,
+            [`@container ${queries.join(' and ')}`]: {
+              minHeight: getMaxHeight(sizes, { maxHeight, maxWidth: maxOuterWidth }),
+            },
+          };
+        }, {}),
+      },
+    };
+  }
 );
 
-function useAdSizes({ sizes, lutSizes }: { sizes?: AdSize[] | null; lutSizes?: AdSizeLUT[] }) {
+function useAdSizes({
+  sizes,
+  lutSizes,
+  maxHeight,
+  maxWidth,
+}: {
+  sizes?: AdSize[] | null;
+  lutSizes?: AdSizeLUT[];
+  maxHeight?: number;
+  maxWidth?: number;
+}) {
   const ref = useScrollAreaRef();
   const [adSizes, setAdSizes] = useState<AdSize[] | null | undefined>(undefined);
 
   useEffect(() => {
-    if (sizes || sizes === null) setAdSizes(sizes);
+    function handleSetAdSizes(sizes: AdSize[] | null) {
+      if (!sizes || (!maxHeight && !maxWidth)) setAdSizes(sizes);
+      else
+        setAdSizes(
+          sizes.filter(([w, h]) => {
+            if (maxHeight && h > maxHeight) return false;
+            if (maxWidth && w > maxWidth) return false;
+            return true;
+          })
+        );
+    }
+
+    if (sizes || sizes === null) handleSetAdSizes(sizes);
     else if (lutSizes) {
       const width = ref?.current?.clientWidth ?? window.innerWidth;
       const adSizes = lutSizes
@@ -220,7 +259,7 @@ function useAdSizes({ sizes, lutSizes }: { sizes?: AdSize[] | null; lutSizes?: A
           return true;
         })
         .flatMap(([_, sizes]) => sizes);
-      setAdSizes(adSizes);
+      handleSetAdSizes(adSizes);
     }
   }, []);
 

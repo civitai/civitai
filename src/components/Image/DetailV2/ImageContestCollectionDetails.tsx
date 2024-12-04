@@ -13,31 +13,43 @@ import { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc, queryClient } from '~/utils/trpc';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
+import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 
 export const ImageContestCollectionDetails = ({
-  imageId,
+  image,
   isOwner,
   isModerator,
   shareUrl,
   userId,
 }: {
-  imageId: number;
+  image: {
+    id: number;
+    nsfwLevel?: number;
+    postId?: number | null;
+  };
   isOwner: boolean;
   isModerator?: boolean;
   shareUrl?: string;
   userId?: number;
 }) => {
   const isOwnerOrMod = isOwner || isModerator;
+
+  const { updateImage } = useImageDetailContext();
   const { collectionItems } = useImageContestCollectionDetails(
-    { id: imageId },
-    { enabled: !!imageId }
+    { id: image.id },
+    { enabled: !!image.id }
   );
+  const queryUtils = trpc.useUtils();
 
   if ((collectionItems?.length ?? 0) === 0) return null;
 
   const displayedItems =
-    collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod) ??
-    [];
+    collectionItems?.filter(
+      (ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod || ci.permissions?.manage
+    ) ?? [];
 
   if (displayedItems.length === 0) return null;
 
@@ -62,9 +74,37 @@ export const ImageContestCollectionDetails = ({
             </>
           ) : null;
           const inReview = item.status === CollectionItemStatus.REVIEW;
-          const userScore = item?.scores?.find((s) => s.userId === userId)?.score;
+          const collectionSupportsScoring = item?.collection?.metadata?.judgesCanScoreEntries;
+          const isCollectionJudge = item?.permissions?.manage || isModerator;
+          const handleScoreUpdated = ({
+            collectionItemId,
+            score,
+            userId,
+          }: {
+            collectionItemId: number;
+            score: number;
+            userId: number;
+          }) => {
+            queryUtils.image.getContestCollectionDetails.setData(
+              { id: image.id },
+              produce((old) => {
+                if (!old) return;
 
-          if (isModerator && inReview) {
+                const item = old.collectionItems.find((item) => item.id === collectionItemId);
+                if (!item) return;
+
+                const existingScore = item.scores.find((itemScore) => itemScore.userId === userId);
+                if (!existingScore) {
+                  item.scores.push({ userId, score });
+                  return;
+                }
+
+                existingScore.score = score;
+              })
+            );
+          };
+
+          if (isCollectionJudge && inReview) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
                 <Divider />
@@ -80,12 +120,32 @@ export const ImageContestCollectionDetails = ({
             );
           }
 
-          if (isOwnerOrMod) {
+          if (isOwnerOrMod || isCollectionJudge) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
+                {isCollectionJudge && (
+                  <CollectionItemNSFWLevelSelector
+                    collectionId={item.collection.id}
+                    collectionItemId={item.id}
+                    nsfwLevel={image?.nsfwLevel}
+                    onNsfwLevelUpdated={(value) => {
+                      queryUtils.image.get.setData(
+                        { id: image.id },
+                        produce((old) => {
+                          if (!old) return;
+
+                          old.nsfwLevel = parseInt(value, 10);
+                          return old;
+                        })
+                      );
+
+                      updateImage(image.id, { nsfwLevel: parseInt(value, 10) });
+                    }}
+                  />
+                )}
                 <Divider />
                 <Text>
-                  You have submitted this image to the{' '}
+                  {isOwner ? 'You have' : 'This user has'} submitted this image to the{' '}
                   <Text weight="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
@@ -110,39 +170,31 @@ export const ImageContestCollectionDetails = ({
                 )}
                 {item.status === CollectionItemStatus.ACCEPTED && (
                   <div className="flex flex-col gap-3">
-                    {isModerator && !userScore ? (
-                      <ContestItemScore
-                        itemId={item.id}
-                        collectionId={item.collection.id}
-                        imageId={imageId}
+                    {isCollectionJudge && collectionSupportsScoring && (
+                      <ContestCollectionItemScorer
+                        collectionItemId={item.id}
+                        onScoreChanged={handleScoreUpdated}
+                        currentScore={item.scores.find((s) => s.userId === userId)?.score}
                       />
-                    ) : (
-                      <>
-                        <Text>
-                          Share the link to your submission in the and have your friends react on
-                          it. This could help you win the contest and the Community Choice award.
-                        </Text>
-                        <Text>
-                          Please note than an account is required to react and reaction votes are
-                          limited to one per account.
-                        </Text>
-                        <ShareButton
-                          url={shareUrl}
-                          title="Share now"
-                          collect={{ type: CollectionType.Image, imageId }}
-                        >
-                          <Button
-                            radius="xl"
-                            color="gray"
-                            size="sm"
-                            compact
-                            className="text-center"
-                          >
-                            <Text size="xs">Share Now</Text>
-                          </Button>
-                        </ShareButton>
-                      </>
                     )}
+
+                    <Text>
+                      Share the link to your submission in the contest and have your friends react
+                      on it. This could help you win the contest and the Community Choice award.
+                    </Text>
+                    <Text>
+                      Please note than an account is required to react and reaction votes are
+                      limited to one per account.
+                    </Text>
+                    <ShareButton
+                      url={shareUrl}
+                      title="Share now"
+                      collect={{ type: CollectionType.Image, imageId: image.id }}
+                    >
+                      <Button radius="xl" color="gray" size="sm" compact className="text-center">
+                        <Text size="xs">Share Now</Text>
+                      </Button>
+                    </ShareButton>
                   </div>
                 )}
                 {item.status === CollectionItemStatus.REJECTED && (
@@ -278,44 +330,6 @@ function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId:
           Approve
         </Button>
       </PopConfirm>
-    </div>
-  );
-}
-
-function ContestItemScore({
-  itemId,
-  collectionId,
-  imageId,
-}: {
-  itemId: number;
-  collectionId: number;
-  imageId: number;
-}) {
-  const [selectedScore, setSelectedScore] = useState(1);
-
-  const { setItemScore, loading } = useSetCollectionItemScore({ imageId });
-  const handleSetItemScore = async () => {
-    await setItemScore({
-      itemId,
-      collectionId,
-      score: selectedScore,
-    });
-  };
-
-  return (
-    <div className="flex flex-col gap-2">
-      <Text>
-        Rate this submission on a scale of 1 to 10, with 1 being the lowest and 10 being the
-        highest.
-      </Text>
-      <SegmentedControl
-        data={['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']}
-        value={selectedScore.toString()}
-        onChange={(value) => setSelectedScore(Number(value))}
-      />
-      <Button onClick={handleSetItemScore} loading={loading}>
-        Submit
-      </Button>
     </div>
   );
 }

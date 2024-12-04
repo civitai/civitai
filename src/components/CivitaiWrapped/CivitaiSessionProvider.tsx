@@ -36,10 +36,12 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
       } as UnauthedUser;
 
     const isMember = user.tier != null;
+    const isPaidMember = user.tier != null && user.tier !== 'free';
     const currentUser: AuthedUser = {
       type: 'authed',
       ...user,
       isMember,
+      isPaidMember,
       memberInBadState: user.memberInBadState,
       refresh: update,
       settings: {
@@ -100,6 +102,7 @@ export type CivitaiSessionUser = SessionUser & {
   disableHidden?: boolean;
   browsingLevel: number;
   meta?: UserMeta;
+  isPaidMember: boolean;
 };
 
 type SharedUser = { settings: BrowsingSettings };

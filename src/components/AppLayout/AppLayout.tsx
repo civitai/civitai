@@ -9,6 +9,8 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
+import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function AppLayout({
   children,
@@ -34,6 +36,8 @@ export function AppLayout({
   notFound?: boolean;
   announcements?: boolean;
 }) {
+  const currentUser = useCurrentUser();
+
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
@@ -59,6 +63,7 @@ export function AppLayout({
           )}
         </div>
       )}
+      {!currentUser?.isPaidMember && <AdhesiveAd />}
     </>
   );
 }

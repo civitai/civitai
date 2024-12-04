@@ -60,6 +60,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -108,18 +109,20 @@ function MyApp(props: CustomAppProps) {
 
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
-      {Component.getLayout?.(page) ?? (
-        <AppLayout
-          left={Component.left}
-          right={Component.right}
-          subNav={Component.subNav}
-          scrollable={Component.scrollable}
-          footer={Component.footer}
-          announcements={Component.announcements}
-        >
-          {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
-        </AppLayout>
-      )}
+      <BrowsingModeOverrideProvider browsingLevel={Component.browsingLevel}>
+        {Component.getLayout?.(page) ?? (
+          <AppLayout
+            left={Component.left}
+            right={Component.right}
+            subNav={Component.subNav}
+            scrollable={Component.scrollable}
+            footer={Component.footer}
+            announcements={Component.announcements}
+          >
+            {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+          </AppLayout>
+        )}
+      </BrowsingModeOverrideProvider>
     </FeatureLayout>
   );
 

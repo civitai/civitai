@@ -20,7 +20,7 @@ import {
 } from '@mantine/core';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { hashify, parseAIR } from '~/utils/string-helpers';
-import { getHotkeyHandler, useLocalStorage } from '@mantine/hooks';
+import { useLocalStorage } from '@mantine/hooks';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
 import { IconArrowAutofitDown } from '@tabler/icons-react';
@@ -35,7 +35,6 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import {
-  keyupEditAttention,
   useGenerationStatus,
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
@@ -50,7 +49,6 @@ import {
   InputNumberSlider,
   InputSegmentedControl,
   InputSwitch,
-  InputTextArea,
   InputSelect,
 } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
@@ -60,6 +58,7 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModeOptions,
   fluxModelId,
+  fluxUltraAir,
   fluxUltraAspectRatios,
   getBaseModelResourceTypes,
   getIsFlux,
@@ -91,6 +90,7 @@ import { clone } from 'lodash-es';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useTipStore } from '~/store/tip.store';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -161,24 +161,6 @@ export function GenerationFormContent() {
   }
   // #endregion
 
-  const promptKeyHandler = getHotkeyHandler([
-    ['mod+Enter', () => form.handleSubmit(handleSubmit)()],
-    [
-      'mod+ArrowUp',
-      (event) => {
-        const text = keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>);
-        form.setValue('prompt', text ?? '');
-      },
-    ],
-    [
-      'mod+ArrowDown',
-      (event) => {
-        const text = keyupEditAttention(event as React.KeyboardEvent<HTMLTextAreaElement>);
-        form.setValue('prompt', text ?? '');
-      },
-    ],
-  ]);
-
   const { conditionalPerformTransaction } = useBuzzTransaction({
     type: 'Generation',
     message: (requiredBalance) =>
@@ -216,6 +198,14 @@ export function GenerationFormContent() {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
+      }
+      if (params.fluxMode !== fluxUltraAir) {
+        if (params.engine) delete params.engine;
+      }
+    } else {
+      const keys = ['fluxMode', 'engine', 'fluxUltraAspectRatio'];
+      for (const key in params) {
+        if (keys.includes(key)) delete params[key as keyof typeof params];
       }
     }
     const isSD3 = getIsSD3(params.baseModel);
@@ -648,7 +638,7 @@ export function GenerationFormContent() {
                             })}
                             withBorder
                           >
-                            <InputTextArea
+                            <InputPrompt
                               name="prompt"
                               placeholder="Your prompt goes here..."
                               autosize
@@ -676,7 +666,6 @@ export function GenerationFormContent() {
                                 const text = event.clipboardData.getData('text/plain');
                                 if (text) setShowFillForm(text.includes('Steps:'));
                               }}
-                              onKeyDown={promptKeyHandler}
                             />
                             {trainedWords.length > 0 ? (
                               <div className="mb-1 flex flex-col gap-2">
@@ -725,14 +714,7 @@ export function GenerationFormContent() {
                   )}
                 </div>
 
-                {!isFlux && (
-                  <InputTextArea
-                    name="negativePrompt"
-                    label="Negative Prompt"
-                    onKeyDown={promptKeyHandler}
-                    autosize
-                  />
-                )}
+                {!isFlux && <InputPrompt name="negativePrompt" label="Negative Prompt" autosize />}
                 {isFluxUltra && (
                   <InputSwitch
                     name="fluxUltraRaw"

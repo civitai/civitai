@@ -68,6 +68,11 @@ import { userContentOverviewCache } from '~/server/redis/caches';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
 import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import {
+  CollectionMetadataSchema,
+  getCollectionPermissionDetails,
+} from '~/server/schema/collection.schema';
+import NewModelVersion from '~/pages/models/[id]/model-versions/create';
 
 type GetAllPostsRaw = {
   id: number;
@@ -838,12 +843,26 @@ export const addPostImage = async ({
     }
   }
 
+  const post = await dbRead.post.findFirst({
+    where: { id: props.postId },
+    select: {
+      collection: {
+        select: {
+          metadata: true,
+        },
+      },
+    },
+  });
+
+  const collectionMeta = (post?.collection?.metadata ?? {}) as CollectionMetadataSchema;
+
   const partialResult = await createImage({
     ...props,
     meta,
     userId: user.id,
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
+    skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
   });
 
   try {
@@ -974,17 +993,30 @@ export const updatePostNsfwLevel = async (ids: number | number[]) => {
   `);
 };
 
-export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
+export const getPostContestCollectionDetails = async ({
+  id,
+  userId,
+}: GetByIdInput & { userId?: number }) => {
   const post = await dbRead.post.findUnique({
     where: { id },
     select: { collectionId: true, userId: true },
   });
 
-  if (!post || !post.collectionId) return [];
+  if (!post || !post.collectionId)
+    return {
+      collection: null,
+      permissions: null,
+      items: [],
+    };
 
   const collection = await getCollectionById({ input: { id: post.collectionId } });
 
-  if (!collection || collection?.mode !== CollectionMode?.Contest) return [];
+  if (!collection || collection?.mode !== CollectionMode?.Contest)
+    return {
+      collection: null,
+      permissions: null,
+      items: [],
+    };
 
   const isImageCollection = collection.type === CollectionType.Image;
 
@@ -1011,12 +1043,21 @@ export const getPostContestCollectionDetails = async ({ id }: GetByIdInput) => {
     },
   });
 
-  return items.map((item) => {
-    return {
-      ...item,
-      collection,
-    };
+  const permissions = await getUserCollectionPermissionsById({
+    id: post.collectionId,
+    userId,
   });
+
+  return {
+    collection,
+    items: items.map((item) => {
+      return {
+        ...item,
+        collection,
+      };
+    }),
+    permissions,
+  };
 };
 
 export const updatePostCollectionTagId = async ({

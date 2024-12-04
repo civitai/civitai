@@ -449,6 +449,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            reason: (output as HaiperVideoGenOutput).externalTOSViolation
+              ? `The content may violate our usage policy`
+              : undefined,
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
@@ -590,8 +593,8 @@ function formatTextToImageStep({
     sampler: metadata?.params?.sampler ?? sampler,
     ...upscale,
 
-    fluxMode: metadata?.params?.fluxMode,
-    fluxUltraRaw: input.engine === 'flux-pro-raw',
+    fluxMode: metadata?.params?.fluxMode ?? undefined,
+    fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
   } as TextToImageParams;
 
   if (resources.some((x) => x.air === fluxUltraAir)) {

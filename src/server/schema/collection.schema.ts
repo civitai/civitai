@@ -18,6 +18,7 @@ import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 import { tagSchema } from '~/server/schema/tag.schema';
+import { NsfwLevel } from './../common/enums';
 
 // TODO.Fix: Type-safety. This isn't actually typesafe. You can choose a type and a id that don't match.
 const collectionItemSchema = z.object({
@@ -116,6 +117,10 @@ export const collectionMetadataSchema = z
       })
       .optional(),
     bannerPosition: z.string().optional(),
+    judgesApplyBrowsingLevel: z.boolean().optional(),
+    judgesCanScoreEntries: z.boolean().optional(),
+    disableFollowOnSubmission: z.boolean().optional(),
+    disableTagRequired: z.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {
@@ -236,7 +241,12 @@ export const removeCollectionItemInput = z.object({
 
 export type SetItemScoreInput = z.infer<typeof setItemScoreInput>;
 export const setItemScoreInput = z.object({
-  collectionId: z.coerce.number(),
-  itemId: z.coerce.number(),
+  collectionItemId: z.coerce.number(),
   score: z.coerce.number().min(1).max(10),
+});
+
+export type SetCollectionItemNsfwLevelInput = z.infer<typeof setCollectionItemNsfwLevelInput>;
+export const setCollectionItemNsfwLevelInput = z.object({
+  collectionItemId: z.number(),
+  nsfwLevel: z.nativeEnum(NsfwLevel),
 });

@@ -63,6 +63,7 @@ export type ReactionButtonProps = ToggleReactionInput & {
     canClick: boolean;
   }) => React.ReactElement;
   readonly?: boolean;
+  invisibleEmpty?: boolean;
 };
 
 export function ReactionButton({
@@ -74,6 +75,7 @@ export function ReactionButton({
   readonly,
   children,
   noEmpty,
+  invisibleEmpty,
 }: ReactionButtonProps) {
   const currentUser = useCurrentUser();
 
@@ -112,7 +114,8 @@ export function ReactionButton({
   const canClick = !!currentUser && !readonly && !isLoading;
   const child = children({ hasReacted, count, reaction, canClick });
 
-  if (noEmpty && count < 1) return null;
+  if (noEmpty && count < 1)
+    return invisibleEmpty ? cloneElement(child, { className: 'invisible' }) : null;
 
   return canClick ? cloneElement(child, { onClick: handleClick }) : child;
 }
