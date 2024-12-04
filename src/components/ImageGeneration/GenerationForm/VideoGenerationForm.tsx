@@ -62,7 +62,6 @@ export function VideoGenerationForm() {
 
   const { data: engines, isLoading } = useGetGenerationEngines();
   const engineData = engines?.find((x) => x.engine === engine);
-  const isDisabled = engineData?.disabled;
 
   const workflows =
     workflow.subType === 'txt2vid'
@@ -99,6 +98,9 @@ export function VideoGenerationForm() {
             { label: 'Mochi', value: 'mochi' },
           ]}
         />
+        {engineData?.message && !engineData?.disabled && (
+          <Alert color="blue">{engineData.message}</Alert>
+        )}
         {workflows.length > 1 ? (
           <Select
             label="Workflow"
@@ -121,7 +123,7 @@ export function VideoGenerationForm() {
         <div className="flex items-center justify-center p-3">
           <Loader />
         </div>
-      ) : isDisabled ? (
+      ) : engineData?.disabled ? (
         <Alert color="yellow" className="mx-3" title={`${engine} generation disabled`}>
           {engineData?.message && <Text className="mb-2">{engineData?.message}</Text>}
           {engines && (

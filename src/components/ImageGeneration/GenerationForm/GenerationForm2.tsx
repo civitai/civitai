@@ -60,6 +60,7 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModeOptions,
   fluxModelId,
+  fluxUltraAir,
   fluxUltraAspectRatios,
   getBaseModelResourceTypes,
   getIsFlux,
@@ -216,6 +217,14 @@ export function GenerationFormContent() {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
+      }
+      if (params.fluxMode !== fluxUltraAir) {
+        if (params.engine) delete params.engine;
+      }
+    } else {
+      const keys = ['fluxMode', 'engine', 'fluxUltraAspectRatio'];
+      for (const key in params) {
+        if (keys.includes(key)) delete params[key as keyof typeof params];
       }
     }
     const isSD3 = getIsSD3(params.baseModel);

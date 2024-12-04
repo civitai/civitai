@@ -583,8 +583,8 @@ function formatTextToImageStep({
     sampler: metadata?.params?.sampler ?? sampler,
     ...upscale,
 
-    fluxMode: metadata?.params?.fluxMode,
-    fluxUltraRaw: input.engine === 'flux-pro-raw',
+    fluxMode: metadata?.params?.fluxMode ?? undefined,
+    fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
   } as TextToImageParams;
 
   if (resources.some((x) => x.air === fluxUltraAir)) {

@@ -9,6 +9,7 @@ import {
   useAnnouncementsStore,
 } from '~/components/Announcements/announcements.utils';
 import clsx from 'clsx';
+import { TwCard } from '~/components/TwCard/TwCard';
 
 export function Announcement({
   announcement,
@@ -34,65 +35,64 @@ export function Announcement({
   }
 
   return (
-    <div
-      className={clsx('relative flex border card', className)}
+    <TwCard
+      className={clsx('items-stretch border', className)}
+      direction="row"
       style={{ borderColor: theme.colors[announcement.color][4], ...style }}
       {...props}
     >
-      <div className="flex items-stretch">
-        {canDismiss && (
-          <ActionIcon
-            variant="subtle"
-            radius="xl"
-            color="red"
-            onClick={handleDismiss}
-            className="absolute right-2 top-2"
-          >
-            <IconX size={20} />
-          </ActionIcon>
-        )}
+      {canDismiss && (
+        <ActionIcon
+          variant="subtle"
+          radius="xl"
+          color="red"
+          onClick={handleDismiss}
+          className="absolute right-2 top-2"
+        >
+          <IconX size={20} />
+        </ActionIcon>
+      )}
 
-        {image && (
-          <div className="relative min-h-40 w-40 @max-md:hidden">
-            <EdgeMedia
-              src={image}
-              width={200}
-              alt="Announcement banner image"
-              className="absolute inset-0 size-full object-cover"
-            />
+      {image && (
+        <div className="relative min-h-40 w-40 @max-md:hidden">
+          <EdgeMedia
+            src={image}
+            width={200}
+            alt="Announcement banner image"
+            className="absolute inset-0 size-full object-cover"
+          />
+        </div>
+      )}
+      <div className="flex flex-1 flex-col justify-center gap-2 p-3">
+        <div className="flex justify-between gap-2">
+          <Title order={4}>{announcement.title}</Title>
+          {moderatorActions}
+        </div>
+        <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+          {announcement.content}
+        </CustomMarkdown>
+        {actions && (
+          <div className="flex gap-2">
+            {actions.map((action, index) => (
+              <Button
+                key={index}
+                component={Link}
+                href={action.link}
+                variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
+                color={action.color ?? announcement.color}
+                // onClick={handleDismiss}
+                // onMouseUp={(e) => {
+                //   if (e.button === 1) {
+                //     handleDismiss();
+                //   }
+                // }}
+              >
+                {action.linkText}
+              </Button>
+            ))}
           </div>
         )}
-        <div className="flex flex-1 flex-col justify-center gap-2 p-3">
-          <div className="flex justify-between gap-2">
-            <Title order={4}>{announcement.title}</Title>
-            {moderatorActions}
-          </div>
-          <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
-            {announcement.content}
-          </CustomMarkdown>
-          {actions && (
-            <div className="flex gap-2">
-              {actions.map((action, index) => (
-                <Link key={index} href={action.link} passHref>
-                  <Button
-                    component="a"
-                    variant={action.variant ? (action.variant as ButtonVariant) : 'outline'}
-                    color={action.color ?? announcement.color}
-                    // onClick={handleDismiss}
-                    // onMouseUp={(e) => {
-                    //   if (e.button === 1) {
-                    //     handleDismiss();
-                    //   }
-                    // }}
-                  >
-                    {action.linkText}
-                  </Button>
-                </Link>
-              ))}
-            </div>
-          )}
-        </div>
       </div>
-    </div>
+    </TwCard>
   );
 }

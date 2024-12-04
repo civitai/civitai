@@ -61,8 +61,16 @@ export function MasonryColumns<TData>({
             return (
               <React.Fragment key={key}>
                 {showStaticItem && staticItem({ columnWidth, height: 450 })}
-                {data.type === 'data' &&
-                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
+                {/* {data.type === 'data' &&
+                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)} */}
+                {data.type === 'data' && (
+                  <RenderComponent
+                    index={index}
+                    data={data.data}
+                    width={columnWidth}
+                    height={height}
+                  />
+                )}
                 {data.type === 'ad' && (
                   <AdUnitRenderable>
                     <TwCard className="w-full items-center justify-center shadow">

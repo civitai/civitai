@@ -108,7 +108,7 @@ model UserPaymentConfiguration {
   stripeAccountId        String? @unique
   stripeAccountStatus    String  @default("PendingOnboarding")
   stripePaymentsEnabled  Boolean @default(false)
-  // 
+  //
   meta                   Json    @default("{}")
 }
 
@@ -1697,6 +1697,7 @@ model Partner {
   token              String?             @unique
   tier               Int                 @default(0)
   logo               String?
+  disabled           Boolean             @default(false)
   runStrategies      RunStrategy[]
 }
 
