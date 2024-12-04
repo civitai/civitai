@@ -261,7 +261,7 @@ export function GeneratedImage({
     <TwCard
       ref={ref}
       className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{ aspectRatio: image.width / image.height }}
+      style={{ aspectRatio: image.aspectRatio ?? image.width / image.height }}
     >
       {inView && (
         <>

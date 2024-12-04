@@ -404,8 +404,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   const { input, output, jobs } = step as VideoGenStep;
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
 
-  let width = videoMetadata.params?.width;
-  let height = videoMetadata.params?.height;
+  const width = videoMetadata.params?.width;
+  const height = videoMetadata.params?.height;
+  let aspectRatio = 16 / 9;
 
   // if ((workflowId = '0-20241108234000287')) console.log(input);
 
@@ -413,22 +414,15 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   if (params) {
     switch (params.engine) {
       case 'haiper': {
-        const { aspectRatio, resolution } = params;
-        if (aspectRatio && resolution && (!width || !height)) {
-          const [rw, rh] = aspectRatio.split(':').map(Number);
-          width = resolution;
-          const ratio = width / rw;
-          height = ratio * rh;
+        if (params.aspectRatio) {
+          const [rw, rh] = params.aspectRatio.split(':').map(Number);
+          aspectRatio = rw / rh;
         }
       }
       case 'kling': {
-        const { aspectRatio } = params;
-        const resolution = 1080;
-        if (aspectRatio && resolution && (!width || !height)) {
-          const [rw, rh] = aspectRatio.split(':').map(Number);
-          width = resolution;
-          const ratio = width / rw;
-          height = ratio * rh;
+        if (params.aspectRatio) {
+          const [rw, rh] = params.aspectRatio.split(':').map(Number);
+          aspectRatio = rw / rh;
         }
       }
     }
@@ -458,6 +452,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             width: width ?? 1080,
             height: height ?? 1080,
             queuePosition: job.queuePosition,
+            aspectRatio,
           })) ?? [],
     }),
     {}

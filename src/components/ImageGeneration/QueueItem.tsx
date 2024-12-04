@@ -293,7 +293,9 @@ export function QueueItem({
               {(pending || processing) && (
                 <TwCard
                   className="items-center justify-center border"
-                  style={{ aspectRatio: images[0].width / images[0].height }}
+                  style={{
+                    aspectRatio: images[0].aspectRatio ?? images[0].width / images[0].height,
+                  }}
                 >
                   {processing && (
                     <>
@@ -319,7 +321,7 @@ export function QueueItem({
                             Currently unavailable
                           </Text>
                         )}
-                        {queuePosition.precedingJobs && (
+                        {!!queuePosition.precedingJobs && (
                           <Text color="dimmed" size="xs" align="center">
                             Your position in queue: {queuePosition.precedingJobs}
                           </Text>

@@ -180,6 +180,10 @@ function EngineForm() {
       return <KlingTextToVideoForm />;
     case 'kling-img2vid':
       return <KlingImageToVideoForm />;
+    case 'minimax-txt2vid':
+      return <MinimaxTxt2VidGenerationForm />;
+    case 'minimax-img2vid':
+      return <MinimaxImg2VidGenerationForm />;
     default:
       return null;
   }
@@ -362,6 +366,25 @@ function MochiGenerationForm() {
         ]}
       />
       <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+function MinimaxTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="minimax">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+    </FormWrapper>
+  );
+}
+
+function MinimaxImg2VidGenerationForm() {
+  return (
+    <FormWrapper engine="minimax">
+      <InputImageUrl name="sourceImageUrl" label="Image" />
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
     </FormWrapper>
   );
 }

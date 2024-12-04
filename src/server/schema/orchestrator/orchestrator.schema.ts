@@ -1,4 +1,4 @@
-import { KlingModel } from '@civitai/client';
+import { KlingModel, MiniMaxVideoGenModel } from '@civitai/client';
 import { z } from 'zod';
 
 const baseVideoSchema = z.object({
@@ -33,12 +33,13 @@ export const klingVideoGenerationSchema = baseVideoSchema.extend({
   seed: z.number().optional(),
   aspectRatio: z.string().optional(),
   sourceImageUrl: z.string().optional(),
-  // image: z.string().optional(),
-  // cameraMovement: z.string().optional(),
-  // duration: z.number().optional(),
-  // aspectRatio: z.string().optional(),
-  // seed: z.number().optional(),
-  // quantity: z.number(),
+});
+
+export const minimaxVideoGenerationSchema = baseVideoSchema.extend({
+  engine: z.literal('minimax'),
+  model: z.string().default(MiniMaxVideoGenModel.HAILOU),
+  enablePromptEnhancer: z.boolean().optional(),
+  sourceImageUrl: z.string().optional(),
 });
 
 export const mochiVideoGenerationSchema = baseVideoSchema.extend({
@@ -54,6 +55,7 @@ export const videoGenerationSchema = z.discriminatedUnion('engine', [
   haiperVideoGenerationSchema,
   klingVideoGenerationSchema,
   mochiVideoGenerationSchema,
+  minimaxVideoGenerationSchema,
 ]);
 
 const baseGenerationSchema = z.object({

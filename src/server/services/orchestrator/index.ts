@@ -20,6 +20,7 @@ interface BaseGeneratedMedia {
   height: number;
   reason?: string;
   queuePosition?: WorkflowStepJobQueuePosition;
+  aspectRatio?: number;
 }
 
 export interface GeneratedVideo extends BaseGeneratedMedia {

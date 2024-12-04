@@ -536,6 +536,11 @@ export const engineDefinitions: EnginesDictionary = {
     description: ``,
     whatIf: ['mode', 'duration'],
   },
+  minimax: {
+    label: 'Minimax',
+    description: '',
+    whatIf: [],
+  },
 };
 
 export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = [
@@ -620,6 +625,32 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
   //   },
   //   metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
   // },
+  {
+    type: 'video',
+    subType: 'txt2vid',
+    name: 'Text to video',
+    category: 'service',
+    engine: 'minimax',
+    key: 'minimax-txt2vid',
+    defaultValues: {
+      prompt: '',
+      enablePromptEnhancer: true,
+    },
+    metadataDisplayProps: [],
+  },
+  {
+    type: 'video',
+    subType: 'img2vid',
+    name: 'Image to video',
+    category: 'service',
+    engine: 'minimax',
+    key: 'minimax-img2vid',
+    defaultValues: {
+      prompt: '',
+      enablePromptEnhancer: true,
+    },
+    metadataDisplayProps: [],
+  },
 ];
 // #endregion
 
