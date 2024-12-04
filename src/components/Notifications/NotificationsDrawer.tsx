@@ -19,14 +19,14 @@ export default function NotificationsDrawer({ toggleNode }: { toggleNode: HTMLDi
       styles={(theme) => ({
         root: {
           [theme.fn.largerThan('xs')]: {
-            top: 'var(--mantine-header-height)',
-            height: `calc(100% - var(--mantine-header-height))`,
+            top: 'var(--header-height)',
+            height: `calc(100% - var(--header-height))`,
           },
         },
         drawer: {
           [theme.fn.largerThan('xs')]: {
-            top: 'var(--mantine-header-height)',
-            height: `calc(100% - var(--mantine-header-height))`,
+            top: 'var(--header-height)',
+            height: `calc(100% - var(--header-height))`,
           },
         },
       })}

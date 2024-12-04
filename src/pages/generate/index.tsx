@@ -109,7 +109,7 @@ const useStyles = createStyles((theme) => {
   return {
     // mobileContent: {
     //   position: 'fixed',
-    //   top: 'var(--mantine-header-height)',
+    //   top: 'var(--header-height)',
     //   left: 0,
     //   right: 0,
     //   bottom: 0,

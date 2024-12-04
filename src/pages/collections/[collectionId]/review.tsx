@@ -177,7 +177,7 @@ const ReviewCollection = () => {
               alignSelf: 'flex-end',
               marginRight: 6,
               position: 'sticky',
-              top: 'var(--mantine-header-height,0)',
+              top: 'var(--header-height,0)',
               marginBottom: -60,
               zIndex: 1000,
             }}
