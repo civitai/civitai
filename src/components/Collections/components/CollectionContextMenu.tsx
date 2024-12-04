@@ -1,7 +1,7 @@
 import { Menu, MenuProps } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconEdit, IconHome, IconPencil, IconTrash } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
@@ -15,6 +15,7 @@ import { trpc } from '~/utils/trpc';
 import { ToggleSearchableMenuItem } from '../../MenuItems/ToggleSearchableMenuItem';
 import { CollectionMode } from '~/shared/utils/prisma/enums';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { CollectionFollowAction } from './CollectionFollow';
 
 export function CollectionContextMenu({
   collectionId,
@@ -119,6 +120,28 @@ export function CollectionContextMenu({
     <Menu {...menuProps} withArrow>
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown>
+        {permissions && (
+          <Menu.Item>
+            <CollectionFollowAction
+              // @ts-ignore eslint-disable-next-line
+              variant="transparent"
+              collectionId={collectionId}
+              permissions={permissions}
+              p={0}
+              pl={0}
+              pr={0}
+              py={0}
+              h={14}
+              w="100%"
+              align="left"
+              style={{
+                display: 'flex',
+                alignItems: 'start',
+              }}
+            />
+          </Menu.Item>
+        )}
+
         {!isBookmarkCollection && (isOwner || isMod) && (
           <>
             <Menu.Item
@@ -157,7 +180,7 @@ export function CollectionContextMenu({
           </Menu.Item>
         )}
         {!isBookmarkCollection && permissions?.manage && (
-          <Link href={`/collections/${collectionId}/review`} passHref>
+          <Link legacyBehavior href={`/collections/${collectionId}/review`} passHref>
             <Menu.Item component="a" icon={<IconPencil size={14} stroke={1.5} />}>
               Review items
             </Menu.Item>

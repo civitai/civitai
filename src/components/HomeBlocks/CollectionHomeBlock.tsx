@@ -21,7 +21,7 @@ import {
   IconLayoutList,
   IconPhoto,
 } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageCard } from '~/components/Cards/ImageCard';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { HomeBlockWrapper } from '~/components/HomeBlocks/HomeBlockWrapper';
@@ -133,7 +133,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
                   </Text>
                 )}
                 {metadata.link && (
-                  <Link href={metadata.link} passHref>
+                  <Link legacyBehavior href={metadata.link} passHref>
                     <Anchor size="sm">
                       <Group spacing={4}>
                         <Text inherit>{metadata.linkText ?? 'View All'} </Text>
@@ -147,7 +147,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
           )}
         </Group>
         {metadata.link && (
-          <Link href={metadata.link} passHref>
+          <Link legacyBehavior href={metadata.link} passHref>
             <Button
               className={homeBlockClasses.expandButton}
               component="a"
@@ -190,7 +190,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       )}
       {metadata.link && (
         <div>
-          <Link href={metadata.link} passHref>
+          <Link legacyBehavior href={metadata.link} passHref>
             <Button
               size="md"
               component="a"
@@ -205,19 +205,6 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
       )}
     </Stack>
   );
-
-  // const ref = useResizeObserver<HTMLDivElement>((entry) => {
-  //   const children = [...entry.target.childNodes] as HTMLElement[];
-  //   for (const child of children) {
-  //     const elementStyle = getComputedStyle(child);
-  //     const paddingTop = parseFloat(elementStyle.paddingTop ?? '0');
-  //     const paddingBottom = parseFloat(elementStyle.paddingBottom ?? '0');
-
-  //     const height = child.clientHeight - paddingTop - paddingBottom;
-  //     if (height === 0) child.style.visibility = 'hidden';
-  //     else child.style.removeProperty('visibility');
-  //   }
-  // });
 
   const useGrid =
     metadata.description &&

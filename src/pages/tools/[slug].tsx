@@ -6,6 +6,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
@@ -14,8 +15,10 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ToolBanner } from '~/components/Tool/ToolBanner';
 import { useQueryTools } from '~/components/Tool/tools.utils';
 import { env } from '~/env/client.mjs';
+import { ImageSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { slugit } from '~/utils/string-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -34,6 +37,19 @@ function ToolFeedPage() {
   const router = useRouter();
 
   const { slug } = router.query;
+  const { query } = useImageQueryParams();
+  const {
+    period = MetricTimeframe.AllTime,
+    sort = ImageSort.MostReactions,
+    baseModels,
+    techniques,
+    fromPlatform,
+    hidden,
+    followed,
+    notPublished,
+    scheduled,
+    withMeta,
+  } = query;
 
   const { tools, loading } = useQueryTools();
   const toolId = tools.find((tool) => slugit(tool.name) === slug)?.id;
@@ -57,10 +73,24 @@ function ToolFeedPage() {
             <IsClient>
               <ImageCategories />
               <ImagesInfinite
-                filters={{ tools: toolId ? [toolId] : undefined, types: ['image', 'video'] }}
+                filters={{
+                  period,
+                  sort,
+                  baseModels,
+                  techniques,
+                  fromPlatform,
+                  hidden,
+                  followed,
+                  notPublished,
+                  scheduled,
+                  withMeta,
+                  tools: toolId ? [toolId] : undefined,
+                  types: ['image', 'video'],
+                }}
                 showEof
                 showAds
                 useIndex
+                disableStoreFilters
               />
             </IsClient>
           </Stack>

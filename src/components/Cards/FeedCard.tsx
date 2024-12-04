@@ -1,5 +1,5 @@
 import { AspectRatio, Card, CardProps } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { useFrameStyles } from '~/components/Cards/Cards.styles';
@@ -69,7 +69,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
 
     if (href)
       card = (
-        <Link href={href} passHref>
+        <Link legacyBehavior href={href} passHref>
           {card}
         </Link>
       );

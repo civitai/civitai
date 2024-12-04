@@ -55,7 +55,7 @@ async function bustUser(userId: number) {
 
 async function clearCategory(userId: number, category: NotificationCategory) {
   const key = getUserKey(userId);
-  if (!hasUser(userId)) return;
+  if (!(await hasUser(userId))) return;
   await redis.hDel(key, category);
   await slideExpiration(userId);
 }

@@ -154,7 +154,7 @@ export const modelNotifications = createNotificationProcessor({
           FROM "UserEngagement" ue
           JOIN new_model_version nmv ON nmv."userId" = ue."targetUserId"
           WHERE ue.type = 'Follow'
-            AND NOT EXISTS (SELECT 1 FROM "ModelEngagement" me WHERE me.type = 'Mute' AND me."userId" = ue."userId")
+            AND NOT EXISTS (SELECT 1 FROM "ModelEngagement" me WHERE me.type = 'Mute' AND me."userId" = ue."userId" AND me."modelId" = nmv."modelId")
 
           UNION
 

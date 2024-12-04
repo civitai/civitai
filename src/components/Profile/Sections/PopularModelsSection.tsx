@@ -10,7 +10,7 @@ import React from 'react';
 import { useQueryModels } from '~/components/Model/model.utils';
 import { ModelSort } from '~/server/common/enums';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Button, Text } from '@mantine/core';
 import { ShowcaseGrid } from '~/components/Profile/Sections/ShowcaseGrid';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
@@ -50,7 +50,7 @@ export const PopularModelsSection = ({ user }: ProfileSectionProps) => {
             title="Most popular models"
             icon={<IconTrendingUp />}
             action={
-              <Link href={`/user/${user.username}/models?sort=${ModelSort.HighestRated}`} passHref>
+              <Link legacyBehavior href={`/user/${user.username}/models?sort=${ModelSort.HighestRated}`} passHref>
                 <Button
                   h={34}
                   component="a"

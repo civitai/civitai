@@ -14,34 +14,39 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
+import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
-import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client.mjs';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { trpc } from '~/utils/trpc';
+import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
+import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
-import { UserPaymentConfigurationCard } from '../../components/Account/UserPaymentConfigurationCard';
-import { OwnedBuzzWithdrawalRequestsPaged } from '../../components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
+import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
+import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
 import { EarlyAccessRewards } from '~/components/Buzz/Rewards/EarlyAccessRewards';
 import { GeneratedImagesReward } from '~/components/Buzz/Rewards/GeneratedImagesRewards';
-import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableRewards';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
+import { OwnedBuzzWithdrawalRequestsPaged } from '~/components/Buzz/WithdrawalRequest/OwnedBuzzWithdrawalRequestsPaged';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { RedeemCodeModal } from '~/components/RedeemableCode/RedeemCodeModal';
-import { useRouter } from 'next/router';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { getLoginLink } from '~/utils/login-helpers';
-import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
-import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
-import { NextLink } from '@mantine/next';
-import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableRewards';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
+import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { getLoginLink } from '~/utils/login-helpers';
+import { trpc } from '~/utils/trpc';
+
+const RedeemCodeModal = dynamic(() =>
+  import('~/components/RedeemableCode/RedeemCodeModal').then((x) => x.RedeemCodeModal)
+);
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -186,11 +191,14 @@ export default function UserBuzzDashboard() {
                         </Group>
                         {reward.cap && (
                           <Group spacing={4}>
+                            <CurrencyIcon size={14} type={reward.accountType} />
                             <Text color="dimmed" size="xs">
                               {hasAwarded
-                                ? `⚡️ ${reward.awarded} / ${reward.cap.toLocaleString()} `
-                                : `⚡️ ${reward.cap.toLocaleString()} `}{' '}
+                                ? `${reward.awarded} / ${reward.cap.toLocaleString()} `
+                                : `${reward.cap.toLocaleString()} `}
+                              {' ('}
                               {reward.interval ?? 'day'}
+                              {')'}
                             </Text>
                             {hasAwarded && (
                               <RingProgress
@@ -199,7 +207,12 @@ export default function UserBuzzDashboard() {
                                 sections={[
                                   {
                                     value: awardedAmountPercent * 100,
-                                    color: awardedAmountPercent === 1 ? 'green' : 'yellow.7',
+                                    color:
+                                      awardedAmountPercent === 1
+                                        ? 'green'
+                                        : reward.accountType === 'generation'
+                                        ? 'blue.4'
+                                        : 'yellow.7',
                                   },
                                 ]}
                               />
@@ -216,7 +229,7 @@ export default function UserBuzzDashboard() {
           </Paper>
           <Text mt={-16} size="sm" mb="xs" align="right">
             Still looking for ways to get more Buzz? Consider posting to the{' '}
-            <Text variant="link" td="underline" component={NextLink} href="/collections/3870938">
+            <Text variant="link" td="underline" component={Link} href="/collections/3870938">
               Buzz Beggars Board
             </Text>
             .

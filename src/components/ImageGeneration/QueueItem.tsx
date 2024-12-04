@@ -12,7 +12,7 @@ import {
   TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   IconAlertTriangleFilled,
   IconArrowsShuffle,
@@ -89,6 +89,7 @@ export function QueueItem({
   const { params, resources = [] } = step;
 
   let { images } = step;
+  const failureReason = images.find((x) => x.status === 'failed' && x.reason)?.reason;
 
   if (filter && filter.marker) {
     images = images.filter((image) => {
@@ -273,6 +274,7 @@ export function QueueItem({
               )}
             </div>
             <Collection items={resources} limit={3} renderItem={ResourceBadge} grouped />
+            {failureReason && <Alert color="red">{failureReason}</Alert>}
 
             <div
               className={cx(classes.grid, {
@@ -362,7 +364,7 @@ const ResourceBadge = (props: Generation.Resource) => {
       size="sm"
       color={unstable ? 'yellow' : undefined}
       sx={{ maxWidth: 200, cursor: 'pointer' }}
-      component={NextLink}
+      component={Link}
       href={`/models/${modelId}?modelVersionId=${id}`}
       onClick={() => generationPanel.close()}
     >

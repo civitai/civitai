@@ -1,6 +1,6 @@
 import { IncomingHttpHeaders } from 'http';
 import { camelCase } from 'lodash-es';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { env } from '~/env/client.mjs';
 import { isDev } from '~/env/other';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -27,14 +27,14 @@ const featureFlags = createFeatureFlags({
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
   ambientCard: ['public'],
-  gallery: ['mod', 'member'],
+  gallery: ['public'],
   posts: ['mod', 'member'],
   articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
   civitaiLink: isDev ? ['granted'] : ['mod', 'member'],
   stripe: ['mod'],
-  imageTraining: ['dev', 'mod', 'member'],
+  imageTraining: ['user'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
@@ -64,8 +64,8 @@ const featureFlags = createFeatureFlags({
     availability: ['user'],
   },
   profileCollections: ['public'],
-  imageSearch: ['dev'],
-  buzz: isDev ? ['granted', 'public'] : ['public'],
+  imageSearch: ['public'],
+  buzz: ['public'],
   signal: isDev ? ['granted', 'user'] : ['user'],
   recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
@@ -73,11 +73,11 @@ const featureFlags = createFeatureFlags({
     default: true,
     displayName: 'CivBot Assistant',
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
-    availability: ['mod', 'member'],
+    availability: ['user'],
   },
   bounties: ['public'],
   newsroom: ['public'],
-  safety: ['mod'],
+  safety: ['public'],
   csamReports: ['granted'],
   reviewTrainingData: ['granted'],
   clubs: ['mod'],
@@ -92,16 +92,16 @@ const featureFlags = createFeatureFlags({
   },
   creatorsProgram: ['mod', 'granted'],
   buzzWithdrawalTransfer: ['granted'],
-  vault: ['mod'],
-  draftMode: ['mod'],
+  vault: ['user'],
+  draftMode: ['public'],
   membershipsV2: ['public'],
   cosmeticShop: ['public'],
   impersonation: ['granted'],
   donationGoals: ['public'],
-  creatorComp: ['user'],
+  creatorComp: ['public'],
   experimentalGen: ['mod'],
-  imageIndex: ['granted', 'mod'],
-  imageIndexFeed: ['granted', 'mod'],
+  imageIndex: ['public'],
+  imageIndexFeed: ['public'],
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
@@ -109,7 +109,7 @@ const featureFlags = createFeatureFlags({
   canBuyBuzz: ['public', 'green'],
   customPaymentProvider: ['public'],
   // Temporarily disabled until we change ads provider -Manuel
-  adsEnabled: ['public', 'blue', 'green'],
+  adsEnabled: ['public', 'blue'],
   paddleAdjustments: ['granted'],
   announcements: ['granted'],
   blocklists: ['granted'],
@@ -150,7 +150,7 @@ const hasFeature = (
     );
 
     serverMatch = domains.some(([key, domain]) => {
-      if (key === 'blue' && host === 'stage.civitai.com') return true;
+      if (key === 'blue' && ['stage.civitai.com', 'dev.civitai.com'].includes(host)) return true;
       return host === domain;
     });
     // if server doesn't match, return false regardless of other availability flags
@@ -244,8 +244,8 @@ function getEnvOverrides() {
   const processFeatureAvailability: Partial<Record<FeatureFlagKey, FeatureAvailability[]>> = {};
   // Set flags from ENV
   for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith('FEATURE_FLAG_')) continue;
-    const featureKey = camelCase(key.replace('FEATURE_FLAG_', ''));
+    if (!key.startsWith('NEXT_PUBLIC_FEATURE_FLAG_')) continue;
+    const featureKey = camelCase(key.replace('NEXT_PUBLIC_FEATURE_FLAG_', ''));
     const availability: FeatureAvailability[] = [];
 
     for (const x of value?.split(',') ?? []) {

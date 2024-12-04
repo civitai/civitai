@@ -1,4 +1,5 @@
 import { useHotkeys } from '@mantine/hooks';
+import produce from 'immer';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -27,6 +28,7 @@ type ImageDetailState = {
   toggleInfo: () => void;
   close: () => void;
   navigate: (id: number) => void;
+  updateImage: (id: number, data: Partial<ImagesInfiniteModel>) => void;
 };
 
 const ImageDetailContext = createContext<ImageDetailState | null>(null);
@@ -53,6 +55,8 @@ export function ImageDetailProvider({
   const browserRouter = useBrowserRouter();
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
+  const queryUtils = trpc.useUtils();
+
   const { postId: queryPostId, active = false } = browserRouter.query as {
     postId?: number;
     active?: boolean;
@@ -67,6 +71,7 @@ export function ImageDetailProvider({
     { ...filters, userId: !!reactions?.length ? undefined : userId, postId, browsingLevel },
     { enabled: shouldFetchMany }
   );
+
   const images = initialImages.length > 0 ? initialImages : queryImages;
 
   const shouldFetchImage =
@@ -88,6 +93,36 @@ export function ImageDetailProvider({
   }
 
   const index = findCurrentImageIndex();
+
+  const updateImage = (id: number, data: Partial<ImagesInfiniteModel>) => {
+    queryUtils.image.getInfinite.setInfiniteData(
+      { ...filters, userId: !!reactions?.length ? undefined : userId, postId, browsingLevel },
+      produce((queryData) => {
+        if (!queryData?.pages?.length) return;
+
+        for (const page of queryData.pages)
+          for (const item of page.items) {
+            if (item.id === id) {
+              Object.assign(item, data);
+              break;
+            }
+          }
+      })
+    );
+
+    queryUtils.image.get.setData(
+      { id },
+      produce((old) => {
+        if (!old) {
+          return old;
+        }
+
+        Object.assign(old, data);
+        const index = images.findIndex((x) => x.id === id);
+        if (index !== -1) Object.assign(images[index], data);
+      })
+    );
+  };
   // #endregion
 
   // #region [back button functionality]
@@ -126,6 +161,7 @@ export function ImageDetailProvider({
       }
     );
   };
+
   // #endregion
 
   const shareUrl = useMemo(() => {
@@ -166,6 +202,7 @@ export function ImageDetailProvider({
         shareUrl,
         navigate,
         index,
+        updateImage,
       }}
     >
       {children}

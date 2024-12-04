@@ -18,6 +18,8 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import {
   IconCalendarDue,
+  IconChristmasBall,
+  IconChristmasTree,
   IconExclamationMark,
   IconHeart,
   IconHeartHandshake,
@@ -34,19 +36,20 @@ import { useRouter } from 'next/router';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   appliesForFounderDiscount,
   useActiveSubscription,
 } from '~/components/Stripe/memberships.util';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { Meta } from '~/components/Meta/Meta';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { env } from '~/env/client.mjs';
+import Image from 'next/image';
 
 export default function Pricing() {
   const router = useRouter();
@@ -82,6 +85,10 @@ export default function Pricing() {
   const activeSubscriptionIsNotDefaultProvider =
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
+  const today = new Date();
+  const month = today.getMonth();
+  const isHolidays = isHolidaysTime();
+
   return (
     <>
       <Meta
@@ -98,6 +105,32 @@ export default function Pricing() {
                 </ThemeIcon>
                 <Text size="md">{redirectReason}</Text>
               </Group>
+            </Alert>
+          )}
+          {isHolidays && !redirectReason && (
+            <Alert color="blue">
+              <div className="flex flex-col items-center gap-4 md:flex-row">
+                <Image
+                  src="/images/holiday/happy-holidays-robot.png"
+                  alt="happy-holidays"
+                  width={150}
+                  height={150}
+                  className="hidden rounded-md md:block"
+                />
+
+                <Stack spacing="xs">
+                  <Text size="md">
+                    To celebrate the holidays and our amazing community, new subscribers and current
+                    members alike will receive 20% additional Blue Buzz along with their standard
+                    Buzz disbursement!
+                  </Text>
+                  <Text size="md">
+                    This bonus applies when a new membership is purchased or an active membership
+                    renews.
+                  </Text>
+                  <Text size="md">Happy Holidays from Civitai!</Text>
+                </Stack>
+              </div>
             </Alert>
           )}
           <Title align="center" className={classes.title}>
@@ -178,7 +211,7 @@ export default function Pricing() {
               >
                 <Text lh={1.2}>
                   The Supporter plan can no longer be purchased. You can stay on your{' '}
-                  <Text component={NextLink} td="underline" href="/user/membership">
+                  <Text component={Link} td="underline" href="/user/membership">
                     current plan
                   </Text>{' '}
                   or level up your support here.
@@ -241,12 +274,7 @@ export default function Pricing() {
                         </Text>
                       </Group>
                       {!isFreeTier ? (
-                        <Button
-                          radius="xl"
-                          color="gray"
-                          component={NextLink}
-                          href="/user/membership"
-                        >
+                        <Button radius="xl" color="gray" component={Link} href="/user/membership">
                           Downgrade to free
                         </Button>
                       ) : (

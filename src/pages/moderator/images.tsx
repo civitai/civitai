@@ -31,7 +31,7 @@ import {
   IconUserOff,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -324,7 +324,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                           placeholder="empty"
                         />
                         {!!entityUrl && (
-                          <Link href={entityUrl} passHref>
+                          <Link legacyBehavior href={entityUrl} passHref>
                             <ActionIcon
                               component="a"
                               variant="transparent"
@@ -385,7 +385,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   Reported by
                 </Text>
                 <Group spacing={4}>
-                  <Link href={`/user/${image.report?.user.username}`} passHref>
+                  <Link legacyBehavior href={`/user/${image.report?.user.username}`} passHref>
                     <Anchor size="xs" target="_blank" lineClamp={1} inline>
                       {image.report?.user.username}
                     </Anchor>

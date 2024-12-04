@@ -1,4 +1,4 @@
-import { Session, SessionUser } from 'next-auth';
+import type { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import dynamic from 'next/dynamic';
 import { createContext, useContext, useEffect, useMemo } from 'react';
@@ -20,11 +20,11 @@ import { deleteCookie } from 'cookies-next';
 // });
 
 export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
-  const { data, update } = useSession();
+  const { data, update, status } = useSession();
   const user = data?.user;
   const { canViewNsfw } = useFeatureFlags();
   const cookies = useCookies();
-  useDomainSync(data?.user as SessionUser);
+  useDomainSync(data?.user as SessionUser, status);
 
   const { disableHidden } = cookies;
 
@@ -36,10 +36,12 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
       } as UnauthedUser;
 
     const isMember = user.tier != null;
+    const isPaidMember = user.tier != null && user.tier !== 'free';
     const currentUser: AuthedUser = {
       type: 'authed',
       ...user,
       isMember,
+      isPaidMember,
       memberInBadState: user.memberInBadState,
       refresh: update,
       settings: {
@@ -60,6 +62,10 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();
   }, [data?.error]);
+
+  if (typeof window !== 'undefined') {
+    window.isAuthed = sessionUser.type === 'authed';
+  }
 
   useEffect(() => {
     deleteCookie('level');
@@ -96,6 +102,7 @@ export type CivitaiSessionUser = SessionUser & {
   disableHidden?: boolean;
   browsingLevel: number;
   meta?: UserMeta;
+  isPaidMember: boolean;
 };
 
 type SharedUser = { settings: BrowsingSettings };

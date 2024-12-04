@@ -1,7 +1,7 @@
 import clsx from 'clsx';
 import React, { useEffect, useRef, useState } from 'react';
 import { AppFooter } from '~/components/AppLayout/AppFooter';
-import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader';
+import { AppHeader, RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { SubNav2 } from '~/components/AppLayout/SubNav';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -9,6 +9,8 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Announcements } from '~/components/Announcements/Announcements';
 import { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
+import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function AppLayout({
   children,
@@ -34,6 +36,8 @@ export function AppLayout({
   notFound?: boolean;
   announcements?: boolean;
 }) {
+  const currentUser = useCurrentUser();
+
   return (
     <>
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
@@ -59,6 +63,7 @@ export function AppLayout({
           )}
         </div>
       )}
+      {!currentUser?.isPaidMember && <AdhesiveAd />}
     </>
   );
 }

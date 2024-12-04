@@ -1,29 +1,31 @@
+import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
+import produce from 'immer';
+import { useRouter } from 'next/router';
+import { useMemo } from 'react';
+import { z } from 'zod';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFiltersContext } from '~/providers/FiltersProvider';
+import { CollectionSort } from '~/server/common/enums';
+import {
+  GetAllCollectionsInfiniteSchema,
+  RemoveCollectionItemInput,
+  SetCollectionItemNsfwLevelInput,
+  SetItemScoreInput,
+} from '~/server/schema/collection.schema';
+import { CollectionItemExpanded } from '~/server/services/collection.service';
 import {
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
-import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
-import { useMemo } from 'react';
-import { z } from 'zod';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { CollectionSort } from '~/server/common/enums';
-import {
-  GetAllCollectionsInfiniteSchema,
-  RemoveCollectionItemInput,
-  SetItemScoreInput,
-} from '~/server/schema/collection.schema';
-import { CollectionItemExpanded } from '~/server/services/collection.service';
-import { removeEmpty } from '~/utils/object-helpers';
-import { trpc } from '~/utils/trpc';
 import { CollectionByIdModel } from '~/types/router';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import produce from 'immer';
+import { MutateOptions } from '@tanstack/react-query';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 const collectionQueryParamSchema = z
   .object({
@@ -310,39 +312,46 @@ export const useMutateCollection = () => {
     },
   });
 
+  const updateCollectionItemNsfwLevelMutation =
+    trpc.collection.updateCollectionItemNSFWLevel.useMutation({
+      onSuccess: async (res, req) => {
+        showSuccessNotification({
+          autoClose: 5000, // 10s
+          title: 'NSFW level has been updated.',
+          message: 'NSFW level has been updated for the item.',
+        });
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Unable to update NSFW level',
+          error: new Error(error.message),
+        });
+      },
+    });
+
   const removeCollectionItemHandler = async (data: RemoveCollectionItemInput) => {
     await removeCollectionItemMutation.mutateAsync(data);
+  };
+
+  const updateCollectionItemNsfwLevelHandler = async (
+    data: SetCollectionItemNsfwLevelInput,
+    opts: Parameters<typeof updateCollectionItemNsfwLevelMutation.mutateAsync>[1]
+  ) => {
+    await updateCollectionItemNsfwLevelMutation.mutateAsync(data, opts);
   };
 
   return {
     removeCollectionItem: removeCollectionItemHandler,
     removingCollectionItem: removeCollectionItemMutation.isLoading,
+    updateCollectionItemNsfwLevel: updateCollectionItemNsfwLevelHandler,
+    updatingCollectionItemNsfwLevel: updateCollectionItemNsfwLevelMutation.isLoading,
+    updateCollectionItemNsfwLevelPayload: updateCollectionItemNsfwLevelMutation.variables,
   };
 };
 
-export const useSetCollectionItemScore = ({ imageId }: { imageId: number }) => {
+export const useSetCollectionItemScore = () => {
   const queryUtils = trpc.useUtils();
   const setItemScoreMutation = trpc.collection.setItemScore.useMutation({
-    onSuccess: (result) => {
-      const { collectionItemId, userId, score } = result;
-      queryUtils.image.getContestCollectionDetails.setData(
-        { id: imageId },
-        produce((old) => {
-          if (!old) return;
-
-          const item = old.find((item) => item.id === collectionItemId);
-          if (!item) return;
-
-          const existingScore = item.scores.find((itemScore) => itemScore.userId === userId);
-          if (!existingScore) {
-            item.scores.push({ userId, score });
-            return;
-          }
-
-          existingScore.score = score;
-        })
-      );
-    },
     onError: (error) => {
       showErrorNotification({
         title: 'Failed to set item score',
@@ -351,8 +360,11 @@ export const useSetCollectionItemScore = ({ imageId }: { imageId: number }) => {
     },
   });
 
-  const setItemScoreHandler = (data: SetItemScoreInput) => {
-    return setItemScoreMutation.mutateAsync(data);
+  const setItemScoreHandler = (
+    data: SetItemScoreInput,
+    opts: Parameters<typeof setItemScoreMutation.mutateAsync>[1]
+  ) => {
+    return setItemScoreMutation.mutateAsync(data, opts);
   };
 
   return {

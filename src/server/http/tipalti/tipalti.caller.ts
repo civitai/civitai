@@ -58,6 +58,7 @@ class TipaltiCaller extends HttpCaller {
     });
 
     const data = await response.json();
+    console.log(data, response.status);
 
     if (!data.access_token) throw new Error('Failed to get Tipalti access token');
 

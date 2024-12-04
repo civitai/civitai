@@ -53,6 +53,7 @@ import dayjs from 'dayjs';
 import { original } from 'immer';
 import { logToAxiom } from '~/server/logging/client';
 import { PaginationInput } from '~/server/schema/base.schema';
+import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -140,13 +141,7 @@ export const createBuzzPurchaseTransaction = async ({
     buzzAmount: unitAmount * 10, // 10x
     currency,
     metadata: getBuzzTransactionMetadata({ unitAmount, userId: user.id }),
-    // Only included if the user has no subscriptions so we can tie them up.
-    includedItems: !subscription
-      ? productsToIncludeWithTransactions.map((p) => ({
-          priceId: p.prices[0].id,
-          quantity: 1,
-        }))
-      : undefined,
+    // Avoid adding the free tier. Paddle seems to have a new way to handle these.
   });
 
   return {
@@ -422,16 +417,16 @@ export const upsertSubscription = async (
     const subscriptionMeta = (userSubscription?.metadata ?? {}) as SubscriptionMetadata;
     if (subscriptionMeta.renewalEmailSent && !!subscriptionMeta.renewalBonus) {
       // This is a migration that we reached out to:
-      await withRetries(async () =>
-        createBuzzTransaction({
+      await withRetries(async () => {
+        await createBuzzTransaction({
           fromAccountId: 0,
           toAccountId: user.id,
           type: TransactionType.Purchase,
           amount: subscriptionMeta.renewalBonus as number,
           description: 'Thank you for your continued support! Here is a bonus for you.',
           externalTransactionId: `renewalBonus:${user.id}`,
-        })
-      );
+        });
+      });
     }
   } else if (userHasSubscription && isCreatingSubscription) {
     log('upsertSubscription :: Subscription already up to date');
@@ -555,7 +550,7 @@ export const manageSubscriptionTransactionComplete = async (
         paidPlans.map(async (p) => {
           const meta = p.metadata as SubscriptionProductMetadata;
           const externalTransactionId = `transactionId:${transactionNotification.id}-product:${p.id}`;
-          return createBuzzTransaction({
+          await createBuzzTransaction({
             fromAccountId: 0,
             toAccountId: user.id,
             type: TransactionType.Purchase,
@@ -568,6 +563,24 @@ export const manageSubscriptionTransactionComplete = async (
               ...buzzTransactionExtras,
             },
           });
+
+          const date = dayjs().subtract(12, 'hours'); // Subtract 12 hrs to ensure that we cover for all timezones.. Max UTC is -12.
+          if (date.month() === 11 && (meta.monthlyBuzz ?? 3000) > 0) {
+            await createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: user.id,
+              type: TransactionType.Purchase,
+              externalTransactionId: `christmas-2024:${externalTransactionId}`,
+              amount: Math.floor((meta.monthlyBuzz ?? 3000) * HOLIDAY_PROMO_VALUE), // assume a min of 3000.
+              description: `20% additional Blue Buzz for being a member! Happy Holidays from Civitai`,
+              toAccountType: 'generation',
+              details: {
+                paddleTransactionId: transactionNotification.id,
+                productId: p.id,
+                ...buzzTransactionExtras,
+              },
+            });
+          }
         })
       );
     }).catch(handleLogError);
@@ -597,7 +610,26 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
   });
 
   if (!subscription) {
-    throw throwNotFoundError('No active subscription found');
+    // Attempt to cancel the subscription on Paddle
+    const user = await dbRead.user.findUnique({ where: { id: userId } });
+
+    if (!user?.paddleCustomerId) {
+      return;
+    }
+
+    const customerSubscriptions = await getPaddleCustomerSubscriptions({
+      customerId: user?.paddleCustomerId,
+    });
+
+    if (customerSubscriptions.length === 0) {
+      throw throwNotFoundError('No active subscription found');
+    }
+
+    await Promise.all(
+      customerSubscriptions.map((sub) => cancelPaddleSubscription(sub.id, 'immediately'))
+    );
+
+    return;
   }
 
   const paddleSubscription = await getPaddleSubscription({ subscriptionId: subscription.id });

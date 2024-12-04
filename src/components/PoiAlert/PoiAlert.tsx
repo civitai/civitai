@@ -1,8 +1,7 @@
 import { IconExclamationMark } from '@tabler/icons-react';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { Anchor, Text } from '@mantine/core';
-import Link from 'next/link';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 type AlertType = 'Bounty' | 'Model';
 type Props = Omit<React.ComponentProps<typeof AlertWithIcon>, 'icon' | 'children'> & {
@@ -18,11 +17,11 @@ export function PoiAlert({ type = 'Model', ...alertProps }: Props) {
   return (
     <AlertWithIcon {...alertProps} icon={<IconExclamationMark />}>
       {openers[type]} Out of respect for this individual and in accordance with our{' '}
-      <Text component={NextLink} href="/content/rules/real-people" variant="link">
+      <Text component={Link} href="/content/rules/real-people" variant="link">
         Content Rules
       </Text>
       , only{' '}
-      <Text component={NextLink} href="/content/rules/real-people" variant="link">
+      <Text component={Link} href="/content/rules/real-people" variant="link">
         work-safe images
       </Text>{' '}
       and non-commercial use is permitted.
@@ -33,7 +32,7 @@ export function PoiAlert({ type = 'Model', ...alertProps }: Props) {
       </Text>
       , and would like to request the removal of this {type === 'Bounty' ? 'bounty' : 'resource'},
       you can do so{' '}
-      <Text component={NextLink} href="/content/rules/real-people" variant="link">
+      <Text component={Link} href="/content/rules/real-people" variant="link">
         here
       </Text>
       .

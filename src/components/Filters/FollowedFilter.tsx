@@ -1,7 +1,6 @@
 import { ButtonProps } from '@mantine/core';
 import { IconUsersGroup, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu, SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -43,7 +42,7 @@ function DumbFollowFilter({ type, value, onChange, ...props }: DumbProps) {
   const followed = value === 'true';
 
   return (
-    <IsClient>
+    <>
       {props.variant === 'menu' && <SelectMenu {...sharedProps} />}
       {props.variant === 'button' && (
         <SelectMenuV2
@@ -52,7 +51,7 @@ function DumbFollowFilter({ type, value, onChange, ...props }: DumbProps) {
           icon={followed ? <IconUsersGroup size={16} /> : <IconWorld size={16} />}
         />
       )}
-    </IsClient>
+    </>
   );
 }
 

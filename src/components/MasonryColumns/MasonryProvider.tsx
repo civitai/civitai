@@ -23,7 +23,7 @@ export const useMasonryContext = () => {
 
 type Props = {
   columnWidth: number;
-  maxColumnCount: number;
+  maxColumnCount?: number;
   gap?: number;
   columnGap?: number;
   rowGap?: number;
@@ -34,11 +34,11 @@ type Props = {
 export function MasonryProvider({
   children,
   columnWidth,
-  maxColumnCount,
+  maxColumnCount = 7,
   gap = 16,
   columnGap = gap,
   rowGap = gap,
-  maxSingleColumnWidth = columnWidth,
+  maxSingleColumnWidth = 450,
   ...boxProps
 }: Props) {
   // width will be set to the inner width of the element. (clientWidth - paddingX)

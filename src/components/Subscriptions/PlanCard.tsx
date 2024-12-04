@@ -15,6 +15,7 @@ import {
 import {
   IconBolt,
   IconChevronDown,
+  IconChristmasTree,
   IconCloud,
   IconHexagon,
   IconHexagonPlus,
@@ -34,7 +35,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
-import { constants } from '~/server/common/constants';
+import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -45,7 +46,8 @@ import {
 } from '~/components/Stripe/MembershipChangePrevention';
 import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { NextLink } from '@mantine/next';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { isHolidaysTime } from '~/utils/date-helpers';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -188,7 +190,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
             {priceId && (
               <>
                 {isActivePlan ? (
-                  <Button radius="xl" {...btnProps} component={NextLink} href="/user/membership">
+                  <Button radius="xl" {...btnProps} component={Link} href="/user/membership">
                     Manage your Membership
                   </Button>
                 ) : isDowngrade ? (
@@ -266,6 +268,22 @@ export const getPlanDetails: (
           </Text>
         ),
       },
+      isHolidaysTime()
+        ? {
+            icon: <IconChristmasTree size={benefitIconSize} />,
+            iconColor: (metadata?.monthlyBuzz ?? 0) === 0 ? 'gray' : 'green',
+            iconVariant: 'light' as ThemeIconVariant,
+            content: (
+              <Text>
+                <Text span color={(metadata?.monthlyBuzz ?? 0) === 0 ? undefined : 'green.7'}>
+                  +
+                  {numberWithCommas(Math.floor((metadata?.monthlyBuzz ?? 0) * HOLIDAY_PROMO_VALUE))}{' '}
+                  Blue Buzz for December
+                </Text>
+              </Text>
+            ),
+          }
+        : null,
       features.membershipsV2
         ? {
             icon: <IconBolt size={benefitIconSize} />,

@@ -12,9 +12,8 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { NextLink } from '@mantine/next';
 import { truncate } from 'lodash-es';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -111,7 +110,7 @@ export function ResourceReviewDetail({ reviewId }: { reviewId: number }) {
             <Title order={3} sx={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <span style={{ whiteSpace: 'nowrap' }}>Review:</span>{' '}
               <Text
-                component={NextLink}
+                component={Link}
                 href={getModelWithVersionUrl(data)}
                 variant="link"
                 lineClamp={1}

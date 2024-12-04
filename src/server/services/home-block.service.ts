@@ -1,6 +1,6 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { HomeBlockType } from '~/shared/utils/prisma/enums';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -185,6 +185,7 @@ export const getHomeBlockData = async ({
               collectionId: collection.id,
               limit: input.limit || metadata.collection.limit,
               browsingLevel: sfwBrowsingLevelsFlag,
+              collectionTagId: metadata.collection.tagId,
             },
           });
 
@@ -220,35 +221,6 @@ export const getHomeBlockData = async ({
 
           const aIndex = metadata.leaderboards.find((item) => item.id === a.id)?.index ?? 0;
           const bIndex = metadata.leaderboards.find((item) => item.id === b.id)?.index ?? 0;
-
-          return aIndex - bIndex;
-        }),
-      };
-    }
-    case HomeBlockType.Announcement: {
-      if (!metadata.announcements) {
-        return null;
-      }
-
-      const announcementIds = metadata.announcements.ids;
-      const announcements = await getCurrentAnnouncements({
-        ids: announcementIds,
-        dismissed: input.dismissed,
-        limit: metadata.announcements.limit,
-        userId: user?.id,
-      });
-
-      if (!announcements.length) {
-        // If the user cleared all announcements in home block, do not display this block.
-        return null;
-      }
-
-      return {
-        ...homeBlock,
-        metadata,
-        announcements: announcements.sort((a, b) => {
-          const aIndex = a.metadata?.index ?? 999;
-          const bIndex = b.metadata?.index ?? 999;
 
           return aIndex - bIndex;
         }),

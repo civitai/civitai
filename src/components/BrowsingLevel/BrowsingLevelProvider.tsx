@@ -1,17 +1,7 @@
-import React, { createContext, useContext, useDeferredValue, useMemo, useState } from 'react';
-import {
-  BrowsingLevel,
-  browsingModeDefaults,
-  publicBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
-import { setCookie } from '~/utils/cookies-helpers';
-import { trpc } from '~/utils/trpc';
-import { createDebouncer } from '~/utils/debouncer';
-import { useDebouncedValue, useDidUpdate } from '@mantine/hooks';
+import React, { createContext, useContext, useDeferredValue, useState } from 'react';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { useDebouncedValue } from '@mantine/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 const BrowsingModeOverrideCtx = createContext<{
@@ -27,17 +17,17 @@ export function BrowsingModeOverrideProvider({
   browsingLevel?: number;
 }) {
   const { canViewNsfw } = useFeatureFlags();
-  const [browsingLevelOverride, setBrowsingLevelOverride] = useState(
-    canViewNsfw ? browsingLevel : publicBrowsingLevelsFlag
-  );
-
-  useDidUpdate(
-    () => setBrowsingLevelOverride(canViewNsfw ? browsingLevel : publicBrowsingLevelsFlag),
-    [browsingLevel]
-  );
+  const [browsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
 
   return (
-    <BrowsingModeOverrideCtx.Provider value={{ browsingLevelOverride, setBrowsingLevelOverride }}>
+    <BrowsingModeOverrideCtx.Provider
+      value={{
+        browsingLevelOverride: canViewNsfw
+          ? browsingLevelOverride ?? browsingLevel
+          : publicBrowsingLevelsFlag,
+        setBrowsingLevelOverride,
+      }}
+    >
       {children}
     </BrowsingModeOverrideCtx.Provider>
   );

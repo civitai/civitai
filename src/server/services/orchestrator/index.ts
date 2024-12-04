@@ -18,6 +18,7 @@ interface BaseGeneratedMedia {
   url: string;
   width: number;
   height: number;
+  reason?: string;
 }
 
 export interface GeneratedVideo extends BaseGeneratedMedia {

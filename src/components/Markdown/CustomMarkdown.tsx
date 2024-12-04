@@ -1,10 +1,10 @@
 import { Table } from '@mantine/core';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import ReactMarkdown from 'react-markdown';
-import { ReactMarkdownOptions } from 'react-markdown/lib/react-markdown';
+import { Options } from 'react-markdown';
 import clsx from 'clsx';
 
-type CustomOptions = ReactMarkdownOptions & {
+type CustomOptions = Options & {
   allowExternalVideo?: boolean;
 };
 
@@ -26,7 +26,7 @@ export function CustomMarkdown({
       components={{
         ...components,
         a: ({ node, href, ...props }) => {
-          if (!href) return <a {...props}>{props.children?.[0]}</a>;
+          if (!href) return <a {...props}>{props.children}</a>;
           if (
             allowExternalVideo &&
             videoKeysRequirements.some((requirements) =>
@@ -49,17 +49,17 @@ export function CustomMarkdown({
             href = href.replace('//civitai.com', `//${location.host}`);
 
           return (
-            <Link href={href} passHref>
+            <Link legacyBehavior href={href} passHref>
               <a target={isExternalLink ? '_blank' : '_self'} rel="nofollow noreferrer">
-                {props.children?.[0]}
+                {props.children}
               </a>
             </Link>
           );
         },
-        table: ({ node, ...props }) => {
+        table: ({ node, children, ref, ...props }) => {
           return (
             <Table {...props} striped withBorder withColumnBorders>
-              {props.children}
+              {children}
             </Table>
           );
         },

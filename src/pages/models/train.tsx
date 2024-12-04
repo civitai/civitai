@@ -1,5 +1,6 @@
 import { Center } from '@mantine/core';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { Page } from '~/components/AppLayout/Page';
 import TrainWizard from '~/components/Training/Wizard/TrainWizard';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -25,13 +26,8 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-export default function ModelTrainingNew() {
-  const features = useFeatureFlags();
-  return features.imageTraining ? (
-    <TrainWizard />
-  ) : (
-    <Center>
-      <NotFound />
-    </Center>
-  );
+function ModelTrainingNew() {
+  return <TrainWizard />;
 }
+
+export default Page(ModelTrainingNew, { features: (features) => features.imageTraining });

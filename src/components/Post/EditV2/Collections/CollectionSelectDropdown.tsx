@@ -87,6 +87,10 @@ export const CollectionSelectDropdown = () => {
     return null;
   }
 
+  const availableTags = (selectedCollection?.tags ?? []).filter(
+    (t) => !t.filterableOnly || t.id === collectionTagId
+  );
+
   return (
     <Stack spacing="xs">
       <Divider label="Collection details for this post" />
@@ -111,10 +115,10 @@ export const CollectionSelectDropdown = () => {
             }}
             tt="capitalize"
           />
-          {selectedCollection && selectedCollection.tags.length > 0 && !post?.publishedAt && (
+          {selectedCollection && availableTags.length > 0 && !post?.publishedAt && (
             <Select
               label="Select Entry Category"
-              data={selectedCollection.tags.map((tag) => ({
+              data={availableTags.map((tag) => ({
                 value: tag.id.toString(),
                 label: toPascalCase(tag.name),
               }))}

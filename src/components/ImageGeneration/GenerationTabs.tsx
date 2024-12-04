@@ -12,12 +12,13 @@ import { Feed } from './Feed';
 import { Queue } from './Queue';
 import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'react';
+import React, { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationForm } from '~/components/Generate/GenerationForm';
+import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -28,17 +29,12 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
+  if (isImageFeedSeparate && view === 'generate') setView('queue');
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
     isImageFeedSeparate ? key !== 'generate' : true
   );
-
-  useEffect(() => {
-    if (isImageFeedSeparate && view === 'generate') {
-      setView('queue');
-    }
-  }, [isImageFeedSeparate, view]);
 
   return (
     <>
@@ -58,10 +54,8 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
       </SignalStatusNotification>
       <div className="flex w-full flex-col gap-2 p-3">
         <div className="flex w-full items-center justify-between gap-2">
-          <div className="flex-1">
-            {/* <Text className="w-full" lineClamp={1}>
-              Folder
-            </Text> */}
+          <div className="relative flex-1">
+            <ChallengeIndicator />
           </div>
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl
@@ -77,7 +71,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
                 ),
                 value: key,
               }))}
-              onChange={(key) => setView(key as any)}
+              onChange={(key: GenerationPanelView) => setView(key)}
               value={view}
             />
           )}

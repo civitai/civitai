@@ -8,7 +8,6 @@ import {
 } from '~/utils/zod-helpers';
 import { isProd } from './other';
 
-
 /**
  * Specify your server-side environment variables schema here.
  * This way you can ensure the app isn't built with invalid env vars.
@@ -133,6 +132,7 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_TOKEN: z.string().optional(),
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
   EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
+  HIVE_VISUAL_TOKEN: z.string().optional(),
   ALT_ORCHESTRATION_ENDPOINT: z.string().url().optional(),
   ALT_ORCHESTRATION_TOKEN: z.string().optional(),
   ALT_ORCHESTRATION_TIMEFRAME: z
@@ -194,9 +194,12 @@ export const serverSchema = z.object({
   TIPALTI_API_URL: z.string().optional(),
   TIPALTI_API_CLIENT_ID: z.string().optional(),
   TIPALTI_API_SECRET: z.string().optional(),
-   TIPALTI_API_CODE_VERIFIER: z.string().optional(),
-   TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
-   TIPALTI_API_TOKEN_URL: z.string().optional(),
+  TIPALTI_API_CODE_VERIFIER: z.string().optional(),
+  TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
+  TIPALTI_API_TOKEN_URL: z.string().optional(),
+
+  // OpenAI
+  OPENAI_API_KEY: z.string().optional(),
 });
 
 /**

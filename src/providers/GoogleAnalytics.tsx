@@ -1,6 +1,7 @@
 import Script from 'next/script';
 import { useFeatureFlags } from './FeatureFlagsProvider';
 import { isProd } from '~/env/other';
+import { GoogleAnalytics as NextGoogleAnalytics } from '@next/third-parties/google';
 
 export function GoogleAnalytics() {
   const features = useFeatureFlags();
@@ -11,7 +12,7 @@ export function GoogleAnalytics() {
 
   return (
     <>
-      <Script
+      {/* <Script
         async
         src={`https://www.googletagmanager.com/gtag/js?id=${id}`}
         strategy="afterInteractive"
@@ -28,7 +29,8 @@ export function GoogleAnalytics() {
           gtag('config', '${id}');
         `,
         }}
-      ></Script>
+      ></Script> */}
+      <NextGoogleAnalytics gaId={id} />
     </>
   );
 }

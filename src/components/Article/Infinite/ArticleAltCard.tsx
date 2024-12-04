@@ -1,6 +1,6 @@
 import { Badge, Box, Card, Group, Stack, Text, createStyles } from '@mantine/core';
 import { IconBookmark, IconEye, IconMessageCircle2, IconMoodSmile } from '@tabler/icons-react';
-import Link from 'next/link';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
@@ -29,7 +29,7 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
   const reactionCount = Object.values(reactionStats).reduce((a, b) => a + b, 0);
 
   return (
-    <Link href={`/articles/${id}/${slugit(title)}`} passHref>
+    <Link legacyBehavior href={`/articles/${id}/${slugit(title)}`} passHref>
       <Card
         component="a"
         p={0}
@@ -51,8 +51,8 @@ export function ArticleAltCard({ data, height, ...props }: Props) {
         {coverImage && (
           <ImageGuard2 image={coverImage}>
             {(safe) => (
-              <div className="relative flex-1 overflow-hidden h-full">
-                <Group spacing={4} className="absolute top-2 left-2 z-10">
+              <div className="relative h-full flex-1 overflow-hidden">
+                <Group spacing={4} className="absolute left-2 top-2 z-10">
                   <ImageGuard2.BlurToggle />
                   <Badge
                     size="sm"

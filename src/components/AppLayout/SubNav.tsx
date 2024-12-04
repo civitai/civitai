@@ -8,6 +8,7 @@ import { VideoFeedFilters } from '~/components/Filters/FeedFilters/VideoFeedFilt
 import { ToolFeedFilters } from '~/components/Filters/FeedFilters/ToolFeedFilters';
 import { ManageHomepageButton } from '~/components/HomeBlocks/ManageHomepageButton';
 import { HomeTabs } from '~/components/HomeContentToggle/HomeContentToggle';
+import { ToolImageFeedFilters } from '~/components/Filters/FeedFilters/ToolImageFeedFilters';
 import clsx from 'clsx';
 
 const filterSections = [
@@ -19,7 +20,7 @@ const filterSections = [
   { pathname: '/articles', component: <ArticleFeedFilters ml="auto" /> },
   { pathname: '/bounties', component: <BountyFeedFilters ml="auto" /> },
   { pathname: '/tools', component: <ToolFeedFilters ml="auto" /> },
-  { pathname: '/tools/[slug]', component: <ImageFeedFilters ml="auto" hideMediaTypes hideTools /> },
+  { pathname: '/tools/[slug]', component: <ToolImageFeedFilters ml="auto" /> },
 ];
 
 export function SubNav2() {
