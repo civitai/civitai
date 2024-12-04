@@ -159,8 +159,6 @@ function ImageContent({
 
   const isVideo = image?.type === 'video';
 
-  console.log(image);
-
   return (
     <ImageGuardContent image={image} {...connect}>
       {(safe) => (
