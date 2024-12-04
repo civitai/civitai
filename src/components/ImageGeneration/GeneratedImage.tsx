@@ -261,7 +261,7 @@ export function GeneratedImage({
     <TwCard
       ref={ref}
       className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{ aspectRatio: image.width / image.height }}
+      style={{ aspectRatio: image.aspectRatio ?? image.width / image.height }}
     >
       {inView && (
         <>
@@ -361,7 +361,7 @@ export function GeneratedImage({
               {!isVideo && !!img2vidConfigs?.length && (
                 <>
                   <Menu.Divider />
-                  {img2vidConfigs.map(({ name, key, type }) => (
+                  {img2vidConfigs.map(({ name, key, type, engine, subType }) => (
                     <Menu.Item
                       key={key}
                       onClick={() =>
@@ -371,7 +371,7 @@ export function GeneratedImage({
                         })
                       }
                     >
-                      {name}
+                      {name} - {engine}
                     </Menu.Item>
                   ))}
                 </>

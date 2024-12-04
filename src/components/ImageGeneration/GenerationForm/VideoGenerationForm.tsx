@@ -1,11 +1,18 @@
-import { Button, Input, Text, Select, Alert, Loader } from '@mantine/core';
+import { Button, Input, Text, Select, Alert, Loader, Anchor } from '@mantine/core';
 import React, { createContext, useEffect, useState, useContext, useMemo } from 'react';
 import { UseFormReturn, useFormContext } from 'react-hook-form';
 import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/HaiperAspectRatio';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import { Form, InputSegmentedControl, InputSwitch, InputText, InputTextArea } from '~/libs/form';
+import {
+  Form,
+  InputNumberSlider,
+  InputSegmentedControl,
+  InputSwitch,
+  InputText,
+  InputTextArea,
+} from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import {
   VideoGenerationInput,
@@ -28,6 +35,7 @@ import {
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
   WORKFLOW_TAGS,
+  engineDefinitions,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
@@ -41,6 +49,9 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { useGetGenerationEngines } from '~/components/Generate/hooks/useGetGenerationEngines';
 import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
+import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { KlingMode, KlingVideoGenDuration } from '@civitai/client';
 
 const schema = videoGenerationSchema;
 
@@ -68,6 +79,10 @@ export function VideoGenerationForm() {
       ? availableWorkflows.filter((x) => x.subType === 'txt2vid')
       : availableWorkflows;
 
+  const availableEngines = Object.keys(engineDefinitions)
+    .filter((key) => engines?.some((x) => x.engine === key && !x.disabled))
+    .map((key) => ({ key, ...engineDefinitions[key] }));
+
   return (
     <div className="flex flex-1 flex-col gap-2">
       <div className="flex flex-col gap-2 px-3">
@@ -92,15 +107,13 @@ export function VideoGenerationForm() {
         <Select
           label="Tool"
           value={engine}
+          description={
+            engineData?.message && !engineData?.disabled ? engineData.message : undefined
+          }
           onChange={(value) => generationFormStore.setEngine(value!)}
-          data={[
-            { label: 'Haiper', value: 'haiper' },
-            { label: 'Mochi', value: 'mochi' },
-          ]}
+          data={availableEngines.map(({ key, label }) => ({ label, value: key }))}
         />
-        {engineData?.message && !engineData?.disabled && (
-          <Alert color="blue">{engineData.message}</Alert>
-        )}
+
         {workflows.length > 1 ? (
           <Select
             label="Workflow"
@@ -163,9 +176,144 @@ function EngineForm() {
       return <HaiperImg2VidGenerationForm />;
     case 'mochi-txt2vid':
       return <MochiGenerationForm />;
+    case 'kling-txt2vid':
+      return <KlingTextToVideoForm />;
+    case 'kling-img2vid':
+      return <KlingImageToVideoForm />;
+    case 'minimax-txt2vid':
+      return <MinimaxTxt2VidGenerationForm />;
+    case 'minimax-img2vid':
+      return <MinimaxImg2VidGenerationForm />;
     default:
       return null;
   }
+}
+
+function KlingTextToVideoForm() {
+  return (
+    <FormWrapper engine="kling">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <InputAspectRatioColonDelimited
+        name="aspectRatio"
+        label="Aspect Ratio"
+        options={['16:9', '1:1', '9:16']}
+      />
+
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={Object.values(KlingVideoGenDuration).map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <Input.Label>Mode</Input.Label>
+          <InfoPopover size="xs" iconProps={{ size: 14 }}>
+            Standard mode is faster to generate and more cost-effective. Pro takes longer to
+            generate and has higher quality video output.
+          </InfoPopover>
+        </div>
+        <InputSegmentedControl
+          name="mode"
+          data={[
+            { label: 'Standard', value: KlingMode.STANDARD },
+            { label: 'Professional', value: KlingMode.PROFESSIONAL },
+          ]}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={0}
+        max={1}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+    </FormWrapper>
+  );
+}
+
+function KlingImageToVideoForm() {
+  return (
+    <FormWrapper engine="kling">
+      <InputImageUrl name="sourceImageUrl" label="Image" />
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={Object.values(KlingVideoGenDuration).map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <Input.Label>Mode</Input.Label>
+          <InfoPopover size="xs" iconProps={{ size: 14 }}>
+            Standard mode is faster to generate and more cost-effective. Pro takes longer to
+            generate and has higher quality video output.
+          </InfoPopover>
+        </div>
+        <InputSegmentedControl
+          name="mode"
+          data={[
+            { label: 'Standard', value: KlingMode.STANDARD },
+            { label: 'Professional', value: KlingMode.PROFESSIONAL },
+          ]}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={0}
+        max={1}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+    </FormWrapper>
+  );
 }
 
 function HaiperTxt2VidGenerationForm() {
@@ -222,6 +370,25 @@ function MochiGenerationForm() {
   );
 }
 
+function MinimaxTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="minimax">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+    </FormWrapper>
+  );
+}
+
+function MinimaxImg2VidGenerationForm() {
+  return (
+    <FormWrapper engine="minimax">
+      <InputImageUrl name="sourceImageUrl" label="Image" />
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+    </FormWrapper>
+  );
+}
+
 type Engine = VideoGenerationInput['engine'];
 function FormWrapper({
   engine,
@@ -240,6 +407,7 @@ function FormWrapper({
     [status.message]
   );
 
+  const { data: engines } = useGetGenerationEngines();
   const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
 
   const form = usePersistForm(workflow.key, {
@@ -266,7 +434,8 @@ function FormWrapper({
       localStorage.removeItem(workflow.key);
     }
     form.reset(defaultValues);
-    const engineConfig = availableEngineConfigurations?.[0];
+    const engine = engines?.[0];
+    const engineConfig = availableEngineConfigurations?.find((x) => x.engine === engine?.engine);
     if (engineConfig) generationFormStore.setWorkflow(engineConfig.key);
   }
 
@@ -353,6 +522,7 @@ function FormWrapper({
 function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }) {
   const [query, setQuery] = useState<VideoGenerationSchema | null>(null);
   const { getValues, watch } = useFormContext();
+  const [error, setError] = useState<string | null>(null);
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
     { type: 'video', data: query as VideoGenerationSchema },
     { keepPreviousData: false, enabled: !!query }
@@ -364,7 +534,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
 
   useEffect(() => {
-    const { whatIf = [] } = engines[engine] ?? {};
+    const { whatIf = [] } = engineDefinitions[engine] ?? {};
     const { defaultValues } = workflow;
     const subscription = watch(() => {
       const formData = getValues();
@@ -373,14 +543,20 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
         {}
       );
 
-      const result = schema.safeParse({
-        engine,
-        workflow: workflow.key,
-        ...defaultValues,
-        ...whatIfData,
-      });
-      if (!result.success) setQuery(null);
-      else setQuery(result.data);
+      try {
+        const result = schema.parse({
+          engine,
+          workflow: workflow.key,
+          ...defaultValues,
+          ...whatIfData,
+        });
+        setQuery(result);
+        setError(null);
+      } catch (e: any) {
+        const { message, path } = JSON.parse(e.message)?.[0] as any;
+        setQuery(null);
+        setError(`${path?.[0]}: ${message}`);
+      }
     });
     return subscription.unsubscribe;
   }, [workflow, engine]);
@@ -405,40 +581,3 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
 }
 
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
-
-type EnginesDictionary = Record<
-  string,
-  {
-    label: string;
-    description: string | (() => React.ReactNode);
-    whatIf?: string[];
-  }
->;
-const engines: EnginesDictionary = {
-  haiper: {
-    label: 'Haiper',
-    description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
-    whatIf: ['duration'],
-  },
-  mochi: {
-    label: 'Mochi',
-    description() {
-      return (
-        <>
-          Mochi 1 preview, by creators{' '}
-          <Text
-            variant="link"
-            component="a"
-            rel="nofollow"
-            href="https://www.genmo.ai/"
-            target="_blank"
-          >
-            https://www.genmo.ai/
-          </Text>
-          , is an open state-of-the-art video generation model with high-fidelity motion and strong
-          prompt adherence in preliminary evaluation.
-        </>
-      );
-    },
-  },
-};
