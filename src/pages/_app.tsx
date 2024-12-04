@@ -11,7 +11,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
 import { registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
-import { getSession, SessionProvider } from 'next-auth/react';
+import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -217,15 +217,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const parsedCookies = parseCookies(cookies);
 
   const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
-  const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  // const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
+  // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+  // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+  const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
 
   // Pass this via the request so we can use it in SSR
-  if (session) {
-    (appContext.ctx.req as any)['session'] = session;
-    // (appContext.ctx.req as any)['flags'] = flags;
-  }
+  // if (session) {
+  //   (appContext.ctx.req as any)['session'] = session;
+  //   // (appContext.ctx.req as any)['flags'] = flags;
+  // }
 
   return {
     pageProps: {
@@ -233,7 +233,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       colorScheme,
       cookies: parsedCookies,
       // cookieKeys: Object.keys(cookies),
-      session,
+      // session,
       flags,
       seed: Date.now(),
       hasAuthCookie,
