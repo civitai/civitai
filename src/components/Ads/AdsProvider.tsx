@@ -45,7 +45,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
-  const adsEnabled = isDev ? true : features.adsEnabled && (allowAds || !isMember);
+  const adsEnabled = isDev ? false : features.adsEnabled && (allowAds || !isMember);
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });
