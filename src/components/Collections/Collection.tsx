@@ -159,7 +159,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
                 <Group spacing="xs">
                   <ModelFiltersDropdown
                     filterMode="query"
-                    maxPopoverHeight={'calc(75vh - var(--mantine-header-height))'}
+                    maxPopoverHeight={'calc(75vh - var(--header-height))'}
                   />
                 </Group>
               </Group>

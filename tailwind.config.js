@@ -14,6 +14,9 @@ module.exports = {
   content: ['./src/**/*.{ts,tsx}',],
   darkMode: 'selector',
   important: 'body',
+  experimental: {
+    optimizeUniversalDefaults: true,
+  },
   theme: {
     screens: breakpoints,
     extend: {

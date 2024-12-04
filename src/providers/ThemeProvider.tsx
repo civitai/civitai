@@ -39,7 +39,6 @@ export function ThemeProvider({
   return (
     <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
       <MantineProvider
-        withCSSVariables
         withGlobalStyles
         withNormalizeCSS
         theme={{

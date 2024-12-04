@@ -179,7 +179,7 @@ const useStyles = createStyles((theme) => ({
   },
   stickySidebar: {
     position: 'sticky',
-    top: `calc(var(--mantine-header-height) + ${theme.spacing.md}px)`,
+    top: `calc(var(--header-height) + ${theme.spacing.md}px)`,
 
     [containerQuery.smallerThan('md')]: {
       position: 'relative',

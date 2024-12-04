@@ -78,8 +78,8 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
       classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
-      {/* 
-        NOTE: 
+      {/*
+        NOTE:
         - Add pending to models tab.
       */}
       <Button
@@ -234,7 +234,7 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           styles={{
             drawer: {
               height: 'auto',
-              maxHeight: 'calc(100dvh - var(--mantine-header-height))',
+              maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },

@@ -179,7 +179,7 @@ const CollectionsLayout = ({ children }: { children: React.ReactNode }) => {
                       </Center>
                     )}
                     <Card.Section ml={0}>
-                      <ScrollArea.Autosize maxHeight="calc(80vh - var(--mantine-header-height,0))">
+                      <ScrollArea.Autosize maxHeight="calc(80vh - var(--header-height,0))">
                         {Collections}
                       </ScrollArea.Autosize>
                     </Card.Section>
