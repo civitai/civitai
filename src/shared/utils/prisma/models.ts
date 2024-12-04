@@ -1331,6 +1331,7 @@ export interface Partner {
   token: string | null;
   tier: number;
   logo: string | null;
+  disabled: boolean;
   runStrategies?: RunStrategy[];
 }
 
