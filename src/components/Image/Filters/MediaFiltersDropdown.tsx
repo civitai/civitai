@@ -340,7 +340,7 @@ export function MediaFiltersDropdown({
           styles={{
             drawer: {
               height: 'auto',
-              maxHeight: 'calc(100dvh - var(--mantine-header-height))',
+              maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 0, overflowY: 'auto' },
@@ -367,7 +367,7 @@ export function MediaFiltersDropdown({
       <Popover.Dropdown maw={468} p={0} w="100%">
         <ScrollArea.Autosize
           type="hover"
-          maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}
+          maxHeight={'calc(90vh - var(--header-height) - 56px)'}
         >
           {dropdown}
         </ScrollArea.Autosize>

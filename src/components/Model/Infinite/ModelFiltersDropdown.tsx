@@ -365,7 +365,7 @@ export function DumbModelFiltersDropdown({
           styles={{
             drawer: {
               height: 'auto',
-              maxHeight: 'calc(100dvh - var(--mantine-header-height))',
+              maxHeight: 'calc(100dvh - var(--header-height))',
             },
             body: { padding: 0, overflowY: 'auto' },
             header: { padding: '4px 8px' },
@@ -391,7 +391,7 @@ export function DumbModelFiltersDropdown({
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={576} p={0} w="100%">
           <ScrollArea.Autosize
-            maxHeight={maxPopoverHeight ?? 'calc(90vh - var(--mantine-header-height) - 56px)'}
+            maxHeight={maxPopoverHeight ?? 'calc(90vh - var(--header-height) - 56px)'}
             type="hover"
           >
             {dropdown}
