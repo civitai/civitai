@@ -1,0 +1,67 @@
+$sizeValue: 18px;
+$up: round(calc($sizeValue / 3));
+$down: round(calc($sizeValue / -3));
+
+.root {
+  border-radius: theme('borderRadius.sm');
+  cursor: pointer;
+  padding: 5px;
+  height: 28px;
+  width: 28px;
+  display: flex;
+  align-items: center;
+}
+
+:global(.dark) {
+  .burger {
+    &, &::before, &::after {
+      background-color: theme('colors.white');
+    }
+  }
+}
+
+.burger {
+  position: relative;
+  user-select: none;
+
+  &, &::before, &::after {
+    display: block;
+    width: $sizeValue;
+    height: round(calc($sizeValue / 12));
+    outline: 1px solid transparent;
+    transition-property: background-color, transform;
+    transition-duration: 300ms;
+    background-color: theme('colors.black');
+
+    @media(prefers-reduced-motion) {
+      transition-duration: 0;
+    }
+  }
+
+  &::before, &::after {
+    position: absolute;
+    content: '';
+    left: 0;
+  }
+
+  &::before {
+    top: $down;
+  }
+
+  &::after {
+    top: $up;
+  }
+
+  &[data-opened] {
+    background-color: transparent;
+
+    &::before {
+      transform: translateY($up) rotate(45deg);
+    }
+
+    &::after {
+      transform: translateY($down) rotate(-45deg);
+    }
+  }
+}
+

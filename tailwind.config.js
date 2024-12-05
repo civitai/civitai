@@ -34,6 +34,8 @@ module.exports = {
         center: true,
       },
       colors: {
+        white: '#fefefe',
+        black: '#222222',
         dark: {
           0: '#C1C2C5',
           1: '#A6A7AB',

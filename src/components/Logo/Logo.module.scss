@@ -2,7 +2,7 @@
   position: relative;
   height: 30px;
 
-  @container (max-width: theme(screens.sm)) {
+  @container (max-width: theme('screens.sm')) {
     width: 45px;
     height: 45px;
   }
@@ -26,7 +26,7 @@
 .flyOver {
   position: absolute;
   height: 45px;
-  @container (max-width: theme(screens.sm)) {
+  @container (max-width: theme('screens.sm')) {
     height: 40px;
   }
 }
@@ -39,7 +39,7 @@
   z-index: 3;
   background: theme('colors.gray.1');
 
-  @container (max-width: theme(screens.sm)) {
+  @container (max-width: theme('screens.sm')) {
     bottom: -7px;
   }
 }
@@ -144,7 +144,7 @@
     transform: rotate(-20deg) translate(-14%, -75%);
     z-index: 3;
 
-    @container (max-width: theme(screens.sm)) {
+    @container (max-width: theme('screens.sm')) {
       display: none;
     }
   }
@@ -156,7 +156,7 @@
     width: 60px;
     opacity: 0;
 
-    @container (max-width: theme(screens.sm)) {
+    @container (max-width: theme('screens.sm')) {
       transform: rotate(-20deg);
       animation: peekOutDeer 5s ease infinite alternate;
       z-index: 1;
@@ -239,7 +239,7 @@
     animation: flyOver 8s 4s ease;
     opacity: 0;
 
-    @container (max-width: theme(screens.sm)) {
+    @container (max-width: theme('screens.sm')) {
       transform: rotate(20deg);
       z-index: 1;
       animation: peekOut 5s ease infinite alternate;
