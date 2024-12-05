@@ -12,6 +12,7 @@ import {
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import {
   formatGenerationResponse,
+  getUserPriority,
   parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
@@ -73,6 +74,7 @@ export async function createComfyStep(
       params: input.params,
       remixOfId: input.remixOfId,
     },
+    priority: getUserPriority(input.user),
   } as ComfyStepTemplate;
 }
 

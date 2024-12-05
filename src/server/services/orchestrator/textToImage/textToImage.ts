@@ -2,6 +2,7 @@ import type { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import {
   formatGenerationResponse,
+  getUserPriority,
   parseGenerateImageInput,
 } from '~/server/services/orchestrator/common';
 import {
@@ -71,6 +72,7 @@ export async function createTextToImageStep(
       params: input.params,
       remixOfId: input.remixOfId,
     },
+    priority: getUserPriority(input.user),
   } as TextToImageStepTemplate;
 }
 
