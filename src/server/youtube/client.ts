@@ -33,6 +33,7 @@ export const getYoutubeAuthUrl = ({
     scope: ['https://www.googleapis.com/auth/youtube.upload'],
     state: JSON.stringify(state),
     redirect_uri: `${env.NEXT_PUBLIC_BASE_URL}${redirectUri}`,
+    approval_prompt: 'force',
     include_granted_scopes: true,
   });
 };

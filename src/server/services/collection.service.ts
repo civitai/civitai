@@ -2283,13 +2283,17 @@ export const enableCollectionYoutubeSupport = async ({
       '/collections/youtube/auth'
     );
     const collectionKey = `collection:${collectionId}:youtube-authentication-code`;
+
+    if (!tokens.refresh_token) {
+      throw throwBadRequestError('Failed to get youtube refresh token');
+    }
     await dbWrite.$transaction(async (tx) => {
       await tx.keyValue.upsert({
         where: {
           key: collectionKey,
         },
         update: {
-          value: authenticationCode,
+          value: tokens.refresh_token as string,
         },
         create: {
           key: collectionKey,
