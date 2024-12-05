@@ -21,13 +21,6 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import {
-  Availability,
-  CollectionType,
-  ModelModifier,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
 import {
   IconArchive,
   IconArrowsLeftRight,
@@ -94,6 +87,7 @@ import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscu
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
@@ -115,6 +109,12 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  Availability,
+  CollectionType,
+  ModelModifier,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
