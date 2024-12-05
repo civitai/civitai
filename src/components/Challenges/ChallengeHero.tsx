@@ -5,7 +5,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 
 export function ChallengeHero() {
   return (
-    <div className="relative -mt-4 mb-4 overflow-hidden bg-gray-1 text-white dark:bg-dark-9">
+    <div className="relative -mt-4 mb-4 overflow-hidden bg-gray-1 dark:bg-dark-9 dark:text-white">
       <MasonryContainer>
         <div className="mt-6 w-full overflow-hidden rounded-lg">
           <Image

@@ -38,6 +38,7 @@ import {
   AddCollectionItemInput,
   BulkSaveCollectionItemsInput,
   CollectionMetadataSchema,
+  EnableCollectionYoutubeSupportInput,
   GetAllCollectionItemsSchema,
   GetAllCollectionsInfiniteSchema,
   GetAllUserCollectionsInputSchema,
@@ -70,6 +71,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { getYoutubeRefreshToken } from '~/server/youtube/client';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -2246,4 +2248,74 @@ export const setCollectionItemNsfwLevel = async ({
   await imagesSearchIndex.queueUpdate([
     { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
   ]);
+};
+
+export const enableCollectionYoutubeSupport = async ({
+  collectionId,
+  userId,
+  authenticationCode,
+}: EnableCollectionYoutubeSupportInput & { userId: number }) => {
+  const user = await dbRead.user.findUnique({ where: { id: userId } });
+  if (!user?.isModerator) {
+    throw throwAuthorizationError('You do not have permission to enable youtube support');
+  }
+
+  const collection = await getCollectionById({ input: { id: collectionId } });
+
+  if (collection.mode !== CollectionMode.Contest) {
+    throw throwBadRequestError('Only contest collections can have youtube support enabled');
+  }
+
+  if (collection.type !== CollectionType.Image) {
+    throw throwBadRequestError('Only image collections can have youtube support enabled');
+  }
+
+  const metadata = collection.metadata as CollectionMetadataSchema;
+
+  if (metadata.youtubeSupportEnabled) {
+    throw throwBadRequestError('Youtube support is already enabled for this collection');
+  }
+
+  // Attempt to save the auth code on the key-value store.
+  try {
+    const { tokens } = await getYoutubeRefreshToken(
+      authenticationCode,
+      '/collections/youtube/auth'
+    );
+    const collectionKey = `collection:${collectionId}:youtube-authentication-code`;
+
+    if (!tokens.refresh_token) {
+      throw throwBadRequestError('Failed to get youtube refresh token');
+    }
+    await dbWrite.$transaction(async (tx) => {
+      await tx.keyValue.upsert({
+        where: {
+          key: collectionKey,
+        },
+        update: {
+          value: tokens.refresh_token as string,
+        },
+        create: {
+          key: collectionKey,
+          value: tokens.refresh_token as string,
+        },
+      });
+
+      await tx.collection.update({
+        where: {
+          id: collection.id,
+        },
+        data: {
+          metadata: {
+            ...metadata,
+            youtubeSupportEnabled: true,
+          },
+        },
+      });
+    });
+
+    return { collectionId, youtubeSupportEnabled: true };
+  } catch (error) {
+    throw throwBadRequestError('Failed to save youtube authentication code');
+  }
 };

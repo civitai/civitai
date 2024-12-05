@@ -121,6 +121,7 @@ export const collectionMetadataSchema = z
     judgesCanScoreEntries: z.boolean().optional(),
     disableFollowOnSubmission: z.boolean().optional(),
     disableTagRequired: z.boolean().optional(),
+    youtubeSupportEnabled: z.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {
@@ -249,4 +250,12 @@ export type SetCollectionItemNsfwLevelInput = z.infer<typeof setCollectionItemNs
 export const setCollectionItemNsfwLevelInput = z.object({
   collectionItemId: z.number(),
   nsfwLevel: z.nativeEnum(NsfwLevel),
+});
+
+export type EnableCollectionYoutubeSupportInput = z.infer<
+  typeof enableCollectionYoutubeSupportInput
+>;
+export const enableCollectionYoutubeSupportInput = z.object({
+  collectionId: z.number(),
+  authenticationCode: z.string(),
 });

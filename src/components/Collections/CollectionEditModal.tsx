@@ -1,9 +1,11 @@
 import { Button, Center, Divider, Group, Input, Loader, Modal, Stack, Text } from '@mantine/core';
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import {
   collectionReadPrivacyData,
   collectionWritePrivacyData,
+  useCollection,
+  useMutateCollection,
 } from '~/components/Collections/collection.utils';
 import {
   Form,
@@ -34,10 +36,16 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const dialog = useDialogContext();
   const queryUtils = trpc.useContext();
   const currentUser = useCurrentUser();
-  const { data, isLoading: queryLoading } = trpc.collection.getById.useQuery(
-    { id: collectionId as number },
-    { enabled: !!collectionId }
-  );
+
+  const {
+    collection,
+    permissions: queryPermissions,
+    isLoading: queryLoading,
+  } = useCollection(collectionId as number, {
+    enabled: !!collectionId,
+  });
+  const [youtubeAuthUrl, setYoutubeAuthUrl] = useState<string | null>(null);
+  const { getYoutubeAuthUrl, getYoutubeAuthUrlLoading } = useMutateCollection();
 
   const isLoading = queryLoading && !!collectionId;
 
@@ -73,22 +81,38 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   };
 
   useEffect(() => {
-    if (data && data.collection) {
+    if (collection) {
       const result = upsertCollectionInput.safeParse({
-        ...data.collection,
-        type: data.collection.type ?? CollectionType.Model,
-        mode: data.collection.mode,
-        metadata: data.collection.metadata ?? {},
+        ...collection,
+        type: collection.type ?? CollectionType.Model,
+        mode: collection.mode,
+        metadata: collection.metadata ?? {},
       });
       if (result.success) form.reset({ ...result.data });
       else console.error(result.error);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data]);
+  }, [collection]);
 
-  const permissions = data?.permissions ?? { manage: false, write: false };
-  const canEdit = data?.collection && permissions.manage;
+  const getYoutubeUrlHandler = async () => {
+    if (!collection) {
+      return;
+    }
+
+    if (youtubeAuthUrl) {
+      window.location.href = youtubeAuthUrl;
+    } else {
+      const url = await getYoutubeAuthUrl({ id: collection.id as number });
+      setYoutubeAuthUrl(url);
+    }
+  };
+
+  const permissions = queryPermissions ?? { manage: false, write: false };
+  const canEdit = !!collection && permissions.manage;
   const isCreate = !collectionId;
+  const isImageCollection = collection?.type === CollectionType.Image;
+  const isPostCollection = collection?.type === CollectionType.Post;  
+  const isContestMode = collection?.mode === CollectionMode.Contest;
 
   return (
     <Modal {...dialog} size="lg" title={isCreate ? 'Create collection' : 'Edit collection'}>
@@ -156,7 +180,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                   ]}
                   clearable
                 />
-                {mode === CollectionMode.Contest && (
+                {isContestMode && (
                   <>
                     <Divider label="Contest Details" />
                     <InputDatePicker
@@ -191,14 +215,14 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       placeholder="Leave blank for unlimited"
                       clearable
                     />
-                    {data?.collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <InputCheckbox
                         name="metadata.existingEntriesDisabled"
                         label="Existing entries disabled"
                         description="Makes it so that the + button takes you directly to the create flow, bypassing existing images selection. Users can still circumbent this by following the collection & selecting an image."
                       />
                     )}
-                    {data?.collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <InputCheckbox
                         name="metadata.disableFollowOnSubmission"
                         label="Submitting an entry will not follow the collection"
@@ -236,14 +260,14 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     />
                     <Divider label="Judging details" />
 
-                    {data?.collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <InputCheckbox
                         name="metadata.judgesApplyBrowsingLevel"
                         label="Judges apply NSFW Rating"
                         description="This will make it so that people with Manage permission on the collection apply NSFW rating to the submissions. Subsmissions made to this collection will not be publicly visible until they're rated."
                       />
                     )}
-                    {data?.collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <InputCheckbox
                         name="metadata.judgesCanScoreEntries"
                         label="Judges can score entries"
@@ -258,6 +282,30 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
+
+                    {isImageCollection && (
+                      <>
+                        <Divider label="Youtube Support" />
+                        <Input.Wrapper
+                          label="Add Youtube Support"
+                          description="By enabling youtube support, videos that are longer than 30s will be uploaded to youtube and youtube will be used to play them on the site. Note channels are exclusive to the collection and cannot be used in other collections."
+                          descriptionProps={{ mb: 12 }}
+                        >
+                          {collection.metadata?.youtubeSupportEnabled ? (
+                            <Text size="sm" color="primary">
+                              Youtube support is enabled for this collection.
+                            </Text>
+                          ) : (
+                            <Button
+                              onClick={getYoutubeUrlHandler}
+                              loading={getYoutubeAuthUrlLoading}
+                            >
+                              {youtubeAuthUrl ? 'Sign in with Youtube' : 'Enable Youtube Support'}
+                            </Button>
+                          )}
+                        </Input.Wrapper>
+                      </>
+                    )}
                   </>
                 )}
               </>

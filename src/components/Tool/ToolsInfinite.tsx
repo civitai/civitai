@@ -3,31 +3,29 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { isEqual } from 'lodash-es';
 import { useEffect } from 'react';
 
-import { useArticleFilters, useQueryArticles } from '~/components/Article/article.utils';
+import { useToolFilters, useQueryTools } from '~/components/Tool/tools.utils';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
+import { GetAllToolsSchema } from '~/server/schema/tool.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { ArticleCard } from '~/components/Cards/ArticleCard';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import Link from 'next/link';
+import { ToolCard } from '~/components/Cards/ToolCard';
 
-export function ArticlesInfinite({
+export function ToolsInfinite({
   filters: filterOverrides = {},
   showEof = false,
   showEmptyCta,
-  disableStoreFilters,
 }: Props) {
-  const articlesFilters = useArticleFilters();
+  const toolsFilters = useToolFilters();
 
-  const filters = disableStoreFilters
-    ? filterOverrides
-    : removeEmpty({ ...articlesFilters, ...filterOverrides });
+  const filters = removeEmpty({ limit: 50, ...toolsFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
-  const { articles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
-    useQueryArticles(debouncedFilters, { keepPreviousData: true });
+  const { tools, loading, fetchNextPage, hasNextPage, refetching } = useQueryTools({
+    filters: debouncedFilters,
+  });
 
   //#region [useEffect] cancel debounced filters
   useEffect(() => {
@@ -37,23 +35,18 @@ export function ArticlesInfinite({
 
   return (
     <>
-      {isLoading ? (
+      {loading ? (
         <Center p="xl">
           <Loader size="xl" />
         </Center>
-      ) : !!articles.length ? (
+      ) : !!tools.length ? (
         <div style={{ position: 'relative' }}>
-          <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-          <MasonryGrid
-            data={articles}
-            render={ArticleCard}
-            itemId={(x) => x.id}
-            empty={<NoContent />}
-          />
+          <LoadingOverlay visible={refetching ?? false} zIndex={9} />
+          <MasonryGrid data={tools} render={ToolCard} itemId={(x) => x.id} empty={<NoContent />} />
           {hasNextPage && (
             <InViewLoader
               loadFn={fetchNextPage}
-              loadCondition={!isFetching}
+              loadCondition={!refetching}
               style={{ gridColumn: '1/-1' }}
             >
               <Center p="xl" sx={{ height: 36 }} mt="md">
@@ -66,7 +59,7 @@ export function ArticlesInfinite({
       ) : (
         <NoContent py="lg">
           {showEmptyCta && (
-            <Link href="/articles/create">
+            <Link href="/tools/create">
               <Button radius="xl">Write an Article</Button>
             </Link>
           )}
@@ -77,8 +70,7 @@ export function ArticlesInfinite({
 }
 
 type Props = {
-  filters?: Partial<GetInfiniteArticlesSchema>;
+  filters?: Partial<GetAllToolsSchema>;
   showEof?: boolean;
   showEmptyCta?: boolean;
-  disableStoreFilters?: boolean;
 };

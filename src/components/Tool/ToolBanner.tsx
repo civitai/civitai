@@ -6,10 +6,10 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useImageFilters } from '~/components/Image/image.utils';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { useQueryTools } from '~/components/Tool/tools.utils';
 import { FilterKeys } from '~/providers/FiltersProvider';
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { slugit } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 
 export function ToolBanner({
   filterType = 'images',
@@ -21,13 +21,16 @@ export function ToolBanner({
   const { tools: toolIds } = useImageFilters(filterType);
   const selectedId = toolIds?.[0];
 
-  const { data } = trpc.tool.getAll.useQuery(undefined, { enabled: !!toolIds?.length || !!slug });
-  const selected = data?.find((x) => x.id === selectedId || slugit(x.name) === slug);
+  const { tools } = useQueryTools({
+    filters: undefined,
+    options: { enabled: !!toolIds?.length || !!slug },
+  });
+  const selected = tools?.find((x) => x.id === selectedId || slugit(x.name) === slug);
   const theme = useMantineTheme();
 
-  if (!data || !selected) return null;
+  if (!tools || !selected) return null;
 
-  const hasHeader = !!selected.metadata?.header;
+  const hasHeader = !!selected.bannerUrl;
 
   return (
     <div
@@ -38,7 +41,7 @@ export function ToolBanner({
         style={
           hasHeader
             ? {
-                backgroundImage: `url(${getEdgeUrl(selected.metadata.header as string, {
+                backgroundImage: `url(${getEdgeUrl(selected.bannerUrl as string, {
                   original: true,
                 })})`,
                 backgroundSize: 'cover',
