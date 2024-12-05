@@ -12,7 +12,7 @@ import {
   IconProps,
   IconTools,
   IconTrophy,
-  IconVideo
+  IconVideo,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
@@ -68,10 +68,12 @@ const homeOptions: Record<string, HomeOption> = {
   challenges: {
     url: '/challenges',
     icon: (props: IconProps) => <IconTrophy {...props} />,
+    grouped: true,
   },
   events: {
     url: '/events',
     icon: (props: IconProps) => <IconCalendar {...props} />,
+    grouped: true,
   },
   shop: {
     url: '/shop',
@@ -83,10 +85,7 @@ const homeOptions: Record<string, HomeOption> = {
 
 const useTabsStyles = createStyles((theme) => ({
   tabHighlight: {
-    backgroundColor: theme.fn.rgba(
-      theme.colors.green[3],
-      theme.colorScheme === 'dark' ? 0.1 : 0.3
-    ),
+    backgroundColor: theme.fn.rgba(theme.colors.green[3], theme.colorScheme === 'dark' ? 0.1 : 0.3),
     backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
       theme.colors.green[4],
       0
