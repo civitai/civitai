@@ -624,13 +624,13 @@ export function Collection({
                 {collection && permissions && (
                   <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
                     {collection.mode === CollectionMode.Contest &&
-                    collection.type === CollectionType.Image ? (
+                    [CollectionType.Image, CollectionType.Post].some(x => x === collection.type) ? (
                       <>
                         <Button
                           color="blue"
                           radius="xl"
                           onClick={() => {
-                            if (!!metadata.existingEntriesDisabled) {
+                            if (!!metadata.existingEntriesDisabled || collection.type === CollectionType.Post) {
                               router.push(`/posts/create?collectionId=${collection.id}`);
                             } else {
                               dialogStore.trigger({
