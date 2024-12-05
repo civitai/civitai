@@ -5,6 +5,7 @@ import {
   MetricTimeframe,
   ModelStatus,
   ModelType,
+  ToolType,
 } from '~/shared/utils/prisma/enums';
 import { createContext, useCallback, useContext, useRef } from 'react';
 import { z } from 'zod';
@@ -25,6 +26,7 @@ import {
   QuestionSort,
   QuestionStatus,
   ThreadSort,
+  ToolSort,
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
@@ -155,6 +157,12 @@ const markerFilterSchema = z.object({
   tags: z.string().array().optional(),
 });
 
+type ToolFilterSchema = z.infer<typeof toolFilterSchema>;
+const toolFilterSchema = z.object({
+  sort: z.nativeEnum(ToolSort).default(ToolSort.Newest),
+  type: z.nativeEnum(ToolType).optional(),
+});
+
 type StorageState = {
   models: ModelFilterSchema;
   questions: QuestionFilterSchema;
@@ -168,6 +176,7 @@ type StorageState = {
   videos: VideoFilterSchema;
   threads: ThreadFilterSchema;
   markers: MarkerFilterSchema;
+  tools: ToolFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 
@@ -191,6 +200,7 @@ type StoreState = FilterState & {
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
   setMarkerFilters: (filters: Partial<MarkerFilterSchema>) => void;
+  setToolFilters: (filters: Partial<ToolFilterSchema>) => void;
 };
 
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
@@ -207,6 +217,7 @@ const localStorageSchemas: LocalStorageSchema = {
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
   markers: { key: 'marker-filters', schema: markerFilterSchema },
+  tools: { key: 'tool-filters', schema: toolFilterSchema },
 };
 
 const getInitialValues = <TSchema extends z.AnyZodObject>({
@@ -281,6 +292,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'threads', data, state })),
       setMarkerFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'markers', data, state })),
+      setToolFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'tools', data, state })),
     }))
   );
 
@@ -332,6 +345,7 @@ export function useSetFilters(type: FilterSubTypes) {
           videos: state.setVideoFilters,
           threads: state.setThreadFilters,
           markers: state.setMarkerFilters,
+          tools: state.setToolFilters,
         }[type]),
       [type]
     )

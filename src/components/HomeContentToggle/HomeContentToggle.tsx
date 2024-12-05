@@ -10,6 +10,7 @@ import {
   IconMoneybag,
   IconPhoto,
   IconProps,
+  IconTools,
   IconTrophy,
   IconVideo
 } from '@tabler/icons-react';
@@ -57,6 +58,11 @@ const homeOptions: Record<string, HomeOption> = {
   bounties: {
     url: '/bounties',
     icon: (props: IconProps) => <IconMoneybag {...props} />,
+    grouped: true,
+  },
+  tools: {
+    url: '/tools',
+    icon: (props: IconProps) => <IconTools {...props} />,
     grouped: true,
   },
   challenges: {
@@ -188,6 +194,7 @@ export function HomeTabs() {
               key === 'clubs' && !features.clubs,
               key === 'shop' && !features.cosmeticShop,
               key === 'articles' && !features.articles,
+              key === 'tools' && !features.toolSearch,
             ].some((b) => b)
         )
         .map(([key, value]) => {

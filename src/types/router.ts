@@ -138,3 +138,6 @@ export type BuzzWithdrawalRequestHistoryRecord =
   | BuzzWithdrawalRequestRouter['getPaginated']['items'][number]['history'];
 export type BuzzWithdrawalGetPaginatedItem =
   BuzzWithdrawalRequestRouter['getPaginated']['items'][number];
+
+type ToolRouter = RouterOutput['tool'];
+export type ToolGetAllModel = ToolRouter['getAll']['items'][number];

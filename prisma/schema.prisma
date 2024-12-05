@@ -3177,6 +3177,7 @@ model Tool {
   priority    Int?
   description String?
   supported   Boolean     @default(false)
+  company     String?
   metadata    Json        @default("{}")
 }
 

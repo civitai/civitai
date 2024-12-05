@@ -1,5 +1,5 @@
 let heInitialized = false;
-let he: { decode: (str: string) => string } = { decode: (str: string) => str };
+const he: { decode: (str: string) => string } = { decode: (str: string) => str };
 function getHe() {
   if (!heInitialized) {
     heInitialized = true;
