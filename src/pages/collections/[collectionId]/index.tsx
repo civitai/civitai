@@ -1,6 +1,5 @@
 import { CollectionContributorPermission } from '~/shared/utils/prisma/enums';
 import { Collection } from '~/components/Collections/Collection';
-import { useCollectionQueryParams } from '~/components/Collections/collection.utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { CollectionsLayout } from '~/components/Collections/CollectionsLayout';
 
