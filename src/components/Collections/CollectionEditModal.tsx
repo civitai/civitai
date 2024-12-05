@@ -110,6 +110,9 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const permissions = queryPermissions ?? { manage: false, write: false };
   const canEdit = !!collection && permissions.manage;
   const isCreate = !collectionId;
+  const isImageCollection = collection?.type === CollectionType.Image;
+  const isPostCollection = collection?.type === CollectionType.Post;  
+  const isContestMode = collection?.mode === CollectionMode.Contest;
 
   return (
     <Modal {...dialog} size="lg" title={isCreate ? 'Create collection' : 'Edit collection'}>
@@ -177,7 +180,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                   ]}
                   clearable
                 />
-                {mode === CollectionMode.Contest && (
+                {isContestMode && (
                   <>
                     <Divider label="Contest Details" />
                     <InputDatePicker
@@ -212,14 +215,14 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       placeholder="Leave blank for unlimited"
                       clearable
                     />
-                    {collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <InputCheckbox
                         name="metadata.existingEntriesDisabled"
                         label="Existing entries disabled"
                         description="Makes it so that the + button takes you directly to the create flow, bypassing existing images selection. Users can still circumbent this by following the collection & selecting an image."
                       />
                     )}
-                    {collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <InputCheckbox
                         name="metadata.disableFollowOnSubmission"
                         label="Submitting an entry will not follow the collection"
@@ -257,14 +260,14 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     />
                     <Divider label="Judging details" />
 
-                    {collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <InputCheckbox
                         name="metadata.judgesApplyBrowsingLevel"
                         label="Judges apply NSFW Rating"
                         description="This will make it so that people with Manage permission on the collection apply NSFW rating to the submissions. Subsmissions made to this collection will not be publicly visible until they're rated."
                       />
                     )}
-                    {collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <InputCheckbox
                         name="metadata.judgesCanScoreEntries"
                         label="Judges can score entries"
@@ -280,12 +283,12 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       clearable
                     />
 
-                    {collection?.type === CollectionType.Image && (
+                    {isImageCollection && (
                       <>
                         <Divider label="Youtube Support" />
                         <Input.Wrapper
                           label="Add Youtube Support"
-                          description="By enabling youtube support, videos that are longer than 30s will be uploaded to youtube and youtube will be used to play them on the site."
+                          description="By enabling youtube support, videos that are longer than 30s will be uploaded to youtube and youtube will be used to play them on the site. Note channels are exclusive to the collection and cannot be used in other collections."
                           descriptionProps={{ mb: 12 }}
                         >
                           {collection.metadata?.youtubeSupportEnabled ? (
