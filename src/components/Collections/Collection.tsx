@@ -32,7 +32,7 @@ import {
 } from '@tabler/icons-react';
 import { truncate } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { CSSProperties, useState } from 'react';
+import React, { CSSProperties } from 'react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -49,7 +49,7 @@ import {
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useImageQueryParams } from '~/components/Image/image.utils';
@@ -86,6 +86,10 @@ import { RemoveFromCollectionMenuItem } from '~/components/MenuItems/RemoveFromC
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import dynamic from 'next/dynamic';
+import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
+import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
+import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );
@@ -123,6 +127,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         sort,
         followed: undefined,
         hidden: undefined,
+        favorites: undefined,
         collectionId: collection.id,
       };
 
@@ -150,18 +155,18 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         <IsClient>
           {!isContestCollection && (
             <>
-              <Group position="apart" spacing={0}>
+              <Group position="right" spacing={4}>
                 <SortFilter
                   type="models"
+                  variant="button"
                   value={sort}
+                  buttonProps={{ compact: false }}
                   onChange={(x) => set({ sort: x as ModelSort })}
                 />
-                <Group spacing="xs">
-                  <ModelFiltersDropdown
-                    filterMode="query"
-                    maxPopoverHeight={'calc(75vh - var(--header-height))'}
-                  />
-                </Group>
+                <ModelFiltersDropdown
+                  filterMode="query"
+                  maxPopoverHeight={'calc(75vh - var(--header-height))'}
+                />
               </Group>
               <CategoryTags />
             </>
@@ -194,7 +199,7 @@ const ImageCollection = ({
   const sort = isContestCollection ? ImageSort.Random : query.sort ?? ImageSort.Newest;
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -217,6 +222,8 @@ const ImageCollection = ({
         period,
         sort,
         collectionId: collection.id,
+        hidden: undefined,
+        followed: undefined,
       };
 
   return (
@@ -270,21 +277,21 @@ const ImageCollection = ({
         <IsClient>
           {!isContestCollection && (
             <>
-              <Group position="apart" spacing={0}>
+              <Group position="right" spacing={4}>
                 <SortFilter
                   type="images"
+                  variant="button"
                   value={sort}
+                  buttonProps={{ compact: false }}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
-
-                <PeriodFilter
-                  type="images"
-                  value={period}
-                  onChange={(x) => replace({ period: x })}
+                <MediaFiltersDropdown
+                  filterType="images"
+                  query={filters}
+                  onChange={(value) => replace(value)}
                 />
               </Group>
-              {/* TODO.imageTags: Bring back once we support tags again.  */}
-              {/* <ImageCategories /> */}
+              <ImageCategories />
             </>
           )}
 
@@ -323,17 +330,7 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite
-              filters={{
-                ...filters,
-                sort,
-                collectionId: collection.id,
-                types: undefined,
-                hidden: undefined,
-                withMeta: undefined,
-                followed: undefined,
-              }}
-            />
+            <ImagesInfinite filters={filters} disableStoreFilters />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -365,6 +362,8 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
         period,
         sort,
         collectionId: collection.id,
+        draftOnly: undefined,
+        followed: undefined,
       };
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -373,29 +372,21 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
       <IsClient>
         {!isContestCollection && (
           <>
-            <Group position="apart" spacing={0}>
+            <Group position="right" spacing={4}>
               <SortFilter
                 type="posts"
+                variant="button"
                 value={sort}
-                onChange={(sort) => replace({ sort: sort as any })}
+                buttonProps={{ compact: false }}
+                onChange={(sort) => replace({ sort: sort as PostSort })}
               />
-              <PeriodFilter
-                type="posts"
-                value={period}
-                onChange={(period) => replace({ period })}
-              />
+              <PostFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
             <PostCategories />
           </>
         )}
         <ReactionSettingsProvider settings={{ hideReactionCount: !isContestCollection }}>
-          <PostsInfinite
-            filters={{
-              ...filters,
-              sort,
-              collectionId: collection.id,
-            }}
-          />
+          <PostsInfinite filters={filters} disableStoreFilters />
         </ReactionSettingsProvider>
       </IsClient>
     </Stack>
@@ -412,12 +403,22 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
 
   // For contest collections, we need to keep the filters clean from outside intervention.
   const filters = isContestCollection
-    ? { sort, period: MetricTimeframe.AllTime, followed: false, collectionId: collection.id }
+    ? {
+        sort,
+        period: MetricTimeframe.AllTime,
+        collectionId: collection.id,
+        followed: undefined,
+        favorites: undefined,
+        hidden: undefined,
+      }
     : {
         ...query,
         sort,
         period,
         collectionId: collection.id,
+        followed: undefined,
+        favorites: undefined,
+        hidden: undefined,
       };
 
   return (
@@ -425,28 +426,20 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
       <IsClient>
         {!isContestCollection && (
           <>
-            <Group position="apart" spacing={0}>
+            <Group position="right" spacing={4}>
               <SortFilter
                 type="articles"
+                variant="button"
                 value={sort}
+                buttonProps={{ compact: false }}
                 onChange={(x) => replace({ sort: x as ArticleSort })}
               />
-              <PeriodFilter
-                type="articles"
-                value={period}
-                onChange={(x) => replace({ period: x })}
-              />
+              <ArticleFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
             <ArticleCategories />
           </>
         )}
-        <ArticlesInfinite
-          filters={{
-            ...filters,
-            sort,
-            collectionId: collection.id,
-          }}
-        />
+        <ArticlesInfinite filters={filters} disableStoreFilters />
       </IsClient>
     </Stack>
   );
