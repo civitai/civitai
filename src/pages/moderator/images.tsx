@@ -44,10 +44,9 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
-import { ImageMetaProps } from '~/server/schema/image.schema';
 import { ImageModerationReviewQueueImage } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { splitUppercase, titleCase } from '~/utils/string-helpers';
+import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { Collection } from '~/components/Collection/Collection';
@@ -108,6 +107,7 @@ const ImageReviewType = {
   newUser: 'New Users',
   reported: 'Reported',
   csam: 'CSAM',
+  appeal: 'Appeals',
 } as const;
 
 type ImageReviewType = keyof typeof ImageReviewType;
@@ -133,7 +133,7 @@ export default function Images() {
   const { data: nameTags } = trpc.image.getModeratorPOITags.useQuery(undefined, {
     enabled: type === 'poi',
   });
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.image.getModeratorReviewQueue.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
@@ -168,7 +168,7 @@ export default function Images() {
               position: 'sticky',
               top: 'var(--mantine-header-height,0)',
               marginBottom: -80,
-              zIndex: 10,
+              zIndex: 30,
             }}
           >
             <ModerationControls images={images} filters={filters} view={type} />
@@ -288,7 +288,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
       }}
     >
       <>
-        <Card.Section sx={{ height: `${height}px` }}>
+        <Card.Section sx={{ height: `${height}px`, position: 'relative' }}>
           {inView && (
             <>
               <Checkbox
@@ -670,6 +670,7 @@ function ModerationControls({
         position="bottom-end"
         onConfirm={handleApproveSelected}
         withArrow
+        withinPortal
       >
         <ButtonTooltip label="Accept" {...tooltipProps}>
           <ActionIcon variant="outline" disabled={!selected.length} color="green">
@@ -683,6 +684,7 @@ function ModerationControls({
           position="bottom-end"
           onConfirm={handleNotPOI}
           withArrow
+          withinPortal
         >
           <ButtonTooltip label="Not POI" {...tooltipProps}>
             <ActionIcon variant="outline" disabled={!selected.length} color="green">
@@ -697,6 +699,7 @@ function ModerationControls({
           position="bottom-end"
           onConfirm={handleRemoveNames}
           withArrow
+          withinPortal
         >
           <ButtonTooltip label="Remove Name" {...tooltipProps}>
             <ActionIcon variant="outline" disabled={!selected.length} color="yellow">
@@ -710,6 +713,7 @@ function ModerationControls({
         position="bottom-end"
         onConfirm={handleDeleteSelected}
         withArrow
+        withinPortal
       >
         <ButtonTooltip label="Delete" {...tooltipProps}>
           <ActionIcon variant="outline" disabled={!selected.length} color="red">

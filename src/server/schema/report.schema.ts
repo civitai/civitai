@@ -1,5 +1,5 @@
 import { MantineColor } from '@mantine/core';
-import { ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 
@@ -142,4 +142,32 @@ export const updateReportSchema = z.object({
   id: z.number(),
   status: z.nativeEnum(ReportStatus),
   internalNotes: z.string().nullish(),
+});
+
+export type CreateEntityAppealInput = z.output<typeof createEntityAppealSchema>;
+export const createEntityAppealSchema = z.object({
+  entityId: z.number(),
+  entityType: z.nativeEnum(EntityType),
+  message: z.string().trim().min(1).max(220),
+});
+
+export type GetRecentAppealsInput = z.output<typeof getRecentAppealsSchema>;
+export const getRecentAppealsSchema = z.object({
+  userId: z.number().optional(),
+  startDate: z.date().optional(),
+});
+
+export type GetAppealDetailsInput = z.output<typeof getAppealDetailsSchema>;
+export const getAppealDetailsSchema = z.object({
+  entityId: z.number(),
+  entityType: z.nativeEnum(EntityType),
+  userId: z.number(),
+});
+
+export type ResolveAppealInput = z.output<typeof resolveAppealSchema>;
+export const resolveAppealSchema = z.object({
+  id: z.number(),
+  status: z.nativeEnum(AppealStatus),
+  resolvedMessage: z.string().trim().max(220).optional(),
+  internalNotes: z.string().trim().optional(),
 });

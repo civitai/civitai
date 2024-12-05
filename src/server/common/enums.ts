@@ -190,6 +190,7 @@ export enum ClubSort {
 export enum BlockedReason {
   TOS = 'tos',
   Moderated = 'moderated',
+  CSAM = 'CSAM',
 }
 
 export enum ThreadSort {

@@ -64,7 +64,7 @@ export type ImageIngestionStatus = "Pending" | "Scanned" | "Error" | "Blocked" |
 
 export type MediaType = "image" | "video" | "audio";
 
-export type BlockImageReason = "Ownership" | "CSAM" | "TOS";
+export type BlockImageReason = "Ownership" | "CSAM" | "TOS" | "Appeal";
 
 export type ImageEngagementType = "Favorite" | "Hide";
 
@@ -149,6 +149,8 @@ export type RedeemableCodeType = "Buzz" | "Membership";
 export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audio" | "Compute" | "GameEngines" | "Editor";
 
 export type TechniqueType = "Image" | "Video";
+
+export type AppealStatus = "Pending" | "Approved" | "Rejected";
 
 export type EntityMetric_EntityType_Type = "Image";
 
@@ -374,6 +376,8 @@ export interface User {
   adTokens?: AdToken[];
   ratingRequests?: ImageRatingRequest[];
   collectionItemScores?: CollectionItemScore[];
+  appeals?: Appeal[];
+  resolvedAppeals?: Appeal[];
 }
 
 export interface CustomerSubscription {
@@ -2475,6 +2479,24 @@ export interface Blocklist {
   updatedAt: Date;
   type: string;
   data: string[];
+}
+
+export interface Appeal {
+  id: number;
+  userId: number;
+  user?: User;
+  entityType: EntityType;
+  entityId: number;
+  status: AppealStatus;
+  appealMessage: string;
+  createdAt: Date;
+  updatedAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  resolvedByUser?: User | null;
+  resolvedMessage: string | null;
+  internalNotes: string | null;
+  buzzTransactionId: string | null;
 }
 
 export interface QuestionRank {

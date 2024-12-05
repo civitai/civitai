@@ -675,6 +675,7 @@ type GetAllImagesRaw = {
   mimeType: string | null;
   scannedAt: Date | null;
   ingestion: ImageIngestionStatus;
+  blockedFor: BlockedReason | null;
   needsReview: string | null;
   userId: number;
   index: number | null;
@@ -1166,6 +1167,7 @@ export const getAllImages = async (
       i.type,
       i.metadata,
       i.ingestion,
+      i."blockedFor",
       i."scannedAt",
       i."needsReview",
       i."userId",
@@ -2138,6 +2140,7 @@ export const getImage = async ({
       i."needsReview",
       i."postId",
       i.ingestion,
+      i."blockedFor",
       i.type,
       i.metadata,
       i."nsfwLevel",
@@ -2184,7 +2187,7 @@ export const getImage = async ({
         : // Now that moderators can review images without post, we need to make this optional
           // in case they land in an image-specific review flow
           `${isModerator ? 'LEFT ' : ''}JOIN "Post" p ON p.id = i."postId" ${
-            !isModerator ? 'AND p."publishedAt" < now()' : ''
+            !isModerator ? `AND (p."publishedAt" < now() OR p."userId" = ${userId})` : ''
           }`
     )}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -3329,6 +3332,7 @@ type GetImageModerationReviewQueueRaw = {
   mimeType: string;
   scannedAt: Date;
   ingestion: ImageIngestionStatus;
+  blockedFor: BlockedReason | null;
   needsReview: string | null;
   userId: number;
   index: number;
@@ -3439,6 +3443,7 @@ export const getImageModerationReviewQueue = async ({
       i.type,
       i.metadata,
       i.ingestion,
+      i."blockedFor",
       i."scannedAt",
       i."needsReview",
       i."userId",

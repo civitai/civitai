@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   ActionIconProps,
+  Anchor,
   Badge,
   BadgeProps,
   Button,
@@ -76,6 +77,8 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -148,6 +151,7 @@ export function ImageDetail2() {
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
   const canCreate = image.hasMeta;
+  const isOwner = currentUser?.id === image.user.id;
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
   const IconLayoutSidebarRight = !sidebarOpen
@@ -204,6 +208,13 @@ export function ImageDetail2() {
       </InteractiveTipBuzzButton>
     </>
   );
+
+  console.log({
+    value: image.blockedFor && !image.needsReview && isOwner,
+    blockedFor: image.blockedFor,
+    needsReview: image.needsReview,
+    isOwner,
+  });
 
   return (
     <>
@@ -405,6 +416,30 @@ export function ImageDetail2() {
                         px="md"
                       >
                         {`This image won't be visible to other users until it's reviewed by our moderators.`}
+                      </AlertWithIcon>
+                    )}
+                    {image.blockedFor && !image.needsReview && isOwner && (
+                      <AlertWithIcon
+                        icon={<IconAlertTriangle />}
+                        color="yellow"
+                        iconColor="yellow"
+                        title="Blocked by moderators"
+                        radius={0}
+                        px="md"
+                      >
+                        This image has been blocked by our moderators. We can make mistakes, if you
+                        believe this was done in error,{' '}
+                        <Anchor
+                          type="button"
+                          onClick={() =>
+                            dialogStore.trigger({
+                              component: AppealDialog,
+                              props: { entityId: image.id, entityType: EntityType.Image },
+                            })
+                          }
+                        >
+                          appeal this removal
+                        </Anchor>
                       </AlertWithIcon>
                     )}
                     <AdUnitSide_2 />
