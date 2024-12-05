@@ -1,27 +1,26 @@
-import { Group, Text, createStyles, Menu, Button } from '@mantine/core';
+import { Button, createStyles, Group, Menu, Text } from '@mantine/core';
 import {
   IconCalendar,
   IconCaretDown,
   IconCategory,
+  IconChristmasTree,
   IconFileText,
   IconHome,
   IconLayoutList,
   IconMoneybag,
   IconPhoto,
-  IconVideo,
   IconProps,
-  IconCake,
   IconTools,
   IconTrophy,
-  IconMeat,
+  IconVideo
 } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
-import clsx from 'clsx';
 
 type HomeOption = {
   url: string;
@@ -77,7 +76,7 @@ const homeOptions: Record<string, HomeOption> = {
   shop: {
     url: '/shop',
     // icon: (props: IconProps) => <IconShoppingBag {...props} />,
-    icon: (props: IconProps) => <IconMeat {...props} />,
+    icon: (props: IconProps) => <IconChristmasTree {...props} />,
     classes: ['tabHighlight'],
   },
 };
@@ -85,20 +84,20 @@ const homeOptions: Record<string, HomeOption> = {
 const useTabsStyles = createStyles((theme) => ({
   tabHighlight: {
     backgroundColor: theme.fn.rgba(
-      theme.colors.orange[3],
+      theme.colors.green[3],
       theme.colorScheme === 'dark' ? 0.1 : 0.3
     ),
     backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
-      theme.colors.orange[4],
+      theme.colors.green[4],
       0
     )}, ${theme.fn.rgba(
-      theme.colors.orange[4],
+      theme.colors.green[4],
       theme.colorScheme === 'dark' ? 0.1 : 0.2
-    )}, ${theme.fn.rgba(theme.colors.orange[4], 0)})`,
+    )}, ${theme.fn.rgba(theme.colors.green[4], 0)})`,
     backgroundSize: '50px',
     backgroundPosition: '-300% 50%',
     backgroundRepeat: 'no-repeat',
-    color: theme.colorScheme === 'dark' ? theme.colors.orange[3] : theme.colors.orange[8],
+    color: theme.colorScheme === 'dark' ? theme.colors.green[3] : theme.colors.green[8],
     animation: 'button-highlight 5s linear infinite',
     willChange: 'background-position',
   },

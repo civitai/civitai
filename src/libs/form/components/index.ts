@@ -23,7 +23,6 @@ import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
 import { DatePicker, TimeInput } from '@mantine/dates';
 import { FileInputUpload } from '~/components/FileInputUpload/FileInputUpload';
 import { ProfileImageUpload } from '~/components/ProfileImageUpload/ProfileImageUpload';
-import { withWatcher } from '~/libs/form/hoc/withWatcher';
 import { RatingWrapper } from '~/libs/form/components/RatingWrapper';
 import { TagsInput } from '~/components/Tags/TagsInput';
 import { MultiFileInputUpload } from './MultiFileInputUpload';
@@ -42,62 +41,52 @@ import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControl
 
 export * from './Form';
 
-export const InputText = withWatcher(withController(TextInputWrapper));
-export const InputNumber = withWatcher(
-  withController(NumberInputWrapper, ({ field }) => ({
-    value: field.value,
-  }))
-);
-export const InputTextArea = withWatcher(withController(Textarea));
-export const InputTransferList = withWatcher(withController(TransferList));
-export const InputSelect = withWatcher(withController(SelectWrapper));
-export const InputMultiSelect = withWatcher(withController(MultiSelectWrapper));
-export const InputSegmentedControl = withWatcher(withController(SegmentedControlWrapper));
-export const InputRadioGroup = withWatcher(withController(Radio.Group));
-export const InputCheckboxGroup = withWatcher(withController(Checkbox.Group));
-export const InputChipGroup = withWatcher(withController(Chip.Group));
-export const InputPasswordInput = withWatcher(withController(PasswordInput));
-export const InputJson = withWatcher(withController(JsonInput));
-export const InputColorPicker = withWatcher(withController(ColorPicker));
-export const InputColorInput = withWatcher(withController(ColorInput));
-export const InputChips = withWatcher(withController(Chip.Group));
-export const InputAutocomplete = withWatcher(withController(Autocomplete));
-export const InputDatePicker = withWatcher(withController(DatePicker));
-export const InputRating = withWatcher(withController(RatingWrapper));
-export const InputSlider = withWatcher(withController(Slider));
-export const InputFileInput = withWatcher(withController(FileInput));
-export const InputRTE = withWatcher(withController(RichTextEditor));
-export const InputImageUpload = withWatcher(withController(ImageUpload));
-// export const InputFileUpload = withWatcher(withController(FileInputUpload));
-export const InputMultiFileUpload = withWatcher(withController(MultiFileInputUpload));
-export const InputProfileImageUpload = withWatcher(withController(ProfileImageUpload));
-export const InputSimpleImageUpload = withWatcher(withController(SimpleImageUpload));
-export const InputTags = withWatcher(withController(TagsInput));
-export const InputTime = withWatcher(withController(TimeInput));
-export const InputNumberSlider = withWatcher(withController(NumberSlider));
-export const InputInlineSocialLinkInput = withWatcher(withController(InlineSocialLinkInput));
-export const InputShowcaseItemsInput = withWatcher(withController(ShowcaseItemsInput));
-export const InputClubResourceManagementInput = withWatcher(
-  withController(ClubResourceManagementInput)
-);
-export const InputProfileSectionsSettingsInput = withWatcher(
-  withController(ProfileSectionsSettingsInput)
-);
+export const InputText = withController(TextInputWrapper);
+export const InputNumber = withController(NumberInputWrapper, ({ field }) => ({
+  value: field.value,
+}));
+export const InputTextArea = withController(Textarea);
+export const InputTransferList = withController(TransferList);
+export const InputSelect = withController(SelectWrapper);
+export const InputMultiSelect = withController(MultiSelectWrapper);
+export const InputSegmentedControl = withController(SegmentedControlWrapper);
+export const InputRadioGroup = withController(Radio.Group);
+export const InputCheckboxGroup = withController(Checkbox.Group);
+export const InputChipGroup = withController(Chip.Group);
+export const InputPasswordInput = withController(PasswordInput);
+export const InputJson = withController(JsonInput);
+export const InputColorPicker = withController(ColorPicker);
+export const InputColorInput = withController(ColorInput);
+export const InputChips = withController(Chip.Group);
+export const InputAutocomplete = withController(Autocomplete);
+export const InputDatePicker = withController(DatePicker);
+export const InputRating = withController(RatingWrapper);
+export const InputSlider = withController(Slider);
+export const InputFileInput = withController(FileInput);
+export const InputRTE = withController(RichTextEditor);
+export const InputImageUpload = withController(ImageUpload);
+// export const InputFileUpload = (withController(FileInputUpload));
+export const InputMultiFileUpload = withController(MultiFileInputUpload);
+export const InputProfileImageUpload = withController(ProfileImageUpload);
+export const InputSimpleImageUpload = withController(SimpleImageUpload);
+export const InputTags = withController(TagsInput);
+export const InputTime = withController(TimeInput);
+export const InputNumberSlider = withController(NumberSlider);
+export const InputInlineSocialLinkInput = withController(InlineSocialLinkInput);
+export const InputShowcaseItemsInput = withController(ShowcaseItemsInput);
+export const InputClubResourceManagementInput = withController(ClubResourceManagementInput);
+export const InputProfileSectionsSettingsInput = withController(ProfileSectionsSettingsInput);
 
-export const InputSwitch = withWatcher(
-  withController(Switch, ({ field }) => ({
-    value: field.value ?? false,
-    checked: field.value ?? false,
-  }))
-);
-export const InputCheckbox = withWatcher(
-  withController(Checkbox, ({ field }) => ({
-    value: field.value ?? false,
-    checked: field.value ?? false,
-  }))
-);
-export const InputFlag = withWatcher(withController(FlagInput));
-export const InputSectionItems = withWatcher(withController(SectionItemsInput));
-export const InputCosmeticSelect = withWatcher(withController(CosmeticSelect));
-export const InputCollectionSelect = withWatcher(withController(CollectionSelectInput));
+export const InputSwitch = withController(Switch, ({ field }) => ({
+  value: field.value ?? false,
+  checked: field.value ?? false,
+}));
+export const InputCheckbox = withController(Checkbox, ({ field }) => ({
+  value: field.value ?? false,
+  checked: field.value ?? false,
+}));
+export const InputFlag = withController(FlagInput);
+export const InputSectionItems = withController(SectionItemsInput);
+export const InputCosmeticSelect = withController(CosmeticSelect);
+export const InputCollectionSelect = withController(CollectionSelectInput);
 export const InputCustomRadioGroup = withController(CustomRadioGroup);

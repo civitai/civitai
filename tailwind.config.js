@@ -14,6 +14,9 @@ module.exports = {
   content: ['./src/**/*.{ts,tsx}',],
   darkMode: 'selector',
   important: 'body',
+  experimental: {
+    optimizeUniversalDefaults: true,
+  },
   theme: {
     screens: breakpoints,
     extend: {
@@ -90,6 +93,30 @@ module.exports = {
           7: '#1C7ED6',
           8: '#1971C2',
           9: '#1864AB',
+        },
+        red: {
+          0: '#fff5f5',
+          1: '#ffe3e3',
+          2: '#ffc9c9',
+          3: '#ffa8a8',
+          4: '#ff8787',
+          5: '#ff6b6b',
+          6: '#fa5252',
+          7: '#f03e3e',
+          8: '#e03131',
+          9: '#c92a2a',
+        },
+        orange: {
+          0: '#fff4e6',
+          1: '#ffe8cc',
+          2: '#ffd8a8',
+          3: '#ffc078',
+          4: '#ffa94d',
+          5: '#ff922b',
+          6: '#fd7e14',
+          7: '#f76707',
+          8: '#e8590c',
+          9: '#d9480f',
         }
       },
       keyframes: {

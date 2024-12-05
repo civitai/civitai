@@ -19,6 +19,7 @@ import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationForm } from '~/components/Generate/GenerationForm';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
+import { useIsClient } from '~/providers/IsClientProvider';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -35,6 +36,9 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   const tabEntries = Object.entries(tabs).filter(([key]) =>
     isImageFeedSeparate ? key !== 'generate' : true
   );
+
+  const isClient = useIsClient();
+  if (!isClient) return null;
 
   return (
     <>
