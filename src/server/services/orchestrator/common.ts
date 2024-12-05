@@ -315,6 +315,7 @@ export async function parseGenerateImageInput({
       upscaleWidth: upscale?.width,
       upscaleHeight: upscale?.height,
     }),
+    priority: getUserPriority(status, user),
   };
 }
 
@@ -706,6 +707,7 @@ const MEMBERSHIP_PRIORITY: Record<UserTier, Priority> = {
   silver: Priority.NORMAL,
   gold: Priority.HIGH,
 };
-export function getUserPriority(user: { tier?: UserTier }) {
+export function getUserPriority(status: GenerationStatus, user: { tier?: UserTier }) {
+  if (!status.membershipPriority) return Priority.NORMAL;
   return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
 }

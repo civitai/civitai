@@ -1,25 +1,24 @@
-import type { SessionUser } from 'next-auth';
-import { z } from 'zod';
-import {
-  formatGenerationResponse,
-  getUserPriority,
-  parseGenerateImageInput,
-} from '~/server/services/orchestrator/common';
 import {
   Scheduler,
   TextToImageStepTemplate,
   TimeSpan,
   type ImageJobNetworkParams,
 } from '@civitai/client';
-import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
-import { TextToImageResponse } from '~/server/services/orchestrator/types';
-import { SignalMessages } from '~/server/common/enums';
-import { submitWorkflow } from '~/server/services/orchestrator/workflows';
-import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import type { SessionUser } from 'next-auth';
+import { z } from 'zod';
 import { env } from '~/env/server.mjs';
-import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
-import { getRandomInt } from '~/utils/number-helpers';
 import { maxRandomSeed } from '~/server/common/constants';
+import { SignalMessages } from '~/server/common/enums';
+import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import { getWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
+import {
+  formatGenerationResponse,
+  parseGenerateImageInput,
+} from '~/server/services/orchestrator/common';
+import { TextToImageResponse } from '~/server/services/orchestrator/types';
+import { submitWorkflow } from '~/server/services/orchestrator/workflows';
+import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
+import { getRandomInt } from '~/utils/number-helpers';
 
 export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -29,7 +28,10 @@ export async function createTextToImageStep(
   input.params.seed =
     input.params.seed ?? getRandomInt(input.params.quantity, maxRandomSeed) - input.params.quantity;
   const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
-  const { resources, params } = await parseGenerateImageInput({ ...input, workflowDefinition });
+  const { resources, params, priority } = await parseGenerateImageInput({
+    ...input,
+    workflowDefinition,
+  });
 
   const scheduler = samplersToSchedulers[
     params.sampler as keyof typeof samplersToSchedulers
@@ -72,7 +74,7 @@ export async function createTextToImageStep(
       params: input.params,
       remixOfId: input.remixOfId,
     },
-    priority: getUserPriority(input.user),
+    priority,
   } as TextToImageStepTemplate;
 }
 
