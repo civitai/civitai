@@ -8,6 +8,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { CollectionSort } from '~/server/common/enums';
 import {
+  EnableCollectionYoutubeSupportInput,
   GetAllCollectionsInfiniteSchema,
   RemoveCollectionItemInput,
   SetCollectionItemNsfwLevelInput,
@@ -26,6 +27,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { MutateOptions } from '@tanstack/react-query';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { GetByIdInput } from '~/server/schema/base.schema';
 
 const collectionQueryParamSchema = z
   .object({
@@ -261,10 +263,21 @@ export const useCollectionsForPostCreation = ({
   };
 };
 
-export const useCollection = (collectionId: number) => {
-  const { data: { collection, permissions } = {}, ...rest } = trpc.collection.getById.useQuery({
-    id: collectionId,
-  });
+export const useCollection = (
+  collectionId: number,
+  opts?: {
+    enabled?: boolean;
+  }
+) => {
+  const { data: { collection, permissions } = {}, ...rest } = trpc.collection.getById.useQuery(
+    {
+      id: collectionId,
+    },
+    {
+      enabled: true,
+      ...opts,
+    }
+  );
 
   return {
     collection,
@@ -329,6 +342,9 @@ export const useMutateCollection = () => {
       },
     });
 
+  const getYoutubeAuthUrlMutation = trpc.collection.getYoutubeAuthUrl.useMutation();
+  const enableYoutubeSupportMutation = trpc.collection.enableYoutubeSupport.useMutation();
+
   const removeCollectionItemHandler = async (data: RemoveCollectionItemInput) => {
     await removeCollectionItemMutation.mutateAsync(data);
   };
@@ -340,12 +356,23 @@ export const useMutateCollection = () => {
     await updateCollectionItemNsfwLevelMutation.mutateAsync(data, opts);
   };
 
+  const getYoutubeAuthUrlHandler = async (data: { id: number }) => {
+    return getYoutubeAuthUrlMutation.mutateAsync(data);
+  };
+  const enableYoutubeSupportHandler = async (data: EnableCollectionYoutubeSupportInput) => {
+    return enableYoutubeSupportMutation.mutateAsync(data);
+  };
+
   return {
     removeCollectionItem: removeCollectionItemHandler,
     removingCollectionItem: removeCollectionItemMutation.isLoading,
     updateCollectionItemNsfwLevel: updateCollectionItemNsfwLevelHandler,
     updatingCollectionItemNsfwLevel: updateCollectionItemNsfwLevelMutation.isLoading,
     updateCollectionItemNsfwLevelPayload: updateCollectionItemNsfwLevelMutation.variables,
+    getYoutubeAuthUrl: getYoutubeAuthUrlHandler,
+    getYoutubeAuthUrlLoading: getYoutubeAuthUrlMutation.isLoading,
+    enableYoutubeSupport: enableYoutubeSupportHandler,
+    enableYoutubeSupportLoading: enableYoutubeSupportMutation.isLoading,
   };
 };
 

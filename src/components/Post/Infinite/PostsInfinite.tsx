@@ -31,6 +31,7 @@ type PostsInfiniteProps = {
   filters?: PostsInfiniteState;
   showEof?: boolean;
   showAds?: boolean;
+  disableStoreFilters?: boolean;
 };
 
 export default function PostsInfinite(props: PostsInfiniteProps) {
@@ -45,9 +46,12 @@ function PostsInfiniteContent({
   filters: filterOverrides = {},
   showEof = false,
   showAds,
+  disableStoreFilters,
 }: PostsInfiniteProps) {
   const postFilters = usePostFilters();
-  const filters = removeEmpty({ ...postFilters, ...filterOverrides });
+  const filters = disableStoreFilters
+    ? filterOverrides
+    : removeEmpty({ ...postFilters, ...filterOverrides });
   showEof = showEof && filters.period !== MetricTimeframe.AllTime;
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 

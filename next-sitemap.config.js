@@ -42,7 +42,7 @@ module.exports = {
       // Add additional sitemaps here
       `${process.env.NEXTAUTH_URL}/sitemap-articles.xml`,
       `${process.env.NEXTAUTH_URL}/sitemap-models.xml`,
-      `${process.env.NEXTAUTH_URL}/sitemap-questions.xml`,
+      `${process.env.NEXTAUTH_URL}/sitemap-tools.xml`,
     ],
   },
 };

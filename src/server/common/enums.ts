@@ -327,3 +327,8 @@ export enum BlocklistType {
   EmailDomain = 'EmailDomain',
   LinkDomain = 'LinkDomain',
 }
+
+export enum ToolSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+}

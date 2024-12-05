@@ -1,6 +1,6 @@
+import { useQueryTools } from '~/components/Tool/tools.utils';
 import { MultiSelectWrapper } from '~/libs/form/components/MultiSelectWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
-import { trpc } from '~/utils/trpc';
 
 export function ToolMultiSelect({
   value,
@@ -11,15 +11,15 @@ export function ToolMultiSelect({
   onChange: (value: number[]) => void;
   placeholder?: string;
 }) {
-  const { data = [], isLoading } = trpc.tool.getAll.useQuery();
+  const { tools, loading } = useQueryTools();
 
   return (
     <MultiSelectWrapper
       value={value}
       onChange={onChange}
-      loading={isLoading}
+      loading={loading}
       placeholder={placeholder}
-      data={data.map(({ id, name, type }) => ({ value: id, label: name, group: type }))}
+      data={tools.map(({ id, name, type }) => ({ value: id, label: name, group: type }))}
       searchable
       clearable
     />
@@ -35,15 +35,15 @@ export function ToolSelect({
   onChange: (value: number) => void;
   placeholder?: string;
 }) {
-  const { data = [], isLoading } = trpc.tool.getAll.useQuery();
+  const { tools, loading } = useQueryTools();
 
   return (
     <SelectWrapper
       value={value}
       onChange={onChange}
-      loading={isLoading}
+      loading={loading}
       placeholder={placeholder}
-      data={data.map(({ id, name, type }) => ({ value: id, label: name, group: type }))}
+      data={tools.map(({ id, name, type }) => ({ value: id, label: name, group: type }))}
       searchable
       clearable
       withinPortal

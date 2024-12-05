@@ -1,6 +1,7 @@
 import { createStyles, Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -12,6 +13,7 @@ import {
 import { ProfileImage } from '~/server/selectors/image.selector';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 import { getInitials } from '~/utils/string-helpers';
 
 export function UserAvatarSimple({
@@ -28,6 +30,7 @@ export function UserAvatarSimple({
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
 }) {
   const { canViewNsfw } = useFeatureFlags();
+  const browsingLevel = useBrowsingLevelDebounced();
   const { classes } = useStyles();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
@@ -53,7 +56,9 @@ export function UserAvatarSimple({
         <div className="relative ">
           <div className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-white/30 dark:bg-black/30">
             {profilePicture &&
-            (!canViewNsfw ? hasPublicBrowsingLevel(profilePicture.nsfwLevel) : true) ? (
+            (!canViewNsfw
+              ? hasPublicBrowsingLevel(profilePicture.nsfwLevel)
+              : Flags.hasFlag(browsingLevel, profilePicture.nsfwLevel)) ? (
               <UserAvatarProfilePicture id={id} username={username} image={profilePicture} />
             ) : (
               <span className="text-sm font-semibold text-dark-8 dark:text-gray-0">

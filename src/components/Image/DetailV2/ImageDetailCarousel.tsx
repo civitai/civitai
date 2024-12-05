@@ -13,6 +13,7 @@ import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 type ImageDetailCarouselProps = {
   videoRef?: React.ForwardedRef<EdgeVideoRef>;
@@ -26,6 +27,7 @@ type ImageProps = {
   width: number | null;
   type: MediaType;
   name: string | null;
+  metadata?: MixedObject | ImageMetadata | VideoMetadata | null;
 };
 
 type Props<T> = Parameters<typeof useCarouselNavigation<T>>[0];
@@ -194,6 +196,11 @@ function ImageContent({
                 setDefaultMuted(isMuted);
               }}
               videoRef={videoRef}
+              youtubeVideoId={
+                image.type === 'video' && image.metadata
+                  ? (image.metadata as VideoMetadata)?.youtubeVideoId
+                  : undefined
+              }
             />
           )}
         </div>

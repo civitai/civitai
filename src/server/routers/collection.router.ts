@@ -3,6 +3,7 @@ import {
   bulkSaveItemsHandler,
   collectionItemsInfiniteHandler,
   deleteUserCollectionHandler,
+  enableCollectionYoutubeSupportHandler,
   followHandler,
   getAllCollectionsInfiniteHandler,
   getAllUserCollectionsHandler,
@@ -19,10 +20,11 @@ import {
   upsertCollectionHandler,
 } from '~/server/controllers/collection.controller';
 import { dbRead } from '~/server/db/client';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { GetByIdInput, getByIdSchema } from '~/server/schema/base.schema';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
+  enableCollectionYoutubeSupportInput,
   followCollectionInputSchema,
   getAllCollectionItemsSchema,
   getAllCollectionsInfiniteSchema,
@@ -41,11 +43,13 @@ import {
   guardedProcedure,
   isFlagProtected,
   middleware,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { getYoutubeAuthUrl } from '~/server/youtube/client';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -144,4 +148,15 @@ export const collectionRouter = router({
     .input(setCollectionItemNsfwLevelInput)
     .use(isFlagProtected('collections'))
     .mutation(setCollectionItemNsfwLevelHandler),
+  getYoutubeAuthUrl: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input }: { input: GetByIdInput }) => {
+      return getYoutubeAuthUrl({
+        redirectUri: `/collections/youtube/auth`,
+        collectionId: input.id,
+      });
+    }),
+  enableYoutubeSupport: moderatorProcedure
+    .input(enableCollectionYoutubeSupportInput)
+    .mutation(enableCollectionYoutubeSupportHandler),
 });
