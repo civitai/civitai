@@ -3135,6 +3135,8 @@ export interface ImageResourceHelper {
   modelThumbsUpCount: number | null;
   modelThumbsDownCount: number | null;
   modelType: ModelType | null;
+  modelVersionBaseModel: string | null;
+  detected: boolean | null;
 }
 
 export interface PostResourceHelper {

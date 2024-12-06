@@ -1,10 +1,10 @@
-import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 import { PostSort } from '~/server/common/enums';
 import { baseQuerySchema, periodModeSchema } from '~/server/schema/base.schema';
 import { imageMetaSchema } from '~/server/schema/image.schema';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray, numericStringArray } from '~/utils/zod-helpers';
@@ -108,6 +108,18 @@ export const updatePostImageSchema = z.object({
     return val;
   }),
   hideMeta: z.boolean().optional(),
+});
+
+export type AddResourceToPostImageInput = z.infer<typeof addResourceToPostImageInput>;
+export const addResourceToPostImageInput = z.object({
+  id: z.number(),
+  modelVersionId: z.number(),
+});
+
+export type RemoveResourceFromPostImageInput = z.infer<typeof removeResourceFromPostImageInput>;
+export const removeResourceFromPostImageInput = z.object({
+  id: z.number(),
+  modelVersionId: z.number(),
 });
 
 export type ReorderPostImagesInput = z.infer<typeof reorderPostImagesSchema>;

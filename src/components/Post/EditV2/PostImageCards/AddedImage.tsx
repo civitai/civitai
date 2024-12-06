@@ -1,19 +1,25 @@
+import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import {
   Accordion,
   ActionIcon,
   Alert,
   Badge,
+  Box,
   Button,
   Card,
   Divider,
+  Group,
   Loader,
   LoadingOverlay,
   Menu,
   Text,
+  ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
-import { CollectionMode, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowBackUp,
+  IconArrowMergeBoth,
   IconChevronDown,
   IconChevronUp,
   IconDotsVertical,
@@ -22,35 +28,46 @@ import {
   IconPencil,
   IconPlus,
   IconTrash,
+  IconUserPlus,
 } from '@tabler/icons-react';
+import { remove } from 'lodash-es';
 import React, { createContext, useContext, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
 import {
   PostEditImageDetail,
   usePostEditStore,
   usePostPreviewContext,
 } from '~/components/Post/EditV2/PostEditProvider';
-import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
-import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
-import { sortAlphabeticallyBy } from '~/utils/array-helpers';
-import { useImageStore } from '~/store/image.store';
-import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
-import { CustomCard } from './CustomCard';
-import { createSelectStore } from '~/store/select.store';
-import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
+import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
+import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
+import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
+import { Generation } from '~/server/services/generation/generation.types';
+import {
+  generationFormWorkflowConfigurations,
+  getBaseModelResourceTypes,
+  getBaseModelSetType,
+} from '~/shared/constants/generation.constants';
+import { ImageIngestionStatus, ModelType } from '~/shared/utils/prisma/enums';
+import { useImageStore } from '~/store/image.store';
+import { createSelectStore } from '~/store/select.store';
+import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import { useCollectionsForPostEditor } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
+import { CustomCard } from './CustomCard';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -69,12 +86,17 @@ type State = {
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
+  isOnSite: boolean;
   isPendingManualAssignment: boolean;
   onDelete: () => void;
-  isDeleting: boolean;
   onEditMetaClick: () => void;
+  isDeleting: boolean;
   isUpdating: boolean;
+  isAddingResource: boolean;
+  isRemovingResource: boolean;
   toggleHidePrompt: () => void;
+  addResource: (modelVersionId: number) => void;
+  removeResource: (modelVersionId: number) => void;
 };
 const AddedImageContext = createContext<State | null>(null);
 const useAddedImageContext = () => {
@@ -102,6 +124,13 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
   const isBlocked = false;
+  const isOnSite =
+    'civitaiResources' in (meta ?? {}) ||
+    (!!meta?.workflow &&
+      generationFormWorkflowConfigurations
+        .map((x) => x.key)
+        .some((v) => v === (meta?.workflow as string)));
+
   // #endregion
 
   // #region [delete image]
@@ -151,6 +180,44 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const toggleHidePrompt = () => {
     updateImageMutation.mutate({ id, hideMeta: !hideMeta });
   };
+  const addResourceMutation = trpc.post.addResourceToImage.useMutation({
+    onSuccess: (resp) => {
+      if (resp) {
+        updateImage(id, (image) => {
+          image.resourceHelper.push(resp);
+        });
+      }
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to add resource',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const addResource = (modelVersionId: number) => {
+    if (isOnSite) return;
+    addResourceMutation.mutate({ id, modelVersionId });
+  };
+  const removeResourceMutation = trpc.post.removeResourceFromImage.useMutation({
+    onSuccess: (resp) => {
+      if (resp) {
+        updateImage(id, (image) => {
+          remove(image.resourceHelper, (r) => r.id === resp.id);
+        });
+      }
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to remove resource',
+        error: new Error(error.message),
+      });
+    },
+  });
+  const removeResource = (modelVersionId: number) => {
+    if (isOnSite) return;
+    removeResourceMutation.mutate({ id, modelVersionId });
+  };
   // #endregion
 
   return (
@@ -160,11 +227,16 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isBlocked,
         isPending,
         isScanned,
+        isOnSite,
         onDelete: handleDelete,
-        isDeleting: deleteImageMutation.isLoading,
         onEditMetaClick: handleEditMetaClick,
+        isDeleting: deleteImageMutation.isLoading,
         isUpdating: updateImageMutation.isLoading,
+        isAddingResource: addResourceMutation.isLoading,
+        isRemovingResource: addResourceMutation.isLoading,
         toggleHidePrompt,
+        addResource,
+        removeResource,
         isPendingManualAssignment,
       }}
     >
@@ -174,9 +246,11 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     </AddedImageContext.Provider>
   );
 }
+
 // #endregion
 
 const store = createSelectStore();
+
 function Preview() {
   const { image } = useAddedImageContext();
   const { isBlocked } = useAddedImageContext();
@@ -204,6 +278,121 @@ function Preview() {
   );
 }
 
+const ResourceHeader = () => {
+  const status = useGenerationStatus();
+  const { image, addResource, isAddingResource, isOnSite } = useAddedImageContext();
+
+  const { resourceHelper: resources } = image;
+
+  // If we have a checkpoint resource, limit the other choices to those that are applicable
+  const chkpt = resources.find((r) => r.modelType === ModelType.Checkpoint);
+  const chkptBaseModel =
+    !!chkpt && !!chkpt.modelVersionBaseModel
+      ? getBaseModelSetType(chkpt.modelVersionBaseModel)
+      : null;
+  const resourceTypes = !!chkptBaseModel
+    ? (getBaseModelResourceTypes(chkptBaseModel) ?? []).filter((t) => t.type !== 'Checkpoint')
+    : [];
+
+  return (
+    <div className="flex items-center justify-between">
+      <div className="flex items-center gap-2">
+        <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+          Resources
+        </h3>
+        <InfoPopover
+          type="hover"
+          variant="transparent"
+          size="sm"
+          position="right"
+          iconProps={{ size: 20 }}
+        >
+          Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
+          create this image.
+        </InfoPopover>
+      </div>
+      {!isOnSite && (
+        <ResourceSelectMultiple
+          limit={status.limits.resources}
+          buttonLabel="RESOURCE"
+          isTraining={true}
+          options={{
+            resources: resourceTypes,
+          }}
+          buttonProps={{
+            size: 'sm',
+            compact: true,
+            className: 'text-sm',
+          }}
+          onChange={(val) => {
+            const vals = val as Generation.Resource[] | undefined;
+            if (!vals || !vals.length) return;
+            vals.forEach((val) => {
+              console.log(val);
+              addResource(val.id);
+            });
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+function RemoveResource({ modelVersionId }: { modelVersionId: number }) {
+  const { removeResource, isRemovingResource, isOnSite } = useAddedImageContext();
+
+  const handleRemoveResource = () => {
+    openConfirmModal({
+      centered: true,
+      title: 'Remove Resource',
+      children: 'Are you sure you want to remove this resource from this image?',
+      labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => removeResource(modelVersionId),
+    });
+  };
+
+  return isOnSite ? (
+    <></>
+  ) : (
+    <Tooltip label="Delete">
+      <ActionIcon color="red" size="sm" onClick={handleRemoveResource} loading={isRemovingResource}>
+        <IconTrash size={16} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
+
+function CopyResource({ modelVersionId }: { modelVersionId: number }) {
+  const { isOnSite } = useAddedImageContext();
+
+  const handleCopyResource = () => {
+    openConfirmModal({
+      centered: true,
+      title: 'Copy to All',
+      children: 'Add this resource to all other images?',
+      labels: { confirm: 'Yep!', cancel: 'Cancel' },
+      confirmProps: { color: 'green' },
+      // onConfirm: () => addResource(modelVersionId),
+    });
+  };
+
+  return isOnSite ? (
+    <></>
+  ) : (
+    <Tooltip label="Copy to All">
+      <ActionIcon
+        color="violet"
+        size="sm"
+        onClick={handleCopyResource}
+        // loading={isAddingResource}
+      >
+        <IconArrowMergeBoth size={16} />
+      </ActionIcon>
+    </Tooltip>
+  );
+}
+
 function EditDetail() {
   const [showMoreResources, setShowMoreResources] = useState(false);
   const { showPreview } = usePostPreviewContext();
@@ -212,16 +401,18 @@ function EditDetail() {
     isBlocked,
     isPending,
     isScanned,
-    isDeleting,
     onEditMetaClick,
+    isDeleting,
     isUpdating,
     toggleHidePrompt,
     isPendingManualAssignment,
   } = useAddedImageContext();
 
   const { meta, hideMeta, resourceHelper: resources } = image;
+
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
   const hasSimpleMeta = !!simpleMeta.length;
+  const resourcesSorted = sortByModelTypes(resources);
 
   return (
     <div className="relative @container">
@@ -344,34 +535,66 @@ function EditDetail() {
           */}
             {!!resources?.length && (
               <CustomCard className="flex flex-col gap-2">
-                <div className="flex items-center gap-2">
-                  <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
-                    Resources
-                  </h3>
-                  <InfoPopover
-                    type="hover"
-                    variant="transparent"
-                    size="sm"
-                    position="right"
-                    iconProps={{ size: 20 }}
-                  >
-                    Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources
-                    used to create this image.
-                  </InfoPopover>
-                </div>
-                {resources
+                <ResourceHeader />
+                {/* TODO check if these ever dont have modelIds */}
+                {resourcesSorted
                   .filter((x) => !!x.modelName)
                   .slice(0, !showMoreResources ? 3 : resources.length)
-                  .map((resource, i) => (
-                    <div key={i} className="flex items-center justify-between gap-3">
-                      <Text>
-                        {resource.modelName} - {resource.modelType}
-                      </Text>
-                      <Badge color="gray" size="md" variant="filled">
-                        {resource.modelVersionName}
-                      </Badge>
-                    </div>
-                  ))}
+                  .map((resource, i) => {
+                    return !!resource.modelId && !!resource.modelVersionId ? (
+                      <Group spacing="xs" noWrap mt={i === 0 ? 4 : undefined}>
+                        {!resource.detected && (
+                          <Tooltip label="Manually added" withArrow>
+                            <ThemeIcon color="cyan" variant="light" radius="xl" size="sm">
+                              <IconUserPlus size={14} />
+                            </ThemeIcon>
+                          </Tooltip>
+                        )}
+                        <Link
+                          key={i}
+                          href={`/models/${resource.modelId}?modelVersionId=${resource.modelVersionId}`}
+                          target="_blank"
+                          className="grow"
+                        >
+                          <Box
+                            component="a"
+                            className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5"
+                          >
+                            <Text>
+                              {resource.modelName} -{' '}
+                              <Text span color="dimmed" size="sm">
+                                {resource.modelVersionName}
+                              </Text>
+                            </Text>
+                            <Group spacing={2}>
+                              <Badge color="gray" size="md" variant="filled">
+                                {getDisplayName(resource.modelType ?? 'unknown')}
+                              </Badge>
+                            </Group>
+                          </Box>
+                        </Link>
+
+                        <Group spacing={4}>
+                          <CopyResource modelVersionId={resource.modelVersionId} />
+                          <RemoveResource modelVersionId={resource.modelVersionId} />
+                        </Group>
+                      </Group>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <Text>
+                          {resource.modelName} -{' '}
+                          <Text span color="dimmed" size="sm">
+                            {resource.modelVersionName}
+                          </Text>
+                        </Text>
+                        <Group spacing={4}>
+                          <Badge color="gray" size="md" variant="filled">
+                            {getDisplayName(resource.modelType ?? 'unknown')}
+                          </Badge>
+                        </Group>
+                      </div>
+                    );
+                  })}
                 {resources.length > 3 && (
                   <div>
                     <Button
@@ -406,21 +629,7 @@ function EditDetail() {
             {!resources?.length && image.type === 'image' && (
               <Alert className="rounded-lg" color="yellow">
                 <div className="flex flex-col gap-3">
-                  <div className="flex items-center gap-2">
-                    <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
-                      Resources
-                    </h3>
-                    <InfoPopover
-                      type="hover"
-                      variant="transparent"
-                      size="sm"
-                      position="right"
-                      iconProps={{ size: 20 }}
-                    >
-                      Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources
-                      used to create this image.
-                    </InfoPopover>
-                  </div>
+                  <ResourceHeader />
                   <Text>
                     Install the{' '}
                     <Text
@@ -547,7 +756,7 @@ function EditDetail() {
                     className="text-sm"
                   >
                     <IconPlus size={16} />
-                    <span>TOOL</span>
+                    <span>TECHNIQUE</span>
                   </PopoverButton>
                   <PopoverPanel className="[--anchor-gap:4px]" anchor="top start" focus>
                     {({ close }) => (
