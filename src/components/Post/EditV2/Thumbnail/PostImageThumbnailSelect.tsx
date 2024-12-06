@@ -61,7 +61,6 @@ export function PostImageThumbnailSelect({
               src={src}
               width={width}
               height={height}
-              frameCount={skipFrames.length}
               selected={selectedFrame === frame}
               onClick={() => setSelectedFrame((current) => (current !== frame ? frame : null))}
             />
@@ -83,7 +82,6 @@ function ThumbnailImageButton({
   height,
   src,
   selected,
-  frameCount,
   onClick,
 }: {
   frame: number;
@@ -91,18 +89,16 @@ function ThumbnailImageButton({
   height: number;
   src: string;
   selected: boolean;
-  frameCount: number;
   onClick: VoidFunction;
 }) {
   const [status, setStatus] = useState<'loading' | 'error' | 'loaded'>('loading');
-  // if (status === 'error') return null;
 
   const aspectRatio = width / height;
 
   return (
     <div
       className={clsx(
-        'flex-1 overflow-hidden rounded-lg mx-auto',
+        'mx-auto flex-1 overflow-hidden rounded-lg',
         selected && 'border-[3px] border-solid border-blue-5',
         status === 'error' && 'hidden'
       )}
@@ -114,7 +110,6 @@ function ThumbnailImageButton({
       <Skeleton
         className={clsx('size-full', status !== 'loading' && 'hidden')}
         width="100%"
-        // height={400 / frameCount}
         visible={status === 'loading'}
         animate
       />

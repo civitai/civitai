@@ -11,7 +11,7 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -97,7 +97,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     <div className="flex flex-nowrap items-center gap-1">
                       <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
                       {safe &&
-                        image.type === 'video' &&
+                        image.type === MediaType.video &&
                         image.metadata &&
                         'duration' in image.metadata && (
                           <DurationBadge duration={image.metadata.duration ?? 0} />
