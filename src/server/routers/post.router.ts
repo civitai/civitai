@@ -1,38 +1,42 @@
-import { addPostImage, getPostEditDetail, getPostEditImages } from './../services/post.service';
-import { applyUserPreferences, cacheIt } from './../middleware.trpc';
-import { getByIdSchema } from './../schema/base.schema';
-import { guardedProcedure, publicProcedure, verifiedProcedure } from './../trpc';
-import {
-  createPostHandler,
-  updatePostHandler,
-  getPostHandler,
-  reorderPostImagesHandler,
-  deletePostHandler,
-  addPostTagHandler,
-  removePostTagHandler,
-  updatePostImageHandler,
-  getPostTagsHandler,
-  getPostsInfiniteHandler,
-  getPostResourcesHandler,
-  getPostContestCollectionDetailsHandler,
-  updatePostCollectionTagIdHandler,
-} from './../controllers/post.controller';
-import {
-  postCreateSchema,
-  postUpdateSchema,
-  reorderPostImagesSchema,
-  addPostTagSchema,
-  removePostTagSchema,
-  updatePostImageSchema,
-  getPostTagsSchema,
-  postsQuerySchema,
-  updatePostCollectionTagIdInput,
-} from './../schema/post.schema';
-import { dbWrite } from '~/server/db/client';
-import { router, protectedProcedure, middleware } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
-import { imageSchema } from '~/server/schema/image.schema';
 import { z } from 'zod';
+import { dbWrite } from '~/server/db/client';
+import { imageSchema } from '~/server/schema/image.schema';
+import { middleware, protectedProcedure, router } from '~/server/trpc';
+import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import {
+  addPostTagHandler,
+  addResourceToPostImageHandler,
+  createPostHandler,
+  deletePostHandler,
+  getPostContestCollectionDetailsHandler,
+  getPostHandler,
+  getPostResourcesHandler,
+  getPostsInfiniteHandler,
+  getPostTagsHandler,
+  removePostTagHandler,
+  removeResourceFromPostImageHandler,
+  reorderPostImagesHandler,
+  updatePostCollectionTagIdHandler,
+  updatePostHandler,
+  updatePostImageHandler,
+} from './../controllers/post.controller';
+import { applyUserPreferences } from './../middleware.trpc';
+import { getByIdSchema } from './../schema/base.schema';
+import {
+  addPostTagSchema,
+  addResourceToPostImageInput,
+  getPostTagsSchema,
+  postCreateSchema,
+  postsQuerySchema,
+  postUpdateSchema,
+  removePostTagSchema,
+  removeResourceFromPostImageInput,
+  reorderPostImagesSchema,
+  updatePostCollectionTagIdInput,
+  updatePostImageSchema,
+} from './../schema/post.schema';
+import { addPostImage, getPostEditDetail } from './../services/post.service';
+import { guardedProcedure, publicProcedure, verifiedProcedure } from './../trpc';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -103,6 +107,14 @@ export const postRouter = router({
     .input(updatePostImageSchema)
     .use(isImageOwnerOrModerator)
     .mutation(updatePostImageHandler),
+  addResourceToImage: verifiedProcedure
+    .input(addResourceToPostImageInput)
+    .use(isImageOwnerOrModerator)
+    .mutation(addResourceToPostImageHandler),
+  removeResourceFromImage: verifiedProcedure
+    .input(removeResourceFromPostImageInput)
+    .use(isImageOwnerOrModerator)
+    .mutation(removeResourceFromPostImageHandler),
   reorderImages: verifiedProcedure
     .input(reorderPostImagesSchema)
     .use(isOwnerOrModerator)

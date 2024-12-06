@@ -3,9 +3,10 @@ import { useSessionStorage } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
+import { useMemo } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { cloneElement, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { sortByModelTypes } from '~/utils/array-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -41,6 +42,8 @@ export function ImageResources({ imageId }: { imageId: number }) {
 
   if (!resources.length) return null;
 
+  const resourcesSorted = sortByModelTypes(resources);
+
   return (
     <div className="flex flex-col gap-1.5">
       <Text className="text-lg font-semibold">Resources used</Text>
@@ -53,7 +56,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
         <Alert>There are no resources associated with this image</Alert>
       ) : (
         <ul className="flex list-none flex-col gap-0.5">
-          {(showAll ? resources : resources.slice(0, LIMIT)).map((resource) => {
+          {(showAll ? resourcesSorted : resourcesSorted.slice(0, LIMIT)).map((resource) => {
             const href = resource.modelId
               ? `/models/${resource.modelId}/${slugit(resource.modelName ?? '')}?modelVersionId=${
                   resource.versionId
