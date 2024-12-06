@@ -190,6 +190,7 @@ export const generationStatusSchema = z.object({
     }),
   charge: z.boolean().default(true),
   checkResourceAvailability: z.boolean().default(false),
+  membershipPriority: z.boolean().default(false),
 });
 export type GenerationStatus = z.infer<typeof generationStatusSchema>;
 

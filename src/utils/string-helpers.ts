@@ -62,6 +62,7 @@ const nameOverrides: Record<string, string> = {
   'PixArt E': 'PixArt Σ',
   'PixArt a': 'PixArt α',
   ProfileDecoration: 'Avatar Decoration',
+  CogVideoX: 'CogVideoX',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {

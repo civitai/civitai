@@ -1,8 +1,11 @@
 import { dbRead } from '~/server/db/client';
-import { ToolMetadata } from '~/server/schema/tool.schema';
+import { GetAllToolsSchema, ToolMetadata } from '~/server/schema/tool.schema';
 
-export type ToolModel = AsyncReturnType<typeof getAllTools>[number];
-export async function getAllTools() {
+export type ToolModel = AsyncReturnType<typeof getAllTools>['items'][number];
+export async function getAllTools(input?: GetAllToolsSchema) {
+  const { cursor, limit, sort, type, include } = input || {};
+  const includeUnlisted = include?.includes('unlisted');
+
   const tools = await dbRead.tool.findMany({
     select: {
       id: true,
@@ -11,17 +14,31 @@ export async function getAllTools() {
       type: true,
       priority: true,
       domain: true,
+      company: true,
       description: true,
       metadata: true,
       supported: true,
+      createdAt: true,
     },
-    where: { enabled: true },
+    where: { type, enabled: true, unlisted: includeUnlisted ? undefined : false },
+    cursor: cursor ? { id: cursor } : undefined,
+    orderBy: [{ supported: 'desc' }, { id: sort === 'Newest' ? 'desc' : 'asc' }],
+    take: limit ? limit + 1 : undefined,
   });
 
-  return tools.map((t) => ({
-    ...t,
-    metadata: (t.metadata || {}) as ToolMetadata,
-  }));
+  let nextCursor: number | undefined;
+  if (limit && tools.length > limit) {
+    const nextItem = tools.pop();
+    nextCursor = nextItem?.id;
+  }
+
+  return {
+    items: tools.map(({ metadata, ...tool }) => ({
+      ...tool,
+      bannerUrl: (metadata as ToolMetadata)?.header,
+    })),
+    nextCursor,
+  };
 }
 
 export async function getToolByName(name: string) {

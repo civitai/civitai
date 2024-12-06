@@ -20,7 +20,8 @@ export type EdgeMediaProps = EdgeUrlProps &
     html5Controls?: boolean;
     onMutedChange?: (muted: boolean) => void;
     videoRef?: React.ForwardedRef<EdgeVideoRef>;
-    metadata?: ImageMetadata | VideoMetadata;
+    metadata?: ImageMetadata | VideoMetadata | null;
+    youtubeVideoId?: string;
   };
 
 export function EdgeMedia({
@@ -49,6 +50,7 @@ export function EdgeMedia({
   html5Controls,
   onMutedChange,
   videoRef,
+  youtubeVideoId,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -125,6 +127,7 @@ export function EdgeMedia({
           onMutedChange={onMutedChange}
           ref={videoRef}
           onMouseOut={handleMouseOut}
+          youtubeVideoId={youtubeVideoId}
         />
       );
     case 'audio':

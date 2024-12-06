@@ -156,7 +156,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     if (!store) return;
     const { limits, tier } = generationStatus;
     store.setState({
-      requestLimit: limits.quantity,
+      requestLimit: limits.queue,
       userLimits: limits,
       userTier: tier,
     });

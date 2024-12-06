@@ -3171,12 +3171,14 @@ model Tool {
   icon        String?
   createdAt   DateTime    @default(now())
   enabled     Boolean     @default(true)
+  unlisted    Boolean     @default(false)
   type        ToolType
   domain      String?
   imageTools  ImageTool[]
   priority    Int?
   description String?
   supported   Boolean     @default(false)
+  company     String?
   metadata    Json        @default("{}")
 }
 

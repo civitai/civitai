@@ -1,59 +1,59 @@
 import { ActionIcon, Badge, Center, Group, Menu, Stack, Text } from '@mantine/core';
 import {
+  IconArchiveFilled,
+  IconBolt,
+  IconBookmark,
+  IconBrush,
+  IconDotsVertical,
   IconDownload,
+  IconInfoCircle,
   IconMessageCircle2,
   IconTagOff,
-  IconDotsVertical,
-  IconBrush,
-  IconBookmark,
-  IconInfoCircle,
-  IconBolt,
-  IconArchiveFilled,
 } from '@tabler/icons-react';
 import React from 'react';
-// import { z } from 'zod';
-import { FeedCard } from '~/components/Cards/FeedCard';
-import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
-import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
-import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants } from '~/server/common/constants';
-import { ReportEntity } from '~/server/schema/report.schema';
-import { aDayAgo } from '~/utils/date-helpers';
-import { abbreviateNumber } from '~/utils/number-helpers';
-import { slugit } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
-import { CollectionType, CosmeticEntity, ModelModifier } from '~/shared/utils/prisma/enums';
-import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
-import { generationPanel } from '~/store/generation.store';
-import { UseQueryModelReturn } from '~/components/Model/model.utils';
-import { env } from '~/env/client.mjs';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
+import { useCardStyles } from '~/components/Cards/Cards.styles';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+// import { z } from 'zod';
+import { FeedCard } from '~/components/Cards/FeedCard';
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
-import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { useInView } from '~/hooks/useInView';
-import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
-import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { isDefined } from '~/utils/type-guards';
-import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
-import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
+import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { AddToCollectionMenuItem } from '~/components/MenuItems/AddToCollectionMenuItem';
+import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
+import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
+import { UseQueryModelReturn } from '~/components/Model/model.utils';
+import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
+import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
+import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useInView } from '~/hooks/useInView';
+import { openContext } from '~/providers/CustomModalsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants } from '~/server/common/constants';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { ReportEntity } from '~/server/schema/report.schema';
+import { CollectionType, CosmeticEntity, ModelModifier } from '~/shared/utils/prisma/enums';
+import { generationPanel } from '~/store/generation.store';
+import { aDayAgo } from '~/utils/date-helpers';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { slugit } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
+import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 
 const IMAGE_CARD_WIDTH = 450;
 
@@ -235,6 +235,7 @@ export function ModelCard({ data, forceInView }: Props) {
 
   const isPOI = data.poi;
   const isSFWOnly = data.minor;
+  const isNSFW = data.nsfw;
 
   const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
   const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
@@ -291,6 +292,17 @@ export function ModelCard({ data, forceInView }: Props) {
                             >
                               <Text color="white" size="xs" transform="capitalize">
                                 SFW
+                              </Text>
+                            </Badge>
+                          )}
+                          {currentUser?.isModerator && isNSFW && (
+                            <Badge
+                              className={cx(classes.infoChip, classes.chip, classes.forMod)}
+                              variant="light"
+                              radius="xl"
+                            >
+                              <Text color="white" size="xs" transform="capitalize">
+                                NSFW
                               </Text>
                             </Badge>
                           )}

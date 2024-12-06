@@ -1,41 +1,20 @@
-import {
-  Stack,
-  Text,
-  Box,
-  Center,
-  Loader,
-  Title,
-  ThemeIcon,
-  Card,
-  Image,
-  Avatar,
-  Badge,
-  Button,
-} from '@mantine/core';
+import { Stack, Text, Box, Center, Loader, Title, ThemeIcon } from '@mantine/core';
+import { IconCloudOff } from '@tabler/icons-react';
 import { useInstantSearch } from 'react-instantsearch';
-
 import {
   ClearRefinements,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { ToolSearchIndexRecord } from '~/server/search-index/tools.search-index';
-import { IconCloudOff, IconUser } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { ToolsSearchIndexSortBy } from '~/components/Search/parsers/tool.parser';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { slugit } from '~/utils/string-helpers';
-import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { generationPanel, generationStore } from '~/store/generation.store';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { ToolType } from '~/shared/utils/prisma/enums';
+import { ToolCard } from '~/components/Cards/ToolCard';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -152,99 +131,6 @@ export function ToolHitList() {
         </InViewLoader>
       )}
     </Stack>
-  );
-}
-
-export function ToolCard({ data }: { data: ToolSearchIndexRecord }) {
-  if (!data) return null;
-
-  const sluggifiedName = slugit(data.name);
-
-  return (
-    <Link
-      href={`/tools/${sluggifiedName}?tools=${data.id}`}
-      as={`/tools/${sluggifiedName}`}
-      passHref
-    >
-      <Card component="a" radius="md" withBorder>
-        <Card.Section className="h-48">
-          {data.bannerUrl ? (
-            <EdgeMedia2
-              className="size-full max-w-full object-cover"
-              src={data.bannerUrl}
-              width={1920}
-              type="image"
-            />
-          ) : (
-            <Image
-              src="/images/civitai-default-account-bg.png"
-              alt="default creator card background decoration"
-              w="100%"
-              h="100%"
-              styles={{
-                figure: { height: '100%' },
-                imageWrapper: { height: '100%' },
-                image: { objectFit: 'cover', height: '100% !important' },
-              }}
-            />
-          )}
-        </Card.Section>
-        <div className="mt-4 flex flex-col items-start gap-4">
-          <div className="flex flex-1 items-center gap-4">
-            {data.icon ? (
-              <Avatar
-                src={getEdgeUrl(data.icon ?? undefined, { type: 'image', width: 40 })}
-                size={40}
-                radius="xl"
-              />
-            ) : (
-              <ThemeIcon size="xl" radius="xl" variant="light">
-                <IconUser />
-              </ThemeIcon>
-            )}
-            <div className="flex flex-col">
-              <Text size="lg" weight={600}>
-                {data.name}
-              </Text>
-              <Text size="sm" color="dimmed">
-                {data.company}
-              </Text>
-            </div>
-          </div>
-          <Badge size="sm" radius="xl">
-            {data.type}
-          </Badge>
-          {data.description && (
-            <Text lineClamp={3}>
-              <CustomMarkdown allowedElements={[]} unwrapDisallowed>
-                {data.description}
-              </CustomMarkdown>
-            </Text>
-          )}
-          {data.supported && (
-            <Button
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                const isVideo = data.type === ToolType.Video;
-                generationStore.setData({
-                  resources: [],
-                  params: {},
-                  type: isVideo ? 'video' : 'image',
-                  // TODO.gen: have to think this through on how to get the right workflow
-                  workflow: isVideo ? `${data.name.toLowerCase}-txt2vid` : undefined,
-                });
-                generationPanel.open();
-              }}
-              fullWidth
-            >
-              Generate
-            </Button>
-          )}
-        </div>
-      </Card>
-    </Link>
   );
 }
 

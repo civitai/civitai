@@ -1,9 +1,9 @@
 import { Box, Group, GroupProps, List, Popover, Text, Tooltip } from '@mantine/core';
-import { CommercialUse } from '~/shared/utils/prisma/enums';
 import {
   IconBrushOff,
   IconCheck,
   IconExchangeOff,
+  IconHorseToy,
   IconPhotoOff,
   IconRotate2,
   IconShoppingCartOff,
@@ -12,9 +12,14 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import React from 'react';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { CommercialUse } from '~/shared/utils/prisma/enums';
 
 export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...props }: Props) => {
-  const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense } =
+  const currentUser = useCurrentUser();
+  const isModerator = currentUser?.isModerator ?? false;
+
+  const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense, minor } =
     permissions;
   const canSellImages = allowCommercialUse.includes(CommercialUse.Image);
   const canRentCivit = allowCommercialUse.includes(CommercialUse.RentCivit);
@@ -29,9 +34,11 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
     'Share merges using this model': allowDerivatives,
     'Sell this model or merges using this model': canSell,
     'Have different permissions when sharing merges': allowDifferentLicense,
+    ...(isModerator && { 'Create NSFW generations': !minor }),
   };
   const iconProps = { size, stroke: 1.5 };
   const icons = [
+    isModerator && minor && { label: 'Minor (no NSFW gen)', icon: <IconHorseToy {...iconProps} /> },
     !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
     !canSellImages && { label: 'No selling images', icon: <IconPhotoOff {...iconProps} /> },
     !canRentCivit && { label: 'No Civitai generation', icon: <IconBrushOff {...iconProps} /> },
@@ -95,4 +102,5 @@ type Permissions = {
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
   allowDifferentLicense: boolean;
+  minor: boolean;
 };

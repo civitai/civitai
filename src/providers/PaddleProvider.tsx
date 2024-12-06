@@ -1,4 +1,6 @@
+import { useLocalStorage } from '@mantine/hooks';
 import { CheckoutEventsData, initializePaddle, Paddle, PaddleEventData } from '@paddle/paddle-js';
+import dayjs from 'dayjs';
 import { useContext, useEffect, useState, createContext, useRef, useCallback } from 'react';
 import { env } from '~/env/client.mjs';
 import { isDev } from '~/env/other';
@@ -26,6 +28,11 @@ export const usePaddle = () => {
 
 export function PaddleProvider({ children }: { children: React.ReactNode }) {
   const currentUser = useCurrentUser();
+  const [retainLastInitializedAt, setRetainLastInitializedAt] = useLocalStorage<Date>({
+    key: 'retain-last-initialized-at',
+    defaultValue: new Date(),
+    getInitialValueInEffect: false,
+  });
 
   const [paddle, setPaddle] = useState<Paddle>();
   const emitter = useRef<
@@ -52,14 +59,17 @@ export function PaddleProvider({ children }: { children: React.ReactNode }) {
 
   // Download and initialize Paddle instance from CDN
   useEffect(() => {
-    if (env.NEXT_PUBLIC_PADDLE_TOKEN) {
+    if (env.NEXT_PUBLIC_PADDLE_TOKEN && !paddle) {
       emitter.current = new EventEmitter<{
         'checkout.completed': CheckoutEventsData | undefined;
         'checkout.closed': undefined;
         'checkout.loaded': undefined;
       }>();
+
+      const shouldInitRetain = dayjs(retainLastInitializedAt).add(1, 'day').isBefore(dayjs());
+
       const pwCustomer = currentUser
-        ? currentUser.paddleCustomerId
+        ? currentUser.paddleCustomerId && shouldInitRetain
           ? { id: currentUser.paddleCustomerId }
           : { email: currentUser.email }
         : {};
@@ -78,9 +88,13 @@ export function PaddleProvider({ children }: { children: React.ReactNode }) {
         if (paddleInstance) {
           setPaddle(paddleInstance);
         }
+
+        if (shouldInitRetain) {
+          setRetainLastInitializedAt(new Date());
+        }
       });
     }
-  }, [currentUser, eventCallback]);
+  }, [currentUser, eventCallback, paddle, retainLastInitializedAt, setRetainLastInitializedAt]);
 
   return (
     <PaddleContext.Provider

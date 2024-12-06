@@ -84,6 +84,8 @@ export const constants = {
     'Kolors',
     'Illustrious',
     'Mochi',
+    'LTXV',
+    'CogVideoX',
     'Other',
   ],
   hiddenBaseModels: [
@@ -93,6 +95,11 @@ export const constants = {
     'SDXL Distilled',
     'SDXL 0.9',
     'SD 2.0 768',
+    'SDXL Turbo',
+    'SVD XT',
+    'Playground v2',
+    'Stable Cascade',
+    'SDXL 1.0 LCM',
   ] as string[],
   modelFileTypes: [
     'Model',
@@ -430,6 +437,8 @@ export const baseModelSetTypes = [
   'Illustrious',
   'Other',
   'Mochi',
+  'LTXV',
+  'CogVideoX',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -452,6 +461,8 @@ export const baseModelSets = defineBaseModelSets({
   Illustrious: ['Illustrious'],
   Other: ['Other'],
   Mochi: ['Mochi'],
+  LTXV: ['LTXV'],
+  CogVideoX: ['CogVideoX'],
 });
 
 const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
@@ -474,6 +485,8 @@ export const baseModelSetNames = defineBaseModelSetNames({
   Illustrious: 'Illustrious',
   Other: 'Other',
   Mochi: 'Mochi',
+  LTXV: 'LTXV',
+  CogVideoX: 'CogVideoX',
 });
 
 type LicenseDetails = {
@@ -552,6 +565,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
     name: 'Illustrious License',
   },
+  'ltxv license': {
+    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/License.txt',
+    name: 'LTX Video License',
+  },
+  'cogvideox license': {
+    url: 'https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE',
+    name: 'CogVideoX License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -593,6 +614,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
   Mochi: baseLicenses['apache 2.0'],
+  LTXV: baseLicenses['ltxv license'],
+  CogVideoX: baseLicenses['cogvideox license'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

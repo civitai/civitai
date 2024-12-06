@@ -72,6 +72,7 @@ export function withController<
                 {...(props as TComponentProps & { name: TName })}
                 {...mapped}
                 reset={(form as any).resetCount}
+                name={name}
               />
             );
           }}
