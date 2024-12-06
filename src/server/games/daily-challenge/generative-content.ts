@@ -1,8 +1,9 @@
 import dayjs from 'dayjs';
 import { ChatCompletionMessageParam } from 'openai/resources';
 import {
+  Prize,
   Score,
-  dailyChallengeConfig as config,
+  getChallengeConfig,
 } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { openai } from '~/server/services/ai/openai';
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
@@ -72,6 +73,9 @@ type GenerateArticleInput = {
   };
   collectionId: number;
   challengeDate: Date;
+  prizes: Array<Prize>;
+  entryPrizeRequirement: number;
+  entryPrize: Prize;
 };
 type GeneratedArticle = {
   title: string;
@@ -84,6 +88,9 @@ export async function generateArticle({
   image,
   collectionId,
   challengeDate,
+  prizes,
+  entryPrizeRequirement,
+  entryPrize,
 }: GenerateArticleInput) {
   if (!openai) throw new Error('OpenAI not connected');
 
@@ -136,7 +143,7 @@ export async function generateArticle({
 
     ## ⭐ Prizes
     **Winners will receive**:
-    ${config.prizes
+    ${prizes
       .map(
         (prize, i) =>
           `- **${asOrdinal(i + 1)}**: <span style="color:#fab005">${numberWithCommas(
@@ -148,13 +155,11 @@ export async function generateArticle({
     Winners will be announced at 12am UTC in this article and notified via on-site notification.
 
     **Full participants will receive**:
-    - <span style="color:#228be6">${config.entryPrize.buzz} Buzz</span>, ${
-    config.entryPrize.points
+    - <span style="color:#228be6">${entryPrize.buzz} Buzz</span>, ${
+    entryPrize.points
   } Challenge Points
 
-    To be considered a full participant, you must **submit ${
-      config.entryPrizeRequirement
-    } entries**.
+    To be considered a full participant, you must **submit ${entryPrizeRequirement} entries**.
 
 
     ## 📝 How to Enter
@@ -168,7 +173,7 @@ export async function generateArticle({
       'MMMM DD'
     )} (23:59 UTC).
     2. All submitted images must be SFW (PG) and adhere to our **Terms of Service**.
-    3. Participants can submit up to ${config.entryPrizeRequirement} images.
+    3. Participants can submit up to ${entryPrizeRequirement} images.
     4. Entries must use the provided model.
   `);
   const content = await markdownToHtml(markdownContent);

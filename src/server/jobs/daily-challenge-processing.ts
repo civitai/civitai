@@ -4,7 +4,8 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
-  dailyChallengeConfig as config,
+  ChallengeConfig,
+  getChallengeConfig,
   getCurrentChallenge,
   getUpcomingChallenge,
   setCurrentChallenge,
@@ -36,6 +37,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
   // Stop if we already have an upcoming challenge
   const upcomingChallenge = await getUpcomingChallenge();
   if (upcomingChallenge) return;
+  const config = await getChallengeConfig();
 
   // Get date of the challenge (should be the next day if it's past 11pm UTC)
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
@@ -112,7 +114,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
   const collectionDetails = await generateCollectionDetails({ resource, image });
 
   // Create collection cover image
-  const coverImageId = await duplicateImage(image.id);
+  const coverImageId = await duplicateImage(image.id, config.challengeRunnerUserId);
 
   // Create collection
   const collection = await dbWrite.collection.create({
@@ -142,6 +144,12 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
     VALUES (${collection.id}, ${config.judgedTagId}, true);
   `;
 
+  const prizeConfig = {
+    prizes: config.prizes,
+    entryPrize: config.entryPrize,
+    entryPrizeRequirement: config.entryPrizeRequirement,
+  };
+
   // Setup Article
   // ----------------------------------------------
   // Generate article
@@ -150,6 +158,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
     image,
     collectionId: collection.id,
     challengeDate,
+    ...prizeConfig,
   });
 
   // Create article
@@ -171,6 +180,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
         challengeType: 'world-morph',
         status: 'pending',
         userId: randomUser.userId,
+        ...prizeConfig,
       },
     },
     select: { id: true },
@@ -211,6 +221,7 @@ export const processDailyChallengeEntries = createJob(
     const currentChallenge = await getCurrentChallenge();
     if (!currentChallenge) return;
     log('Processing entries for challenge:', currentChallenge);
+    const config = await getChallengeConfig();
 
     // Update pending entries
     // ----------------------------------------------
@@ -274,6 +285,16 @@ export const processDailyChallengeEntries = createJob(
       DELETE FROM "CollectionItem"
       WHERE "collectionId" = ${currentChallenge.collectionId}
       AND status = 'REJECTED';
+    `;
+
+    // TEMP: Remove judged tag from unjudged entries
+    // Doing this because users can still manually add it
+    await dbWrite.$executeRaw`
+      UPDATE "CollectionItem"
+        SET "tagId" = NULL
+      WHERE "collectionId" = ${currentChallenge.collectionId}
+      AND "tagId" = ${config.judgedTagId}
+      AND note IS NULL;
     `;
 
     // Rate new entries
@@ -406,7 +427,7 @@ export const processDailyChallengeEntries = createJob(
           AND ci.status = 'ACCEPTED'
           AND i."userId" IN (${Prisma.join(userIds)})
         GROUP BY 1
-        HAVING COUNT(*) >= ${config.entryPrizeRequirement};
+        HAVING COUNT(*) >= ${currentChallenge.entryPrizeRequirement};
       `;
       log('Earned prizes:', earnedPrizes.length);
 
@@ -418,7 +439,7 @@ export const processDailyChallengeEntries = createJob(
               type: TransactionType.Reward,
               toAccountId: userId,
               fromAccountId: 0, // central bank
-              amount: config.entryPrize.buzz,
+              amount: currentChallenge.entryPrize.buzz,
               description: `Challenge Entry Prize: ${dateStr}`,
               externalTransactionId: `challenge-entry-prize-${dateStr}-${userId}`,
               toAccountType: 'generation',
@@ -437,7 +458,7 @@ export const processDailyChallengeEntries = createJob(
           details: {
             articleId: currentChallenge.articleId,
             challengeName: currentChallenge.title,
-            prize: config.entryPrize.buzz,
+            prize: currentChallenge.entryPrize.buzz,
           },
         });
         log('Users notified');
@@ -460,9 +481,10 @@ export const pickDailyChallengeWinners = createJob(
   '0 0 * * *',
   async () => {
     // Get current challenge
+    const config = await getChallengeConfig();
     const currentChallenge = await getCurrentChallenge();
     if (!currentChallenge) {
-      await startNextChallenge();
+      await startNextChallenge(config);
       return;
     }
 
@@ -511,7 +533,7 @@ export const pickDailyChallengeWinners = createJob(
     `;
     log('Judged entries:', judgedEntriesRaw?.length);
     if (!judgedEntriesRaw.length) {
-      await startNextChallenge();
+      await startNextChallenge(config);
       return;
     }
 
@@ -640,7 +662,7 @@ ${outcome}
 
     // Start next challenge
     // ----------------------------------------------
-    await startNextChallenge();
+    await startNextChallenge(config);
   }
 );
 
@@ -673,12 +695,12 @@ const duplicateImageColumns = [
   'sortAt',
   'pHash',
 ];
-async function duplicateImage(imageId: number) {
+async function duplicateImage(imageId: number, userId: number) {
   const newImage = await dbWrite.$queryRawUnsafe<{ id: number }[]>(`
     INSERT INTO "Image" (${duplicateImageColumns.map((col) => `"${col}"`).join(', ')}, "userId")
     SELECT
       ${duplicateImageColumns.map((col) => `i."${col}"`).join(', ')},
-      ${config.challengeRunnerUserId}
+      ${userId}
     FROM "Image" i
     WHERE i.id = ${imageId}
     RETURNING id;
@@ -707,7 +729,7 @@ async function getCoverOfModel(modelId: number) {
   return image;
 }
 
-async function startNextChallenge() {
+async function startNextChallenge(config: ChallengeConfig) {
   const upcomingChallenge = await getUpcomingChallenge();
   if (!upcomingChallenge) return;
   log('Starting next challenge');
