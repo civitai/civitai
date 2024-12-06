@@ -2220,6 +2220,7 @@ export async function getCollectionEntryCount({
     AND "addedById" = ${userId}
     GROUP BY "status"
   `;
+  console.log(collection);
   const result: { [key in CollectionItemStatus]?: number } & { max: number } = {
     max: collection.total,
   };
