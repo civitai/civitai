@@ -543,7 +543,7 @@ function PinnedIndicator({
   return (
     <HoverCard width={300} withArrow withinPortal>
       <HoverCard.Target>
-        <ThemeIcon {...themeIconProps} className="absolute -right-2.5 -top-2.5 z-[1]">
+        <ThemeIcon {...themeIconProps} className="absolute -right-2.5 -top-2.5 z-10">
           <IconPinFilled {...iconProps} />
         </ThemeIcon>
       </HoverCard.Target>
