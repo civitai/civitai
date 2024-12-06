@@ -93,6 +93,8 @@ import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDro
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import { CollectionItemStatus } from '@prisma/client';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );
@@ -528,7 +530,7 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <>
+    <BrowsingModeOverrideProvider browsingLevel={allBrowsingLevelsFlag}>
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
@@ -543,7 +545,7 @@ export function Collection({
           }
         />
       )}
-      <SensitiveShield contentNsfwLevel={collection.nsfwLevel}>
+      <SensitiveShield contentNsfwLevel={allBrowsingLevelsFlag}>
         <MasonryProvider
           columnWidth={constants.cardSizes.model}
           maxColumnCount={7}
@@ -811,7 +813,7 @@ export function Collection({
           </MasonryContainer>
         </MasonryProvider>
       </SensitiveShield>
-    </>
+    </BrowsingModeOverrideProvider>
   );
 }
 

@@ -122,6 +122,7 @@ export const collectionMetadataSchema = z
     disableFollowOnSubmission: z.boolean().optional(),
     disableTagRequired: z.boolean().optional(),
     youtubeSupportEnabled: z.boolean().optional(),
+    forcedNsfwLevel: z.number().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {
