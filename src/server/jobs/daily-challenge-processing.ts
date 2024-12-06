@@ -52,7 +52,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
       AND ci."status" = 'ACCEPTED'
     `;
 
-  //Get Users on Cooldown ⚠️
+  //Get Users on Cooldown
   const cooldownUsers = await dbRead.$queryRaw<{ userId: number }[]>`
       SELECT DISTINCT
         cast(a.metadata->'userId' as int) as "userId"
@@ -68,33 +68,38 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
     (user) => !cooldownUsers.some((cu) => cu.userId === user.userId)
   );
 
-  // Pick a user
-  const randomUser = getRandom(availableUsers);
+  let resource: SelectedResource | undefined;
+  while (!resource) {
+    // Pick a user
+    const randomUser = getRandom(availableUsers);
 
-  // Get resources from that user
-  const resourceIds = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT ci."modelId" as id
-      FROM "CollectionItem" ci
-      JOIN "Model" m ON m.id = ci."modelId"
-      WHERE "collectionId" = ${config.collectionId}
-      AND ci."status" = 'ACCEPTED'
-      AND m."userId" = ${randomUser.userId}
-    `;
+    // Get resources from that user
+    const resourceIds = await dbRead.$queryRaw<{ id: number }[]>`
+        SELECT ci."modelId" as id
+        FROM "CollectionItem" ci
+        JOIN "Model" m ON m.id = ci."modelId"
+        WHERE "collectionId" = ${config.collectionId}
+        AND ci."status" = 'ACCEPTED'
+        AND m."userId" = ${randomUser.userId}
+        AND m.status = 'Published'
+      `;
+    if (!resourceIds.length) continue;
 
-  // Pick a resource
-  const randomResourceId = getRandom(resourceIds);
+    // Pick a resource
+    const randomResourceId = getRandom(resourceIds);
 
-  // Get resource details
-  const [resource] = await dbRead.$queryRaw<{ modelId: number; creator: string; title: string }[]>`
-      SELECT
-        m.id as "modelId",
-        u."username" as creator,
-        m.name as title
-      FROM "Model" m
-      JOIN "User" u ON u.id = m."userId"
-      WHERE m.id = ${randomResourceId.id}
-      LIMIT 1
-    `;
+    // Get resource details
+    [resource] = await dbRead.$queryRaw<SelectedResource[]>`
+        SELECT
+          m.id as "modelId",
+          u."username" as creator,
+          m.name as title
+        FROM "Model" m
+        JOIN "User" u ON u.id = m."userId"
+        WHERE m.id = ${randomResourceId.id}
+        LIMIT 1
+      `;
+  }
 
   // Get cover of resource
   const image = await getCoverOfModel(resource.modelId);
@@ -730,4 +735,10 @@ type JudgedEntry = {
   username: string;
   note: string;
   engagement: number;
+};
+
+type SelectedResource = {
+  modelId: number;
+  creator: string;
+  title: string;
 };
