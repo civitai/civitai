@@ -452,6 +452,7 @@ export function Collection({
   const router = useRouter();
 
   const { collection, permissions, isLoading } = useCollection(collectionId);
+  // TODO.luis: Fetch entry count using collection.getEntryCount(collectionId)
 
   const { classes } = useStyles({ bannerPosition: collection?.metadata?.bannerPosition });
   const { blockedUsers } = useHiddenPreferencesData();
@@ -520,6 +521,8 @@ export function Collection({
     ) : null;
 
   if (!collection) return null;
+
+  // TODO.luis: Display entry count as outlined in the design
 
   return (
     <>

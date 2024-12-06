@@ -72,6 +72,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { getYoutubeRefreshToken } from '~/server/youtube/client';
+import { number } from 'zod';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -2194,6 +2195,37 @@ export const getCollectionItemById = ({ id }: GetByIdInput) => {
     },
   });
 };
+
+export async function getCollectionEntryCount({
+  collectionId,
+  userId,
+}: {
+  collectionId: number;
+  userId: number;
+}) {
+  const [collection] = await dbRead.$queryRaw<{ total: number }[]>`
+    SELECT
+      CAST(c.metadata->'maxItemsPerUser' as int) as total
+    FROM "Collection" c
+    WHERE c.id = ${collectionId}
+  `;
+  if (!collection) throw throwNotFoundError('Collection not found');
+
+  const statuses = await dbRead.$queryRaw<{ status: CollectionItemStatus; count: number }[]>`
+    SELECT
+      "status",
+      CAST(COUNT(*) as int) as "count"
+    FROM "CollectionItem"
+    WHERE "collectionId" = ${collectionId}
+    AND "addedById" = ${userId}
+    GROUP BY "status"
+  `;
+  const result: { [key in CollectionItemStatus]?: number } & { max: number } = {
+    max: collection.total,
+  };
+  for (const { status, count } of statuses) result[status] = count;
+  return result;
+}
 
 export const setCollectionItemNsfwLevel = async ({
   collectionItemId,
