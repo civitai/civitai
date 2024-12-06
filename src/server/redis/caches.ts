@@ -28,6 +28,7 @@ import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { fluxUltraAir } from '~/shared/constants/generation.constants';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -549,6 +550,27 @@ export const imageMetaCache = createCachedObject<ImageWithMeta>({
       SELECT
         i.id,
         (CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta"
+      FROM "Image" i
+      WHERE i.id IN (${Prisma.join(ids as number[])})
+    `;
+    return Object.fromEntries(images.map((x) => [x.id, x]));
+  },
+  ttl: CacheTTL.hour,
+});
+
+type ImageWithMetadata = {
+  id: number;
+  metadata?: ImageMetadata | VideoMetadata | null;
+};
+
+export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
+  key: REDIS_KEYS.CACHES.IMAGE_METADATA,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    const images = await dbRead.$queryRaw<ImageWithMetadata[]>`
+      SELECT
+        i.id,
+        i.metadata
       FROM "Image" i
       WHERE i.id IN (${Prisma.join(ids as number[])})
     `;
