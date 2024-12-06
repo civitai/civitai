@@ -17,6 +17,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
+import { useMergedRef } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
@@ -32,7 +33,7 @@ import {
   IconUserOff,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
@@ -51,19 +52,30 @@ import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { Collection } from '~/components/Collection/Collection';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useReportCsamImages } from '~/components/Image/image.utils';
-import { useInView } from '~/hooks/useInView';
-import { useRouter } from 'next/router';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
-import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
-import { InViewLoader } from '~/components/InView/InViewLoader';
-import { useMergedRef } from '@mantine/hooks';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { useReportCsamImages } from '~/components/Image/image.utils';
+import PromptHighlight from '~/components/Image/PromptHighlight/PromptHighlight';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { InViewLoader } from '~/components/InView/InViewLoader';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { NoContent } from '~/components/NoContent/NoContent';
+import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import { useInView } from '~/hooks/useInView';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
+import { ImageModerationReviewQueueImage } from '~/types/router';
+import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { splitUppercase } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 type StoreState = {
@@ -168,7 +180,7 @@ export default function Images() {
               alignSelf: 'flex-end',
               marginRight: 6,
               position: 'sticky',
-              top: 'var(--mantine-header-height,0)',
+              top: 'var(--header-height,0)',
               marginBottom: -80,
               zIndex: 30,
             }}
@@ -380,7 +392,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           )}
         </Card.Section>
         {hasReport && (
-          <Stack spacing={8} p="xs">
+          <Stack spacing={8} p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
             <Group position="apart" noWrap>
               <Stack spacing={2}>
                 <Text size="xs" color="dimmed" inline>
@@ -426,7 +438,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               !includesInappropriate ? (
                 <></>
               ) : (
-                <Card.Section p="xs">
+                <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
                   <Text size="sm" lh={1.2} dangerouslySetInnerHTML={{ __html: html }} />
                 </Card.Section>
               )
@@ -434,7 +446,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </PromptHighlight>
         )}
         {image.needsReview === 'poi' && !!image.names?.length && (
-          <Card.Section p="xs">
+          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
             <Group spacing={4}>
               {image.names.map((name) => (
                 <Badge key={name} size="sm">
@@ -445,7 +457,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Card.Section>
         )}
         {image.needsReview === 'tag' && !!image.tags && (
-          <Card.Section p="xs">
+          <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
             <Group spacing={4}>
               {image.tags
                 .filter((x) => x.nsfwLevel === NsfwLevel.Blocked)

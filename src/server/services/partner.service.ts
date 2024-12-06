@@ -3,7 +3,7 @@ import { shuffle } from '~/utils/array-helpers';
 
 export const getAllPartners = async () => {
   const partners = await dbRead.partner.findMany({
-    where: {},
+    where: { disabled: false },
     select: {
       id: true,
       name: true,

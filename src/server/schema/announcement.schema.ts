@@ -23,13 +23,6 @@ export const announcementMetaSchema = z
   })
   .partial();
 
-export type GetAnnouncementsInput = z.infer<typeof getAnnouncementsSchema>;
-export const getAnnouncementsSchema = z.object({
-  dismissed: z.array(z.number()).optional(),
-  ids: z.array(z.number()).optional(),
-  limit: z.number().optional(),
-});
-
 export type UpsertAnnouncementSchema = z.infer<typeof upsertAnnouncementSchema>;
 export const upsertAnnouncementSchema = z.object({
   id: z.number().optional(),

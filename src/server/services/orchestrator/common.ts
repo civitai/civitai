@@ -4,6 +4,7 @@ import {
   HaiperVideoGenInput,
   HaiperVideoGenOutput,
   ImageJobNetworkParams,
+  Priority,
   TextToImageInput,
   TextToImageStep,
   VideoBlob,
@@ -61,6 +62,7 @@ import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { UserTier } from '~/server/schema/user.schema';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -313,6 +315,7 @@ export async function parseGenerateImageInput({
       upscaleWidth: upscale?.width,
       upscaleHeight: upscale?.height,
     }),
+    priority: getUserPriority(status, user),
   };
 }
 
@@ -583,8 +586,8 @@ function formatTextToImageStep({
     sampler: metadata?.params?.sampler ?? sampler,
     ...upscale,
 
-    fluxMode: metadata?.params?.fluxMode,
-    fluxUltraRaw: input.engine === 'flux-pro-raw',
+    fluxMode: metadata?.params?.fluxMode ?? undefined,
+    fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
   } as TextToImageParams;
 
   if (resources.some((x) => x.air === fluxUltraAir)) {
@@ -695,4 +698,16 @@ export async function queryGeneratedImageWorkflows(
     items: await formatGenerationResponse(items as GeneratedImageWorkflow[]),
     nextCursor,
   };
+}
+
+const MEMBERSHIP_PRIORITY: Record<UserTier, Priority> = {
+  free: Priority.LOW,
+  founder: Priority.NORMAL,
+  bronze: Priority.NORMAL,
+  silver: Priority.NORMAL,
+  gold: Priority.HIGH,
+};
+export function getUserPriority(status: GenerationStatus, user: { tier?: UserTier }) {
+  if (!status.membershipPriority) return Priority.NORMAL;
+  return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
 }

@@ -1051,7 +1051,7 @@ export const toggleBan = async ({
   if (!user.bannedAt) {
     // Unpublish their models
     const models = await dbRead.model.findMany({
-      where: { userId: id, status: ModelStatus.Published },
+      where: { userId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
     });
 
     if (models.length) {

@@ -1,6 +1,5 @@
 import React, { useMemo } from 'react';
 import { createReportForm } from './create-report-form';
-import { withWatcher } from '~/libs/form/hoc/withWatcher';
 import { withController } from '~/libs/form/hoc/withController';
 import { reportNsfwDetailsSchema } from '~/server/schema/report.schema';
 import { Accordion, Badge, Chip, Group, Input, InputWrapperProps, Text } from '@mantine/core';
@@ -118,4 +117,4 @@ function ModerationTagsInput({ value = [], onChange, type, ...props }: Moderatio
     </Input.Wrapper>
   );
 }
-const InputModerationTags = withWatcher(withController(ModerationTagsInput));
+const InputModerationTags = withController(ModerationTagsInput);

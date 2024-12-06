@@ -6,6 +6,7 @@ import { isDefined } from '~/utils/type-guards';
 import { getDisplayName } from '~/utils/string-helpers';
 import { AlwaysOpenCombobox } from '~/components/Combobox/AlwaysOpenComboBox';
 import { ComboboxOption } from '~/components/Combobox/combobox.types';
+import { useQueryTools } from '~/components/Tool/tools.utils';
 
 export function ImageToolsPopover({
   image,
@@ -14,7 +15,7 @@ export function ImageToolsPopover({
   image: PostEditImageDetail;
   onSuccess?: () => void;
 }) {
-  const { data: tools = [], isLoading: loadingTools } = trpc.tool.getAll.useQuery();
+  const { tools, loading: loadingTools } = useQueryTools({ filters: { include: ['unlisted'] } });
   const [updateImage, imageCount, imageIds] = usePostEditStore((state) => [
     state.updateImage,
     state.images.length,

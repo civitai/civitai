@@ -1,0 +1,26 @@
+.item {
+  cursor: pointer;
+  background-color: theme('colors.gray.2');
+
+  &:not(:last-child) {
+    border-bottom: 1px solid theme('colors.gray.3');
+  }
+}
+
+.active {
+  background-color: theme('colors.gray.1');
+}
+
+:global(.dark) {
+  .item {
+    background-color: theme('colors.dark.6');
+
+    &:not(:last-child) {
+      border-color: theme('colors.dark.4');
+    }
+  }
+
+  .active {
+    background-color: theme('colors.dark.5');
+  }
+}

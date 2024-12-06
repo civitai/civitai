@@ -11,7 +11,7 @@ import {
   Menu,
   Text,
 } from '@mantine/core';
-import { CollectionMode, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { MediaType, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBackUp,
   IconChevronDown,
@@ -50,7 +50,12 @@ import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import { useCollectionsForPostEditor } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
+import {
+  CurrentThumbnail,
+  PostImageThumbnailSelect,
+} from '~/components/Post/EditV2/Thumbnail/PostImageThumbnailSelect';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -108,7 +113,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const deleteImageMutation = trpc.image.delete.useMutation({
     onSuccess: (_, { id }) =>
       setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id)),
-    onError: (error: any) => showErrorNotification({ error: new Error(error.message) }),
+    onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
   const handleDelete = () => {
@@ -218,6 +223,7 @@ function EditDetail() {
     toggleHidePrompt,
     isPendingManualAssignment,
   } = useAddedImageContext();
+  const postId = usePostEditStore((state) => state.post?.id);
 
   const { meta, hideMeta, resourceHelper: resources } = image;
   const simpleMeta = Object.entries(simpleMetaProps).filter(([key]) => meta?.[key]);
@@ -573,6 +579,69 @@ function EditDetail() {
             </CustomCard>
             {/* #endregion */}
 
+            {/* #region [thumbnail] */}
+            {image.type === MediaType.video && (
+              <CustomCard className="flex flex-col gap-2">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
+                      Thumbnail
+                    </h3>
+                    <InfoPopover
+                      type="hover"
+                      variant="transparent"
+                      size="sm"
+                      position="right"
+                      iconProps={{ size: 20 }}
+                    >
+                      The thumbnail is the image that represents your post. It is the first thing
+                      viewers see when they come across your post.
+                    </InfoPopover>
+                  </div>
+                  <Button
+                    className="text-sm uppercase"
+                    size="sm"
+                    variant="light"
+                    onClick={() => {
+                      const metadata = image.metadata as VideoMetadata;
+
+                      dialogStore.trigger({
+                        component: PostImageThumbnailSelect,
+                        props: {
+                          imageId: image.id,
+                          src: image.url,
+                          duration: metadata?.duration ?? 1,
+                          width: metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH,
+                          height: metadata?.height ?? 1,
+                          postId,
+                          thumbnailFrame: metadata?.thumbnailFrame,
+                        },
+                      });
+                    }}
+                    compact
+                  >
+                    Select
+                  </Button>
+                </div>
+                <div className="flex items-center gap-2">
+                  {image.metadata &&
+                  'thumbnailFrame' in image.metadata &&
+                  image.metadata.thumbnailFrame != null ? (
+                    <CurrentThumbnail
+                      imageId={image.id}
+                      postId={postId}
+                      src={image.url}
+                      thumbnailFrame={image.metadata.thumbnailFrame}
+                      width={image.metadata.width}
+                    />
+                  ) : (
+                    <Text>Thumbnail will be auto generated.</Text>
+                  )}
+                </div>
+              </CustomCard>
+            )}
+            {/* #endregion */}
+
             {meta?.external && Object.keys(meta?.external).length > 0 && (
               <CustomCard className="flex flex-col gap-2">
                 <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
@@ -646,7 +715,7 @@ function PostImage() {
       >
         <EdgeMedia
           src={url}
-          width={metadata?.width ?? 450}
+          width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
           type={type}
           original={type === 'video' ? true : undefined}
           className={showPreview ? 'rounded-none' : 'rounded-lg'}

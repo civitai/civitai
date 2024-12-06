@@ -482,7 +482,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           // prevent default filtering behavior
           filter={() => true}
           clearable={query.length > 0}
-          maxDropdownHeight={isMobile ? 'calc(90vh - var(--mantine-header-height))' : undefined}
+          maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : undefined}
           {...autocompleteProps}
         />
         <ActionIcon

@@ -1335,6 +1335,7 @@ export interface Partner {
   token: string | null;
   tier: number;
   logo: string | null;
+  disabled: boolean;
   runStrategies?: RunStrategy[];
 }
 
@@ -2409,12 +2410,14 @@ export interface Tool {
   icon: string | null;
   createdAt: Date;
   enabled: boolean;
+  unlisted: boolean;
   type: ToolType;
   domain: string | null;
   imageTools?: ImageTool[];
   priority: number | null;
   description: string | null;
   supported: boolean;
+  company: string | null;
   metadata: JsonValue;
 }
 

@@ -1,5 +1,5 @@
 import { LoadingOverlay } from '@mantine/core';
-import React, { useEffect, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
   FieldValues,
   FormProvider,
@@ -11,6 +11,16 @@ import {
   useFormContext,
 } from 'react-hook-form';
 import { z } from 'zod';
+import clsx from 'clsx';
+
+const CustomFormCtx = createContext<{
+  onSubmit?: SubmitHandler<any>;
+} | null>(null);
+export function useCustomFormContext() {
+  const ctx = useContext(CustomFormCtx);
+  if (!ctx) throw new Error('missing CustomFormCtx in tree');
+  return ctx;
+}
 
 type FormProps<TFieldValues extends FieldValues> = {
   id?: string;
@@ -46,15 +56,12 @@ export function Form<TFieldValues extends FieldValues = FieldValues>({
 
   return (
     <FormProvider {...form}>
-      <form
-        id={id}
-        onSubmit={handleSubmit}
-        className={className}
-        style={{ position: 'relative', ...style }}
-      >
-        <LoadingOverlay visible={loading} zIndex={1} />
-        {children}
-      </form>
+      <CustomFormCtx.Provider value={{ onSubmit }}>
+        <form id={id} onSubmit={handleSubmit} className={clsx('relative', className)} style={style}>
+          <LoadingOverlay visible={loading} zIndex={1} />
+          {children}
+        </form>
+      </CustomFormCtx.Provider>
     </FormProvider>
   );
 }

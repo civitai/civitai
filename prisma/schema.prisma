@@ -108,7 +108,7 @@ model UserPaymentConfiguration {
   stripeAccountId        String? @unique
   stripeAccountStatus    String  @default("PendingOnboarding")
   stripePaymentsEnabled  Boolean @default(false)
-  // 
+  //
   meta                   Json    @default("{}")
 }
 
@@ -1700,6 +1700,7 @@ model Partner {
   token              String?             @unique
   tier               Int                 @default(0)
   logo               String?
+  disabled           Boolean             @default(false)
   runStrategies      RunStrategy[]
 }
 
@@ -3173,12 +3174,14 @@ model Tool {
   icon        String?
   createdAt   DateTime    @default(now())
   enabled     Boolean     @default(true)
+  unlisted    Boolean     @default(false)
   type        ToolType
   domain      String?
   imageTools  ImageTool[]
   priority    Int?
   description String?
   supported   Boolean     @default(false)
+  company     String?
   metadata    Json        @default("{}")
 }
 

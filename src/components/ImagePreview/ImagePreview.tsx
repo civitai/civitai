@@ -120,9 +120,7 @@ export function ImagePreview({
   // if (onClick) edgeImageStyle.cursor = 'pointer'; // !important - this line was causing hydration errors
   if (style?.height || style?.maxHeight) edgeImageStyle.maxHeight = '100%';
   const Image = nsfw ? (
-    <div className="relative size-full">
-      <MediaHash hash={hash} width={width} height={height} />
-    </div>
+    <MediaHash hash={hash} width={width} height={height} />
   ) : (
     <EdgeMedia
       src={url}

@@ -18,6 +18,7 @@ import {
   PostSort,
   QuestionSort,
   ThreadSort,
+  ToolSort,
 } from '~/server/common/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -45,6 +46,7 @@ const sortOptions = {
   videos: Object.values(ImageSort).filter((x) => !Object.values(ImageSortHidden).includes(x)),
   threads: Object.values(ThreadSort),
   markers: Object.values(MarkerSort),
+  tools: Object.values(ToolSort),
 };
 
 export function SortFilter(props: SortFilterProps) {
@@ -64,7 +66,8 @@ type DumbProps = {
     | BountySort
     | ClubSort
     | MarkerSort
-    | ThreadSort;
+    | ThreadSort
+    | ToolSort;
   onChange: (
     value:
       | ModelSort
@@ -77,6 +80,7 @@ type DumbProps = {
       | ClubSort
       | MarkerSort
       | ThreadSort
+      | ToolSort
   ) => void;
 } & SortFilterComponentProps;
 function DumbSortFilter({ type, value, onChange, ...props }: DumbProps) {

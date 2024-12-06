@@ -31,15 +31,15 @@ export function ThemeProvider({
     // elevate colorscheme class to body for tailwind
     if (typeof window !== 'undefined') {
       const body = document.querySelector('body');
-      body?.removeAttribute('class');
-      body?.classList.add(colorScheme);
+      // body?.removeAttribute('class');
+      if (colorScheme === 'dark') body?.classList.add('dark');
+      else body?.classList.remove('dark');
     }
   }, [colorScheme]);
 
   return (
     <ColorSchemeProvider colorScheme={colorScheme} toggleColorScheme={toggleColorScheme}>
       <MantineProvider
-        withCSSVariables
         withGlobalStyles
         withNormalizeCSS
         theme={{

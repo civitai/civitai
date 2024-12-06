@@ -51,7 +51,10 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div
           key={colIndex}
-          className={clsx('flex max-w-[450px] flex-col gap-4', { ['w-full']: columnCount === 1 })}
+          className={clsx(
+            'flex max-w-[450px] flex-col gap-4',
+            columnCount === 1 ? 'w-full' : 'w-[320px]'
+          )}
           style={columnCount > 1 ? { width: columnWidth } : undefined}
         >
           {items.map(({ height, data }, index) => {
@@ -61,8 +64,16 @@ export function MasonryColumns<TData>({
             return (
               <React.Fragment key={key}>
                 {showStaticItem && staticItem({ columnWidth, height: 450 })}
-                {data.type === 'data' &&
-                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
+                {/* {data.type === 'data' &&
+                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)} */}
+                {data.type === 'data' && (
+                  <RenderComponent
+                    index={index}
+                    data={data.data}
+                    width={columnWidth}
+                    height={height}
+                  />
+                )}
                 {data.type === 'ad' && (
                   <AdUnitRenderable>
                     <TwCard className="w-full items-center justify-center shadow">

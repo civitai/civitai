@@ -120,9 +120,13 @@ export default function Pricing() {
 
                 <Stack spacing="xs">
                   <Text size="md">
-                    To celebrate the holidays and our awesome community anyone who signs up for a
-                    membership or has an already active membership will recieve 20% additional Blue
-                    Buzz!
+                    To celebrate the holidays and our amazing community, new subscribers and current
+                    members alike will receive 20% additional Blue Buzz along with their standard
+                    Buzz disbursement!
+                  </Text>
+                  <Text size="md">
+                    This bonus applies when a new membership is purchased or an active membership
+                    renews.
                   </Text>
                   <Text size="md">Happy Holidays from Civitai!</Text>
                 </Stack>

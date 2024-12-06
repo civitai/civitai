@@ -109,7 +109,11 @@ function StatefulPeriodFilter({ type, disabled, hideMode, variant }: StatefulPro
   const globalPeriod = useFiltersContext(
     useCallback(
       (state) =>
-        type !== 'collections' && type !== 'clubs' && type !== 'threads' && type !== 'markers'
+        type !== 'collections' &&
+        type !== 'clubs' &&
+        type !== 'threads' &&
+        type !== 'markers' &&
+        type !== 'tools'
           ? state[type].period
           : undefined,
       [type]

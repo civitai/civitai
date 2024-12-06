@@ -169,3 +169,36 @@ export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: n
     payoutAmount,
   };
 };
+
+const ONE_MINUTE = 60;
+const ONE_HOUR = 60 * ONE_MINUTE;
+export const formatDuration = (seconds: number) => {
+  if (seconds === 0) return '0:00';
+
+  const hours = Math.floor(seconds / ONE_HOUR);
+  const minutes = Math.floor((seconds % ONE_HOUR) / ONE_MINUTE);
+  const remainingSeconds = Math.round(seconds % ONE_MINUTE);
+
+  const hourString = hours > 0 ? String(hours).padStart(2, '0') : '';
+  const minuteString =
+    hourString || minutes === 0 ? String(minutes).padStart(2, '0') : String(minutes);
+  const secondString = String(remainingSeconds).padStart(2, '0');
+
+  return [hourString, minuteString, secondString].filter(Boolean).join(':');
+};
+
+// Help from ChatGPT :^) -Manuel
+export function roundDownToPowerOfTwo(value: number) {
+  if (value < 1) return 0; // Powers of 2 start from 1 in practical use cases
+
+  // Check if the value is already a power of 2
+  if ((value & (value - 1)) === 0) return value;
+
+  // Round down to the nearest power of 2 using bit shifting
+  let result = 1;
+  while (result <= value) {
+    result <<= 1; // Double the result (equivalent to result *= 2)
+  }
+
+  return result >> 1; // Divide by 2 to get the largest power of 2 less than or equal to the value
+}
