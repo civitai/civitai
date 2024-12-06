@@ -1,0 +1,21 @@
+.border {
+  border: var(--borderWidth) solid var(--border);
+}
+.cssFrame, .texture {
+  padding: 6px;
+  background-size: var(--bgSize);
+}
+.cssFrame {
+    background-image: var(--bgGradient);
+}
+.texture {
+    background-image: var(--bgImage);
+}
+.glow {
+  &:before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: var(--bgGradient);
+  }
+}

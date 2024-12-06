@@ -11,7 +11,7 @@ export function ToolMultiSelect({
   onChange: (value: number[]) => void;
   placeholder?: string;
 }) {
-  const { tools, loading } = useQueryTools();
+  const { tools, loading } = useQueryTools({ filters: { include: ['unlisted'] } });
 
   return (
     <MultiSelectWrapper
@@ -35,7 +35,7 @@ export function ToolSelect({
   onChange: (value: number) => void;
   placeholder?: string;
 }) {
-  const { tools, loading } = useQueryTools();
+  const { tools, loading } = useQueryTools({ filters: { include: ['unlisted'] } });
 
   return (
     <SelectWrapper

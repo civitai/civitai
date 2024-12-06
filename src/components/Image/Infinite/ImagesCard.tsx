@@ -11,7 +11,7 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
 import { useMemo } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
@@ -35,6 +35,7 @@ import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { generationPanel } from '~/store/generation.store';
 import { useImageStore } from '~/store/image.store';
+import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
@@ -92,9 +93,17 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       <MediaHash {...image} />
                     )}
                   </RoutedDialogLink>
-
-                  <ImageGuard2.BlurToggle className="absolute left-2 top-2" />
-
+                  <div className="absolute left-2 top-2">
+                    <div className="flex flex-nowrap items-center gap-1">
+                      <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
+                      {safe &&
+                        image.type === MediaType.video &&
+                        image.metadata &&
+                        'duration' in image.metadata && (
+                          <DurationBadge duration={image.metadata.duration ?? 0} />
+                        )}
+                    </div>
+                  </div>
                   {safe && (
                     <div className="absolute right-2 top-2 flex flex-col gap-2">
                       {!isBlocked && <ImageContextMenu image={image} />}

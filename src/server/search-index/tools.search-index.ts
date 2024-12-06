@@ -85,7 +85,7 @@ type BaseTool = {
   bannerUrl: string | null;
 };
 
-const WHERE = [Prisma.sql`t.enabled = TRUE`];
+const WHERE = [Prisma.sql`t.enabled = TRUE AND t.unlisted = FALSE`];
 
 const transformData = async ({ tools }: { tools: BaseTool[] }) => {
   return tools; // No transformation needed

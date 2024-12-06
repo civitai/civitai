@@ -1,0 +1,15 @@
+.indicator {
+  position: absolute;
+  bottom: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 0 15px 15px;
+  border-color: transparent transparent theme('colors.yellow.6') transparent;
+  z-index: 10;
+  opacity: 0.5;
+  &:hover {
+    opacity: 0.8;
+  }
+}

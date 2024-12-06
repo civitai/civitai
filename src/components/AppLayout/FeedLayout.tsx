@@ -8,7 +8,7 @@ export function FeedLayout({ children }: { children: React.ReactNode }) {
     <MasonryProvider
       columnWidth={constants.cardSizes.model}
       maxSingleColumnWidth={450}
-      className="z-10 m-0 flex-1 peer-[.announcements]:mt-8"
+      className="z-10 m-0 flex-1"
     >
       {children}
     </MasonryProvider>

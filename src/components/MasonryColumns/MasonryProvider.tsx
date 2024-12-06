@@ -22,7 +22,7 @@ export const useMasonryContext = () => {
 };
 
 type Props = {
-  columnWidth: number;
+  columnWidth?: number;
   maxColumnCount?: number;
   gap?: number;
   columnGap?: number;
@@ -33,7 +33,7 @@ type Props = {
 
 export function MasonryProvider({
   children,
-  columnWidth,
+  columnWidth = 320,
   maxColumnCount = 7,
   gap = 16,
   columnGap = gap,

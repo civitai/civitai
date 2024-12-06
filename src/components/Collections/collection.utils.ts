@@ -399,3 +399,25 @@ export const useSetCollectionItemScore = () => {
     loading: setItemScoreMutation.isLoading,
   };
 };
+
+export const useCollectionEntryCount = (
+  collectionId: number,
+  opts?: {
+    enabled?: boolean;
+  }
+) => {
+  const { data, ...rest } = trpc.collection.getEntryCount.useQuery(
+    {
+      id: collectionId,
+    },
+    {
+      enabled: true,
+      ...opts,
+    }
+  );
+
+  return {
+    data,
+    ...rest,
+  };
+};

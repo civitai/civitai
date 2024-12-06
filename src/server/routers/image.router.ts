@@ -4,6 +4,7 @@ import {
   deleteImageHandler,
   moderateImageHandler,
   setTosViolationHandler,
+  setVideoThumbnailController,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -57,6 +58,7 @@ import {
   imageRatingReviewInput,
   imageReviewQueueInputSchema,
   reportCsamImagesSchema,
+  setVideoThumbnailSchema,
   updateImageNsfwLevelSchema,
   updateImageTechniqueSchema,
   updateImageToolsSchema,
@@ -187,5 +189,11 @@ export const imageRouter = router({
     .query(({ input, ctx }) => getImagesByUserIdForModeration(input.userId)),
 
   getAllImagesPendingIngestion: moderatorProcedure.query(getImagesPendingIngestion),
+  // #endregion
+
+  // #region [thumbnail]
+  setThumbnail: verifiedProcedure
+    .input(setVideoThumbnailSchema)
+    .mutation(setVideoThumbnailController),
   // #endregion
 });

@@ -1,4 +1,5 @@
-import { Group, Paper, Switch, Text, createStyles } from '@mantine/core';
+import { Group, Text } from '@mantine/core';
+import { ToggleList } from '~/components/ToggleList/ToggleList';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
 import {
   BrowsingLevel,
@@ -9,14 +10,12 @@ import {
 import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsStacked() {
-  const { classes } = useStyles();
-
   return (
-    <Paper withBorder p={0} className={classes.root}>
+    <ToggleList>
       {browsingLevels.map((level) => (
         <BrowsingLevelItem key={level} level={level} />
       ))}
-    </Paper>
+    </ToggleList>
   );
 }
 
@@ -24,17 +23,9 @@ function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
   const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const isSelected = Flags.hasFlag(browsingLevel, level);
   const toggleBrowsingLevel = useToggleBrowsingLevel();
-  const { classes, cx } = useStyles();
 
   return (
-    <Group
-      position="apart"
-      py="sm"
-      px="md"
-      onClick={() => toggleBrowsingLevel(level)}
-      className={cx({ [classes.active]: isSelected })}
-      noWrap
-    >
+    <ToggleList.Item checked={isSelected} onChange={() => toggleBrowsingLevel(level)}>
       <Group noWrap>
         <Text weight={700} w={50} ta="center">
           {browsingLevelLabels[level]}
@@ -43,26 +34,6 @@ function BrowsingLevelItem({ level }: { level: BrowsingLevel }) {
           {browsingLevelDescriptions[level]}
         </Text>
       </Group>
-      <Switch checked={isSelected} onClick={() => toggleBrowsingLevel(level)} />
-    </Group>
+    </ToggleList.Item>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  root: {
-    ['& > div']: {
-      ['&:hover']: {
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-        cursor: 'pointer',
-      },
-      ['&:not(:last-child)']: {
-        borderBottom: `1px ${
-          theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-        } solid`,
-      },
-    },
-  },
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-  },
-}));

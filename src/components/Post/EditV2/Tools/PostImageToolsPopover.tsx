@@ -15,7 +15,7 @@ export function ImageToolsPopover({
   image: PostEditImageDetail;
   onSuccess?: () => void;
 }) {
-  const { tools, loading: loadingTools } = useQueryTools();
+  const { tools, loading: loadingTools } = useQueryTools({ filters: { include: ['unlisted'] } });
   const [updateImage, imageCount, imageIds] = usePostEditStore((state) => [
     state.updateImage,
     state.images.length,

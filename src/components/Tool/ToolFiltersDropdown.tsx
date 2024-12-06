@@ -9,7 +9,7 @@ import {
   Indicator,
   Popover,
   Stack,
-  createStyles,
+  useMantineTheme,
 } from '@mantine/core';
 import { ToolType } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
@@ -17,45 +17,16 @@ import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GetAllToolsSchema } from '~/server/schema/tool.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        // color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));
+import classes from './ToolFiltersDropdown.module.scss';
+import cx from 'clsx';
+import { useIsClient } from '~/providers/IsClientProvider';
 
 const toolTypes = Object.keys(ToolType);
 
 export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
-  const { classes, theme, cx } = useStyles();
+  const theme = useMantineTheme();
   const mobile = useIsMobile();
+  const isClient = useIsClient();
 
   const [opened, setOpened] = useState(false);
 
@@ -96,16 +67,21 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
       zIndex={10}
       showZero={false}
       dot={false}
-      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
+      classNames={{ root: 'leading-none', indicator: 'leading-relaxed	' }}
       inline
     >
       <Button
-        className={classes.actionButton}
+        className="@max-sm:w-full"
         color="gray"
         radius="xl"
         variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
         {...buttonProps}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+        rightIcon={
+          <IconChevronDown
+            className={cx({ ['rotate-180 transition-transform']: opened })}
+            size={16}
+          />
+        }
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
@@ -146,6 +122,8 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
       )}
     </Stack>
   );
+
+  if (!isClient) return target;
 
   if (mobile)
     return (

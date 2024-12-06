@@ -39,6 +39,7 @@ import {
   updateCollectionItemsStatusInput,
   upsertCollectionInput,
 } from '~/server/schema/collection.schema';
+import { getCollectionEntryCount } from '~/server/services/collection.service';
 import {
   guardedProcedure,
   isFlagProtected,
@@ -159,4 +160,9 @@ export const collectionRouter = router({
   enableYoutubeSupport: moderatorProcedure
     .input(enableCollectionYoutubeSupportInput)
     .mutation(enableCollectionYoutubeSupportHandler),
+  getEntryCount: protectedProcedure
+    .input(getByIdSchema)
+    .query(({ input, ctx }: { input: GetByIdInput; ctx: { user: { id: number } } }) => {
+      return getCollectionEntryCount({ collectionId: input.id, userId: ctx.user.id });
+    }),
 });

@@ -58,7 +58,6 @@ export function CsamImageSelection({
   return (
     <div className="relative">
       <MasonryProvider
-        columnWidth={300}
         maxColumnCount={7}
         maxSingleColumnWidth={450}
         style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}

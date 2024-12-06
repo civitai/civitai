@@ -49,7 +49,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useHotkeys } from '@mantine/hooks';
-import { Burger } from '~/components/AppLayout/AppHeader/Burger';
+import { Burger } from '~/components/Burger/Burger';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 
 const UserMenuCtx = createContext<{ handleClose: () => void }>({ handleClose: () => undefined });
@@ -80,7 +80,7 @@ export function UserMenu() {
             <UserAvatar user={creator ?? currentUser} size="md" />
             {features.buzz && currentUser && <UserBuzz pr="sm" />}
           </div>
-          <Burger opened={open} size="sm" className={clsx({ ['@md:hidden']: !!currentUser })} />
+          <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
         </UnstyledButton>
       </Popover.Target>
       <Popover.Dropdown className="flex flex-col p-0 @max-md:mt-2 @max-md:h-[calc(100%-var(--header-height))]">

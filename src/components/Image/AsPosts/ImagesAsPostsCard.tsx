@@ -12,6 +12,7 @@ import {
   ThemeIcon,
   ThemeIconProps,
   Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconBrush,
@@ -37,11 +38,9 @@ import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -50,6 +49,8 @@ import { generationPanel } from '~/store/generation.store';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import { TwCard } from '~/components/TwCard/TwCard';
 
 export function ImagesAsPostsCard({
   data,
@@ -60,6 +61,7 @@ export function ImagesAsPostsCard({
   width: number;
   height: number;
 }) {
+  const theme = useMantineTheme();
   const { ref, inView } = useInView({ rootMargin: '200%' });
   const { classes, cx } = useStyles();
   const features = useFeatureFlags();
@@ -213,92 +215,101 @@ export function ImagesAsPostsCard({
   const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
 
   return (
-    <div className={cx(pinned && classes.pinned)}>
-      {pinned && (
-        <PinnedIndicator
-          radius="xl"
-          color="orange"
-          size="md"
-          iconProps={{ size: 16, stroke: 1.5 }}
-        />
-      )}
-      <MasonryCard
-        withBorder={!cosmetic}
-        shadow="sm"
-        height={height}
-        ref={ref}
-        // Hard setting padding className to be !important for the frame to work
-        className={cx(classes.card, cosmetic && `!p-1.5`)}
-        frameDecoration={cosmetic}
-      >
-        {data.user.id !== -1 && (
-          <Paper p="xs" radius={0} className={cx(cosmetic && 'rounded-t-lg')}>
-            {inView && (
-              <Group spacing={8} align="flex-start" position="apart" noWrap>
-                <UserAvatar
-                  user={data.user}
-                  subText={
-                    <>
-                      {data.publishedAt ? <DaysFromNow date={data.publishedAt} /> : 'Not published'}
-                      {' - '}
-                      {modelVersionName ?? 'Cross-post'}
-                    </>
-                  }
-                  subTextForce
-                  size="md"
-                  spacing="xs"
-                  badge={
-                    isOP ? (
-                      <Badge size="xs" color="violet" radius="xl">
-                        OP
-                      </Badge>
-                    ) : null
-                  }
-                  withUsername
-                  linkToProfile
-                />
-                <Group spacing={8} position="right" noWrap>
-                  {!data.publishedAt && (
-                    <Tooltip label="Post not Published" withArrow>
-                      <Link href={`/posts/${data.postId}/edit`}>
-                        <ActionIcon color="red" variant="outline">
-                          <IconExclamationMark />
-                        </ActionIcon>
-                      </Link>
-                    </Tooltip>
-                  )}
-                  {data.review ? (
-                    <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
-                      <Badge
-                        variant="light"
-                        radius="md"
-                        size="lg"
-                        style={{ userSelect: 'none', padding: 4, height: 'auto' }}
-                        color={isThumbsUp ? 'success.5' : 'red'}
-                      >
-                        <Group spacing={4} noWrap>
-                          {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
-                          {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
-                        </Group>
-                      </Badge>
-                    </RoutedDialogLink>
-                  ) : null}
-                </Group>
-              </Group>
-            )}
-          </Paper>
+    <TwCosmeticWrapper
+      className="w-full"
+      cosmetic={{
+        ...cosmetic?.data,
+        ...(pinned
+          ? {
+              border: theme.colors.orange[theme.fn.primaryShade()],
+              borderWidth: 2,
+            }
+          : undefined),
+      }}
+    >
+      <>
+        {pinned && (
+          <PinnedIndicator
+            radius="xl"
+            color="orange"
+            size="md"
+            iconProps={{ size: 16, stroke: 1.5 }}
+          />
         )}
-        <div className={classes.container}>
-          <div className={classes.blurHash}>
-            <MediaHash {...image} className={cx(cosmetic && 'rounded-b-lg')} />
-          </div>
-          <div className={classes.content} style={{ opacity: inView ? 1 : 0 }}>
+        <TwCard style={{ height }} className={cx({ ['border']: !pinned })} ref={ref}>
+          <MediaHash {...image} className={cx('opacity-70', cosmetic && 'rounded-b-lg')} />
+          {data.user.id !== -1 && (
+            <Paper p="xs" radius={0} className={cx('h-[58px] z-[2]', cosmetic && 'rounded-t-lg ')}>
+              {inView && (
+                <Group spacing={8} align="flex-start" position="apart" noWrap>
+                  <UserAvatar
+                    user={data.user}
+                    subText={
+                      <>
+                        {data.publishedAt ? (
+                          <DaysFromNow date={data.publishedAt} />
+                        ) : (
+                          'Not published'
+                        )}
+                        {' - '}
+                        {modelVersionName ?? 'Cross-post'}
+                      </>
+                    }
+                    subTextForce
+                    size="md"
+                    spacing="xs"
+                    badge={
+                      isOP ? (
+                        <Badge size="xs" color="violet" radius="xl">
+                          OP
+                        </Badge>
+                      ) : null
+                    }
+                    withUsername
+                    linkToProfile
+                  />
+                  <Group spacing={8} position="right" noWrap>
+                    {!data.publishedAt && (
+                      <Tooltip label="Post not Published" withArrow>
+                        <Link href={`/posts/${data.postId}/edit`}>
+                          <ActionIcon color="red" variant="outline">
+                            <IconExclamationMark />
+                          </ActionIcon>
+                        </Link>
+                      </Tooltip>
+                    )}
+                    {data.review ? (
+                      <RoutedDialogLink name="resourceReview" state={{ reviewId: data.review.id }}>
+                        <Badge
+                          variant="light"
+                          radius="md"
+                          size="lg"
+                          style={{ userSelect: 'none', padding: 4, height: 'auto' }}
+                          color={isThumbsUp ? 'success.5' : 'red'}
+                        >
+                          <Group spacing={4} noWrap>
+                            {isThumbsUp ? <ThumbsUpIcon filled /> : <ThumbsDownIcon filled />}
+                            {data.review.details && <IconMessage size={18} strokeWidth={2.5} />}
+                          </Group>
+                        </Badge>
+                      </RoutedDialogLink>
+                    ) : null}
+                  </Group>
+                </Group>
+              )}
+            </Paper>
+          )}
+
+          <div
+            className="relative opacity-0 transition-opacity"
+            style={{ opacity: inView ? 1 : 0 }}
+          >
             {inView && (
               <>
                 {data.images.length === 1 ? (
                   <ImageGuard2 image={image}>
                     {(safe) => (
-                      <div className={cx(classes.imageContainer, cosmetic && 'rounded-b-lg')}>
+                      <>
                         {image.onSite && <OnsiteIndicator />}
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         {safe && (
@@ -343,10 +354,10 @@ export function ImagesAsPostsCard({
                                 type={image.type}
                                 width={450}
                                 placeholder="empty"
-                                className={classes.image}
                                 wrapperProps={{ style: { zIndex: 1 } }}
                                 skip={getSkipValue(image)}
                                 fadeIn
+                                className="z-[1] object-cover"
                               />
                             )}
                           </>
@@ -371,7 +382,7 @@ export function ImagesAsPostsCard({
                         {image.hasMeta && (
                           <div className="absolute bottom-0.5 right-0.5 z-10">
                             <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                              <ActionIcon className={classes.info} variant="transparent" size="lg">
+                              <ActionIcon variant="transparent" size="lg">
                                 <IconInfoCircle
                                   color="white"
                                   filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
@@ -383,7 +394,7 @@ export function ImagesAsPostsCard({
                             </ImageMetaPopover2>
                           </div>
                         )}
-                      </div>
+                      </>
                     )}
                   </ImageGuard2>
                 ) : (
@@ -420,7 +431,7 @@ export function ImagesAsPostsCard({
                           {slidesInView.includes(index) && (
                             <ImageGuard2 image={image} connectType="post" connectId={postId}>
                               {(safe) => (
-                                <div className={classes.imageContainer}>
+                                <>
                                   {image.onSite && <OnsiteIndicator />}
                                   <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                                   {safe && (
@@ -456,9 +467,8 @@ export function ImagesAsPostsCard({
                                     className={classes.link}
                                   >
                                     <>
-                                      <div className={classes.blurHash}>
-                                        <MediaHash {...image} />
-                                      </div>
+                                      <MediaHash {...image} className="opacity-70" />
+
                                       {safe && (
                                         <EdgeMedia2
                                           metadata={image.metadata}
@@ -468,10 +478,10 @@ export function ImagesAsPostsCard({
                                           type={image.type}
                                           width={450}
                                           placeholder="empty"
-                                          className={classes.image}
                                           wrapperProps={{ style: { zIndex: 1 } }}
                                           skip={getSkipValue(image)}
                                           fadeIn
+                                          className="z-[1] object-cover"
                                         />
                                       )}
                                     </>
@@ -507,7 +517,7 @@ export function ImagesAsPostsCard({
                                       </ImageMetaPopover2>
                                     </div>
                                   )}
-                                </div>
+                                </>
                               )}
                             </ImageGuard2>
                           )}
@@ -519,9 +529,9 @@ export function ImagesAsPostsCard({
               </>
             )}
           </div>
-        </div>
-      </MasonryCard>
-    </div>
+        </TwCard>
+      </>
+    </TwCosmeticWrapper>
   );
 }
 
@@ -530,12 +540,10 @@ function PinnedIndicator({
   className,
   ...themeIconProps
 }: Omit<ThemeIconProps, 'children'> & { iconProps?: IconProps }) {
-  const { classes, cx } = useStyles();
-
   return (
     <HoverCard width={300} withArrow withinPortal>
       <HoverCard.Target>
-        <ThemeIcon {...themeIconProps} className={cx(classes.pinnedIndicator, className)}>
+        <ThemeIcon {...themeIconProps} className="absolute -right-2.5 -top-2.5 z-10">
           <IconPinFilled {...iconProps} />
         </ThemeIcon>
       </HoverCard.Target>
@@ -559,48 +567,12 @@ const useStyles = createStyles((theme) => ({
     color: 'white',
     fontWeight: 500,
   },
-  card: {
-    display: 'flex',
-    flexDirection: 'column',
-    cursor: 'auto !important',
-  },
   link: {
-    width: '100%',
-    display: 'flex',
-    justifyContent: 'center',
-  },
-  slide: {
-    display: 'flex',
-    flexDirection: 'column',
-  },
-  imageContainer: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
     width: '100%',
     height: '100%',
     display: 'flex',
-    alignItems: 'center',
     justifyContent: 'center',
-    // paddingBottom: 42,
-    // background: theme.colors.dark[9],
-    flexDirection: 'column',
-    overflow: 'hidden',
   },
-  topRight: {
-    position: 'absolute',
-    top: theme.spacing.sm,
-    right: theme.spacing.sm,
-    zIndex: 10,
-  },
-  contentOverlay: {
-    position: 'absolute',
-    width: '100%',
-    left: 0,
-    zIndex: 10,
-    padding: theme.spacing.sm,
-  },
-  top: { top: 0 },
   reactions: {
     position: 'absolute',
     bottom: 6,
@@ -613,66 +585,6 @@ const useStyles = createStyles((theme) => ({
     // backdropFilter: 'blur(13px) saturate(160%)',
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     padding: 4,
-    zIndex: 1,
-  },
-  blurHash: {
-    opacity: 0.7,
-    zIndex: 1,
-  },
-  container: {
-    position: 'relative',
-    flex: 1,
-  },
-  content: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    transition: theme.other.fadeIn,
-    opacity: 0,
-    zIndex: 2,
-  },
-  info: {
-    // position: 'absolute',
-    // bottom: 5,
-    // right: 5,
-    // zIndex: 1,
-  },
-  statBadge: {
-    background: 'rgba(212,212,212,0.2)',
-    // backdropFilter: 'blur(7px)',
-    cursor: 'pointer',
-  },
-  image: {
-    width: '100%',
-    zIndex: 1,
-    // position: 'absolute',
-    // top: '50%',
-    // left: 0,
-    // transform: 'translateY(-50%)',
-  },
-
-  pinned: {
-    position: 'relative',
-    borderRadius: 8,
-
-    '&:before': {
-      content: '""',
-      position: 'absolute',
-      top: 0,
-      right: 0,
-      bottom: 0,
-      left: 0,
-      margin: -2,
-      borderRadius: 'inherit',
-      background: theme.colors.orange[theme.fn.primaryShade()],
-    },
-  },
-  pinnedIndicator: {
-    position: 'absolute',
-    top: -10,
-    right: -10,
     zIndex: 1,
   },
 }));

@@ -1,10 +1,8 @@
 import OneKeyMap from '@essentials/one-key-map';
 import { Carousel } from '@mantine/carousel';
-import { createStyles } from '@mantine/core';
 import trieMemoize from 'trie-memoize';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 
 type Props<TData> = {
   data: TData[];
@@ -29,7 +27,6 @@ export function MasonryCarousel<TData>({
   itemWrapperProps,
   viewportClassName,
 }: Props<TData>) {
-  const { classes } = useStyles();
   const { columnCount, columnWidth, maxSingleColumnWidth } = useMasonryContext();
 
   const totalItems = data.length + (extra ? 1 : 0);
@@ -38,15 +35,16 @@ export function MasonryCarousel<TData>({
   return data.length ? (
     <Carousel
       key={id}
-      classNames={{ ...classes, viewport: viewportClassName }}
-      slideSize={`${100 / columnCount}%`}
-      slideGap="md"
+      classNames={{ viewport: viewportClassName }}
+      slideSize={columnCount > 1 ? '336px' : '100%'}
+      slideGap={16}
       align={totalItems <= columnCount ? 'start' : 'end'}
       withControls={totalItems > columnCount ? true : false}
       slidesToScroll={columnCount}
+      controlSize={32}
       // height={columnCount === 1 ? maxSingleColumnWidth : '100%'}
       loop
-      sx={{
+      style={{
         width: columnCount === 1 ? maxSingleColumnWidth : '100%',
         maxWidth: '100%',
         margin: '0 auto',
@@ -68,24 +66,22 @@ export function MasonryCarousel<TData>({
   );
 }
 
-const useStyles = createStyles(() => ({
-  control: {
-    svg: {
-      width: 32,
-      height: 32,
-
-      [containerQuery.smallerThan('sm')]: {
-        minWidth: 16,
-        minHeight: 16,
-      },
-    },
-
-    '&[data-inactive]': {
-      opacity: 0,
-      cursor: 'default',
-    },
-  },
-}));
+// const useStyles = createStyles(() => ({
+//   control: {
+//     svg: {
+//       width: 32,
+//       height: 32,
+//       [containerQuery.smallerThan('sm')]: {
+//         minWidth: 16,
+//         minHeight: 16,
+//       },
+//     },
+//     '&[data-inactive]': {
+//       opacity: 0,
+//       cursor: 'default',
+//     },
+//   },
+// }));
 
 // supposedly ~5.5x faster than createElement without the memo
 const createRenderElement = trieMemoize(

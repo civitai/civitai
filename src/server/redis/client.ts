@@ -202,7 +202,8 @@ export const REDIS_KEYS = {
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
     IMAGE_META: 'packed:caches:image-meta',
-    ANNOUNCEMENTS: 'packed:caches:image-meta',
+    IMAGE_METADATA: 'packed:caches:image-metadata',
+    ANNOUNCEMENTS: 'packed:caches:announcement',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -231,6 +232,7 @@ export const REDIS_KEYS = {
     IMAGE_DELETED: 'indexes:image-deleted',
   },
   DAILY_CHALLENGE: {
+    CONFIG: 'daily-challenge:config',
     DETAILS: 'daily-challenge:details',
   },
 } as const;

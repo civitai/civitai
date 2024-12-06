@@ -1,0 +1,10 @@
+.username {
+  vertical-align: middle;
+  filter: drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.2));
+}
+
+:global(.dark) {
+  .username {
+    filter: drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8));
+  }
+}

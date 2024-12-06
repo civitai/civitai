@@ -20,6 +20,7 @@ import {
   deleteImageById,
   getAllImagesIndex,
   getPostDetailByImageId,
+  setVideoThumbnail,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -40,6 +41,7 @@ import {
   GetInfiniteImagesOutput,
   ImageModerationSchema,
   ImageReviewQueueInput,
+  SetVideoThumbnailInput,
 } from './../schema/image.schema';
 import {
   getAllImages,
@@ -578,3 +580,19 @@ export const getImageContestCollectionDetailsHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+export function setVideoThumbnailController({
+  input,
+  ctx,
+}: {
+  input: SetVideoThumbnailInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId, isModerator } = ctx.user;
+    return setVideoThumbnail({ ...input, userId, isModerator });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+}

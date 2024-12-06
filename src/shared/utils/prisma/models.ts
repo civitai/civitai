@@ -2406,6 +2406,7 @@ export interface Tool {
   icon: string | null;
   createdAt: Date;
   enabled: boolean;
+  unlisted: boolean;
   type: ToolType;
   domain: string | null;
   imageTools?: ImageTool[];
