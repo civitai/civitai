@@ -69,9 +69,10 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
   );
 
   let resource: SelectedResource | undefined;
+  let randomUser: { userId: number } | undefined;
   while (!resource) {
     // Pick a user
-    const randomUser = getRandom(availableUsers);
+    randomUser = getRandom(availableUsers);
 
     // Get resources from that user
     const resourceIds = await dbRead.$queryRaw<{ id: number }[]>`
@@ -100,6 +101,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
         LIMIT 1
       `;
   }
+  if (!randomUser || !resource) throw new Error('Failed to pick resource');
 
   // Get cover of resource
   const image = await getCoverOfModel(resource.modelId);
@@ -192,6 +194,13 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
     },
   });
   log('Added to challenge collection');
+
+  // Add link back to challenge from collection
+  await dbWrite.$executeRawUnsafe(`
+    UPDATE "Collection"
+      SET description = COALESCE(description, ' [View Daily Challenge](/articles/${article.id})')
+    WHERE id = ${collection.id};
+  `);
 });
 
 export const processDailyChallengeEntries = createJob(
@@ -231,6 +240,41 @@ export const processDailyChallengeEntries = createJob(
       WHERE s.id = ci."imageId";
     `;
     log('Reviewed entries:', reviewedCount);
+
+    // Notify users of rejection
+    const rejectedUsers = await dbRead.$queryRaw<{ userId: number; count: number }[]>`
+      SELECT
+        i."userId",
+        CAST(COUNT(*) as int) as count
+      FROM "CollectionItem" ci
+      JOIN "Image" i ON i.id = ci."imageId"
+      WHERE ci."collectionId" = ${currentChallenge.collectionId}
+      AND ci.status = 'REJECTED'
+      GROUP BY 1;
+    `;
+    const processingDateStr = dayjs().utc().startOf('hour').format('HH');
+    const notificationTasks = rejectedUsers.map(({ userId, count }) => async () => {
+      await createNotification({
+        type: 'challenge-rejection',
+        category: NotificationCategory.System,
+        key: `challenge-rejection:${currentChallenge.articleId}:${processingDateStr}`,
+        userId,
+        details: {
+          articleId: currentChallenge.articleId,
+          collectionId: currentChallenge.collectionId,
+          challengeName: currentChallenge.title,
+          count,
+        },
+      });
+    });
+    await limitConcurrency(notificationTasks, 3);
+
+    // Remove rejected entries from collection
+    await dbWrite.$executeRaw`
+      DELETE FROM "CollectionItem"
+      WHERE "collectionId" = ${currentChallenge.collectionId}
+      AND status = 'REJECTED';
+    `;
 
     // Rate new entries
     // ----------------------------------------------

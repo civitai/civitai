@@ -25,4 +25,13 @@ export const systemNotifications = createNotificationProcessor({
       url: `/articles/${details.articleId}`,
     }),
   },
+  'challenge-rejection': {
+    displayName: 'Challenge Rejection',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `${details.count} entries to the "${details.challengeName}" challenge have been declined. Consider making new entries to improve your chances of winning!`,
+      url: `/articles/${details.articleId}`,
+    }),
+  },
 });
