@@ -22,7 +22,7 @@ export function ToolBanner({
   const selectedId = toolIds?.[0];
 
   const { tools } = useQueryTools({
-    filters: undefined,
+    filters: { include: ['unlisted'] },
     options: { enabled: !!toolIds?.length || !!slug },
   });
   const selected = tools?.find((x) => x.id === selectedId || slugit(x.name) === slug);

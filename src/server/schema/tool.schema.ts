@@ -13,4 +13,5 @@ export const getAllToolsSchema = infiniteQuerySchema.extend({
   sort: z.nativeEnum(ToolSort).optional(),
   type: z.nativeEnum(ToolType).optional(),
   company: z.string().optional(),
+  include: z.enum(['unlisted']).array().optional(),
 });

@@ -51,7 +51,7 @@ function ToolFeedPage() {
     withMeta,
   } = query;
 
-  const { tools, loading } = useQueryTools();
+  const { tools, loading } = useQueryTools({ filters: { include: ['unlisted'] } });
   const toolId = tools.find((tool) => slugit(tool.name) === slug)?.id;
 
   if (loading) return <PageLoader />;
