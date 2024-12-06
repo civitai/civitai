@@ -17,7 +17,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
-import { MediaType, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   IconArrowBackUp,
   IconArrowMergeBoth,
@@ -51,30 +50,29 @@ import {
 } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
+import {
+  CurrentThumbnail,
+  PostImageThumbnailSelect,
+} from '~/components/Post/EditV2/Thumbnail/PostImageThumbnailSelect';
 import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { VideoMetadata } from '~/server/schema/media.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import {
   generationFormWorkflowConfigurations,
   getBaseModelResourceTypes,
   getBaseModelSetType,
 } from '~/shared/constants/generation.constants';
-import { ImageIngestionStatus, ModelType } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
-import {
-  CurrentThumbnail,
-  PostImageThumbnailSelect,
-} from '~/components/Post/EditV2/Thumbnail/PostImageThumbnailSelect';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { CustomCard } from './CustomCard';
 
 // #region [types]
