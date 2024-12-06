@@ -1,10 +1,7 @@
 import {
   ActionIcon,
   ActionIconProps,
-  Input,
   Popover,
-  createStyles,
-  MantineSize,
   Box,
   Stack,
   Group,
@@ -15,6 +12,7 @@ import {
 } from '@mantine/core';
 import { getHotkeyHandler, useClickOutside } from '@mantine/hooks';
 import { useEffect, useMemo, useState } from 'react';
+import clsx from 'clsx';
 
 export function ActionIconSelect<T>({
   items,
@@ -28,7 +26,6 @@ export function ActionIconSelect<T>({
   children: React.ReactNode;
   actionIconProps?: ActionIconProps;
 } & Omit<PopoverProps, 'children'>) {
-  const { classes, cx } = useDropdownContentStyles();
   const [active, setActive] = useState<number>();
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState<string>('');
@@ -136,7 +133,9 @@ export function ActionIconSelect<T>({
               {filteredData.map((item, index) => (
                 <Group
                   key={item.label}
-                  className={cx({ [classes.active]: index === active })}
+                  className={clsx({
+                    ['cursor-pointer bg-gray-0 dark:bg-dark-7']: index === active,
+                  })}
                   onMouseOver={() => setActive(index)}
                   onMouseLeave={() => setActive(undefined)}
                   onClick={() => handleClick(index)}
@@ -152,10 +151,3 @@ export function ActionIconSelect<T>({
     </Popover>
   );
 }
-
-const useDropdownContentStyles = createStyles((theme) => ({
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-    cursor: 'pointer',
-  },
-}));

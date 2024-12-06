@@ -1,0 +1,15 @@
+$columns: 7;
+$width: 320;
+$gap: 16;
+
+.queries {
+  margin: 0 auto;
+  box-sizing: content-box;
+  width: 100%;
+
+  @for $i from 2 through $columns {
+    @container (min-width: #{$width * $i + ($gap * ($i - 1))}px) {
+      width: #{$width * $i + ($gap * ($i - 1))}px;
+    }
+  }
+}
