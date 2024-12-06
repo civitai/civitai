@@ -61,6 +61,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { ImageModerationReviewQueueImage } from '~/types/router';
+import { formatDate } from '~/utils/date-helpers';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -268,6 +269,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const theme = useMantineTheme();
 
   const hasReport = !!image.report;
+  const hasAppeal = !!image.appeal;
   const pendingReport = hasReport && image.report?.status === 'Pending';
   const entityUrl = getImageEntityUrl(image);
 
@@ -457,13 +459,35 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
             </Group>
           </Card.Section>
         )}
-        {image.needsReview === 'appeal' && (
+        {image.needsReview === 'appeal' && hasAppeal && (
           <Card.Section p="xs">
-            <Group spacing={4}>
-              <Badge size="sm" color="red">
-                Appeal
-              </Badge>
-            </Group>
+            <Stack spacing={8} sx={{ cursor: 'auto', color: 'initial' }}>
+              <Group position="apart" noWrap>
+                <Stack spacing={2}>
+                  <Text size="xs" color="dimmed" inline>
+                    Appealed by
+                  </Text>
+                  <Group spacing={4}>
+                    <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
+                      <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                        {image.appeal?.user.username}
+                      </Anchor>
+                    </Link>
+                  </Group>
+                </Stack>
+                <Stack spacing={2} align="flex-end">
+                  <Text size="xs" color="dimmed" inline>
+                    Created at
+                  </Text>
+                  {image.appeal?.createdAt ? (
+                    <Text size="xs">{formatDate(image.appeal?.createdAt)}</Text>
+                  ) : null}
+                </Stack>
+              </Group>
+              <ContentClamp maxHeight={150}>
+                {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
+              </ContentClamp>
+            </Stack>
           </Card.Section>
         )}
       </>

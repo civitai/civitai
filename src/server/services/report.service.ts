@@ -493,74 +493,46 @@ export async function resolveEntityAppeal({
     data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
   });
 
-  if (status === AppealStatus.Approved) {
-    for (const appeal of appeals) {
-      switch (appeal.entityType) {
-        case EntityType.Image:
-          // Update entity with needsReview = null
-          const image = await dbWrite.image.update({
-            where: { id: appeal.entityId },
-            data: { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Pending },
-          });
-          await ingestImage({ image });
-          break;
-        default:
-          // Do nothing
-          break;
-      }
-
-      if (appeal.buzzTransactionId) {
-        await withRetries(() =>
-          refundTransaction(
-            appeal.buzzTransactionId as string,
-            `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
-          )
-        );
-      }
-
-      // Notify the user that their appeal has been resolved
-      await createNotification({
-        userId: appeal.userId,
-        type: 'entity-appeal-resolved',
-        category: NotificationCategory.Other,
-        key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
-        details: {
-          entityType: appeal.entityType,
-          entityId: appeal.entityId,
-          status: appeal.status,
-          resolvedMessage,
-        },
-      });
+  const approved = status === AppealStatus.Approved;
+  for (const appeal of appeals) {
+    switch (appeal.entityType) {
+      case EntityType.Image:
+        // Update entity with needsReview = null
+        const image = await dbWrite.image.update({
+          where: { id: appeal.entityId },
+          data: approved
+            ? { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Pending }
+            : { needsReview: null },
+        });
+        await ingestImage({ image });
+        break;
+      default:
+        // Do nothing
+        break;
     }
-  } else {
-    for (const appeal of appeals) {
-      switch (appeal.entityType) {
-        case EntityType.Image:
-          // Update entity with needsReview = null
-          await dbWrite.image.update({
-            where: { id: appeal.entityId },
-            data: { needsReview: null },
-          });
-          break;
-        default:
-          // Do nothing
-          break;
-      }
 
-      // Notify the user that their appeal has been resolved
-      await createNotification({
-        userId: appeal.userId,
-        type: 'entity-appeal-resolved',
-        category: NotificationCategory.Other,
-        key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
-        details: {
-          entityType: appeal.entityType,
-          entityId: appeal.entityId,
-          status: appeal.status,
-          resolvedMessage,
-        },
-      });
+    if (approved && appeal.buzzTransactionId) {
+      await withRetries(() =>
+        refundTransaction(
+          appeal.buzzTransactionId as string,
+          `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+        )
+      );
     }
+
+    // Notify the user that their appeal has been resolved
+    await createNotification({
+      userId: appeal.userId,
+      type: 'entity-appeal-resolved',
+      category: NotificationCategory.Other,
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
+      details: {
+        entityType: appeal.entityType,
+        entityId: appeal.entityId,
+        status,
+        resolvedMessage,
+      },
+    });
   }
 
   return appeals;

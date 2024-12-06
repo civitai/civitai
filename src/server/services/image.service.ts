@@ -294,7 +294,7 @@ export const moderateImages = async ({
         details: {
           modelName: img.postId ? `post #${img.postId}` : 'a post',
           entity: 'image',
-          url: `/posts/${img.postId ?? ''}`,
+          url: `/images/${img.id ?? ''}`,
         },
       }).catch();
     }
@@ -3323,6 +3323,39 @@ export const updateEntityImages = async ({
   }
 };
 
+const imageReviewQueueJoinMap = {
+  report: {
+    select: `
+      report.id as "reportId",
+      report.reason as "reportReason",
+      report.status as "reportStatus",
+      report.details as "reportDetails",
+      array_length("alsoReportedBy", 1) as "reportCount",
+      ur.username as "reportUsername",
+      ur.id as "reportUserId",
+    `,
+    join: `
+      JOIN "ImageReport" imgr ON i.id = imgr."imageId"
+      JOIN "Report" report ON report.id = imgr."reportId"
+      JOIN "User" ur ON ur.id = report."userId"
+    `,
+  },
+  appeal: {
+    select: `
+      appeal.id as "appealId",
+      appeal."appealMessage" as "appealMessage",
+      appeal."createdAt" as "appealCreatedAt",
+      au.id as "appealUserId",
+      au.username as "appealUsername",
+    `,
+    join: `
+      JOIN "Appeal" appeal ON appeal."entityId" = i.id AND appeal."entityType" = 'Image'
+      JOIN "User" au ON au.id = appeal."userId"
+    `,
+  },
+} as const;
+type AdditionalQueryKey = keyof typeof imageReviewQueueJoinMap;
+
 type GetImageModerationReviewQueueRaw = {
   id: number;
   name: string;
@@ -3363,6 +3396,11 @@ type GetImageModerationReviewQueueRaw = {
   reportUsername?: string;
   reportUserId?: number;
   reportCount?: number;
+  appealId?: number;
+  appealMessage?: string;
+  appealCreatedAt?: Date;
+  appealUserId?: number;
+  appealUsername?: string;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3415,21 +3453,8 @@ export const getImageModerationReviewQueue = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
-  const reportsJoin = `
-    JOIN "ImageReport" imgr ON i.id = imgr."imageId"
-    JOIN "Report" report ON report.id = imgr."reportId"
-    JOIN "User" ur ON ur.id = report."userId"
-  `;
-
-  const reportsSelect = `
-    report.id as "reportId",
-    report.reason as "reportReason",
-    report.status as "reportStatus",
-    report.details as "reportDetails",
-    array_length("alsoReportedBy", 1) as "reportCount",
-    ur.username as "reportUsername",
-    ur.id as "reportUserId",
-  `;
+  const queryKey = reportReview ? 'report' : (needsReview as AdditionalQueryKey);
+  const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
     -- Image moderation queue
@@ -3463,13 +3488,13 @@ export const getImageModerationReviewQueue = async ({
       u."deletedAt",
       ic."entityType",
       ic."entityId",
-      ${Prisma.raw(reportReview ? reportsSelect : '')}
+      ${Prisma.raw(additionalQuery ? additionalQuery.select : '')}
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       FROM "Image" i
       JOIN "User" u ON u.id = i."userId"
       LEFT JOIN "Post" p ON p.id = i."postId"
       LEFT JOIN "ImageConnection" ic on ic."imageId" = i.id
-      ${Prisma.raw(reportReview ? reportsJoin : '')}
+      ${Prisma.raw(additionalQuery ? additionalQuery.join : '')}
       WHERE ${Prisma.join(AND, ' AND ')}
       ORDER BY ${Prisma.raw(orderBy)}
       LIMIT ${limit + 1}
@@ -3545,6 +3570,14 @@ export const getImageModerationReviewQueue = async ({
             user: { id: number; username?: string | null };
           }
         | undefined;
+      appeal?:
+        | {
+            id: number;
+            reason: string;
+            createdAt: Date;
+            user: { id: number; username?: string | null };
+          }
+        | undefined;
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       entityType?: string | null;
@@ -3564,6 +3597,11 @@ export const getImageModerationReviewQueue = async ({
       reportUsername,
       reportUserId,
       reportCount,
+      appealId,
+      appealMessage,
+      appealCreatedAt,
+      appealUserId,
+      appealUsername,
       ...i
     }) => ({
       ...i,
@@ -3588,6 +3626,14 @@ export const getImageModerationReviewQueue = async ({
             status: reportStatus as ReportStatus,
             count: (reportCount ?? 0) + 1,
             user: { id: reportUserId as number, username: reportUsername },
+          }
+        : undefined,
+      appeal: appealId
+        ? {
+            id: appealId,
+            reason: appealMessage as string,
+            createdAt: appealCreatedAt as Date,
+            user: { id: appealUserId as number, username: appealUsername },
           }
         : undefined,
     })

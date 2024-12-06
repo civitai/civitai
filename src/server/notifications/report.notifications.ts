@@ -59,9 +59,11 @@ export const reportNotifications = createNotificationProcessor({
     category: NotificationCategory.Other,
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `Your appeal regarding the ${
+      message: `Your appeal regarding your ${
         details.entityType
-      } has been ${details.status.toLowerCase()}: ${details.resolvedMessage}`,
+      } has been ${details.status.toLowerCase()}${
+        details.resolvedMessage ? `: ${details.resolvedMessage}.` : '.'
+      }`,
       url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
     }),
   },
