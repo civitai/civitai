@@ -73,7 +73,7 @@ export const contestCollectionYoutubeUpload = createJob(
             AND (i.metadata->'youtubeVideoId') IS NULL
             AND ci."updatedAt" > ${lastRun}
           -- Ensures that we try to upload smaller videos first as a safeguard.
-          ORDER BY metadata->'size' ASC
+          ORDER BY i.metadata->'size' ASC
         `;
 
         const authClient = await getYoutubeAuthClient(authKey.value as string);
