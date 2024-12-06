@@ -166,7 +166,8 @@ export const getAppealDetailsSchema = z.object({
 
 export type ResolveAppealInput = z.output<typeof resolveAppealSchema>;
 export const resolveAppealSchema = z.object({
-  id: z.number(),
+  ids: z.number().array().min(1),
+  entityType: z.nativeEnum(EntityType),
   status: z.nativeEnum(AppealStatus),
   resolvedMessage: z.string().trim().max(220).optional(),
   internalNotes: z.string().trim().optional(),

@@ -1,4 +1,4 @@
-import { Button, Loader, Modal, Text, Textarea } from '@mantine/core';
+import { Alert, Button, Loader, Modal, Text, Textarea } from '@mantine/core';
 import { useHotkeys } from '@mantine/hooks';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
@@ -51,11 +51,13 @@ export function AppealDialog({ entityId, entityType }: Props) {
   };
 
   useHotkeys([['mod+Enter', handleSubmit]]);
+  const shouldChargeBuzz = data >= 3;
 
   return (
     <Modal
       {...dialog}
       title={<Text className="font-semibold">Appeal Removal</Text>}
+      size="lg"
       onClose={handleClose}
       centered
     >
@@ -72,17 +74,27 @@ export function AppealDialog({ entityId, entityType }: Props) {
             value={state.message}
             onChange={(e) => setState({ message: e.currentTarget.value, error: '' })}
             error={state.error}
-            minRows={5}
-            maxRows={8}
+            minRows={3}
+            maxRows={5}
             maxLength={MAX_MESSAGE_LENGTH}
             autosize
             required
           />
+          {shouldChargeBuzz && (
+            <Alert color="yellow">
+              <Text size="xs">
+                Since you have already made an above average number of appeals that have been
+                declined, this and additional appeals will carry a Buzz fee that will be returned to
+                you upon acceptance of your appeal. This fee will also be removed 30 days after your
+                last declined appeal.
+              </Text>
+            </Alert>
+          )}
           <div className="flex justify-end gap-4">
             <Button variant="default" onClick={handleClose}>
               Cancel
             </Button>
-            {data >= 3 ? (
+            {shouldChargeBuzz ? (
               <BuzzTransactionButton
                 buzzAmount={100}
                 label="Submit"

@@ -9,7 +9,12 @@ import {
   ReportStatus,
 } from '~/shared/utils/prisma/enums';
 import { Report } from '~/shared/utils/prisma/models';
-import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  BlockedReason,
+  NotificationCategory,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -41,6 +46,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import dayjs from 'dayjs';
 import { ingestImage } from '~/server/services/image.service';
+import { createNotification } from '~/server/services/notification.service';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -461,14 +467,15 @@ export async function createEntityAppeal({
 }
 
 export async function resolveEntityAppeal({
-  id,
+  ids,
+  entityType,
   status,
   internalNotes,
   resolvedMessage,
   userId,
 }: ResolveAppealInput & { userId: number }) {
-  const appeal = await getAppealById({
-    id,
+  const appeals = await dbRead.appeal.findMany({
+    where: { entityId: { in: ids }, status: AppealStatus.Pending, entityType },
     select: {
       id: true,
       entityId: true,
@@ -479,39 +486,82 @@ export async function resolveEntityAppeal({
       userId: true,
     },
   });
-  if (!appeal) throw throwNotFoundError('Appeal not found');
-  if (appeal.status !== AppealStatus.Pending) throw throwBadRequestError('Appeal already resolved');
+  const affectedIds = appeals.map((a) => a.id);
 
-  const updated = await dbWrite.appeal.update({
-    where: { id },
+  await dbWrite.appeal.updateMany({
+    where: { id: { in: affectedIds } },
     data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
   });
 
   if (status === AppealStatus.Approved) {
-    switch (appeal.entityType) {
-      case EntityType.Image:
-        // Update entity with needsReview = null
-        const image = await dbWrite.image.update({
-          where: { id: appeal.entityId },
-          data: { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Pending },
-        });
-        await ingestImage({ image });
-        break;
-      default:
-        // Do nothing
-        break;
-    }
+    for (const appeal of appeals) {
+      switch (appeal.entityType) {
+        case EntityType.Image:
+          // Update entity with needsReview = null
+          const image = await dbWrite.image.update({
+            where: { id: appeal.entityId },
+            data: { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Pending },
+          });
+          await ingestImage({ image });
+          break;
+        default:
+          // Do nothing
+          break;
+      }
 
-    if (appeal.buzzTransactionId) {
-      await withRetries(() =>
-        refundTransaction(
-          appeal.buzzTransactionId as string,
-          `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`,
-          updated
-        )
-      );
+      if (appeal.buzzTransactionId) {
+        await withRetries(() =>
+          refundTransaction(
+            appeal.buzzTransactionId as string,
+            `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+          )
+        );
+      }
+
+      // Notify the user that their appeal has been resolved
+      await createNotification({
+        userId: appeal.userId,
+        type: 'entity-appeal-resolved',
+        category: NotificationCategory.Other,
+        key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
+        details: {
+          entityType: appeal.entityType,
+          entityId: appeal.entityId,
+          status: appeal.status,
+          resolvedMessage,
+        },
+      });
+    }
+  } else {
+    for (const appeal of appeals) {
+      switch (appeal.entityType) {
+        case EntityType.Image:
+          // Update entity with needsReview = null
+          await dbWrite.image.update({
+            where: { id: appeal.entityId },
+            data: { needsReview: null },
+          });
+          break;
+        default:
+          // Do nothing
+          break;
+      }
+
+      // Notify the user that their appeal has been resolved
+      await createNotification({
+        userId: appeal.userId,
+        type: 'entity-appeal-resolved',
+        category: NotificationCategory.Other,
+        key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
+        details: {
+          entityType: appeal.entityType,
+          entityId: appeal.entityId,
+          status: appeal.status,
+          resolvedMessage,
+        },
+      });
     }
   }
 
-  return updated;
+  return appeals;
 }

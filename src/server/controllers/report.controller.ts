@@ -338,23 +338,9 @@ export async function resolveEntityAppealHandler({
 }) {
   try {
     const { id: userId } = ctx.user;
-    const appeal = await resolveEntityAppeal({ ...input, userId });
+    const appeals = await resolveEntityAppeal({ ...input, userId });
 
-    // Notify the user that their appeal has been resolved
-    await createNotification({
-      userId: appeal.userId,
-      type: 'entity-appeal-resolved',
-      category: NotificationCategory.Other,
-      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
-      details: {
-        entityType: appeal.entityType,
-        entityId: appeal.entityId,
-        status: appeal.status,
-        resolvedMessage: appeal.resolvedMessage,
-      },
-    });
-
-    return appeal;
+    return appeals;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

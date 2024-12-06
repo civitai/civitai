@@ -20,6 +20,7 @@ import { TooltipProps } from '@mantine/core/lib/Tooltip/Tooltip';
 import { showNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
+  IconBan,
   IconCheck,
   IconExternalLink,
   IconInfoCircle,
@@ -63,6 +64,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useMergedRef } from '@mantine/hooks';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { NsfwLevel } from '~/server/common/enums';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -455,6 +457,15 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
             </Group>
           </Card.Section>
         )}
+        {image.needsReview === 'appeal' && (
+          <Card.Section p="xs">
+            <Group spacing={4}>
+              <Badge size="sm" color="red">
+                Appeal
+              </Badge>
+            </Group>
+          </Card.Section>
+        )}
       </>
     </MasonryCard>
   );
@@ -465,6 +476,12 @@ type ImageGridItemProps = {
   index: number;
   width: number;
   height: number;
+};
+
+const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
+  position: 'bottom',
+  withArrow: true,
+  withinPortal: true,
 };
 
 function ModerationControls({
@@ -482,12 +499,6 @@ function ModerationControls({
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const router = useRouter();
-
-  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
-    position: 'bottom',
-    withArrow: true,
-    withinPortal: true,
-  };
 
   const moderateImagesMutation = trpc.image.moderate.useMutation({
     async onMutate({ ids, needsReview, reviewAction }) {
@@ -665,19 +676,23 @@ function ModerationControls({
           <IconSquareOff size="1.25rem" />
         </ActionIcon>
       </ButtonTooltip>
-      <PopConfirm
-        message={`Are you sure you want to approve ${selected.length} image(s)?`}
-        position="bottom-end"
-        onConfirm={handleApproveSelected}
-        withArrow
-        withinPortal
-      >
-        <ButtonTooltip label="Accept" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
-            <IconCheck size="1.25rem" />
-          </ActionIcon>
-        </ButtonTooltip>
-      </PopConfirm>
+      {view === 'appeal' ? (
+        <AppealActions selected={selected} filters={filters} />
+      ) : (
+        <PopConfirm
+          message={`Are you sure you want to approve ${selected.length} image(s)?`}
+          position="bottom-end"
+          onConfirm={handleApproveSelected}
+          withArrow
+          withinPortal
+        >
+          <ButtonTooltip label="Accept" {...tooltipProps}>
+            <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <IconCheck size="1.25rem" />
+            </ActionIcon>
+          </ButtonTooltip>
+        </PopConfirm>
+      )}
       {view === 'poi' && (
         <PopConfirm
           message={`Are you sure these ${selected.length} image(s) are not real people?`}
@@ -708,19 +723,21 @@ function ModerationControls({
           </ButtonTooltip>
         </PopConfirm>
       )}
-      <PopConfirm
-        message={`Are you sure you want to delete ${selected.length} image(s)?`}
-        position="bottom-end"
-        onConfirm={handleDeleteSelected}
-        withArrow
-        withinPortal
-      >
-        <ButtonTooltip label="Delete" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
-            <IconTrash size="1.25rem" />
-          </ActionIcon>
-        </ButtonTooltip>
-      </PopConfirm>
+      {view !== 'appeal' && (
+        <PopConfirm
+          message={`Are you sure you want to delete ${selected.length} image(s)?`}
+          position="bottom-end"
+          onConfirm={handleDeleteSelected}
+          withArrow
+          withinPortal
+        >
+          <ButtonTooltip label="Delete" {...tooltipProps}>
+            <ActionIcon variant="outline" disabled={!selected.length} color="red">
+              <IconTrash size="1.25rem" />
+            </ActionIcon>
+          </ButtonTooltip>
+        </PopConfirm>
+      )}
 
       <ButtonTooltip {...tooltipProps} label="Report CSAM">
         <ActionIcon
@@ -738,5 +755,74 @@ function ModerationControls({
         </ActionIcon>
       </ButtonTooltip>
     </Group>
+  );
+}
+
+function AppealActions({ selected, filters }: { selected: number[]; filters: MixedObject }) {
+  const queryUtils = trpc.useUtils();
+  const deselectAll = useStore((state) => state.deselectAll);
+
+  const resolveAppealMutation = trpc.report.resolveAppeal.useMutation({
+    async onMutate({ ids }) {
+      await queryUtils.image.getModeratorReviewQueue.cancel();
+      queryUtils.image.getModeratorReviewQueue.setInfiniteData(
+        filters,
+        produce((data) => {
+          if (!data?.pages?.length) return;
+
+          for (const page of data.pages)
+            for (const item of page.items) {
+              if (ids.includes(item.id)) {
+                item.needsReview = null;
+              }
+            }
+        })
+      );
+    },
+    onSuccess: (_, { status }) => {
+      showSuccessNotification({ message: `The images have been ${status.toLowerCase()}` });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to resolve appeal',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleResolveAppeal = (status: AppealStatus) => {
+    deselectAll();
+    resolveAppealMutation.mutate({ ids: selected, status, entityType: EntityType.Image });
+  };
+
+  return (
+    <>
+      <PopConfirm
+        message={`Are you sure you want to approve ${selected.length} image(s)?`}
+        position="bottom-end"
+        onConfirm={() => handleResolveAppeal(AppealStatus.Approved)}
+        withArrow
+        withinPortal
+      >
+        <ButtonTooltip label="Approve" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+            <IconCheck size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+      <PopConfirm
+        message={`Are you sure you want to reject ${selected.length} image(s)?`}
+        position="bottom-end"
+        onConfirm={() => handleResolveAppeal(AppealStatus.Rejected)}
+        withArrow
+        withinPortal
+      >
+        <ButtonTooltip label="Reject" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+            <IconBan size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+    </>
   );
 }
