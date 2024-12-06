@@ -1,13 +1,12 @@
 import { Stack, Text, Box, Center, Loader, Title, ThemeIcon } from '@mantine/core';
+import { IconCloudOff } from '@tabler/icons-react';
 import { useInstantSearch } from 'react-instantsearch';
-
 import {
   ClearRefinements,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
 import { SearchHeader } from '~/components/Search/SearchHeader';
-import { IconCloudOff } from '@tabler/icons-react';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';
@@ -16,9 +15,6 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ToolCard } from '~/components/Cards/ToolCard';
-import { generationPanel, generationStore } from '~/store/generation.store';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { ToolType } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

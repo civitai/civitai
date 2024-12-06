@@ -3,7 +3,8 @@ import { GetAllToolsSchema, ToolMetadata } from '~/server/schema/tool.schema';
 
 export type ToolModel = AsyncReturnType<typeof getAllTools>['items'][number];
 export async function getAllTools(input?: GetAllToolsSchema) {
-  const { cursor, limit, sort, type } = input || {};
+  const { cursor, limit, sort, type, include } = input || {};
+  const includeUnlisted = include?.includes('unlisted');
 
   const tools = await dbRead.tool.findMany({
     select: {
@@ -19,16 +20,9 @@ export async function getAllTools(input?: GetAllToolsSchema) {
       supported: true,
       createdAt: true,
     },
-    where: {
-      type,
-      enabled: true,
-      id: cursor ? { gt: cursor } : undefined,
-    },
-    orderBy: [
-      { supported: 'desc' },
-      { id: 'asc' },
-      { createdAt: sort === 'Newest' ? 'desc' : 'asc' },
-    ],
+    where: { type, enabled: true, unlisted: includeUnlisted ? undefined : false },
+    cursor: cursor ? { id: cursor } : undefined,
+    orderBy: [{ supported: 'desc' }, { id: sort === 'Newest' ? 'desc' : 'asc' }],
     take: limit ? limit + 1 : undefined,
   });
 
