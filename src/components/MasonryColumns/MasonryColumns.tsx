@@ -51,7 +51,10 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div
           key={colIndex}
-          className={clsx('flex max-w-[450px] flex-col gap-4', { ['w-full']: columnCount === 1 })}
+          className={clsx(
+            'flex max-w-[450px] flex-col gap-4',
+            columnCount === 1 ? 'w-full' : 'w-[320px]'
+          )}
           style={columnCount > 1 ? { width: columnWidth } : undefined}
         >
           {items.map(({ height, data }, index) => {

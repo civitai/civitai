@@ -35,7 +35,7 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
   const isMobile = isMobileDevice();
 
   return (
-    <div className={clsx('relative ')} {...props}>
+    <div className={clsx('relative')} {...props}>
       {largerThanViewport && position !== 'start' && (
         <div
           className={clsx(
@@ -48,6 +48,7 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
           </ActionIcon>
         </div>
       )}
+      {/* TODO - add a mutation observer to check node scroll width when children are added/removed */}
       <div ref={setNode} className={clsx('overflow-x-auto scrollbar-none', className)}>
         {children}
       </div>

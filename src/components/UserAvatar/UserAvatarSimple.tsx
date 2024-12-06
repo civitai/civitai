@@ -1,4 +1,4 @@
-import { createStyles, Text, Tooltip, UnstyledButton } from '@mantine/core';
+import { Text, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -15,6 +15,7 @@ import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { getInitials } from '~/utils/string-helpers';
+import classes from './UserAvatarSimple.module.scss';
 
 export function UserAvatarSimple({
   id,
@@ -31,7 +32,6 @@ export function UserAvatarSimple({
 }) {
   const { canViewNsfw } = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
-  const { classes } = useStyles();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
   const router = useRouter();
@@ -118,13 +118,3 @@ export function UserAvatarSimple({
     </UnstyledButton>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  username: {
-    verticalAlign: 'middle',
-    filter:
-      theme.colorScheme === 'dark'
-        ? 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8))'
-        : 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.2))',
-  },
-}));

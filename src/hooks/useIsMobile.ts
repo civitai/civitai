@@ -14,7 +14,7 @@ export function useIsMobile(options?: { breakpoint: MantineSize }) {
 
 let isMobile: boolean | undefined;
 export function isMobileDevice() {
-  if (!isMobile)
+  if (isMobile === undefined)
     isMobile =
       typeof window !== 'undefined' && ('ontouchstart' in window || navigator.maxTouchPoints > 0);
   return isMobile;

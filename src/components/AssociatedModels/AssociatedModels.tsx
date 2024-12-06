@@ -62,7 +62,7 @@ export function AssociatedModels({
   if (!isOwnerOrModerator && !combinedData.length) return null;
 
   return (
-    <MasonryProvider columnWidth={310} maxColumnCount={4} maxSingleColumnWidth={450}>
+    <MasonryProvider maxColumnCount={4}>
       <MasonryContainer
         my="xl"
         pt="xl"
