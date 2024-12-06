@@ -22,8 +22,18 @@ export function MasonryContainer({ children, ...boxProps }: MasonryContainerProp
   };
 
   return (
-    <MasonryProvider px="md" {...boxProps} className={clsx('@container', boxProps.className)}>
-      <div className={styles.queries}>
+    <MasonryProvider
+      px="md"
+      {...boxProps}
+      className={clsx('@container', boxProps.className)}
+      maxColumnCount={columnCount}
+    >
+      <div
+        style={{
+          width: columnCount > 1 && combinedWidth ? combinedWidth : undefined,
+        }}
+        className={styles.queries}
+      >
         {typeof children === 'function' ? children(state) : children}
       </div>
     </MasonryProvider>
