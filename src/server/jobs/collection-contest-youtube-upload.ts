@@ -3,6 +3,20 @@ import { createJob, getJobDate } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getYoutubeAuthClient, uploadYoutubeVideo } from '~/server/youtube/client';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { logToAxiom } from '~/server/logging/client';
+
+const logWebhook = (data: MixedObject) => {
+  logToAxiom(
+    {
+      name: 'collection-contest-youtube-upload-cron',
+      type: 'error',
+      ...data,
+    },
+    'webhooks'
+  ).catch();
+};
+
+const ATTEMPT_LIMIT = 3;
 
 export const contestCollectionYoutubeUpload = createJob(
   'collection-contest-youtube-upload',
@@ -56,7 +70,10 @@ export const contestCollectionYoutubeUpload = createJob(
             AND i."ingestion" = 'Scanned'
             -- We only want to upload videos that are longer than 30 seconds
             AND (i.metadata->'duration')::int > 30  
+            AND (i.metadata->'youtubeVideoId') IS NULL
             AND ci."updatedAt" > ${lastRun}
+          -- Ensures that we try to upload smaller videos first as a safeguard.
+          ORDER BY metadata->'size' ASC
         `;
 
         const authClient = await getYoutubeAuthClient(authKey.value as string);
@@ -67,6 +84,12 @@ export const contestCollectionYoutubeUpload = createJob(
               console.log(`Video already uploaded ${item.imageId}`);
               continue;
             }
+
+            if ((item.metadata.youtubeUploadAttempt ?? 0) > ATTEMPT_LIMIT) {
+              console.log(`Video upload attempts exceeded ${item.imageId}`);
+              continue;
+            }
+
             const uploadedVideo = await uploadYoutubeVideo({
               url: item.imageUrl,
               title: item.title,
@@ -86,10 +109,22 @@ export const contestCollectionYoutubeUpload = createJob(
             });
           } catch (error) {
             console.error(`Error uploading video ${item.imageId}: ${(error as Error).message}`);
+            logWebhook({ error, imageId: item.imageId });
+
+            await dbWrite.image.update({
+              where: { id: item.imageId },
+              data: {
+                metadata: {
+                  ...item.metadata,
+                  youtubeUploadAttempt: (item.metadata.youtubeUploadAttempt ?? 0) + 1,
+                },
+              },
+            });
           }
         }
       } catch (error) {
         console.error(`Error processing collection ${collection.id}: ${(error as Error).message}`);
+        logWebhook({ error });
       }
     }
 
