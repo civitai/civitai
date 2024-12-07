@@ -6,6 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ChallengeConfig,
   getChallengeConfig,
+  getChallengeTypeConfig,
   getCurrentChallenge,
   getUpcomingChallenge,
   setCurrentChallenge,
@@ -33,11 +34,13 @@ import { createJob } from './job';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
-export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * * *', async () => {
+const dailyChallengeSetupJob = createJob('daily-challenge-setup', '45 23 * * *', async () => {
   // Stop if we already have an upcoming challenge
   const upcomingChallenge = await getUpcomingChallenge();
   if (upcomingChallenge) return;
+  log('Setting up daily challenge');
   const config = await getChallengeConfig();
+  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
 
   // Get date of the challenge (should be the next day if it's past 11pm UTC)
   const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
@@ -50,7 +53,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
       SELECT DISTINCT m."userId"
       FROM "CollectionItem" ci
       JOIN "Model" m ON m.id = ci."modelId"
-      WHERE "collectionId" = ${config.collectionId}
+      WHERE "collectionId" = ${challengeTypeConfig.collectionId}
       AND ci."status" = 'ACCEPTED'
     `;
 
@@ -81,7 +84,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
         SELECT ci."modelId" as id
         FROM "CollectionItem" ci
         JOIN "Model" m ON m.id = ci."modelId"
-        WHERE "collectionId" = ${config.collectionId}
+        WHERE "collectionId" = ${challengeTypeConfig.collectionId}
         AND ci."status" = 'ACCEPTED'
         AND m."userId" = ${randomUser.userId}
         AND m.status = 'Published'
@@ -111,17 +114,21 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
   // Setup Collection
   // ----------------------------------------------
   // Generate title and description
-  const collectionDetails = await generateCollectionDetails({ resource, image });
+  const collectionDetails = await generateCollectionDetails({
+    resource,
+    image,
+    config: challengeTypeConfig,
+  });
 
   // Create collection cover image
-  const coverImageId = await duplicateImage(image.id, config.challengeRunnerUserId);
+  const coverImageId = await duplicateImage(image.id, challengeTypeConfig.userId);
 
   // Create collection
   const collection = await dbWrite.collection.create({
     data: {
       ...collectionDetails,
       imageId: coverImageId,
-      userId: config.challengeRunnerUserId,
+      userId: challengeTypeConfig.userId,
       read: CollectionReadConfiguration.Private,
       write: CollectionReadConfiguration.Private,
       type: 'Image',
@@ -159,6 +166,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
     collectionId: collection.id,
     challengeDate,
     ...prizeConfig,
+    config: challengeTypeConfig,
   });
 
   // Create article
@@ -169,7 +177,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
       nsfw: false,
       nsfwLevel: 1,
       userNsfwLevel: 1,
-      userId: config.challengeRunnerUserId,
+      userId: challengeTypeConfig.userId,
       coverId: coverImageId,
       metadata: {
         modelId: resource.modelId,
@@ -177,7 +185,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
         theme: articleDetails.theme,
         challengeDate,
         collectionId: collection.id,
-        challengeType: 'world-morph',
+        challengeType: config.challengeType,
         status: 'pending',
         userId: randomUser.userId,
         ...prizeConfig,
@@ -199,7 +207,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
     data: {
       collectionId: config.challengeCollectionId,
       articleId: article.id,
-      addedById: config.challengeRunnerUserId,
+      addedById: challengeTypeConfig.userId,
       status: 'REVIEW',
     },
   });
@@ -213,7 +221,7 @@ export const dailyChallengeSetup = createJob('daily-challenge-setup', '45 23 * *
   `);
 });
 
-export const processDailyChallengeEntries = createJob(
+const processDailyChallengeEntriesJob = createJob(
   'daily-challenge-process-entries',
   '55 * * * *',
   async () => {
@@ -222,6 +230,7 @@ export const processDailyChallengeEntries = createJob(
     if (!currentChallenge) return;
     log('Processing entries for challenge:', currentChallenge);
     const config = await getChallengeConfig();
+    const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
 
     // Update pending entries
     // ----------------------------------------------
@@ -246,7 +255,7 @@ export const processDailyChallengeEntries = createJob(
           ELSE 'REJECTED'::"CollectionItemStatus"
         END,
         "reviewedAt" = now(),
-        "reviewedById" = ${config.challengeRunnerUserId}
+        "reviewedById" = ${challengeTypeConfig.userId}
       FROM source s
       WHERE s.id = ci."imageId";
     `;
@@ -365,6 +374,7 @@ export const processDailyChallengeEntries = createJob(
           theme: currentChallenge.theme,
           creator: entry.username,
           imageUrl: getEdgeUrl(entry.url, { width: 1024 }),
+          config: challengeTypeConfig,
         });
         log('Review prepared', entry.imageId, review);
 
@@ -384,7 +394,7 @@ export const processDailyChallengeEntries = createJob(
 
         // Send comment
         await upsertComment({
-          userId: config.challengeRunnerUserId,
+          userId: challengeTypeConfig.userId,
           entityType: 'image',
           entityId: entry.imageId,
           content: review.comment,
@@ -397,7 +407,7 @@ export const processDailyChallengeEntries = createJob(
             entityType: 'image',
             entityId: entry.imageId,
             reaction: review.reaction,
-            userId: config.challengeRunnerUserId,
+            userId: challengeTypeConfig.userId,
           });
           log('Reaction sent', entry.imageId);
         } catch (error) {
@@ -476,7 +486,7 @@ export const processDailyChallengeEntries = createJob(
   }
 );
 
-export const pickDailyChallengeWinners = createJob(
+const pickDailyChallengeWinnersJob = createJob(
   'daily-challenge-pick-winners',
   '0 0 * * *',
   async () => {
@@ -487,6 +497,7 @@ export const pickDailyChallengeWinners = createJob(
       await startNextChallenge(config);
       return;
     }
+    const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
 
     log('Picking winners for challenge:', currentChallenge);
 
@@ -507,87 +518,34 @@ export const pickDailyChallengeWinners = createJob(
 
     // Pick Winners
     // ----------------------------------------------
-    // Get all judged entries
-    const judgedEntriesRaw = await dbRead.$queryRaw<JudgedEntry[]>`
-      SELECT
-        ci."imageId",
-        i."userId",
-        u."username",
-        ci.note,
-        (
-          SELECT
-          CAST(COALESCE(SUM("metricValue"), 0) as int)
-          FROM "EntityMetric"
-          WHERE
-            "entityType" = 'Image'
-            AND "entityId" = ci."imageId"
-            AND "metricType" != 'Buzz'
-        ) as engagement
-      FROM "CollectionItem" ci
-      JOIN "Image" i ON i.id = ci."imageId"
-      JOIN "User" u ON u.id = i."userId"
-      WHERE ci."collectionId" = ${currentChallenge.collectionId}
-      AND ci."tagId" = ${config.judgedTagId}
-      AND ci.note IS NOT NULL -- Since people can apply judged tag atm...
-      AND ci.status = 'ACCEPTED'
-    `;
-    log('Judged entries:', judgedEntriesRaw?.length);
-    if (!judgedEntriesRaw.length) {
+    // Get top judged entries
+    const judgedEntries = await getJudgedEntries(currentChallenge.collectionId, config);
+    if (!judgedEntries.length) {
       await startNextChallenge(config);
       return;
-    }
-
-    // Sort judged entries by (rating * 0.75) and (engagement * 0.25)
-    const maxEngagement = Math.max(...judgedEntriesRaw.map((entry) => entry.engagement));
-    const minEngagement = Math.min(...judgedEntriesRaw.map((entry) => entry.engagement));
-    const judgedEntries = judgedEntriesRaw.map(({ note, engagement, ...entry }) => {
-      const { score, summary } = JSON.parse(note);
-      // Calculate average rating
-      const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
-      // Adjust engagement to be between 0 and 10
-      const engagementNormalized =
-        ((engagement - minEngagement) / (maxEngagement - minEngagement)) * 10;
-      return {
-        ...entry,
-        summary,
-        score,
-        weightedRating: rating * 0.75 + engagementNormalized * 0.25,
-      };
-    });
-    judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating);
-
-    // Take top 10 entries per user
-    let toSend = config.finalReviewAmount;
-    const toFinalJudgement: typeof judgedEntries = [];
-    const finalJudgementUsers = new Set<number>();
-    for (const entry of judgedEntries) {
-      if (toSend <= 0) break;
-      if (finalJudgementUsers.has(entry.userId)) continue;
-      toFinalJudgement.push(entry);
-      finalJudgementUsers.add(entry.userId);
-      toSend--;
     }
 
     // Send to LLM for final judgement
     log('Sending entries for final judgement');
     const { winners, process, outcome } = await generateWinners({
       theme: currentChallenge.theme,
-      entries: toFinalJudgement.map((entry) => ({
+      entries: judgedEntries.map((entry) => ({
         creator: entry.username,
         summary: entry.summary,
         score: entry.score,
       })),
+      config: challengeTypeConfig,
     });
 
     // Map winners to entries
     const winningEntries = winners
       .map((winner, i) => {
-        const entry = toFinalJudgement.find((e) => e.username === winner.creator);
+        const entry = judgedEntries.find((e) => e.username === winner.creator);
         if (!entry) return null;
         return {
           ...entry,
           position: i + 1,
-          prize: config.prizes[i].buzz,
+          prize: currentChallenge.prizes[i].buzz,
           reason: winner.reason,
         };
       })
@@ -651,7 +609,7 @@ ${outcome}
           type: TransactionType.Reward,
           toAccountId: entry.userId,
           fromAccountId: 0, // central bank
-          amount: config.prizes[i].buzz,
+          amount: currentChallenge.prizes[i].buzz,
           description: `Challenge Winner Prize ${i + 1}: ${dateStr}`,
           externalTransactionId: `challenge-winner-prize-${dateStr}-${i + 1}`,
           toAccountType: 'user',
@@ -665,6 +623,12 @@ ${outcome}
     await startNextChallenge(config);
   }
 );
+
+export const dailyChallengeJobs = [
+  dailyChallengeSetupJob,
+  processDailyChallengeEntriesJob,
+  pickDailyChallengeWinnersJob,
+];
 
 // Helper Functions
 // ----------------------------------------------
@@ -710,7 +674,7 @@ async function duplicateImage(imageId: number, userId: number) {
   return newImage[0].id;
 }
 
-async function getCoverOfModel(modelId: number) {
+export async function getCoverOfModel(modelId: number) {
   const [image] = await dbRead.$queryRaw<{ id: number; url: string }[]>`
     SELECT
       i.id, i."url"
@@ -727,6 +691,69 @@ async function getCoverOfModel(modelId: number) {
   if (!image) throw new Error('Failed to get cover image');
   image.url = getEdgeUrl(image.url, { width: 1024 });
   return image;
+}
+
+export async function getJudgedEntries(collectionId: number, config: ChallengeConfig) {
+  const judgedEntriesRaw = await dbRead.$queryRaw<JudgedEntry[]>`
+    SELECT
+      ci."imageId",
+      i."userId",
+      u."username",
+      ci.note,
+      (
+        SELECT
+        CAST(COALESCE(SUM("metricValue"), 0) as int)
+        FROM "EntityMetric"
+        WHERE
+          "entityType" = 'Image'
+          AND "entityId" = ci."imageId"
+          AND "metricType" != 'Buzz'
+      ) as engagement
+    FROM "CollectionItem" ci
+    JOIN "Image" i ON i.id = ci."imageId"
+    JOIN "User" u ON u.id = i."userId"
+    WHERE ci."collectionId" = ${collectionId}
+    AND ci."tagId" = ${config.judgedTagId}
+    AND ci.note IS NOT NULL -- Since people can apply judged tag atm...
+    AND ci.status = 'ACCEPTED'
+  `;
+  log('Judged entries:', judgedEntriesRaw?.length);
+  if (!judgedEntriesRaw.length) {
+    return [];
+  }
+
+  // Sort judged entries by (rating * 0.75) and (engagement * 0.25)
+  const maxEngagement = Math.max(...judgedEntriesRaw.map((entry) => entry.engagement));
+  const minEngagement = Math.min(...judgedEntriesRaw.map((entry) => entry.engagement));
+  const judgedEntries = judgedEntriesRaw.map(({ note, engagement, ...entry }) => {
+    const { score, summary } = JSON.parse(note);
+    // Calculate average rating
+    const rating = (score.theme + score.wittiness + score.humor + score.aesthetic) / 4;
+    // Adjust engagement to be between 0 and 10
+    const engagementNormalized =
+      ((engagement - minEngagement) / (maxEngagement - minEngagement)) * 10;
+    return {
+      ...entry,
+      summary,
+      score,
+      weightedRating: rating * 0.75 + engagementNormalized * 0.25,
+    };
+  });
+  judgedEntries.sort((a, b) => b.weightedRating - a.weightedRating);
+
+  // Take top 10 entries per user
+  let toSend = config.finalReviewAmount;
+  const toFinalJudgement: typeof judgedEntries = [];
+  const finalJudgementUsers = new Set<number>();
+  for (const entry of judgedEntries) {
+    if (toSend <= 0) break;
+    if (finalJudgementUsers.has(entry.userId)) continue;
+    toFinalJudgement.push(entry);
+    finalJudgementUsers.add(entry.userId);
+    toSend--;
+  }
+
+  return toFinalJudgement;
 }
 
 async function startNextChallenge(config: ChallengeConfig) {

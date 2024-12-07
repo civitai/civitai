@@ -1,10 +1,10 @@
+import { mergeWith } from 'lodash-es';
 import { z } from 'zod';
 import { dbRead } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 const challengeConfigSchema = z.object({
-  collectionId: z.number(),
-  challengeRunnerUserId: z.number(),
+  challengeType: z.string(),
   challengeCollectionId: z.number(),
   judgedTagId: z.number(),
   reviewMeTagId: z.number(),
@@ -30,8 +30,7 @@ const challengeConfigSchema = z.object({
 });
 export type ChallengeConfig = z.infer<typeof challengeConfigSchema>;
 export const dailyChallengeConfig: ChallengeConfig = {
-  collectionId: 2930699,
-  challengeRunnerUserId: 6235605,
+  challengeType: 'world-morph',
   challengeCollectionId: 6236625,
   judgedTagId: 299729,
   reviewMeTagId: 301770,
@@ -52,11 +51,75 @@ export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
   try {
     const redisConfig = await redis.packed.get<any>(REDIS_KEYS.DAILY_CHALLENGE.CONFIG);
-    if (redisConfig) config = challengeConfigSchema.parse(redisConfig);
+    if (redisConfig) config = challengeConfigSchema.partial().parse(redisConfig);
   } catch (e) {
     console.error('Invalid daily challenge config in redis:', e);
   }
+
   return { ...dailyChallengeConfig, ...config };
+}
+
+export type ChallengePrompts = {
+  systemMessage: string;
+  collection: string;
+  article: string;
+  review: string;
+  winner: string;
+};
+type ChallengeType = {
+  collectionId: number;
+  userId: number;
+  prompts: ChallengePrompts;
+};
+const DEFAULT_CHALLENGE_TYPE = 'world-morph';
+type ChallengeTypeRow = {
+  name: string;
+  collectionId: number;
+  userId: number;
+  promptSystemMessage: string;
+  promptCollection: string;
+  promptArticle: string;
+  promptReview: string;
+  promptWinner: string;
+};
+export async function getChallengeTypeConfig(type: string | undefined) {
+  type ??= DEFAULT_CHALLENGE_TYPE;
+  const rows = await dbRead.$queryRaw<ChallengeTypeRow[]>`
+    SELECT
+      "name",
+      "collectionId",
+      "userId",
+      "promptSystemMessage",
+      "promptCollection",
+      "promptArticle",
+      "promptReview",
+      "promptWinner"
+    FROM "ChallengeType"
+    WHERE "name" IN (${type}, ${DEFAULT_CHALLENGE_TYPE})
+  `;
+  const result = rows.find((r) => r.name === DEFAULT_CHALLENGE_TYPE);
+  if (!result) throw new Error('Default challenge type not found in database');
+
+  let override = rows.find((r) => r.name === type);
+  if (!override) override = result;
+  else {
+    mergeWith(result, override, (objValue, srcValue) => {
+      // Handle empty strings as null
+      if (typeof srcValue === 'string' && !srcValue) return objValue;
+    });
+  }
+
+  return {
+    collectionId: result.collectionId,
+    userId: result.userId,
+    prompts: {
+      systemMessage: result.promptSystemMessage,
+      collection: result.promptCollection,
+      article: result.promptArticle,
+      review: result.promptReview,
+      winner: result.promptWinner,
+    },
+  } as ChallengeType;
 }
 
 export type Prize = {
@@ -73,6 +136,7 @@ export type Score = {
 
 type DailyChallengeDetails = {
   articleId: number;
+  type: string;
   date: Date;
   theme: string;
   modelId: number;
@@ -89,6 +153,7 @@ export async function getChallengeDetails(articleId: number) {
   const rows = await dbRead.$queryRaw<DailyChallengeDetails[]>`
     SELECT
       a."id" as "articleId",
+      (a.metadata->>'challengeType') as "type",
       (a.metadata->>'theme') as "theme",
       (a.metadata->>'challengeDate')::timestamp as "date",
       cast(a.metadata->'modelId' as int) as "modelId",

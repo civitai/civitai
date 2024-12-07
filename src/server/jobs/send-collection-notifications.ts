@@ -3,7 +3,6 @@ import { dbRead } from '~/server/db/client';
 import { createJob, getJobDate } from './job';
 import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
-import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 
 const CUTOFF_DATE = '2024-09-25';
 
@@ -25,7 +24,7 @@ export const sendCollectionNotifications = createJob(
       JOIN "CollectionContributor" cc ON c.id = cc."collectionId" AND cc."userId" != c."userId"
       WHERE ci."createdAt" >= ${lastRun}
         AND ci."status" = 'ACCEPTED'
-        AND c."userId" != ${dailyChallengeConfig.challengeRunnerUserId}
+        AND c.mode != 'Contest'
       GROUP BY ci."collectionId", c.name
     `;
 
