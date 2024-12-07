@@ -301,7 +301,7 @@ export function ImagesAsPostsCard({
           )}
 
           <div
-            className="relative opacity-0 transition-opacity"
+            className="relative overflow-hidden opacity-0 transition-opacity"
             style={{ opacity: inView ? 1 : 0 }}
           >
             {inView && (
