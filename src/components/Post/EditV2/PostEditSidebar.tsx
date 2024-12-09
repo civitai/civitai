@@ -239,15 +239,16 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       {post.publishedAt && images.length > 0 && (
         <Button
           onClick={() => {
+            const [image] = images;
             if (images.length > 1) {
               router.push(`/posts/${post.id}`);
-            } else if (images.length === 1) {
-              router.push(`/images/${images[0].id}`);
+            } else if (images.length === 1 && image && image.data.hasOwnProperty('id')) {
+              // @ts-ignore - we know it's an image that has ID based off of the above.
+              router.push(`/images/${image.data.id}`);
             }
           }}
           variant="outline"
-          color="gray"
-          className="mt-2"
+          color="blue"
         >
           View {postLabel}
         </Button>
