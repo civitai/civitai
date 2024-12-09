@@ -3,6 +3,22 @@ import { createJob, getJobDate } from './job';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getYoutubeAuthClient, uploadYoutubeVideo } from '~/server/youtube/client';
 import { VideoMetadata } from '~/server/schema/media.schema';
+import { logToAxiom } from '~/server/logging/client';
+import sanitize from 'sanitize-html';
+import { env } from '~/env/server.mjs';
+
+const logWebhook = (data: MixedObject) => {
+  logToAxiom(
+    {
+      name: 'collection-contest-youtube-upload-cron',
+      type: 'error',
+      ...data,
+    },
+    'webhooks'
+  ).catch();
+};
+
+const ATTEMPT_LIMIT = 3;
 
 export const contestCollectionYoutubeUpload = createJob(
   'collection-contest-youtube-upload',
@@ -44,19 +60,31 @@ export const contestCollectionYoutubeUpload = createJob(
             detail: string;
             mimeType: string;
             metadata: VideoMetadata;
+            username: string;
           }[]
         >`
-          SELECT i.id as "imageId", i.url as "imageUrl", p.title, p.detail, i."mimeType", i.metadata
+          SELECT 
+            i.id as "imageId",
+            i.url as "imageUrl",
+            p.title,
+            p.detail,
+            i."mimeType",
+            i.metadata,
+            u."username"
           FROM "CollectionItem" ci
           JOIN "Image" i ON i.id = ci."imageId"
           JOIN "Post" p ON p.id = i."postId"
+          JOIN "User" u ON u.id = p."userId"
           WHERE ci."collectionId" = ${collection.id}
             AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
             AND i."ingestion" = 'Scanned'
             -- We only want to upload videos that are longer than 30 seconds
             AND (i.metadata->'duration')::int > 30  
+            AND (i.metadata->'youtubeVideoId') IS NULL
             AND ci."updatedAt" > ${lastRun}
+          -- Ensures that we try to upload smaller videos first as a safeguard.
+          ORDER BY i.metadata->'size' ASC
         `;
 
         const authClient = await getYoutubeAuthClient(authKey.value as string);
@@ -67,10 +95,31 @@ export const contestCollectionYoutubeUpload = createJob(
               console.log(`Video already uploaded ${item.imageId}`);
               continue;
             }
+
+            if ((item.metadata.youtubeUploadAttempt ?? 0) > ATTEMPT_LIMIT) {
+              console.log(`Video upload attempts exceeded ${item.imageId}`);
+              continue;
+            }
+
+            const userProfile = item.username
+              ? `${env.NEXT_PUBLIC_BASE_URL}/user/${item.username}`
+              : undefined;
+
             const uploadedVideo = await uploadYoutubeVideo({
               url: item.imageUrl,
               title: item.title,
-              description: item.detail,
+              description: `
+                ${sanitize(item.detail, {
+                  allowedTags: [],
+                  allowedAttributes: {},
+                })}
+                
+                Created by:
+                ${userProfile}
+
+                Find out more at:
+                ${env.NEXT_PUBLIC_BASE_URL}
+              `,
               mimeType: item.mimeType,
               client: authClient,
             });
@@ -86,10 +135,22 @@ export const contestCollectionYoutubeUpload = createJob(
             });
           } catch (error) {
             console.error(`Error uploading video ${item.imageId}: ${(error as Error).message}`);
+            logWebhook({ error, imageId: item.imageId });
+
+            await dbWrite.image.update({
+              where: { id: item.imageId },
+              data: {
+                metadata: {
+                  ...item.metadata,
+                  youtubeUploadAttempt: (item.metadata.youtubeUploadAttempt ?? 0) + 1,
+                },
+              },
+            });
           }
         }
       } catch (error) {
         console.error(`Error processing collection ${collection.id}: ${(error as Error).message}`);
+        logWebhook({ error });
       }
     }
 

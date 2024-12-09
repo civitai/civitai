@@ -18,5 +18,6 @@ export const videoMetadataSchema = z.object({
   size: z.number().optional(),
   thumbnailFrame: z.number().nullish(),
   youtubeVideoId: z.string().optional(),
+  youtubeUploadAttempt: z.number().optional(),
   // hasSound: z.boolean().default(false), not accessible from HTMLVideoElement
 });
