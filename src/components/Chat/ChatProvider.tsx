@@ -50,17 +50,17 @@ export const ChatContextProvider = ({
 
 export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   const { state } = useChatContext();
-  // const isMobile = useIsMobile();
-  // const isClient = useIsClient();
+  const isMobile = useIsMobile();
+  const isClient = useIsClient();
 
-  if (!state.open) return null;
+  // if (!state.open) return null;
 
-  // if (!state.open)
-  //   return isClient && !isMobile ? (
-  //     <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
-  //       <AdUnitOutstream />
-  //     </div>
-  //   ) : null;
+  if (!state.open)
+    return isClient && !isMobile && location.host === 'stage.civitai.com' ? (
+      <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
+        <AdUnitOutstream />
+      </div>
+    ) : null;
 
   return (
     <div
