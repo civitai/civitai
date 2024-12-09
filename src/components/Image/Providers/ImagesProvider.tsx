@@ -4,6 +4,7 @@ import { ImageGetInfinite } from '~/types/router';
 export type ImagesContextState = {
   images?: ImageGetInfinite;
   hideReactionCount?: boolean;
+  collectionId?: number;
 };
 
 const ImagesContext = createContext<ImagesContextState | null>(null);

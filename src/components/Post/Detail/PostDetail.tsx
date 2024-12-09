@@ -88,11 +88,13 @@ export function PostDetailContent({ postId }: Props) {
     collectionItems = [],
     permissions,
     collection,
+    isLoading: isLoadingPostCollection,
   } = usePostContestCollectionDetails({ id: postId }, { enabled: !!post?.collectionId });
 
   const collectionMetadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
   const requiresCollectionJudgement =
     collectionMetadata?.judgesApplyBrowsingLevel && permissions?.manage;
+  const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel ?? undefined;
 
   const {
     flatData: unfilteredImages,
@@ -102,9 +104,10 @@ export function PostDetailContent({ postId }: Props) {
     {
       postId,
       pending: true,
+      browsingLevel: forcedBrowsingLevel,
     },
     {
-      applyHiddenPreferences: !requiresCollectionJudgement,
+      applyHiddenPreferences: !requiresCollectionJudgement && !forcedBrowsingLevel,
     }
   );
 
@@ -155,9 +158,12 @@ export function PostDetailContent({ postId }: Props) {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/posts/${postId}`, rel: 'canonical' }]}
         deIndex={post?.availability === Availability.Unsearchable}
       />
-      <SensitiveShield contentNsfwLevel={post.nsfwLevel}>
+      <SensitiveShield
+        contentNsfwLevel={forcedBrowsingLevel || post.nsfwLevel}
+        isLoading={!!(post?.collectionId && isLoadingPostCollection)}
+      >
         <TrackView entityId={post.id} entityType="Post" type="PostView" />
-        <BrowsingModeOverrideProvider browsingLevel={aggregateBrowsingLevel}>
+        <BrowsingModeOverrideProvider browsingLevel={forcedBrowsingLevel || aggregateBrowsingLevel}>
           <ReactionSettingsProvider
             settings={{
               hideReactions: collectionItems.some((ci) =>
@@ -352,7 +358,7 @@ export function PostDetailContent({ postId }: Props) {
                       isOwner={currentUser?.id === post.user.id}
                       isModerator={currentUser?.isModerator}
                     />
-                    {hiddenExplained.hasHidden && !imagesLoading && (
+                    {hiddenExplained.hasHidden && !imagesLoading && !forcedBrowsingLevel && (
                       <Paper component={Center} p="xl" mih={300} withBorder>
                         <ExplainHiddenImages {...hiddenExplained} />
                       </Paper>

@@ -134,7 +134,11 @@ export function PostImages({
                     </div>
                     <RoutedDialogLink
                       name="imageDetail"
-                      state={{ imageId: image.id, images }}
+                      state={{
+                        imageId: image.id,
+                        images,
+                        collectionId: imageCollectionItem?.collection?.id,
+                      }}
                       onClick={() => {
                         if (videoRef.current) videoRef.current.stop();
                       }}

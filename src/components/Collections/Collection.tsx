@@ -93,6 +93,8 @@ import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDro
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import { CollectionItemStatus } from '@prisma/client';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {} from '~/shared/constants/browsingLevel.constants';
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );
@@ -333,7 +335,7 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters />
+            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -528,7 +530,9 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <>
+    <BrowsingModeOverrideProvider
+      browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
+    >
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
@@ -543,7 +547,9 @@ export function Collection({
           }
         />
       )}
-      <SensitiveShield contentNsfwLevel={collection.nsfwLevel}>
+      <SensitiveShield
+        contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
+      >
         <MasonryProvider
           columnWidth={constants.cardSizes.model}
           maxColumnCount={7}
@@ -811,7 +817,7 @@ export function Collection({
           </MasonryContainer>
         </MasonryProvider>
       </SensitiveShield>
-    </>
+    </BrowsingModeOverrideProvider>
   );
 }
 

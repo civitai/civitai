@@ -107,7 +107,7 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index } =
+  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index, collection } =
     useImageDetailContext();
 
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
@@ -130,6 +130,8 @@ export function ImageDetail2() {
     { id: image?.id as number },
     { enabled: !!image?.id }
   );
+
+  const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel;
 
   if (!image) return <NotFound />;
 
@@ -213,7 +215,7 @@ export function ImageDetail2() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
-      <SensitiveShield contentNsfwLevel={image.nsfwLevel}>
+      <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
         <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
         <BrowsingModeOverrideProvider browsingLevel={image.nsfwLevel}>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">

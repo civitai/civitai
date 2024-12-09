@@ -38,6 +38,7 @@ import { CosmeticSelect } from '~/libs/form/components/CosmeticSelect';
 import { CollectionSelectInput } from '~/libs/form/components/CollectionSelectInput';
 import { CustomRadioGroup } from '~/libs/form/components/RadioGroupWrapper';
 import { SegmentedControlWrapper } from '~/libs/form/components/SegmentedControlWrapper';
+import { BrowsingLevelsInput } from '~/components/BrowsingLevel/BrowsingLevelInput';
 
 export * from './Form';
 
@@ -90,3 +91,4 @@ export const InputSectionItems = withController(SectionItemsInput);
 export const InputCosmeticSelect = withController(CosmeticSelect);
 export const InputCollectionSelect = withController(CollectionSelectInput);
 export const InputCustomRadioGroup = withController(CustomRadioGroup);
+export const InputBrowsingLevels = withController(BrowsingLevelsInput);

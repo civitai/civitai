@@ -5,6 +5,7 @@ import { createContext, useContext, useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useCollection } from '~/components/Collections/collection.utils';
 import { ImagesQueryParamSchema, useQueryImages } from '~/components/Image/image.utils';
 import { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -12,7 +13,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { ImageGetInfinite } from '~/types/router';
+import { CollectionByIdModel, ImageGetInfinite } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 
@@ -29,6 +30,7 @@ type ImageDetailState = {
   close: () => void;
   navigate: (id: number) => void;
   updateImage: (id: number, data: Partial<ImagesInfiniteModel>) => void;
+  collection?: CollectionByIdModel;
 };
 
 const ImageDetailContext = createContext<ImageDetailState | null>(null);
@@ -44,18 +46,25 @@ export function ImageDetailProvider({
   images: initialImages = [],
   hideReactionCount,
   filters,
+  collectionId,
 }: {
   children: React.ReactElement;
   imageId: number;
   images?: ImagesInfiniteModel[];
   hideReactionCount?: boolean;
   filters: ImagesQueryParamSchema;
+  collectionId?: number;
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+
+  // Only do this so that we have it pre-fetched
+  const { collection } = useCollection(collectionId as number, {
+    enabled: !!collectionId,
+  });
 
   const { postId: queryPostId, active = false } = browserRouter.query as {
     postId?: number;
@@ -203,6 +212,7 @@ export function ImageDetailProvider({
         navigate,
         index,
         updateImage,
+        collection,
       }}
     >
       {children}

@@ -41,7 +41,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const { ref, inView } = useInView({ rootMargin: '200% 0px' });
   const { classes, cx } = useStyles();
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
-  const { images } = useImagesContext();
+  const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
 
   const image = useImageStore(data);
@@ -71,7 +71,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                 <div className="relative flex-1">
                   <RoutedDialogLink
                     name="imageDetail"
-                    state={{ imageId: image.id, images }}
+                    state={{ imageId: image.id, images, ...contextProps }}
                     className="absolute inset-0"
                   >
                     {safe ? (

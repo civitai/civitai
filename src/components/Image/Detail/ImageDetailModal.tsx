@@ -7,12 +7,16 @@ import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { removeEmpty } from '../../../utils/object-helpers';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 import { useMemo } from 'react';
+import { useCollection } from '~/components/Collections/collection.utils';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export default function ImageDetailModal({
   imageId,
   images,
   hideReactionCount,
   filters,
+  collectionId,
 }: {
   imageId: number;
   filters?: Record<string, unknown>;
@@ -27,7 +31,16 @@ export default function ImageDetailModal({
     [query, images]
   );
 
+  // Only do this so that we have it pre-fetched
+  const { isLoading } = useCollection(collectionId as number, {
+    enabled: !!collectionId,
+  });
+
   if (!query.imageId) return null;
+
+  if (collectionId && isLoading) {
+    return <PageLoader />;
+  }
 
   return (
     <PageModal {...dialog} withCloseButton={false} fullScreen padding={0}>
@@ -36,6 +49,7 @@ export default function ImageDetailModal({
         filters={queryFilters}
         images={images}
         hideReactionCount={hideReactionCount}
+        collectionId={collectionId}
       >
         <ImageDetail2 />
       </ImageDetailProvider>
