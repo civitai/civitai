@@ -12,7 +12,7 @@ import {
 import dayjs from 'dayjs';
 import { env } from '~/env/server.mjs';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
-import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
 import { searchClient } from '~/server/meilisearch/client';
@@ -627,7 +627,7 @@ export async function softDeleteUser({ id }: { id: number }) {
     data: {
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: 'CSAM',
+      blockedFor: BlockedReason.CSAM,
       needsReview: 'blocked',
     },
   });

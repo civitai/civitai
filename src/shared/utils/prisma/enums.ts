@@ -300,6 +300,7 @@ export const BlockImageReason = {
   Ownership: 'Ownership',
   CSAM: 'CSAM',
   TOS: 'TOS',
+  Appeal: 'Appeal',
 } as const;
 
 export type BlockImageReason = (typeof BlockImageReason)[keyof typeof BlockImageReason];
@@ -684,6 +685,14 @@ export const TechniqueType = {
 } as const;
 
 export type TechniqueType = (typeof TechniqueType)[keyof typeof TechniqueType];
+
+export const AppealStatus = {
+  Pending: 'Pending',
+  Approved: 'Approved',
+  Rejected: 'Rejected',
+} as const;
+
+export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
 
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',

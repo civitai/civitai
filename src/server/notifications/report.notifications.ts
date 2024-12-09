@@ -1,5 +1,10 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
+import { EntityType } from '~/shared/utils/prisma/enums';
+
+const entityUrlMap: Partial<{ [k in EntityType]?: string }> = {
+  [EntityType.Image]: '/images',
+} as const;
 
 export const reportNotifications = createNotificationProcessor({
   // Moveable
@@ -48,5 +53,18 @@ export const reportNotifications = createNotificationProcessor({
         details
       FROM actioned r
     `,
+  },
+  'entity-appeal-resolved': {
+    displayName: 'Entity appeal resolved',
+    category: NotificationCategory.Other,
+    toggleable: false,
+    prepareMessage: ({ details }) => ({
+      message: `Your appeal regarding your ${
+        details.entityType
+      } has been ${details.status.toLowerCase()}${
+        details.resolvedMessage ? `: ${details.resolvedMessage}.` : '.'
+      }`,
+      url: `${entityUrlMap[details.entityType as EntityType]}/${details.entityId}`,
+    }),
   },
 });
