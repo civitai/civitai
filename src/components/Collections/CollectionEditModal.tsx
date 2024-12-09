@@ -69,7 +69,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
         metadata: {
           ...(data.metadata ?? {}),
           // Ensures we NEVER send out 0.
-          forcedBrowsingLevel: data.metadata?.forcedBrowsingLevel || null,
+          forcedBrowsingLevel: data.metadata?.forcedBrowsingLevel || undefined,
         },
       },
       {
