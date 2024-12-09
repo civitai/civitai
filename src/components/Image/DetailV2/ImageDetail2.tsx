@@ -131,8 +131,6 @@ export function ImageDetail2() {
     { enabled: !!image?.id }
   );
 
-  console.log(collection);
-
   const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel;
 
   if (!image) return <NotFound />;
