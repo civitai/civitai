@@ -6,7 +6,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { createEntityAppealSchema } from '~/server/schema/report.schema';
 import { EntityType } from '~/shared/utils/prisma/enums';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 export function AppealDialog({ entityId, entityType }: Props) {
@@ -21,10 +21,18 @@ export function AppealDialog({ entityId, entityType }: Props) {
       handleClose();
       queryUtils.report.getRecentAppeals.setData({}, (old) => (old ? old + 1 : 1));
 
-      if (entityType === EntityType.Image)
-        queryUtils.image.get.setData({ id: entityId }, (old) =>
-          old ? { ...old, needsReview: 'appeal' } : old
-        );
+      showSuccessNotification({
+        title: 'Appeal created',
+        message: 'Your appeal has been submitted successfully',
+      });
+
+      if (entityType === EntityType.Image) {
+        queryUtils.image.get.setData({ id: entityId }, (old) => ({
+          // Forced cast to any because ts was complaining for no reason
+          ...(old as any),
+          needsReview: 'appeal',
+        }));
+      }
     },
     onError: (error) => {
       showErrorNotification({
@@ -48,7 +56,7 @@ export function AppealDialog({ entityId, entityType }: Props) {
       return;
     }
 
-    createAppealMutation.mutate({ entityId, entityType, message: state.message });
+    createAppealMutation.mutate(result.data);
   };
 
   const handleClose = () => {
@@ -74,7 +82,7 @@ export function AppealDialog({ entityId, entityType }: Props) {
       ) : (
         <div className="flex flex-col gap-4">
           <Textarea
-            label="Message"
+            label="Why should this image be unblocked?"
             description={`${state.message.length}/${MAX_APPEAL_MESSAGE_LENGTH} characters`}
             placeholder="Please provide a reason for appealing the removal of this content"
             value={state.message}
@@ -89,10 +97,10 @@ export function AppealDialog({ entityId, entityType }: Props) {
           {shouldChargeBuzz && (
             <Alert color="yellow">
               <Text size="xs">
-                Since you have already made an above average number of appeals that have been
-                declined, this and additional appeals will carry a Buzz fee that will be returned to
-                you upon acceptance of your appeal. This fee will also be removed 30 days after your
-                last declined appeal.
+                Since you have already made an above average number of appeals that are pending
+                review or have been declined, this and additional appeals will carry a Buzz fee that
+                will be returned to you upon acceptance of your appeal. This fee will also be
+                removed 30 days after your last declined appeal.
               </Text>
             </Alert>
           )}

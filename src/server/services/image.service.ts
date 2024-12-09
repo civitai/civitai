@@ -3347,10 +3347,14 @@ const imageReviewQueueJoinMap = {
       appeal."createdAt" as "appealCreatedAt",
       au.id as "appealUserId",
       au.username as "appealUsername",
+      mu.id as "moderatorId",
+      mu.username as "moderatorUsername",
     `,
     join: `
       JOIN "Appeal" appeal ON appeal."entityId" = i.id AND appeal."entityType" = 'Image'
       JOIN "User" au ON au.id = appeal."userId"
+      JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
+      JOIN "User" mu ON mu.id = ma."userId"
     `,
   },
 } as const;
@@ -3401,6 +3405,8 @@ type GetImageModerationReviewQueueRaw = {
   appealCreatedAt?: Date;
   appealUserId?: number;
   appealUsername?: string;
+  moderatorId?: number;
+  moderatorUsername?: string;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3576,6 +3582,7 @@ export const getImageModerationReviewQueue = async ({
             reason: string;
             createdAt: Date;
             user: { id: number; username?: string | null };
+            moderator?: { id: number; username?: string | null };
           }
         | undefined;
       publishedAt?: Date | null;
@@ -3602,6 +3609,8 @@ export const getImageModerationReviewQueue = async ({
       appealCreatedAt,
       appealUserId,
       appealUsername,
+      moderatorId,
+      moderatorUsername,
       ...i
     }) => ({
       ...i,
@@ -3634,6 +3643,7 @@ export const getImageModerationReviewQueue = async ({
             reason: appealMessage as string,
             createdAt: appealCreatedAt as Date,
             user: { id: appealUserId as number, username: appealUsername },
+            moderator: { id: moderatorId as number, username: moderatorUsername },
           }
         : undefined,
     })

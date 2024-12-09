@@ -1328,7 +1328,6 @@ enum BlockImageReason {
   Ownership
   CSAM
   TOS
-  Appeal
 }
 
 model BlockedImage {

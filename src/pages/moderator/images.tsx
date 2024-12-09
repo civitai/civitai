@@ -61,6 +61,7 @@ import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
+import { resolveAppealSchema } from '~/server/schema/report.schema';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { ImageModerationReviewQueueImage } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
@@ -469,14 +470,22 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   <Text size="xs" color="dimmed" inline>
                     Appealed by
                   </Text>
-                  <Group spacing={4}>
-                    <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
-                      <Anchor size="xs" target="_blank" lineClamp={1} inline>
-                        {image.appeal?.user.username}
-                      </Anchor>
-                    </Link>
-                  </Group>
+                  <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
+                    <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                      {image.appeal?.user.username}
+                    </Anchor>
+                  </Link>
                 </Stack>
+                {image.appeal?.moderator && (
+                  <Stack spacing={2}>
+                    <Text size="xs" color="dimmed" inline>
+                      Moderated by
+                    </Text>
+                    <Text size="xs" lineClamp={1} inline>
+                      {image.appeal?.moderator.username}
+                    </Text>
+                  </Stack>
+                )}
                 <Stack spacing={2} align="flex-end">
                   <Text size="xs" color="dimmed" inline>
                     Created at
@@ -789,6 +798,7 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
   const deselectAll = useStore((state) => state.deselectAll);
 
   const [resolvedMessage, setResolvedMessage] = useState<string>();
+  const [error, setError] = useState<string>();
 
   const resolveAppealMutation = trpc.report.resolveAppeal.useMutation({
     async onMutate({ ids }) {
@@ -819,6 +829,8 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
   });
 
   const handleResolveAppeal = (status: AppealStatus) => {
+    if (!resolvedMessage) return;
+
     deselectAll();
     resolveAppealMutation.mutate({
       ids: selected,
@@ -828,14 +840,28 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
     });
   };
 
+  const handleResolvedMessageChange = (message: string) => {
+    const result = resolveAppealSchema.pick({ resolvedMessage: true }).safeParse({
+      resolvedMessage,
+    });
+    if (!result.success) {
+      setError(result.error.flatten().fieldErrors.resolvedMessage?.[0] ?? 'Message is required');
+    } else {
+      setError('');
+    }
+
+    setResolvedMessage(message);
+  };
+
   return (
     <>
       <PopConfirm
         message={
           <ConfirmResolvedAppeal
             status={AppealStatus.Approved}
-            onChange={setResolvedMessage}
+            onChange={handleResolvedMessageChange}
             itemCount={selected.length}
+            error={error}
           />
         }
         position="bottom-end"
@@ -854,8 +880,9 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         message={
           <ConfirmResolvedAppeal
             status={AppealStatus.Rejected}
-            onChange={setResolvedMessage}
+            onChange={handleResolvedMessageChange}
             itemCount={selected.length}
+            error={error}
           />
         }
         position="bottom-end"
@@ -878,10 +905,12 @@ function ConfirmResolvedAppeal({
   status,
   onChange,
   itemCount,
+  error,
 }: {
   status: AppealStatus;
   onChange: (message: string) => void;
   itemCount?: number;
+  error?: string;
 }) {
   return (
     <Stack spacing="xs">
@@ -892,12 +921,13 @@ function ConfirmResolvedAppeal({
       <Textarea
         label="Resolved message"
         description="This message will be sent to the user who appealed the image"
-        placeholder="Optional"
+        error={error}
         onChange={(e) => onChange(e.currentTarget.value)}
         minRows={2}
         maxRows={5}
         maxLength={MAX_APPEAL_MESSAGE_LENGTH}
         autosize
+        required
       />
     </Stack>
   );

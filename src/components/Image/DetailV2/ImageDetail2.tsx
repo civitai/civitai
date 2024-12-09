@@ -411,7 +411,7 @@ export function ImageDetail2() {
                         px="md"
                       >
                         {image.needsReview === 'appeal'
-                          ? `Your appeal has been submitted, but the image will remain hidden until it's reviewed by our mods.`
+                          ? `Your appeal has been submitted, but the image will remain hidden until it's reviewed by our moderators.`
                           : `This image won't be visible to other users until it's reviewed by our moderators.`}
                       </AlertWithIcon>
                     )}

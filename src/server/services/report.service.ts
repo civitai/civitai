@@ -45,7 +45,11 @@ import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz
 import { withRetries } from '~/utils/errorHandling';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import dayjs from 'dayjs';
-import { ingestImage } from '~/server/services/image.service';
+import {
+  ingestImage,
+  queueImageSearchIndexUpdate,
+  updateNsfwLevel,
+} from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
@@ -502,10 +506,18 @@ export async function resolveEntityAppeal({
         const image = await dbWrite.image.update({
           where: { id: appeal.entityId },
           data: approved
-            ? { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Pending }
+            ? { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Scanned }
             : { needsReview: null },
         });
-        await ingestImage({ image });
+
+        if (approved) await updateNsfwLevel(image.id);
+
+        await queueImageSearchIndexUpdate({
+          ids: [appeal.entityId],
+          action: approved
+            ? SearchIndexUpdateQueueAction.Update
+            : SearchIndexUpdateQueueAction.Delete,
+        });
         break;
       default:
         // Do nothing

@@ -63,7 +63,7 @@ const reviewTypeToBlockedReason = {
   blocked: BlockImageReason.TOS,
   tag: BlockImageReason.TOS,
   newUser: BlockImageReason.Ownership,
-  appeal: BlockImageReason.Appeal,
+  appeal: BlockImageReason.TOS,
 };
 
 export const moderateImageHandler = async ({
