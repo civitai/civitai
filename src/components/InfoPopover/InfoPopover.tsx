@@ -6,19 +6,43 @@ import {
   PopoverProps,
   Text,
 } from '@mantine/core';
-import { IconInfoCircle, IconProps } from '@tabler/icons-react';
+import { Icon, IconInfoCircle, IconProps } from '@tabler/icons-react';
+import clsx from 'clsx';
 import React, { forwardRef } from 'react';
 
 export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
-  ({ iconProps, buttonProps, size, variant, children, type = 'click', ...popoverProps }, ref) => {
+  (
+    {
+      iconProps,
+      buttonProps,
+      size,
+      variant,
+      children,
+      type = 'click',
+      hideClick,
+      customIcon,
+      ...popoverProps
+    },
+    ref
+  ) => {
     const Popover = type === 'hover' ? HoverCard : MantinePopover;
+    const Icon = !!customIcon ? customIcon : IconInfoCircle;
 
     return (
       <Popover width={300} {...popoverProps} shadow="sm">
         <Popover.Target>
-          <ActionIcon ref={ref} {...buttonProps} size={size} variant={variant}>
+          <ActionIcon
+            ref={ref}
+            {...buttonProps}
+            size={size}
+            variant={variant}
+            className={clsx({
+              ['active:transform-none']: !!hideClick,
+              ['cursor-auto']: !!hideClick,
+            })}
+          >
             <Text color="dimmed" inline>
-              <IconInfoCircle {...iconProps} />
+              <Icon {...iconProps} />
             </Text>
           </ActionIcon>
         </Popover.Target>
@@ -39,4 +63,6 @@ type Props = PopoverProps & {
   >;
   iconProps?: IconProps;
   type?: 'hover' | 'click';
+  hideClick?: boolean; // TODO consider this behavior if type === hover
+  customIcon?: Icon;
 };

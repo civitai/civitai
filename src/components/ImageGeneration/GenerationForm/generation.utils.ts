@@ -1,8 +1,10 @@
-import { generationStatusSchema } from '~/server/schema/generation.schema';
-import React, { useMemo, useCallback } from 'react';
-import { trpc } from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
+import React, { useCallback, useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { generationStatusSchema } from '~/server/schema/generation.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 // export const useGenerationFormStore = create<Partial<GenerateFormModel>>()(
 //   persist(() => ({}), { name: 'generation-form-2', version: 0 })
@@ -241,3 +243,14 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
 
 //   return [selected, handleSetSelected] as const;
 // }
+
+export const isMadeOnSite = (meta: ImageMetaProps | null) => {
+  if (!meta) return false;
+  return (
+    'civitaiResources' in meta ||
+    (!!meta.workflow &&
+      generationFormWorkflowConfigurations
+        .map((x) => x.key)
+        .some((v) => v === (meta.workflow as string)))
+  );
+};
