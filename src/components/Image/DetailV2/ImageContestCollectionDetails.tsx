@@ -115,7 +115,35 @@ export const ImageContestCollectionDetails = ({
                   </Text>{' '}
                   contest{tagDisplay}.{' '}
                 </Text>
+                {isCollectionJudge && (
+                  <CollectionItemNSFWLevelSelector
+                    collectionId={item.collection.id}
+                    collectionItemId={item.id}
+                    nsfwLevel={image?.nsfwLevel}
+                    onNsfwLevelUpdated={(value) => {
+                      queryUtils.image.get.setData(
+                        { id: image.id },
+                        produce((old) => {
+                          if (!old) return;
+
+                          old.nsfwLevel = parseInt(value, 10);
+                          return old;
+                        })
+                      );
+
+                      updateImage(image.id, { nsfwLevel: parseInt(value, 10) });
+                    }}
+                  />
+                )}
                 <ReviewActions itemId={item.id} collectionId={item.collection.id} />
+                {isCollectionJudge && collectionSupportsScoring && (
+                  <ContestCollectionItemScorer
+                    collectionItemId={item.id}
+                    onScoreChanged={handleScoreUpdated}
+                    currentScore={item.scores.find((s) => s.userId === userId)?.score}
+                    layout="minimal"
+                  />
+                )}
               </div>
             );
           }
@@ -175,6 +203,7 @@ export const ImageContestCollectionDetails = ({
                         collectionItemId={item.id}
                         onScoreChanged={handleScoreUpdated}
                         currentScore={item.scores.find((s) => s.userId === userId)?.score}
+                        layout="minimal"
                       />
                     )}
 
