@@ -1,4 +1,4 @@
-import { Button, Title, Badge, Tooltip, Text, TooltipProps, ThemeIcon } from '@mantine/core';
+import { Button, Title, Badge, Tooltip, Text, TooltipProps, ThemeIcon, Group } from '@mantine/core';
 import { useIsMutating } from '@tanstack/react-query';
 import { trpc } from '~/utils/trpc';
 import { PostDetailEditable } from '~/server/services/post.service';
@@ -7,7 +7,7 @@ import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { useRef, useState } from 'react';
-import { IconClock, IconTrash } from '@tabler/icons-react';
+import { IconClock, IconInfoCircle, IconTrash } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
@@ -112,11 +112,24 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   });
   // #endregion
 
+  const postLabel = collectionId ? 'Entry' : 'Post';
+
   return (
     <>
       <div className="flex flex-col gap-0">
         <div className="flex items-center justify-between">
-          <Title size="sm">POST</Title>
+          <div className="flex items-center gap-2">
+            {collectionId && (
+              <Tooltip
+                maw={350}
+                multiline
+                label="Did you tag the tools you used in your entry? Adding the tools used to create your entry may make you elegible for more prizes."
+              >
+                <IconInfoCircle size={18} />
+              </Tooltip>
+            )}
+            <Title size="sm">{postLabel}</Title>
+          </div>
           <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">
             {mutating > 0 ? 'Saving' : 'Saved'}
           </Badge>
@@ -125,7 +138,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         <Text size="xs">
           {!post.publishedAt ? (
             <>
-              Your post is currently{' '}
+              Your {postLabel} is currently{' '}
               <Tooltip
                 label={`Click the ${publishLabel} button to make your post Public to share with the Civitai community for comments and reactions.`}
                 {...tooltipProps}
