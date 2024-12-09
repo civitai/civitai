@@ -12,6 +12,7 @@ import {
   Loader,
   LoadingOverlay,
   Menu,
+  Stack,
   Text,
   ThemeIcon,
   Tooltip,
@@ -19,12 +20,13 @@ import {
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconArrowBackUp,
-  IconArrowMergeBoth,
+  IconArrowFork,
   IconChevronDown,
   IconChevronUp,
   IconDotsVertical,
   IconEye,
   IconEyeOff,
+  IconHelp,
   IconPencil,
   IconPlus,
   IconTrash,
@@ -37,7 +39,10 @@ import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import {
+  isMadeOnSite,
+  useGenerationStatus,
+} from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -62,7 +67,6 @@ import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import {
-  generationFormWorkflowConfigurations,
   getBaseModelResourceTypes,
   getBaseModelSetType,
 } from '~/shared/constants/generation.constants';
@@ -93,16 +97,15 @@ type State = {
   isScanned: boolean;
   isPending: boolean;
   isOnSite: boolean;
+  otherImages: PostEditImageDetail[];
   isPendingManualAssignment: boolean;
   onDelete: () => void;
   onEditMetaClick: () => void;
   isDeleting: boolean;
   isUpdating: boolean;
   isAddingResource: boolean;
-  isRemovingResource: boolean;
   toggleHidePrompt: () => void;
   addResource: (modelVersionId: number) => void;
-  removeResource: (modelVersionId: number) => void;
 };
 const AddedImageContext = createContext<State | null>(null);
 const useAddedImageContext = () => {
@@ -118,25 +121,24 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const { showPreview } = usePostPreviewContext();
   const storedImage = useImageStore(image);
 
-  const [updateImage, setImages] = usePostEditStore((state) => [
+  const [images, updateImage, setImages] = usePostEditStore((state) => [
+    state.images,
     state.updateImage,
     state.setImages,
   ]);
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta } = storedImage;
+  const otherImages = images
+    .filter((img) => img.type === 'added')
+    .filter((img) => img.data.id !== id && !isMadeOnSite(img.data.meta)) // double filter because TS is stupid
+    .map((i) => i.data);
 
   const isPending = ingestion === ImageIngestionStatus.Pending;
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
   const isBlocked = false;
-  const isOnSite =
-    'civitaiResources' in (meta ?? {}) ||
-    (!!meta?.workflow &&
-      generationFormWorkflowConfigurations
-        .map((x) => x.key)
-        .some((v) => v === (meta?.workflow as string)));
-
+  const isOnSite = isMadeOnSite(meta);
   // #endregion
 
   // #region [delete image]
@@ -186,11 +188,12 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const toggleHidePrompt = () => {
     updateImageMutation.mutate({ id, hideMeta: !hideMeta });
   };
+
   const addResourceMutation = trpc.post.addResourceToImage.useMutation({
     onSuccess: (resp) => {
       if (resp) {
         updateImage(id, (image) => {
-          image.resourceHelper.push(resp);
+          image.resourceHelper = image.resourceHelper.concat(resp);
         });
       }
     },
@@ -203,26 +206,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   });
   const addResource = (modelVersionId: number) => {
     if (isOnSite) return;
-    addResourceMutation.mutate({ id, modelVersionId });
-  };
-  const removeResourceMutation = trpc.post.removeResourceFromImage.useMutation({
-    onSuccess: (resp) => {
-      if (resp) {
-        updateImage(id, (image) => {
-          remove(image.resourceHelper, (r) => r.id === resp.id);
-        });
-      }
-    },
-    onError(error) {
-      showErrorNotification({
-        title: 'Unable to remove resource',
-        error: new Error(error.message),
-      });
-    },
-  });
-  const removeResource = (modelVersionId: number) => {
-    if (isOnSite) return;
-    removeResourceMutation.mutate({ id, modelVersionId });
+    addResourceMutation.mutate({ id: [id], modelVersionId });
   };
   // #endregion
 
@@ -234,15 +218,14 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isPending,
         isScanned,
         isOnSite,
+        otherImages,
         onDelete: handleDelete,
         onEditMetaClick: handleEditMetaClick,
         isDeleting: deleteImageMutation.isLoading,
         isUpdating: updateImageMutation.isLoading,
         isAddingResource: addResourceMutation.isLoading,
-        isRemovingResource: addResourceMutation.isLoading,
         toggleHidePrompt,
         addResource,
-        removeResource,
         isPendingManualAssignment,
       }}
     >
@@ -301,16 +284,18 @@ const ResourceHeader = () => {
     : [];
 
   return (
-    <div className="flex items-center justify-between">
+    <div className="group flex items-center justify-between">
       <div className="flex items-center gap-2">
         <h3 className=" text-lg font-semibold leading-none text-dark-7 dark:text-gray-0 ">
           Resources
         </h3>
         <InfoPopover
           type="hover"
+          hideClick={true}
+          withinPortal={true}
           variant="transparent"
           size="sm"
-          position="right"
+          position="top"
           iconProps={{ size: 20 }}
         >
           Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
@@ -318,86 +303,208 @@ const ResourceHeader = () => {
         </InfoPopover>
       </div>
       {!isOnSite && (
-        <ResourceSelectMultiple
-          limit={status.limits.resources}
-          buttonLabel="RESOURCE"
-          isTraining={true}
-          options={{
-            resources: resourceTypes,
-          }}
-          buttonProps={{
-            size: 'sm',
-            compact: true,
-            className: 'text-sm',
-          }}
-          onChange={(val) => {
-            const vals = val as Generation.Resource[] | undefined;
-            if (!vals || !vals.length) return;
-            vals.forEach((val) => {
-              console.log(val);
-              addResource(val.id);
-            });
-          }}
-        />
+        <Group spacing="xs">
+          <Box className="hidden group-hover:block">
+            <InfoPopover
+              type="hover"
+              hideClick={true}
+              withinPortal={true}
+              variant="transparent"
+              size="sm"
+              position="top"
+              iconProps={{ size: 20 }}
+              customIcon={IconHelp}
+            >
+              <Stack>
+                <Text>Manually add a resource.</Text>
+                <Text size="sm">
+                  If you can&apos;t find the one you&apos;re looking for, it&apos;s either not
+                  uploaded here, or is being filtered out to match your already selected resources.
+                </Text>
+              </Stack>
+            </InfoPopover>
+          </Box>
+          <ResourceSelectMultiple
+            limit={status.limits.resources}
+            buttonLabel="RESOURCE"
+            isTraining={true}
+            options={{
+              resources: resourceTypes,
+            }}
+            buttonProps={{
+              size: 'sm',
+              compact: true,
+              className: 'text-sm',
+              loading: isAddingResource,
+            }}
+            onChange={(val) => {
+              const vals = val as Generation.Resource[] | undefined;
+              if (!vals || !vals.length) return;
+              vals.forEach((val) => {
+                console.log(val);
+                addResource(val.id);
+              });
+            }}
+          />
+        </Group>
       )}
     </div>
   );
 };
 
-function RemoveResource({ modelVersionId }: { modelVersionId: number }) {
-  const { removeResource, isRemovingResource, isOnSite } = useAddedImageContext();
+const ResourceRow = ({
+  resource,
+  i,
+}: {
+  resource: PostEditImageDetail['resourceHelper'][number];
+  i: number;
+}) => {
+  const { image, isOnSite, otherImages } = useAddedImageContext();
+  const [updateImage] = usePostEditStore((state) => [state.updateImage]);
+
+  const { modelId, modelName, modelType, modelVersionId, modelVersionName, detected } = resource;
+
+  const copyResourceMutation = trpc.post.addResourceToImage.useMutation({
+    onSuccess: (resp) => {
+      if (resp) {
+        updateImage(image.id, (img) => {
+          img.resourceHelper = img.resourceHelper.concat(resp);
+        });
+      }
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to add resources',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const removeResourceMutation = trpc.post.removeResourceFromImage.useMutation({
+    onSuccess: (resp) => {
+      if (resp) {
+        updateImage(image.id, (img) => {
+          remove(img.resourceHelper, (r) => r.id === resp.id);
+        });
+      }
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Unable to remove resource',
+        error: new Error(error.message),
+      });
+    },
+  });
 
   const handleRemoveResource = () => {
+    if (isOnSite || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Remove Resource',
       children: 'Are you sure you want to remove this resource from this image?',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
-      onConfirm: () => removeResource(modelVersionId),
+      onConfirm: () => {
+        if (isOnSite) return;
+        removeResourceMutation.mutate({ id: image.id, modelVersionId });
+      },
     });
   };
 
-  return isOnSite ? (
-    <></>
-  ) : (
-    <Tooltip label="Delete">
-      <ActionIcon color="red" size="sm" onClick={handleRemoveResource} loading={isRemovingResource}>
-        <IconTrash size={16} />
-      </ActionIcon>
-    </Tooltip>
-  );
-}
-
-function CopyResource({ modelVersionId }: { modelVersionId: number }) {
-  const { isOnSite } = useAddedImageContext();
-
   const handleCopyResource = () => {
+    if (!otherImages.length || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Copy to All',
-      children: 'Add this resource to all other images?',
+      children: `Add this resource to all other valid images (${otherImages.length})?`,
       labels: { confirm: 'Yep!', cancel: 'Cancel' },
       confirmProps: { color: 'green' },
-      // onConfirm: () => addResource(modelVersionId),
+      onConfirm: () => {
+        if (!otherImages.length) return;
+        copyResourceMutation.mutate({ id: otherImages.map((oi) => oi.id), modelVersionId });
+      },
     });
   };
 
-  return isOnSite ? (
-    <></>
-  ) : (
-    <Tooltip label="Copy to All">
-      <ActionIcon
-        color="violet"
-        size="sm"
-        onClick={handleCopyResource}
-        // loading={isAddingResource}
+  return !!modelId && !!modelVersionId ? (
+    <Group spacing="xs" noWrap mt={i === 0 ? 4 : undefined}>
+      {!detected && (
+        <Tooltip label="Manually added" withArrow>
+          <ThemeIcon color="cyan" variant="light" radius="xl" size="sm">
+            <IconUserPlus size={14} />
+          </ThemeIcon>
+        </Tooltip>
+      )}
+      <Link
+        href={`/models/${modelId}?modelVersionId=${modelVersionId}`}
+        target="_blank"
+        className="grow"
       >
-        <IconArrowMergeBoth size={16} />
-      </ActionIcon>
-    </Tooltip>
+        <Box
+          component="a"
+          className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5"
+        >
+          <Text>
+            {modelName} -{' '}
+            <Text span color="dimmed" size="sm">
+              {modelVersionName}
+            </Text>
+          </Text>
+          <Group spacing={2}>
+            <Badge color="gray" size="md" variant="filled">
+              {getDisplayName(modelType ?? 'unknown')}
+            </Badge>
+          </Group>
+        </Box>
+      </Link>
+
+      <Group spacing={4} noWrap>
+        {!otherImages.length ? (
+          <></>
+        ) : (
+          <Tooltip label="Copy to All">
+            <ActionIcon
+              color="violet"
+              size="sm"
+              onClick={handleCopyResource}
+              loading={copyResourceMutation.isLoading}
+            >
+              <IconArrowFork size={16} />
+            </ActionIcon>
+          </Tooltip>
+        )}
+        {isOnSite ? (
+          <></>
+        ) : (
+          <Tooltip label="Delete">
+            <ActionIcon
+              color="red"
+              size="sm"
+              onClick={handleRemoveResource}
+              loading={removeResourceMutation.isLoading}
+            >
+              <IconTrash size={16} />
+            </ActionIcon>
+          </Tooltip>
+        )}
+      </Group>
+    </Group>
+  ) : (
+    <div className="flex items-center justify-between gap-3">
+      <Text>
+        {modelName} -{' '}
+        <Text span color="dimmed" size="sm">
+          {modelVersionName}
+        </Text>
+      </Text>
+      <Group spacing={4}>
+        <Badge color="gray" size="md" variant="filled">
+          {getDisplayName(modelType ?? 'unknown')}
+        </Badge>
+      </Group>
+    </div>
   );
-}
+};
 
 function EditDetail() {
   const [showMoreResources, setShowMoreResources] = useState(false);
@@ -547,61 +654,9 @@ function EditDetail() {
                 {resourcesSorted
                   .filter((x) => !!x.modelName)
                   .slice(0, !showMoreResources ? 3 : resources.length)
-                  .map((resource, i) => {
-                    return !!resource.modelId && !!resource.modelVersionId ? (
-                      <Group spacing="xs" noWrap mt={i === 0 ? 4 : undefined}>
-                        {!resource.detected && (
-                          <Tooltip label="Manually added" withArrow>
-                            <ThemeIcon color="cyan" variant="light" radius="xl" size="sm">
-                              <IconUserPlus size={14} />
-                            </ThemeIcon>
-                          </Tooltip>
-                        )}
-                        <Link
-                          key={i}
-                          href={`/models/${resource.modelId}?modelVersionId=${resource.modelVersionId}`}
-                          target="_blank"
-                          className="grow"
-                        >
-                          <Box
-                            component="a"
-                            className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5"
-                          >
-                            <Text>
-                              {resource.modelName} -{' '}
-                              <Text span color="dimmed" size="sm">
-                                {resource.modelVersionName}
-                              </Text>
-                            </Text>
-                            <Group spacing={2}>
-                              <Badge color="gray" size="md" variant="filled">
-                                {getDisplayName(resource.modelType ?? 'unknown')}
-                              </Badge>
-                            </Group>
-                          </Box>
-                        </Link>
-
-                        <Group spacing={4}>
-                          <CopyResource modelVersionId={resource.modelVersionId} />
-                          <RemoveResource modelVersionId={resource.modelVersionId} />
-                        </Group>
-                      </Group>
-                    ) : (
-                      <div className="flex items-center justify-between gap-3">
-                        <Text>
-                          {resource.modelName} -{' '}
-                          <Text span color="dimmed" size="sm">
-                            {resource.modelVersionName}
-                          </Text>
-                        </Text>
-                        <Group spacing={4}>
-                          <Badge color="gray" size="md" variant="filled">
-                            {getDisplayName(resource.modelType ?? 'unknown')}
-                          </Badge>
-                        </Group>
-                      </div>
-                    );
-                  })}
+                  .map((resource, i) => (
+                    <ResourceRow key={`${image.id}-${i}`} resource={resource} i={i} />
+                  ))}
                 {resources.length > 3 && (
                   <div>
                     <Button
@@ -690,6 +745,7 @@ function EditDetail() {
                   </h3>
                   <InfoPopover
                     type="hover"
+                    hideClick={true}
                     variant="transparent"
                     size="sm"
                     position="right"
@@ -799,6 +855,7 @@ function EditDetail() {
                     </h3>
                     <InfoPopover
                       type="hover"
+                      hideClick={true}
                       variant="transparent"
                       size="sm"
                       position="right"

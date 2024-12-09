@@ -63,14 +63,18 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 const isImageOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
 
-  const { id } = input as { id: number };
-
   const userId = ctx.user.id;
   const isModerator = ctx?.user?.isModerator;
-  if (!isModerator && !!id) {
-    const ownerId = (await dbWrite.image.findUnique({ where: { id }, select: { userId: true } }))
-      ?.userId;
-    if (ownerId !== userId) throw throwAuthorizationError();
+
+  const { id: inputId } = input as { id: number | number[] | null };
+
+  if (!isModerator && !!inputId) {
+    const ids = !Array.isArray(inputId) ? [inputId] : inputId;
+    const images = await dbWrite.image.findMany({
+      where: { id: { in: ids } },
+      select: { userId: true },
+    });
+    if (images.some((i) => i.userId !== userId)) throw throwAuthorizationError();
   }
 
   return next({

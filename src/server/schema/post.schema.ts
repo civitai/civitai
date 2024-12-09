@@ -112,7 +112,7 @@ export const updatePostImageSchema = z.object({
 
 export type AddResourceToPostImageInput = z.infer<typeof addResourceToPostImageInput>;
 export const addResourceToPostImageInput = z.object({
-  id: z.number(),
+  id: z.array(z.number()),
   modelVersionId: z.number(),
 });
 

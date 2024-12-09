@@ -1,14 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { SessionUser } from 'next-auth';
+import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server.mjs';
-import { PostSort } from '~/server/common/enums';
+import { PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { externalMetaSchema, ImageSchema } from '~/server/schema/image.schema';
+import { externalMetaSchema, ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import {
   editPostImageSelect,
@@ -30,6 +31,7 @@ import {
   getImagesForPosts,
   purgeImageGenerationDataCache,
   purgeResizeCache,
+  queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
@@ -964,10 +966,14 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
 };
 
 export const addResourceToPostImage = async ({
-  id: imageId,
+  id: imageIds,
   modelVersionId,
   user,
 }: AddResourceToPostImageInput & { user: SessionUser }) => {
+  if (!imageIds.length) {
+    throw throwBadRequestError('Must include at least one image.');
+  }
+
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id: modelVersionId },
     select: {
@@ -990,42 +996,60 @@ export const addResourceToPostImage = async ({
 
   if (!modelVersion) throw throwNotFoundError('Model version not found.');
 
-  const image = await dbRead.image.findFirst({
-    where: { id: imageId },
-    select: { postId: true },
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { postId: true, meta: true },
   });
 
-  if (!image) throw throwNotFoundError('Image not found.');
-  // TODO add check for isOnSite and return
+  if (images.length !== imageIds.length) {
+    throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
+  }
+  // TODO technically this can be called with a combo of on/off site imgs
+  if (images.some((i) => isMadeOnSite(i.meta as ImageMetaProps))) {
+    throw throwBadRequestError('Cannot add resources to on-site generations.');
+  }
 
   // noinspection JSPotentiallyInvalidTargetOfIndexedPropertyAccess
   const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();
   const name = `${modelVersion.model.name} - ${modelVersion.name}`;
 
-  const { id: createdId } = await dbWrite.imageResource.create({
-    data: {
+  const createdResources = await dbWrite.imageResource.createManyAndReturn({
+    data: imageIds.map((imageId) => ({
       modelVersionId,
       imageId,
       name,
       hash,
       detected: false,
-    },
-    select: { id: true },
+    })),
+    skipDuplicates: true,
+    select: { id: true, imageId: true },
+  });
+
+  await queueImageSearchIndexUpdate({
+    ids: createdResources.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
   });
 
   // TODO are these necessary?
-  // Cache Busting
+  // - Cache Busting
+
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   await bustCacheTag(`images-model:${modelVersion.model.id}`);
 
-  if (!!image.postId) {
-    await preventReplicationLag('postImages', image.postId);
-    await bustCachesForPost(image.postId);
+  // for (const imageId of imageIds) {
+  //   purgeImageGenerationDataCache(imageId);
+  // }
+
+  for (const image of images) {
+    if (!!image.postId) {
+      await preventReplicationLag('postImages', image.postId);
+      await bustCachesForPost(image.postId);
+    }
   }
 
-  return dbWrite.imageResourceHelper.findFirst({
-    where: { id: createdId },
+  return dbWrite.imageResourceHelper.findMany({
+    where: { id: { in: createdResources.map((x) => x.id) } },
   });
 };
 
@@ -1053,11 +1077,21 @@ export const removeResourceFromPostImage = async ({
     where: { id: resource.id },
   });
 
+  await queueImageSearchIndexUpdate({
+    ids: [imageId],
+    action: SearchIndexUpdateQueueAction.Update,
+  });
+
   // TODO are these necessary?
-  // Cache Busting
+  // - Cache Busting
+
   await bustCacheTag(`images-user:${user.id}`);
   await bustCacheTag(`images-modelVersion:${modelVersionId}`);
   // await bustCacheTag(`images-model:${modelVersion.model.id}`);
+
+  // for (const imageId of imageIds) {
+  //   purgeImageGenerationDataCache(imageId);
+  // }
 
   if (!!image.postId) {
     await preventReplicationLag('postImages', image.postId);
