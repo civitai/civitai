@@ -33,7 +33,7 @@ import {
   IconUserPlus,
 } from '@tabler/icons-react';
 import { remove } from 'lodash-es';
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useMemo, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -69,6 +69,7 @@ import { Generation } from '~/server/services/generation/generation.types';
 import {
   getBaseModelResourceTypes,
   getBaseModelSetType,
+  getBaseModelSetTypes,
 } from '~/shared/constants/generation.constants';
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
@@ -77,6 +78,7 @@ import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
 
 // #region [types]
@@ -88,6 +90,8 @@ const simpleMetaProps = {
   seed: 'Seed',
   clipSkip: 'Clip skip',
 } as const;
+type AllowedResource = { type: ModelType; baseModels: string[] };
+type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 // #endregion
 
 // #region [AddedImage context]
@@ -98,6 +102,7 @@ type State = {
   isPending: boolean;
   isOnSite: boolean;
   otherImages: PostEditImageDetail[];
+  allowedResources: AllowedResource[];
   isPendingManualAssignment: boolean;
   onDelete: () => void;
   onEditMetaClick: () => void;
@@ -114,6 +119,44 @@ const useAddedImageContext = () => {
   return context;
 };
 // #endregion
+
+const getAllowedResources = (resources: ResourceHelper[]) => {
+  const resourcesSorted = sortByModelTypes(resources);
+  for (const resource of resourcesSorted) {
+    if (resource.modelType === ModelType.Checkpoint) {
+      const baseModel = !!resource.modelVersionBaseModel
+        ? getBaseModelSetType(resource.modelVersionBaseModel)
+        : null;
+      if (isDefined(baseModel)) {
+        return (
+          (getBaseModelResourceTypes(baseModel)?.filter(
+            (t) => t.type !== 'Checkpoint'
+          ) as AllowedResource[]) ?? []
+        );
+      }
+    } else {
+      if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {
+        const baseTypes = getBaseModelSetTypes({
+          modelType: resource.modelType,
+          baseModel: resource.modelVersionBaseModel,
+        });
+        const allTypes = baseTypes.flatMap(
+          (b) => (getBaseModelResourceTypes(b) as AllowedResource[]) ?? []
+        );
+        return Object.values(
+          allTypes.reduce<Record<string, AllowedResource>>((acc, { type, baseModels }) => {
+            if (!acc[type]) {
+              acc[type] = { type, baseModels: [] };
+            }
+            acc[type].baseModels = Array.from(new Set([...acc[type].baseModels, ...baseModels]));
+            return acc;
+          }, {})
+        );
+      }
+    }
+  }
+  return [];
+};
 
 // #region [AddedImage Provider]
 export function AddedImage({ image }: { image: PostEditImageDetail }) {
@@ -132,6 +175,10 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     .filter((img) => img.type === 'added')
     .filter((img) => img.data.id !== id && !isMadeOnSite(img.data.meta)) // double filter because TS is stupid
     .map((i) => i.data);
+
+  const allowedResources = useMemo(() => {
+    return getAllowedResources(image.resourceHelper);
+  }, [image.resourceHelper]);
 
   const isPending = ingestion === ImageIngestionStatus.Pending;
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
@@ -219,6 +266,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isScanned,
         isOnSite,
         otherImages,
+        allowedResources,
         onDelete: handleDelete,
         onEditMetaClick: handleEditMetaClick,
         isDeleting: deleteImageMutation.isLoading,
@@ -269,19 +317,7 @@ function Preview() {
 
 const ResourceHeader = () => {
   const status = useGenerationStatus();
-  const { image, addResource, isAddingResource, isOnSite } = useAddedImageContext();
-
-  const { resourceHelper: resources } = image;
-
-  // If we have a checkpoint resource, limit the other choices to those that are applicable
-  const chkpt = resources.find((r) => r.modelType === ModelType.Checkpoint);
-  const chkptBaseModel =
-    !!chkpt && !!chkpt.modelVersionBaseModel
-      ? getBaseModelSetType(chkpt.modelVersionBaseModel)
-      : null;
-  const resourceTypes = !!chkptBaseModel
-    ? (getBaseModelResourceTypes(chkptBaseModel) ?? []).filter((t) => t.type !== 'Checkpoint')
-    : [];
+  const { allowedResources, addResource, isAddingResource, isOnSite } = useAddedImageContext();
 
   return (
     <div className="group flex items-center justify-between">
@@ -302,7 +338,7 @@ const ResourceHeader = () => {
           create this image.
         </InfoPopover>
       </div>
-      {!isOnSite && (
+      {!isOnSite ? (
         <Group spacing="xs">
           <Box className="hidden group-hover:block">
             <InfoPopover
@@ -329,7 +365,7 @@ const ResourceHeader = () => {
             buttonLabel="RESOURCE"
             isTraining={true}
             options={{
-              resources: resourceTypes,
+              resources: allowedResources,
             }}
             buttonProps={{
               size: 'sm',
@@ -341,35 +377,56 @@ const ResourceHeader = () => {
               const vals = val as Generation.Resource[] | undefined;
               if (!vals || !vals.length) return;
               vals.forEach((val) => {
-                console.log(val);
                 addResource(val.id);
               });
             }}
           />
         </Group>
+      ) : (
+        <Badge color="cyan">Made on-site</Badge>
       )}
     </div>
   );
 };
 
-const ResourceRow = ({
-  resource,
-  i,
-}: {
-  resource: PostEditImageDetail['resourceHelper'][number];
-  i: number;
-}) => {
+const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) => {
   const { image, isOnSite, otherImages } = useAddedImageContext();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
-  const { modelId, modelName, modelType, modelVersionId, modelVersionName, detected } = resource;
+  const {
+    modelId,
+    modelName,
+    modelType,
+    modelVersionId,
+    modelVersionName,
+    modelVersionBaseModel,
+    detected,
+  } = resource;
+
+  const otherAvailableIDs = useMemo(() => {
+    return otherImages
+      .map((oi) => {
+        const otherAllowed = getAllowedResources(oi.resourceHelper);
+        const resourceMatch = otherAllowed.find((oa) => oa.type === modelType);
+        if (
+          resourceMatch &&
+          modelVersionBaseModel &&
+          resourceMatch.baseModels.includes(modelVersionBaseModel)
+        ) {
+          return oi.id;
+        }
+      })
+      .filter(isDefined);
+  }, [modelType, modelVersionBaseModel, otherImages]);
 
   const copyResourceMutation = trpc.post.addResourceToImage.useMutation({
     onSuccess: (resp) => {
       if (resp) {
-        updateImage(image.id, (img) => {
-          img.resourceHelper = img.resourceHelper.concat(resp);
-        });
+        for (const r of resp) {
+          updateImage(r.imageId, (img) => {
+            img.resourceHelper.push(r);
+          });
+        }
       }
     },
     onError(error) {
@@ -412,16 +469,16 @@ const ResourceRow = ({
   };
 
   const handleCopyResource = () => {
-    if (!otherImages.length || !modelVersionId) return;
+    if (!otherAvailableIDs.length || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Copy to All',
-      children: `Add this resource to all other valid images (${otherImages.length})?`,
+      children: `Add this resource to all other valid images (${otherAvailableIDs.length})?`,
       labels: { confirm: 'Yep!', cancel: 'Cancel' },
       confirmProps: { color: 'green' },
       onConfirm: () => {
-        if (!otherImages.length) return;
-        copyResourceMutation.mutate({ id: otherImages.map((oi) => oi.id), modelVersionId });
+        if (!otherAvailableIDs.length) return;
+        copyResourceMutation.mutate({ id: otherAvailableIDs, modelVersionId });
       },
     });
   };
@@ -459,7 +516,7 @@ const ResourceRow = ({
       </Link>
 
       <Group spacing={4} noWrap>
-        {!otherImages.length ? (
+        {!otherAvailableIDs.length ? (
           <></>
         ) : (
           <Tooltip label="Copy to All">
