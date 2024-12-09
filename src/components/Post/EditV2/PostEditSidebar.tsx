@@ -33,7 +33,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       state.images.length > 1,
       state.collectionId,
       state.collectionTagId,
-      state.images
+      state.images,
     ]);
   const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
@@ -236,10 +236,14 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
       {showReorder && <ReorderImagesButton />}
 
-      {post.publishedAt && (
+      {post.publishedAt && images.length > 0 && (
         <Button
           onClick={() => {
-            if (imagesimimage)
+            if (images.length > 1) {
+              router.push(`/posts/${post.id}`);
+            } else if (images.length === 1) {
+              router.push(`/images/${images[0].id}`);
+            }
           }}
           variant="outline"
           color="gray"
