@@ -25,7 +25,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const params = usePostEditParams();
   const { returnUrl, afterPublish } = params;
   const [deleted, setDeleted] = useState(false);
-  const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId] =
+  const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId, images] =
     usePostEditStore((state) => [
       state.updatePost,
       state.isReordering,
@@ -33,6 +33,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       state.images.length > 1,
       state.collectionId,
       state.collectionTagId,
+      state.images
     ]);
   const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
@@ -234,6 +235,19 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       )}
 
       {showReorder && <ReorderImagesButton />}
+
+      {post.publishedAt && (
+        <Button
+          onClick={() => {
+            if (imagesimimage)
+          }}
+          variant="outline"
+          color="gray"
+          className="mt-2"
+        >
+          View {postLabel}
+        </Button>
+      )}
 
       <DeletePostButton postId={post.id}>
         {({ onClick, isLoading }) => (
