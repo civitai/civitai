@@ -131,6 +131,7 @@ export const updatePostHandler = async ({
         collectionId: true,
         id: true,
         nsfwLevel: true,
+        title: true,
       },
     });
 
@@ -177,6 +178,26 @@ export const updatePostHandler = async ({
         !collection.metadata?.disableTagRequired
       ) {
         throw throwBadRequestError('You must select a tag for this collection');
+      }
+
+      if (collection.metadata.entriesRequireTitle && !post.title) {
+        throw throwBadRequestError('Your entry must have a title to be submitted');
+      }
+
+      if (collection.metadata.entriesRequireTools) {
+        // Check all images within this post has tools:
+        const exists = await dbWrite.image.findFirst({
+          where: {
+            postId: input.id,
+            tools: {
+              none: {},
+            },
+          },
+        });
+
+        if (exists) {
+          throw throwBadRequestError('All images must have tools to be submitted');
+        }
       }
 
       if (collection.mode === CollectionMode.Contest) {

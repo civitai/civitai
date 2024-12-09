@@ -1,6 +1,7 @@
 import { Input, Text, useMantineTheme } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { DragEvent } from 'react';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { constants } from '~/server/common/constants';
@@ -55,6 +56,11 @@ export function MediaDropzone({
         constants.mediaUpload.maxVideoFileSize
       : settings.maxSize
     : constants.mediaUpload.maxVideoFileSize;
+
+  const seconds = settings?.maxVideoDuration ?? constants.mediaUpload.maxVideoDurationSeconds;
+  const durationLabel =seconds > 60 ? dayjs
+    .duration(seconds, 'seconds')
+    .format(`mm [minutes (${seconds} seconds)]`) : `${seconds} seconds`;
   // #region [render]
   return (
     <div className="flex w-full flex-col gap-1">
@@ -97,10 +103,10 @@ export function MediaDropzone({
               {`Images cannot exceed ${formatBytes(maxSize)} `}
             </Text> */}
             {allowsVideo && (
-              <Text size="sm" color="dimmed" inline>
-                {`Videos cannot exceed ${formatBytes(maxVideoSize)}, 4k resolution, or ${
-                  settings?.maxVideoDuration ?? constants.mediaUpload.maxVideoDurationSeconds
-                } seconds in duration`}
+              <Text size="sm" color="dimmed" align="center" inline>
+                {`Videos cannot exceed ${formatBytes(
+                  maxVideoSize
+                )}, 4K resolution, or ${durationLabel} in duration`}
               </Text>
             )}
             {fileExtensions.length > 0 && (

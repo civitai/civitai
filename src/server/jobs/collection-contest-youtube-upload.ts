@@ -114,11 +114,11 @@ export const contestCollectionYoutubeUpload = createJob(
                   allowedAttributes: {},
                 })}
                 
-                Created by:
+                Created by ${item.username}:
                 ${userProfile}
 
-                Find out more at:
-                ${env.NEXT_PUBLIC_BASE_URL}
+                Check out more entries at:
+                ${env.NEXT_PUBLIC_BASE_URL}/collections/${collection.id}
               `,
               mimeType: item.mimeType,
               client: authClient,

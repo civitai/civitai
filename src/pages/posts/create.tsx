@@ -128,6 +128,7 @@ export default Page(
               <Title>
                 {displayReview
                   ? 'Create a Review'
+                  : (collectionIdsAggregate?.length ?? 0) > 0 ? 'Submit Entry' 
                   : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
               </Title>
             </div>

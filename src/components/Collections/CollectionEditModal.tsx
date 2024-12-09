@@ -111,7 +111,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const canEdit = !!collection && permissions.manage;
   const isCreate = !collectionId;
   const isImageCollection = collection?.type === CollectionType.Image;
-  const isPostCollection = collection?.type === CollectionType.Post;  
+  const isPostCollection = collection?.type === CollectionType.Post;
   const isContestMode = collection?.mode === CollectionMode.Contest;
 
   return (
@@ -258,8 +258,21 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       label="Tags are not required"
                       description="If enabled, users will be able to submit items without a tag even when tags are setup."
                     />
+                    {isImageCollection && (
+                      <InputCheckbox
+                        name="metadata.entriesRequireTitle"
+                        label="Entries require post title"
+                        description="If enabled, users will be required to add a title to their post before creating it on the collection."
+                      />
+                    )}
+                    {isImageCollection && (
+                      <InputCheckbox
+                        name="metadata.entriesRequireTools"
+                        label="Entries require tool selection"
+                        description="If enabled, users will be required to add at least 1 tool to each of the images uploaded."
+                      />
+                    )}
                     <Divider label="Judging details" />
-
                     {isImageCollection && (
                       <InputCheckbox
                         name="metadata.judgesApplyBrowsingLevel"
@@ -282,7 +295,6 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
-
                     {isImageCollection && (
                       <>
                         <Divider label="Youtube Support" />

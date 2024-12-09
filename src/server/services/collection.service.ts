@@ -1417,7 +1417,7 @@ export const updateCollectionItemsStatus = async ({
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, type: true, mode: true, name: true },
+    select: { id: true, type: true, mode: true, name: true, metadata: true },
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
@@ -1430,6 +1430,46 @@ export const updateCollectionItemsStatus = async ({
 
   if (!manage && !isOwner)
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
+
+  const collectionMetadata = collection.metadata as CollectionMetadataSchema;
+
+  if (status === CollectionItemStatus.ACCEPTED) {
+    if (collectionMetadata?.judgesCanScoreEntries) {
+      const exists = await dbWrite.collectionItem.findFirst({
+        where: {
+          id: { in: collectionItemIds },
+          scores: {
+            none: {},
+          },
+        },
+      });
+
+      if (exists) {
+        throw throwBadRequestError(
+          'Some of the items selected do not have scores. Please ensure all items have scores before approving them.'
+        );
+      }
+    }
+
+    if (collectionMetadata?.judgesApplyBrowsingLevel && collection.type === CollectionType.Image) {
+      const exists = await dbWrite.collectionItem.findFirst({
+        where: {
+          id: { in: collectionItemIds },
+          image: {
+            nsfwLevel: {
+              in: [0, -1],
+            },
+          },
+        },
+      });
+
+      if (exists) {
+        throw throwBadRequestError(
+          'Some of the items selected have not been given an NSFW rating. Please ensure all items have an NSFW rating before approving them.'
+        );
+      }
+    }
+  }
 
   if (collectionItemIds.length > 0) {
     await dbWrite.$executeRaw`
