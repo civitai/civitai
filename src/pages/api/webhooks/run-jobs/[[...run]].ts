@@ -59,7 +59,8 @@ import { redis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
-import * as dailyChallengeJobs from '~/server/jobs/daily-challenge-processing';
+import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
+import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -116,7 +117,8 @@ export const jobs: Job[] = [
   processSubscriptionsRequiringRenewal,
   sendCollectionNotifications,
   checkProcessingResourceTrainingV2,
-  ...Object.values(dailyChallengeJobs),
+  ...dailyChallengeJobs,
+  contestCollectionYoutubeUpload,
 ];
 
 const log = createLogger('jobs', 'green');

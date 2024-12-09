@@ -10,6 +10,7 @@ import {
   Group,
   Menu,
   Popover,
+  Progress,
   Stack,
   Text,
   ThemeIcon,
@@ -30,9 +31,9 @@ import {
   IconInfoCircle,
   IconPhoto,
 } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
+import { capitalize, truncate } from 'lodash-es';
 import { useRouter } from 'next/router';
-import React, { CSSProperties, useState } from 'react';
+import React, { CSSProperties } from 'react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -45,11 +46,12 @@ import {
   contestCollectionReactionsHidden,
   isCollectionSubsmissionPeriod,
   useCollection,
+  useCollectionEntryCount,
 } from '~/components/Collections/collection.utils';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PeriodFilter, SortFilter } from '~/components/Filters';
+import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { useImageQueryParams } from '~/components/Image/image.utils';
@@ -77,7 +79,7 @@ import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
-import { removeTags } from '~/utils/string-helpers';
+import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { Meta } from '../Meta/Meta';
 import { ModelContextMenuProvider } from '~/components/Model/Actions/ModelCardContextMenu';
@@ -86,6 +88,11 @@ import { RemoveFromCollectionMenuItem } from '~/components/MenuItems/RemoveFromC
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import dynamic from 'next/dynamic';
+import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
+import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
+import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
+import { CollectionItemStatus } from '@prisma/client';
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );
@@ -123,6 +130,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         sort,
         followed: undefined,
         hidden: undefined,
+        favorites: undefined,
         collectionId: collection.id,
       };
 
@@ -150,18 +158,18 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
         <IsClient>
           {!isContestCollection && (
             <>
-              <Group position="apart" spacing={0}>
+              <Group position="right" spacing={4}>
                 <SortFilter
                   type="models"
+                  variant="button"
                   value={sort}
+                  buttonProps={{ compact: false }}
                   onChange={(x) => set({ sort: x as ModelSort })}
                 />
-                <Group spacing="xs">
-                  <ModelFiltersDropdown
-                    filterMode="query"
-                    maxPopoverHeight={'calc(75vh - var(--header-height))'}
-                  />
-                </Group>
+                <ModelFiltersDropdown
+                  filterMode="query"
+                  maxPopoverHeight={'calc(75vh - var(--header-height))'}
+                />
               </Group>
               <CategoryTags />
             </>
@@ -194,7 +202,7 @@ const ImageCollection = ({
   const sort = isContestCollection ? ImageSort.Random : query.sort ?? ImageSort.Newest;
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
-  const utils = trpc.useContext();
+  const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -217,6 +225,8 @@ const ImageCollection = ({
         period,
         sort,
         collectionId: collection.id,
+        hidden: undefined,
+        followed: undefined,
       };
 
   return (
@@ -270,21 +280,21 @@ const ImageCollection = ({
         <IsClient>
           {!isContestCollection && (
             <>
-              <Group position="apart" spacing={0}>
+              <Group position="right" spacing={4}>
                 <SortFilter
                   type="images"
+                  variant="button"
                   value={sort}
+                  buttonProps={{ compact: false }}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
-
-                <PeriodFilter
-                  type="images"
-                  value={period}
-                  onChange={(x) => replace({ period: x })}
+                <MediaFiltersDropdown
+                  filterType="images"
+                  query={filters}
+                  onChange={(value) => replace(value)}
                 />
               </Group>
-              {/* TODO.imageTags: Bring back once we support tags again.  */}
-              {/* <ImageCategories /> */}
+              <ImageCategories />
             </>
           )}
 
@@ -323,17 +333,7 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite
-              filters={{
-                ...filters,
-                sort,
-                collectionId: collection.id,
-                types: undefined,
-                hidden: undefined,
-                withMeta: undefined,
-                followed: undefined,
-              }}
-            />
+            <ImagesInfinite filters={filters} disableStoreFilters />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -365,6 +365,8 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
         period,
         sort,
         collectionId: collection.id,
+        draftOnly: undefined,
+        followed: undefined,
       };
 
   // For contest collections, we need to keep the filters clean from outside intervention.
@@ -373,29 +375,21 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
       <IsClient>
         {!isContestCollection && (
           <>
-            <Group position="apart" spacing={0}>
+            <Group position="right" spacing={4}>
               <SortFilter
                 type="posts"
+                variant="button"
                 value={sort}
-                onChange={(sort) => replace({ sort: sort as any })}
+                buttonProps={{ compact: false }}
+                onChange={(sort) => replace({ sort: sort as PostSort })}
               />
-              <PeriodFilter
-                type="posts"
-                value={period}
-                onChange={(period) => replace({ period })}
-              />
+              <PostFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
             <PostCategories />
           </>
         )}
         <ReactionSettingsProvider settings={{ hideReactionCount: !isContestCollection }}>
-          <PostsInfinite
-            filters={{
-              ...filters,
-              sort,
-              collectionId: collection.id,
-            }}
-          />
+          <PostsInfinite filters={filters} disableStoreFilters />
         </ReactionSettingsProvider>
       </IsClient>
     </Stack>
@@ -412,12 +406,22 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
 
   // For contest collections, we need to keep the filters clean from outside intervention.
   const filters = isContestCollection
-    ? { sort, period: MetricTimeframe.AllTime, followed: false, collectionId: collection.id }
+    ? {
+        sort,
+        period: MetricTimeframe.AllTime,
+        collectionId: collection.id,
+        followed: undefined,
+        favorites: undefined,
+        hidden: undefined,
+      }
     : {
         ...query,
         sort,
         period,
         collectionId: collection.id,
+        followed: undefined,
+        favorites: undefined,
+        hidden: undefined,
       };
 
   return (
@@ -425,28 +429,20 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
       <IsClient>
         {!isContestCollection && (
           <>
-            <Group position="apart" spacing={0}>
+            <Group position="right" spacing={4}>
               <SortFilter
                 type="articles"
+                variant="button"
                 value={sort}
+                buttonProps={{ compact: false }}
                 onChange={(x) => replace({ sort: x as ArticleSort })}
               />
-              <PeriodFilter
-                type="articles"
-                value={period}
-                onChange={(x) => replace({ period: x })}
-              />
+              <ArticleFiltersDropdown query={filters} onChange={(value) => replace(value)} />
             </Group>
             <ArticleCategories />
           </>
         )}
-        <ArticlesInfinite
-          filters={{
-            ...filters,
-            sort,
-            collectionId: collection.id,
-          }}
-        />
+        <ArticlesInfinite filters={filters} disableStoreFilters />
       </IsClient>
     </Stack>
   );
@@ -459,6 +455,9 @@ export function Collection({
   const router = useRouter();
 
   const { collection, permissions, isLoading } = useCollection(collectionId);
+  const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
+    enabled: collection?.mode === CollectionMode.Contest && !!collection?.metadata?.maxItemsPerUser,
+  });
 
   const { classes } = useStyles({ bannerPosition: collection?.metadata?.bannerPosition });
   const { blockedUsers } = useHiddenPreferencesData();
@@ -629,71 +628,139 @@ export function Collection({
                   )}
                 </Stack>
                 {collection && permissions && (
-                  <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
-                    {collection.mode === CollectionMode.Contest &&
-                    collection.type === CollectionType.Image ? (
-                      <>
-                        <Button
-                          color="blue"
-                          radius="xl"
-                          onClick={() => {
-                            if (!!metadata.existingEntriesDisabled) {
-                              router.push(`/posts/create?collectionId=${collection.id}`);
-                            } else {
-                              dialogStore.trigger({
-                                component: AddUserContentModal,
-                                props: {
-                                  collectionId: collection.id,
-                                },
-                              });
-                            }
-                          }}
-                        >
-                          Submit an entry
-                        </Button>
-                      </>
-                    ) : (
-                      <>
-                        <CollectionFollowAction
-                          collectionId={collection.id}
-                          permissions={permissions}
-                        />
-                        {canAddContent && (
-                          <Tooltip label="Add from your library." position="bottom" withArrow>
-                            <ActionIcon
-                              color="blue"
-                              variant="subtle"
-                              radius="xl"
-                              onClick={() => {
-                                if (!!metadata.existingEntriesDisabled) {
-                                  router.push(`/posts/create?collectionId=${collection.id}`);
-                                } else {
-                                  dialogStore.trigger({
-                                    component: AddUserContentModal,
-                                    props: {
-                                      collectionId: collection.id,
-                                    },
-                                  });
-                                }
-                              }}
-                            >
-                              <IconCirclePlus />
-                            </ActionIcon>
-                          </Tooltip>
-                        )}
-                      </>
-                    )}
-                    <CollectionContextMenu
-                      collectionId={collection.id}
-                      ownerId={collection.user.id}
-                      permissions={permissions}
-                      mode={collection.mode}
-                    >
-                      <ActionIcon variant="subtle">
-                        <IconDotsVertical size={16} />
-                      </ActionIcon>
-                    </CollectionContextMenu>
-                  </Group>
+                  <Stack>
+                    <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
+                      {collection.mode === CollectionMode.Contest &&
+                      [CollectionType.Image, CollectionType.Post].some(
+                        (x) => x === collection.type
+                      ) ? (
+                        <>
+                          <Button
+                            color="blue"
+                            radius="xl"
+                            onClick={() => {
+                              if (
+                                !!metadata.existingEntriesDisabled ||
+                                collection.type === CollectionType.Post
+                              ) {
+                                router.push(`/posts/create?collectionId=${collection.id}`);
+                              } else {
+                                dialogStore.trigger({
+                                  component: AddUserContentModal,
+                                  props: {
+                                    collectionId: collection.id,
+                                  },
+                                });
+                              }
+                            }}
+                          >
+                            Submit an entry
+                          </Button>
+                        </>
+                      ) : (
+                        <>
+                          <CollectionFollowAction
+                            collectionId={collection.id}
+                            permissions={permissions}
+                          />
+                          {canAddContent && (
+                            <Tooltip label="Add from your library." position="bottom" withArrow>
+                              <ActionIcon
+                                color="blue"
+                                variant="subtle"
+                                radius="xl"
+                                onClick={() => {
+                                  if (!!metadata.existingEntriesDisabled) {
+                                    router.push(`/posts/create?collectionId=${collection.id}`);
+                                  } else {
+                                    dialogStore.trigger({
+                                      component: AddUserContentModal,
+                                      props: {
+                                        collectionId: collection.id,
+                                      },
+                                    });
+                                  }
+                                }}
+                              >
+                                <IconCirclePlus />
+                              </ActionIcon>
+                            </Tooltip>
+                          )}
+                        </>
+                      )}
+                      <CollectionContextMenu
+                        collectionId={collection.id}
+                        ownerId={collection.user.id}
+                        permissions={permissions}
+                        mode={collection.mode}
+                      >
+                        <ActionIcon variant="subtle">
+                          <IconDotsVertical size={16} />
+                        </ActionIcon>
+                      </CollectionContextMenu>
+                    </Group>
+                    {entryCountDetails?.max &&
+                      (() => {
+                        const statuses = [
+                          CollectionItemStatus.REJECTED,
+                          CollectionItemStatus.REVIEW,
+                          CollectionItemStatus.ACCEPTED,
+                        ];
+                        const totalEntries =
+                          (entryCountDetails[CollectionItemStatus.REJECTED] ?? 0) +
+                          entryCountDetails.max;
+                        const remainingEntries =
+                          entryCountDetails.max -
+                          // We only count review/accepted
+                          [CollectionItemStatus.ACCEPTED, CollectionItemStatus.REVIEW].reduce(
+                            // Sum all statuses
+                            (acc, status) => acc + (entryCountDetails[status] ?? 0),
+                            0
+                          );
+
+                        return (
+                          <Stack spacing={0}>
+                            <Progress
+                              size="xl"
+                              sections={[
+                                ...statuses.map((status) => {
+                                  const color =
+                                    status === CollectionItemStatus.REVIEW
+                                      ? 'blue'
+                                      : status === CollectionItemStatus.ACCEPTED
+                                      ? 'green'
+                                      : 'red';
+
+                                  const label = capitalize(status.toLowerCase());
+
+                                  return entryCountDetails[status]
+                                    ? {
+                                        value: (entryCountDetails[status] / totalEntries) * 100,
+                                        color,
+                                        // label,
+                                        tooltip: `${label}: ${entryCountDetails[status]}`,
+                                      }
+                                    : undefined;
+                                }),
+                                remainingEntries > 0
+                                  ? {
+                                      value: (remainingEntries / totalEntries) * 100,
+                                      color: 'gray',
+                                      // label: 'Remaining',
+                                      tooltip: `Remaining: ${remainingEntries}`,
+                                    }
+                                  : undefined,
+                              ].filter(isDefined)}
+                            />
+                            <Tooltip label="Rejected entries do not count toward the allowed count.">
+                              <Text size="xs" weight="bold">
+                                Max entries per participant: {entryCountDetails.max}
+                              </Text>
+                            </Tooltip>
+                          </Stack>
+                        );
+                      })()}
+                  </Stack>
                 )}
               </Group>
               {metadata.submissionStartDate &&

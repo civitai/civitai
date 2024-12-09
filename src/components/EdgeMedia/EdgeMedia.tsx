@@ -1,13 +1,13 @@
 import { createStyles, Text } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPlayerPlayFilled } from '@tabler/icons-react';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { MAX_ANIMATION_DURATION_SECONDS } from '~/server/common/constants';
-import { ImageMetadata, VideoMetadata, videoMetadataSchema } from '~/server/schema/media.schema';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { useTimeout } from '@mantine/hooks';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -20,7 +20,8 @@ export type EdgeMediaProps = EdgeUrlProps &
     html5Controls?: boolean;
     onMutedChange?: (muted: boolean) => void;
     videoRef?: React.ForwardedRef<EdgeVideoRef>;
-    metadata?: ImageMetadata | VideoMetadata;
+    metadata?: ImageMetadata | VideoMetadata | null;
+    youtubeVideoId?: string;
   };
 
 export function EdgeMedia({
@@ -49,6 +50,7 @@ export function EdgeMedia({
   html5Controls,
   onMutedChange,
   videoRef,
+  youtubeVideoId,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -58,13 +60,14 @@ export function EdgeMedia({
   useEffect(() => {
     mediaRef?.[1](imgRef.current);
   }, [mediaRef]);
+  const [internalAnim, setInternalAnim] = useState(anim);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
   const { url, type: inferredType } = useEdgeUrl(src, {
     width,
     height,
     fit,
-    anim,
+    anim: internalAnim ?? anim,
     transcode,
     blur,
     quality,
@@ -75,6 +78,15 @@ export function EdgeMedia({
     skip,
   });
 
+  const { start, clear } = useTimeout(() => {
+    setInternalAnim(true);
+  }, 1000);
+
+  const handleMouseOut = () => {
+    if (!anim && internalAnim) setInternalAnim(false);
+    clear();
+  };
+
   switch (inferredType) {
     case 'image': {
       const img = (
@@ -84,14 +96,14 @@ export function EdgeMedia({
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
           onLoad={(e) => (fadeIn ? (e.currentTarget.style.opacity = '1') : undefined)}
           onError={(e) => e.currentTarget.classList.add('load-error')}
-          src={url}
           style={style}
           {...imgProps}
+          src={url}
         />
       );
       if (type === 'video') {
         return (
-          <div className={classes.videoThumbRoot}>
+          <div onMouseOver={start} onMouseOut={handleMouseOut} className={classes.videoThumbRoot}>
             <IconPlayerPlayFilled className={classes.playButton} />
             {img}
           </div>
@@ -114,6 +126,8 @@ export function EdgeMedia({
           html5Controls={html5Controls}
           onMutedChange={onMutedChange}
           ref={videoRef}
+          onMouseOut={handleMouseOut}
+          youtubeVideoId={youtubeVideoId}
         />
       );
     case 'audio':

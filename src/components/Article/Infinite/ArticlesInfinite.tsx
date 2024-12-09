@@ -17,10 +17,13 @@ export function ArticlesInfinite({
   filters: filterOverrides = {},
   showEof = false,
   showEmptyCta,
+  disableStoreFilters,
 }: Props) {
   const articlesFilters = useArticleFilters();
 
-  const filters = removeEmpty({ ...articlesFilters, ...filterOverrides });
+  const filters = disableStoreFilters
+    ? filterOverrides
+    : removeEmpty({ ...articlesFilters, ...filterOverrides });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
 
   const { articles, isLoading, fetchNextPage, hasNextPage, isRefetching, isFetching } =
@@ -77,4 +80,5 @@ type Props = {
   filters?: Partial<GetInfiniteArticlesSchema>;
   showEof?: boolean;
   showEmptyCta?: boolean;
+  disableStoreFilters?: boolean;
 };

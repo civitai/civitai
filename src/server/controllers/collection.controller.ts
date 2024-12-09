@@ -9,6 +9,7 @@ import {
   AddSimpleImagePostInput,
   BulkSaveCollectionItemsInput,
   CollectionMetadataSchema,
+  EnableCollectionYoutubeSupportInput,
   FollowCollectionInputSchema,
   GetAllCollectionItemsSchema,
   GetAllCollectionsInfiniteSchema,
@@ -29,6 +30,7 @@ import {
   bulkSaveItems,
   checkUserOwnsCollectionAndItem,
   deleteCollectionById,
+  enableCollectionYoutubeSupport,
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
@@ -657,6 +659,20 @@ export const setCollectionItemNsfwLevelHandler = async ({
       throw throwAuthorizationError('You do not have permission to manage this collection.');
 
     return await setCollectionItemNsfwLevel({ ...input });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+export const enableCollectionYoutubeSupportHandler = async ({
+  input,
+  ctx,
+}: {
+  input: EnableCollectionYoutubeSupportInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  try {
+    return await enableCollectionYoutubeSupport({ ...input, userId: user.id });
   } catch (error) {
     throw throwDbError(error);
   }

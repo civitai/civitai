@@ -74,6 +74,9 @@ export function VideoGenerationForm() {
   const { data: engines, isLoading } = useGetGenerationEngines();
   const engineData = engines?.find((x) => x.engine === engine);
 
+  // TODO - handle case where workflow is no longer available
+  if (!workflow) return null;
+
   const workflows =
     workflow.subType === 'txt2vid'
       ? availableWorkflows.filter((x) => x.subType === 'txt2vid')

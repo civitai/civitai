@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.323",
+  "version": "5.0.332",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -134,9 +134,12 @@
     "dayjs": "^1.11.12",
     "discord.js": "^14.7.1",
     "draft-js": "^0.11.7",
+    "embla-carousel-autoplay": "^7.1.0",
     "embla-carousel-react": "^7.0.3",
     "exifreader": "^4.13.0",
     "file-saver": "^2.0.5",
+    "google-auth-library": "^9.15.0",
+    "googleapis": "^144.0.0",
     "gray-matter": "^4.0.3",
     "he": "^1.2.0",
     "html-to-text": "^9.0.5",
@@ -195,6 +198,7 @@
     "request-ip": "^3.3.0",
     "run-queue": "^2.0.1",
     "sanitize-html": "^2.7.3",
+    "sass": "^1.82.0",
     "semver": "^7.6.0",
     "sharp": "^0.32.6",
     "slate": "^0.94.1",

@@ -2406,12 +2406,14 @@ export interface Tool {
   icon: string | null;
   createdAt: Date;
   enabled: boolean;
+  unlisted: boolean;
   type: ToolType;
   domain: string | null;
   imageTools?: ImageTool[];
   priority: number | null;
   description: string | null;
   supported: boolean;
+  company: string | null;
   metadata: JsonValue;
 }
 

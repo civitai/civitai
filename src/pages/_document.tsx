@@ -1,5 +1,6 @@
 import { createGetInitialProps } from '@mantine/next';
 import Document, { Html, Main, NextScript, Head } from 'next/document';
+import clsx from 'clsx';
 
 const getInitialProps = createGetInitialProps();
 
@@ -12,7 +13,7 @@ export default class _Document extends Document {
       <Html>
         {/* <InlineStylesHead /> */}
         <Head />
-        <body className={pageProps.colorScheme}>
+        <body className={clsx(pageProps.colorScheme, { ['green']: pageProps.flags.isGreen })}>
           <Main />
           <NextScript />
         </body>

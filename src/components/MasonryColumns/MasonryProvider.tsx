@@ -22,7 +22,7 @@ export const useMasonryContext = () => {
 };
 
 type Props = {
-  columnWidth: number;
+  columnWidth?: number;
   maxColumnCount?: number;
   gap?: number;
   columnGap?: number;
@@ -33,7 +33,7 @@ type Props = {
 
 export function MasonryProvider({
   children,
-  columnWidth,
+  columnWidth = 320,
   maxColumnCount = 7,
   gap = 16,
   columnGap = gap,
@@ -60,7 +60,7 @@ export function MasonryProvider({
   const [columnCount, combinedWidth] = useMemo(() => {
     if (width === 0) return [0, 0];
     const gap = 16;
-    const count = Math.min(Math.floor((width + gap) / (columnWidth + gap)), maxColumnCount) ?? 1;
+    const count = Math.min(Math.floor((width + gap) / (columnWidth + gap)), maxColumnCount) || 1;
     const combinedWidth = count * columnWidth + (count - 1) * gap;
     return [count, combinedWidth];
   }, [width, columnWidth, maxColumnCount]);

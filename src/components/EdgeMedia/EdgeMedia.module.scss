@@ -1,0 +1,42 @@
+.responsive {
+  width: 100%;
+}
+
+.fadeIn {
+  opacity: 0;
+  transition: opacity 200ms ease-in;
+}
+
+.videoThumbRoot {
+  height: 100%;
+  width: 100%;
+  position: relative;
+
+  &:hover {
+    .playButton {
+      background-color: rgba(0,0,0,0.8)
+    }
+  }
+
+  img {
+    object-fit: cover;
+    height: 100%;
+    object-position: 50% 50%;
+  }
+}
+
+.playButton {
+  width: 80px;
+  height: 80px;
+  color: theme('colors.white');
+  background-color: rgba(0,0,0,.6);
+  padding: 20px;
+  border-radius: 50%;
+  box-shadow: 0 2px 2px 1px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.2);
+  transition: background-color 200ms ease;
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%,-50%);
+  z-index: 2;
+}
