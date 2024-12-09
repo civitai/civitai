@@ -28,18 +28,21 @@ export function SensitiveShield({
   const { canViewNsfw } = useFeatureFlags();
   const { status } = useSession();
 
-  if (isLoading) return <PageLoader />;
-
   if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
 
   // this content is not available on this site
-  if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel)))
+  if (!canViewNsfw && (nsfw || !hasPublicBrowsingLevel(contentNsfwLevel))) {
+    if (isLoading) return <PageLoader />; // Makes it so that we may confirm this to be true
+
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <Text>This content is not available on this site</Text>
       </div>
     );
+  }
   if (!currentUser && !hasSafeBrowsingLevel(contentNsfwLevel)) {
+    if (isLoading) return <PageLoader />; // Makes it so that we may confirm this to be true
+
     return (
       <div className="absolute inset-0 flex items-center justify-center">
         <div className="flex flex-col items-center gap-2 p-3">

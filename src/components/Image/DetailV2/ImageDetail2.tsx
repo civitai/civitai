@@ -107,7 +107,7 @@ const sharedIconProps: IconProps = {
 export function ImageDetail2() {
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
-  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index } =
+  const { images, active, close, toggleInfo, shareUrl, connect, navigate, index, collection } =
     useImageDetailContext();
 
   const [sidebarOpen, setSidebarOpen] = useLocalStorage({
@@ -131,9 +131,9 @@ export function ImageDetail2() {
     { enabled: !!image?.id }
   );
 
-  const forcedBrowsingLevel = (collectionItems ?? []).reduce((acc, ci) => {
-    return acc | (ci.collection.metadata?.forcedBrowsingLevel ?? 0);
-  }, 0);
+  console.log(collection);
+
+  const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel;
 
   if (!image) return <NotFound />;
 

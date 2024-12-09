@@ -335,7 +335,7 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters />
+            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
