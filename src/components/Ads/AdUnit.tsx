@@ -66,7 +66,7 @@ export const AdUnitSide_3 = adUnitFactory({
 
 export const AdUnitOutstream = adUnitFactory({
   adUnit: 'outstream',
-  sizes: null,
+  sizes: [[1, 1]],
   id: 'adngin-outstream-0',
 });
 

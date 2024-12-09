@@ -56,7 +56,7 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   // if (!state.open) return null;
 
   if (!state.open)
-    return isClient && !isMobile ? (
+    return isClient && !isMobile && location.host === 'stage.civitai.com' ? (
       <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
         <AdUnitOutstream />
       </div>
