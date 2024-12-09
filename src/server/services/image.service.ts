@@ -1446,6 +1446,10 @@ export const getAllImagesIndex = async (
   }
 
   const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
+  const videoIds = searchResults
+    .filter((sr) => sr.type === MediaType.video)
+    .map((sr) => sr.id)
+    .filter(isDefined);
   const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
 
   let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -1473,7 +1477,7 @@ export const getAllImagesIndex = async (
           })
         : undefined,
       include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
-      await getMetadataForImages(imageIds),
+      await getMetadataForImages(videoIds), // Only need this for videos
     ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
