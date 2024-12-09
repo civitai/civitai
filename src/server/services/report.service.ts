@@ -430,6 +430,7 @@ export async function createEntityAppeal({
     startDate: dayjs().subtract(30, 'days').toDate(),
     status: [AppealStatus.Pending, AppealStatus.Rejected],
   });
+
   if (appealsCount >= 3) {
     const transaction = await withRetries(() =>
       createBuzzTransaction({

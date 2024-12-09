@@ -209,13 +209,6 @@ export function ImageDetail2() {
     </>
   );
 
-  console.log({
-    value: image.blockedFor && !image.needsReview && isOwner,
-    blockedFor: image.blockedFor,
-    needsReview: image.needsReview,
-    isOwner,
-  });
-
   return (
     <>
       <Meta
@@ -406,16 +399,20 @@ export function ImageDetail2() {
                         }}
                       />
                     )}
-                    {image.needsReview && (
+                    {image.needsReview && isOwner && (
                       <AlertWithIcon
                         icon={<IconAlertTriangle />}
                         color="yellow"
                         iconColor="yellow"
-                        title="Flagged for review"
+                        title={
+                          image.needsReview === 'appeal' ? 'Under appeal' : 'Flagged for review'
+                        }
                         radius={0}
                         px="md"
                       >
-                        {`This image won't be visible to other users until it's reviewed by our moderators.`}
+                        {image.needsReview === 'appeal'
+                          ? `Your appeal has been submitted, but the image will remain hidden until it's reviewed by our mods.`
+                          : `This image won't be visible to other users until it's reviewed by our moderators.`}
                       </AlertWithIcon>
                     )}
                     {image.blockedFor && !image.needsReview && isOwner && (
@@ -472,7 +469,7 @@ export function ImageDetail2() {
                     </Card>
                     <ImageContestCollectionDetails
                       image={image}
-                      isOwner={image.user.id === currentUser?.id}
+                      isOwner={isOwner}
                       isModerator={currentUser?.isModerator}
                       userId={currentUser?.id}
                     />

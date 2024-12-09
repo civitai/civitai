@@ -3,14 +3,14 @@ import { useHotkeys } from '@mantine/hooks';
 import { useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { createEntityAppealSchema } from '~/server/schema/report.schema';
 import { EntityType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-const MAX_MESSAGE_LENGTH = 220;
-
 export function AppealDialog({ entityId, entityType }: Props) {
+  const queryUtils = trpc.useUtils();
   const dialog = useDialogContext();
   const [state, setState] = useState<State>({ message: '', error: '' });
 
@@ -19,6 +19,12 @@ export function AppealDialog({ entityId, entityType }: Props) {
   const createAppealMutation = trpc.report.createAppeal.useMutation({
     onSuccess: () => {
       handleClose();
+      queryUtils.report.getRecentAppeals.setData({}, (old) => (old ? old + 1 : 1));
+
+      if (entityType === EntityType.Image)
+        queryUtils.image.get.setData({ id: entityId }, (old) =>
+          old ? { ...old, needsReview: 'appeal' } : old
+        );
     },
     onError: (error) => {
       showErrorNotification({
@@ -69,14 +75,14 @@ export function AppealDialog({ entityId, entityType }: Props) {
         <div className="flex flex-col gap-4">
           <Textarea
             label="Message"
-            description={`${state.message.length}/${MAX_MESSAGE_LENGTH} characters`}
+            description={`${state.message.length}/${MAX_APPEAL_MESSAGE_LENGTH} characters`}
             placeholder="Please provide a reason for appealing the removal of this content"
             value={state.message}
             onChange={(e) => setState({ message: e.currentTarget.value, error: '' })}
             error={state.error}
             minRows={3}
             maxRows={5}
-            maxLength={MAX_MESSAGE_LENGTH}
+            maxLength={MAX_APPEAL_MESSAGE_LENGTH}
             autosize
             required
           />

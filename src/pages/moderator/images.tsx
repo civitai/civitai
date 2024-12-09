@@ -13,6 +13,7 @@ import {
   SegmentedControl,
   Stack,
   Text,
+  Textarea,
   Title,
   useMantineTheme,
 } from '@mantine/core';
@@ -58,6 +59,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { ImageModerationReviewQueueImage } from '~/types/router';
@@ -786,6 +788,8 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
   const queryUtils = trpc.useUtils();
   const deselectAll = useStore((state) => state.deselectAll);
 
+  const [resolvedMessage, setResolvedMessage] = useState<string>();
+
   const resolveAppealMutation = trpc.report.resolveAppeal.useMutation({
     async onMutate({ ids }) {
       await queryUtils.image.getModeratorReviewQueue.cancel();
@@ -816,15 +820,27 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
 
   const handleResolveAppeal = (status: AppealStatus) => {
     deselectAll();
-    resolveAppealMutation.mutate({ ids: selected, status, entityType: EntityType.Image });
+    resolveAppealMutation.mutate({
+      ids: selected,
+      status,
+      entityType: EntityType.Image,
+      resolvedMessage,
+    });
   };
 
   return (
     <>
       <PopConfirm
-        message={`Are you sure you want to approve ${selected.length} image(s)?`}
+        message={
+          <ConfirmResolvedAppeal
+            status={AppealStatus.Approved}
+            onChange={setResolvedMessage}
+            itemCount={selected.length}
+          />
+        }
         position="bottom-end"
         onConfirm={() => handleResolveAppeal(AppealStatus.Approved)}
+        onCancel={() => setResolvedMessage('')}
         withArrow
         withinPortal
       >
@@ -835,9 +851,16 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         </ButtonTooltip>
       </PopConfirm>
       <PopConfirm
-        message={`Are you sure you want to reject ${selected.length} image(s)?`}
+        message={
+          <ConfirmResolvedAppeal
+            status={AppealStatus.Rejected}
+            onChange={setResolvedMessage}
+            itemCount={selected.length}
+          />
+        }
         position="bottom-end"
         onConfirm={() => handleResolveAppeal(AppealStatus.Rejected)}
+        onCancel={() => setResolvedMessage('')}
         withArrow
         withinPortal
       >
@@ -848,5 +871,34 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
         </ButtonTooltip>
       </PopConfirm>
     </>
+  );
+}
+
+function ConfirmResolvedAppeal({
+  status,
+  onChange,
+  itemCount,
+}: {
+  status: AppealStatus;
+  onChange: (message: string) => void;
+  itemCount?: number;
+}) {
+  return (
+    <Stack spacing="xs">
+      <Text size="sm">
+        Are you sure you want to {status === AppealStatus.Approved ? 'approve' : 'reject'}{' '}
+        {itemCount} image(s)?
+      </Text>
+      <Textarea
+        label="Resolved message"
+        description="This message will be sent to the user who appealed the image"
+        placeholder="Optional"
+        onChange={(e) => onChange(e.currentTarget.value)}
+        minRows={2}
+        maxRows={5}
+        maxLength={MAX_APPEAL_MESSAGE_LENGTH}
+        autosize
+      />
+    </Stack>
   );
 }

@@ -2,6 +2,7 @@ import { MantineColor } from '@mantine/core';
 import { AppealStatus, EntityType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 
 export enum ReportEntity {
   Model = 'model',
@@ -148,7 +149,7 @@ export type CreateEntityAppealInput = z.output<typeof createEntityAppealSchema>;
 export const createEntityAppealSchema = z.object({
   entityId: z.number(),
   entityType: z.nativeEnum(EntityType),
-  message: z.string().trim().min(1).max(220),
+  message: z.string().trim().min(1).max(MAX_APPEAL_MESSAGE_LENGTH),
 });
 
 export type GetRecentAppealsInput = z.output<typeof getRecentAppealsSchema>;
@@ -169,6 +170,6 @@ export const resolveAppealSchema = z.object({
   ids: z.number().array().min(1),
   entityType: z.nativeEnum(EntityType),
   status: z.nativeEnum(AppealStatus),
-  resolvedMessage: z.string().trim().max(220).optional(),
+  resolvedMessage: z.string().trim().max(MAX_APPEAL_MESSAGE_LENGTH).optional(),
   internalNotes: z.string().trim().optional(),
 });
