@@ -10,20 +10,25 @@ import {
   hasSafeBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { useSession } from 'next-auth/react';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
 
 export function SensitiveShield({
   children,
   nsfw,
   contentNsfwLevel,
+  isLoading,
 }: {
   children: React.ReactNode;
   nsfw?: boolean;
   contentNsfwLevel: number;
+  isLoading?: boolean;
 }) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const { canViewNsfw } = useFeatureFlags();
   const { status } = useSession();
+
+  if (isLoading) return <PageLoader />;
 
   if (!hasSafeBrowsingLevel(contentNsfwLevel) && status === 'loading') return null;
 

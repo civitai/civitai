@@ -9,6 +9,7 @@ import {
 } from '~/components/Collections/collection.utils';
 import {
   Form,
+  InputBrowsingLevels,
   InputCheckbox,
   InputDatePicker,
   InputNumber,
@@ -62,7 +63,15 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const upsertCollectionMutation = trpc.collection.upsert.useMutation();
   const handleSubmit = (data: UpsertCollectionInput) => {
     upsertCollectionMutation.mutate(
-      { ...data, mode: data.mode || null },
+      {
+        ...data,
+        mode: data.mode || null,
+        metadata: {
+          ...(data.metadata ?? {}),
+          // Ensures we NEVER send out 0.
+          forcedBrowsingLevel: data.metadata?.forcedBrowsingLevel || null,
+        },
+      },
       {
         onSuccess: async (collection) => {
           await queryUtils.collection.getInfinite.invalidate();
@@ -111,7 +120,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const canEdit = !!collection && permissions.manage;
   const isCreate = !collectionId;
   const isImageCollection = collection?.type === CollectionType.Image;
-  const isPostCollection = collection?.type === CollectionType.Post;  
+  const isPostCollection = collection?.type === CollectionType.Post;
   const isContestMode = collection?.mode === CollectionMode.Contest;
 
   return (
@@ -281,6 +290,11 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       placeholder="Select a voting period start date"
                       icon={<IconCalendar size={16} />}
                       clearable
+                    />
+                    <InputBrowsingLevels
+                      name="metadata.forcedBrowsingLevel"
+                      label="Forced Browsing Level"
+                      description="Forces browsing level on this collection so that users will see all types of content regardless of settings."
                     />
 
                     {isImageCollection && (

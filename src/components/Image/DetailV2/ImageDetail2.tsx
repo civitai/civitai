@@ -131,6 +131,10 @@ export function ImageDetail2() {
     { enabled: !!image?.id }
   );
 
+  const forcedBrowsingLevel = (collectionItems ?? []).reduce((acc, ci) => {
+    return acc | (ci.collection.metadata?.forcedBrowsingLevel ?? 0);
+  }, 0);
+
   if (!image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
@@ -213,7 +217,7 @@ export function ImageDetail2() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
-      <SensitiveShield contentNsfwLevel={image.nsfwLevel}>
+      <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
         <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
         <BrowsingModeOverrideProvider browsingLevel={image.nsfwLevel}>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
