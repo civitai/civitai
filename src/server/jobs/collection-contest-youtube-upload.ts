@@ -4,6 +4,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getYoutubeAuthClient, uploadYoutubeVideo } from '~/server/youtube/client';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { logToAxiom } from '~/server/logging/client';
+import sanitize from 'sanitize-html';
+import { env } from '~/env/server.mjs';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -58,12 +60,21 @@ export const contestCollectionYoutubeUpload = createJob(
             detail: string;
             mimeType: string;
             metadata: VideoMetadata;
+            username: string;
           }[]
         >`
-          SELECT i.id as "imageId", i.url as "imageUrl", p.title, p.detail, i."mimeType", i.metadata
+          SELECT 
+            i.id as "imageId",
+            i.url as "imageUrl",
+            p.title,
+            p.detail,
+            i."mimeType",
+            i.metadata,
+            u."username"
           FROM "CollectionItem" ci
           JOIN "Image" i ON i.id = ci."imageId"
           JOIN "Post" p ON p.id = i."postId"
+          JOIN "User" u ON u.id = p."userId"
           WHERE ci."collectionId" = ${collection.id}
             AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
@@ -90,10 +101,25 @@ export const contestCollectionYoutubeUpload = createJob(
               continue;
             }
 
+            const userProfile = item.username
+              ? `${env.NEXT_PUBLIC_BASE_URL}/user/${item.username}`
+              : undefined;
+
             const uploadedVideo = await uploadYoutubeVideo({
               url: item.imageUrl,
               title: item.title,
-              description: item.detail,
+              description: `
+                ${sanitize(item.detail, {
+                  allowedTags: [],
+                  allowedAttributes: {},
+                })}
+                
+                Created by:
+                ${userProfile}
+
+                Find out more at:
+                ${env.NEXT_PUBLIC_BASE_URL}
+              `,
               mimeType: item.mimeType,
               client: authClient,
             });
