@@ -58,7 +58,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
     },
   });
 
-  const mode = form.watch('mode');
+  const metadata = form.watch('metadata');
 
   const upsertCollectionMutation = trpc.collection.upsert.useMutation();
   const handleSubmit = (data: UpsertCollectionInput) => {
@@ -218,6 +218,13 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
+                    {metadata?.submissionEndDate && (
+                      <InputCheckbox
+                        name="metadata.submissionsHiddenUntilEndDate"
+                        label="Hide entries until end date"
+                        description="Makes it so that other user entries are not visible until the end date is reached."
+                      />
+                    )}
                     <InputNumber
                       name="metadata.maxItemsPerUser"
                       label="Max items per user"

@@ -106,6 +106,7 @@ export const collectionMetadataSchema = z
     maxItemsPerUser: z.coerce.number().optional(),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
+    submissionsHiddenUntilEndDate: z.boolean().optional(),
     existingEntriesDisabled: z.coerce.boolean().optional(),
     votingPeriodStart: z.coerce.date().nullish(),
     uploadSettings: z
