@@ -38,7 +38,7 @@ export const InfoPopover = forwardRef<HTMLButtonElement, Props>(
             variant={variant}
             className={clsx({
               ['active:transform-none']: !!hideClick,
-              ['cursor-auto']: !!hideClick,
+              ['cursor-help']: !!hideClick,
             })}
           >
             <Text color="dimmed" inline>

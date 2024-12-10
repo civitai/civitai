@@ -317,7 +317,8 @@ function Preview() {
 
 const ResourceHeader = () => {
   const status = useGenerationStatus();
-  const { allowedResources, addResource, isAddingResource, isOnSite } = useAddedImageContext();
+  const { image, allowedResources, addResource, isAddingResource, isOnSite } =
+    useAddedImageContext();
 
   return (
     <div className="group flex items-center justify-between">
@@ -328,7 +329,6 @@ const ResourceHeader = () => {
         <InfoPopover
           type="hover"
           hideClick={true}
-          withinPortal={true}
           variant="transparent"
           size="sm"
           position="top"
@@ -344,7 +344,6 @@ const ResourceHeader = () => {
             <InfoPopover
               type="hover"
               hideClick={true}
-              withinPortal={true}
               variant="transparent"
               size="sm"
               position="top"
@@ -361,7 +360,6 @@ const ResourceHeader = () => {
             </InfoPopover>
           </Box>
           <ResourceSelectMultiple
-            limit={status.limits.resources}
             buttonLabel="RESOURCE"
             isTraining={true}
             options={{
@@ -372,10 +370,12 @@ const ResourceHeader = () => {
               compact: true,
               className: 'text-sm',
               loading: isAddingResource,
+              disabled: image.resourceHelper.length >= status.limits.resources,
             }}
             onChange={(val) => {
               const vals = val as Generation.Resource[] | undefined;
-              if (!vals || !vals.length) return;
+              if (!vals || !vals.length || image.resourceHelper.length >= status.limits.resources)
+                return;
               vals.forEach((val) => {
                 addResource(val.id);
               });
@@ -497,10 +497,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         target="_blank"
         className="grow"
       >
-        <Box
-          component="a"
-          className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5"
-        >
+        <Box className="flex items-center justify-between gap-3 hover:bg-gray-2 hover:dark:bg-dark-5">
           <Text>
             {modelName} -{' '}
             <Text span color="dimmed" size="sm">
@@ -746,9 +743,9 @@ function EditDetail() {
           // #region [missing resources]
           */}
             {!resources?.length && image.type === 'image' && (
-              <Alert className="rounded-lg" color="yellow">
-                <div className="flex flex-col gap-3">
-                  <ResourceHeader />
+              <CustomCard className="flex flex-col gap-2">
+                <ResourceHeader />
+                <Alert className="rounded-lg" color="yellow">
                   <Text>
                     Install the{' '}
                     <Text
@@ -762,8 +759,8 @@ function EditDetail() {
                     </Text>{' '}
                     to automatically detect all the resources used in your images.
                   </Text>
-                </div>
-              </Alert>
+                </Alert>
+              </CustomCard>
             )}
             {/* #endregion */}
 
