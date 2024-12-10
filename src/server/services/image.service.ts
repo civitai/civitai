@@ -449,6 +449,14 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image: images[0] });
 };
 
+const defaultScanTypes = [
+  ...(env.EXTERNAL_IMAGE_SCANNER === 'hive'
+    ? [ImageScanType.Hive]
+    : [ImageScanType.Moderation, ImageScanType.Label]),
+  ImageScanType.WD14,
+  ImageScanType.Hash,
+];
+
 export const ingestImage = async ({
   image,
   tx,
@@ -507,12 +515,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: [
-        ImageScanType.Label,
-        ImageScanType.Moderation,
-        ImageScanType.WD14,
-        ImageScanType.Hash,
-      ],
+      scans: defaultScanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -592,12 +595,7 @@ export const ingestImageBulk = async ({
           width: image.width,
           height: image.height,
           prompt: image.prompt,
-          scans: scans ?? [
-            ImageScanType.Label,
-            ImageScanType.Moderation,
-            ImageScanType.WD14,
-            ImageScanType.Hash,
-          ],
+          scans: scans ?? defaultScanTypes,
           callbackUrl,
         }))
       ),
@@ -952,8 +950,9 @@ export const getAllImages = async (
               (
                 ci."status" = 'ACCEPTED'
                 AND (
-                  (c.metadata::json->'submissionEndDate') IS NULL
-                  OR (c.metadata::json->'submissionEndDate')::TEXT = 'null'
+                  (c.metadata::json->'submissionsHiddenUntilEndDate') IS NULL
+                  OR (c.metadata::json->'submissionsHiddenUntilEndDate')::TEXT = 'null'
+                  OR (c.metadata::json->'submissionsHiddenUntilEndDate')::TEXT = 'false'
                   OR (c.metadata::json->>'submissionEndDate')::TIMESTAMP WITH TIME ZONE <= NOW()
                 )
                 ${Prisma.raw(sort === ImageSort.Random ? `AND ci."randomId" IS NOT NULL` : '')}
@@ -1446,6 +1445,10 @@ export const getAllImagesIndex = async (
   }
 
   const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
+  const videoIds = searchResults
+    .filter((sr) => sr.type === MediaType.video)
+    .map((sr) => sr.id)
+    .filter(isDefined);
   const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
 
   let userReactions: Record<number, ReviewReactions[]> | undefined;
@@ -1473,7 +1476,7 @@ export const getAllImagesIndex = async (
           })
         : undefined,
       include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
-      await getMetadataForImages(imageIds),
+      await getMetadataForImages(videoIds), // Only need this for videos
     ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
@@ -2272,30 +2275,28 @@ export async function getImageGenerationResources(id: number) {
     select: { imageId: true, modelVersionId: true, hash: true, strength: true },
   });
   const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const resourceData = await resourceDataCache
-    .fetch(versionIds)
-    .then((resourceData) => formatGenerationResources(resourceData));
+  const resourceData = await resourceDataCache.fetch(versionIds);
 
   // TODO - determine a good way to return resources when some resources are unavailable
-  // const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
-  // if (index > -1 && !resourceData[index].available) {
-  //   const checkpoint = resourceData[index];
-  //   const latestVersion = await dbRead.modelVersion.findFirst({
-  //     where: {
-  //       modelId: checkpoint.model.id,
-  //       availability: { in: ['Public', 'EarlyAccess'] },
-  //       generationCoverage: { covered: true },
-  //     },
-  //     select: { id: true },
-  //     orderBy: { index: 'asc' },
-  //   });
-  //   if (latestVersion) {
-  //     const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
-  //     if (newCheckpoint) resourceData[index] = newCheckpoint;
-  //   }
-  // }
+  const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
+  if (index > -1 && !resourceData[index].available) {
+    const checkpoint = resourceData[index];
+    const latestVersion = await dbRead.modelVersion.findFirst({
+      where: {
+        modelId: checkpoint.model.id,
+        availability: { in: ['Public', 'EarlyAccess'] },
+        generationCoverage: { covered: true },
+      },
+      select: { id: true },
+      orderBy: { index: 'asc' },
+    });
+    if (latestVersion) {
+      const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
+      if (newCheckpoint) resourceData[index] = newCheckpoint;
+    }
+  }
 
-  return resourceData
+  return formatGenerationResources(resourceData)
     .map((resource) => {
       const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
       return {

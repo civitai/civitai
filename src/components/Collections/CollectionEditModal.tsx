@@ -9,6 +9,7 @@ import {
 } from '~/components/Collections/collection.utils';
 import {
   Form,
+  InputBrowsingLevels,
   InputCheckbox,
   InputDatePicker,
   InputNumber,
@@ -57,12 +58,20 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
     },
   });
 
-  const mode = form.watch('mode');
+  const metadata = form.watch('metadata');
 
   const upsertCollectionMutation = trpc.collection.upsert.useMutation();
   const handleSubmit = (data: UpsertCollectionInput) => {
     upsertCollectionMutation.mutate(
-      { ...data, mode: data.mode || null },
+      {
+        ...data,
+        mode: data.mode || null,
+        metadata: {
+          ...(data.metadata ?? {}),
+          // Ensures we NEVER send out 0.
+          forcedBrowsingLevel: data.metadata?.forcedBrowsingLevel || undefined,
+        },
+      },
       {
         onSuccess: async (collection) => {
           await queryUtils.collection.getInfinite.invalidate();
@@ -111,7 +120,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const canEdit = !!collection && permissions.manage;
   const isCreate = !collectionId;
   const isImageCollection = collection?.type === CollectionType.Image;
-  const isPostCollection = collection?.type === CollectionType.Post;  
+  const isPostCollection = collection?.type === CollectionType.Post;
   const isContestMode = collection?.mode === CollectionMode.Contest;
 
   return (
@@ -205,10 +214,17 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     <InputDatePicker
                       name="metadata.submissionEndDate"
                       label="Submission End Date"
-                      placeholder="Select an start date"
+                      placeholder="Select an end date"
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
+                    {metadata?.submissionEndDate && (
+                      <InputCheckbox
+                        name="metadata.submissionsHiddenUntilEndDate"
+                        label="Hide entries until end date"
+                        description="Makes it so that other user entries are not visible until the end date is reached."
+                      />
+                    )}
                     <InputNumber
                       name="metadata.maxItemsPerUser"
                       label="Max items per user"
@@ -258,8 +274,21 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       label="Tags are not required"
                       description="If enabled, users will be able to submit items without a tag even when tags are setup."
                     />
+                    {isImageCollection && (
+                      <InputCheckbox
+                        name="metadata.entriesRequireTitle"
+                        label="Entries require post title"
+                        description="If enabled, users will be required to add a title to their post before creating it on the collection."
+                      />
+                    )}
+                    {isImageCollection && (
+                      <InputCheckbox
+                        name="metadata.entriesRequireTools"
+                        label="Entries require tool selection"
+                        description="If enabled, users will be required to add at least 1 tool to each of the images uploaded."
+                      />
+                    )}
                     <Divider label="Judging details" />
-
                     {isImageCollection && (
                       <InputCheckbox
                         name="metadata.judgesApplyBrowsingLevel"
@@ -282,7 +311,11 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
-
+                    <InputBrowsingLevels
+                      name="metadata.forcedBrowsingLevel"
+                      label="Forced Browsing Level"
+                      description="Forces browsing level on this collection so that users will only see content based on this value regardless of their global settings."
+                    />
                     {isImageCollection && (
                       <>
                         <Divider label="Youtube Support" />
