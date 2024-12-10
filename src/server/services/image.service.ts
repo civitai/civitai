@@ -449,6 +449,14 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image: images[0] });
 };
 
+const defaultScanTypes = [
+  ...(env.EXTERNAL_IMAGE_SCANNER === 'hive'
+    ? [ImageScanType.Hive]
+    : [ImageScanType.Moderation, ImageScanType.Label]),
+  ImageScanType.WD14,
+  ImageScanType.Hash,
+];
+
 export const ingestImage = async ({
   image,
   tx,
@@ -507,12 +515,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: [
-        ImageScanType.Label,
-        ImageScanType.Moderation,
-        ImageScanType.WD14,
-        ImageScanType.Hash,
-      ],
+      scans: defaultScanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -592,12 +595,7 @@ export const ingestImageBulk = async ({
           width: image.width,
           height: image.height,
           prompt: image.prompt,
-          scans: scans ?? [
-            ImageScanType.Label,
-            ImageScanType.Moderation,
-            ImageScanType.WD14,
-            ImageScanType.Hash,
-          ],
+          scans: scans ?? defaultScanTypes,
           callbackUrl,
         }))
       ),
