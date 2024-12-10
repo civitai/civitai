@@ -507,12 +507,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: [
-        ImageScanType.Label,
-        ImageScanType.Moderation,
-        ImageScanType.WD14,
-        ImageScanType.Hash,
-      ],
+      scans: [ImageScanType.Hive, ImageScanType.WD14, ImageScanType.Hash],
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -592,12 +587,7 @@ export const ingestImageBulk = async ({
           width: image.width,
           height: image.height,
           prompt: image.prompt,
-          scans: scans ?? [
-            ImageScanType.Label,
-            ImageScanType.Moderation,
-            ImageScanType.WD14,
-            ImageScanType.Hash,
-          ],
+          scans: scans ?? [ImageScanType.Hive, ImageScanType.WD14, ImageScanType.Hash],
           callbackUrl,
         }))
       ),
