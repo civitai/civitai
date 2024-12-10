@@ -782,9 +782,9 @@ export function Collection({
                     <AlertWithIcon icon={<IconAlertCircle />}>
                       <Text>
                         This collection is accepting entries until{' '}
-                        {formatDate(metadata.submissionEndDate)}. During the subsmission period, you
-                        will only see your entries, both reviewed and unreviewed. Once the
-                        submission period ends, you will see all entries.
+                        {formatDate(metadata.submissionEndDate)}. Entries that have been approved
+                        will be visible to the public. Entries under review are only visible to the
+                        owner.
                       </Text>
                     </AlertWithIcon>
                   )}

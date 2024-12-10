@@ -46,7 +46,7 @@ export const PostContestCollectionInfoAlert = ({
               <Text>
                 Thank you for your submission to the {collectionName} contest{tagDisplay}! We will
                 review your submission and let you know if it is accepted so that it appears in the
-                contest collection within 24 to 48 hours.
+                contest collection within 72 hours.
               </Text>
               <Text>You will receive a notification when your submission is reviewed.</Text>
             </Stack>

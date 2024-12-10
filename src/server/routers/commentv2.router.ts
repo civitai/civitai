@@ -25,8 +25,8 @@ import {
 import { dbRead } from '~/server/db/client';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { toggleHideCommentSchema } from '~/server/schema/commentv2.schema';
-import { CacheTTL } from '~/server/common/constants';
 import { rateLimit } from '~/server/middleware.trpc';
+import { commentRateLimits } from '~/server/schema/comment.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -55,7 +55,7 @@ export const commentv2Router = router({
   upsert: guardedProcedure
     .input(upsertCommentv2Schema)
     .use(isOwnerOrModerator)
-    .use(rateLimit({ limit: 60, period: CacheTTL.hour }))
+    .use(rateLimit(commentRateLimits))
     .mutation(upsertCommentV2Handler),
   delete: protectedProcedure
     .input(getByIdSchema)
