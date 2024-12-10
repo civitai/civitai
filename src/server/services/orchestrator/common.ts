@@ -407,9 +407,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   const { input, output, jobs } = step as VideoGenStep;
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
 
-  const width = videoMetadata.params?.width;
-  const height = videoMetadata.params?.height;
-  let aspectRatio = 16 / 9;
+  let width = videoMetadata.params?.width;
+  let height = videoMetadata.params?.height;
+  let aspectRatio = width && height ? width / height : 16 / 9;
 
   // if ((workflowId = '0-20241108234000287')) console.log(input);
 
@@ -421,13 +421,20 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           const [rw, rh] = params.aspectRatio.split(':').map(Number);
           aspectRatio = rw / rh;
         }
+        break;
       }
       case 'kling': {
         if (params.aspectRatio) {
           const [rw, rh] = params.aspectRatio.split(':').map(Number);
           aspectRatio = rw / rh;
         }
+        break;
       }
+      case 'mochi':
+        width = 848;
+        height = 480;
+        aspectRatio = width / height;
+        break;
     }
   }
 

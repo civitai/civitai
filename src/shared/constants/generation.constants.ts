@@ -10,6 +10,10 @@ import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.sche
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { findClosest } from '~/utils/number-helpers';
+import { Kling } from '~/server/orchestrator/kling/kling.schema';
+import { Haiper } from '~/server/orchestrator/haiper/haiper.schema';
+import { Mochi } from '~/server/orchestrator/mochi/mochi.schema';
+import { Minimax } from '~/server/orchestrator/minimax/minimax.schema';
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -560,6 +564,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       enablePromptEnhancer: true,
     },
     metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
+    validate: Haiper.validateInput,
   },
   {
     type: 'video',
@@ -573,8 +578,10 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       duration: 4,
       seed: undefined,
       enablePromptEnhancer: true,
+      sourceImageUrl: undefined,
     },
     metadataDisplayProps: ['duration', 'seed', 'resolution'],
+    validate: Haiper.validateInput,
   },
   {
     type: 'video',
@@ -589,6 +596,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       enablePromptEnhancer: true,
     },
     metadataDisplayProps: ['seed'],
+    validate: Mochi.validateInput,
   },
   {
     type: 'video',
@@ -607,24 +615,26 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       seed: undefined,
     },
     metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
+    validate: Kling.validateInput,
   },
-  // {
-  //   type: 'video',
-  //   subType: 'img2vid',
-  //   name: 'Image to video',
-  //   category: 'service',
-  //   engine: 'kling',
-  //   key: 'kling-img2vid',
-  //   defaultValues: {
-  //     prompt: '',
-  //     negativePrompt: '',
-  //     cfgScale: 0.5, // custom cfgScale
-  //     mode: KlingMode.STANDARD, // custom mode
-  //     duration: 5, // custom duration
-  //     seed: undefined,
-  //   },
-  //   metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
-  // },
+  {
+    type: 'video',
+    subType: 'img2vid',
+    name: 'Image to video',
+    category: 'service',
+    engine: 'kling',
+    key: 'kling-img2vid',
+    defaultValues: {
+      prompt: '',
+      negativePrompt: '',
+      cfgScale: 0.5, // custom cfgScale
+      mode: KlingMode.STANDARD, // custom mode
+      duration: 5, // custom duration
+      seed: undefined,
+    },
+    metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
+    validate: Kling.validateInput,
+  },
   {
     type: 'video',
     subType: 'txt2vid',
@@ -637,6 +647,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       enablePromptEnhancer: true,
     },
     metadataDisplayProps: [],
+    validate: Minimax.validateInput,
   },
   {
     type: 'video',
@@ -650,6 +661,7 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
       enablePromptEnhancer: true,
     },
     metadataDisplayProps: [],
+    validate: Minimax.validateInput,
   },
 ];
 // #endregion

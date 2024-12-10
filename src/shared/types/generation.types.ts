@@ -20,6 +20,7 @@ interface BaseGenerationWorkflowConfig {
   /** default values used for generation */
   defaultValues?: Record<string, any>;
   metadataDisplayProps?: string[];
+  validate: (args: any) => any;
   disabled?: boolean;
 }
 

@@ -29,7 +29,6 @@ import {
   generationStore,
   useGenerationFormStore,
   generationFormStore,
-  useGenerationFormWorkflowConfig,
   useGenerationStore,
 } from '~/store/generation.store';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
@@ -39,23 +38,25 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
-import { InputImageUrl } from '~/components/Generate/Input/InputImageUrl';
+import { ImageUrlInput } from '~/components/Generate/Input/InputImageUrl';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
-import { TwCard } from '~/components/TwCard/TwCard';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { hashify } from '~/utils/string-helpers';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { useGetGenerationEngines } from '~/components/Generate/hooks/useGetGenerationEngines';
-import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { KlingMode, KlingVideoGenDuration } from '@civitai/client';
+import { EnhancementType } from '~/server/orchestrator/infrastructure/base.enums';
 
 const schema = videoGenerationSchema;
 
-const WorkflowContext = createContext<{ workflow: GenerationWorkflowConfig } | null>(null);
+const WorkflowContext = createContext<{
+  workflow: GenerationWorkflowConfig;
+  engine: string;
+} | null>(null);
 function useWorkflowContext() {
   const ctx = useContext(WorkflowContext);
   if (!ctx) throw new Error('missing video gen ctx');
@@ -63,24 +64,24 @@ function useWorkflowContext() {
 }
 
 export function VideoGenerationForm() {
-  const engine = useGenerationFormStore((state) => state.engine ?? 'haiper');
-
-  const { workflow, availableWorkflows } = useGenerationFormWorkflowConfig({
-    type: 'video',
-    category: 'service',
-    engine,
-  });
-
   const { data: engines, isLoading } = useGetGenerationEngines();
-  const engineData = engines?.find((x) => x.engine === engine);
 
-  // TODO - handle case where workflow is no longer available
-  if (!workflow) return null;
+  const selectedEngine = useGenerationFormStore((state) => state.engine);
+  const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
+  const engineData = engines?.find((x) => x.engine === selectedEngine) ?? engines?.[0];
+  const engine = engineData?.engine;
+  const availableWorkflows = generationFormWorkflowConfigurations.filter((config) =>
+    Object.entries({ type: 'video', engine }).every(
+      ([key, value]) => config[key as keyof typeof config] === value
+    )
+  );
 
-  const workflows =
-    workflow.subType === 'txt2vid'
-      ? availableWorkflows.filter((x) => x.subType === 'txt2vid')
-      : availableWorkflows;
+  const workflow =
+    availableWorkflows.length > 0
+      ? availableWorkflows.find((x) =>
+          sourceImageUrl ? x.subType === 'img2vid' : x.subType === 'txt2vid'
+        ) ?? availableWorkflows[0]
+      : undefined;
 
   const availableEngines = Object.keys(engineDefinitions)
     .filter((key) => engines?.some((x) => x.engine === key && !x.disabled))
@@ -107,33 +108,6 @@ export function VideoGenerationForm() {
             to change.
           </Text>
         </Alert>
-        <Select
-          label="Tool"
-          value={engine}
-          description={
-            engineData?.message && !engineData?.disabled ? engineData.message : undefined
-          }
-          onChange={(value) => generationFormStore.setEngine(value!)}
-          data={availableEngines.map(({ key, label }) => ({ label, value: key }))}
-        />
-
-        {workflows.length > 1 ? (
-          <Select
-            label="Workflow"
-            data={workflows.map((x) => ({ label: x.name, value: x.key }))}
-            value={workflow.key ?? workflows[0].key}
-            onChange={(workflow) => generationFormStore.setWorkflow(workflow!)}
-          />
-        ) : (
-          <div>
-            <Input.Label>Workflow</Input.Label>
-            <TwCard className="border px-3 py-2">
-              <Text size="sm" className="leading-5">
-                {workflow.name}
-              </Text>
-            </TwCard>
-          </div>
-        )}
       </div>
       {isLoading ? (
         <div className="flex items-center justify-center p-3">
@@ -161,11 +135,31 @@ export function VideoGenerationForm() {
             </>
           )}
         </Alert>
-      ) : (
-        <WorkflowContext.Provider value={{ workflow }}>
-          <EngineForm />
-        </WorkflowContext.Provider>
-      )}
+      ) : workflow && engine ? (
+        <>
+          <div className="flex flex-col gap-2 px-3">
+            <Select
+              label="Tool"
+              value={engine}
+              description={
+                engineData?.message && !engineData?.disabled ? engineData.message : undefined
+              }
+              onChange={(value) => generationFormStore.setEngine(value!)}
+              data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
+            />
+
+            {workflow?.subType.startsWith('img') && (
+              <ImageUrlInput
+                value={sourceImageUrl}
+                onChange={generationFormStore.setSourceImageUrl}
+              />
+            )}
+          </div>
+          <WorkflowContext.Provider value={{ workflow, engine }}>
+            <EngineForm />
+          </WorkflowContext.Provider>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -261,7 +255,7 @@ function KlingTextToVideoForm() {
 function KlingImageToVideoForm() {
   return (
     <FormWrapper engine="kling">
-      <InputImageUrl name="sourceImageUrl" label="Image" />
+      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <div className="flex flex-col gap-0.5">
@@ -341,7 +335,7 @@ function HaiperTxt2VidGenerationForm() {
 function HaiperImg2VidGenerationForm() {
   return (
     <FormWrapper engine="haiper">
-      <InputImageUrl name="sourceImageUrl" label="Image" />
+      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <div className="flex flex-col gap-0.5">
@@ -385,7 +379,7 @@ function MinimaxTxt2VidGenerationForm() {
 function MinimaxImg2VidGenerationForm() {
   return (
     <FormWrapper engine="minimax">
-      <InputImageUrl name="sourceImageUrl" label="Image" />
+      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
     </FormWrapper>
@@ -403,22 +397,20 @@ function FormWrapper({
   const type = useGenerationFormStore((state) => state.type);
   const storeData = useGenerationStore((state) => state.data);
   const { workflow } = useWorkflowContext();
-  const { defaultValues } = workflow ?? {};
+  // const { defaultValues } = workflow ?? {};
   const status = useGenerationStatus();
   const messageHash = useMemo(
     () => (status.message ? hashify(status.message).toString() : undefined),
     [status.message]
   );
 
-  const { data: engines } = useGetGenerationEngines();
-  const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
-
   const form = usePersistForm(workflow.key, {
-    schema: schema as any,
+    schema: z.record(z.string(), z.any()) as any,
     version: 1,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
-    defaultValues: { ...defaultValues, engine, workflow: workflow.key },
+    defaultValues: validateInput(workflow),
+    // defaultValues: { ...defaultValues, engine, workflow: workflow.key },
     storage: localStorage,
   });
 
@@ -436,10 +428,8 @@ function FormWrapper({
     for (const workflow of generationFormWorkflowConfigurations) {
       localStorage.removeItem(workflow.key);
     }
-    form.reset(defaultValues);
-    const engine = engines?.[0];
-    const engineConfig = availableEngineConfigurations?.find((x) => x.engine === engine?.engine);
-    if (engineConfig) generationFormStore.setWorkflow(engineConfig.key);
+    form.reset();
+    generationFormStore.reset();
   }
 
   function handleSubmit(data: z.infer<typeof schema>) {
@@ -451,22 +441,23 @@ function FormWrapper({
     conditionalPerformTransaction(totalCost, () => {
       mutate({
         type: 'video',
-        data: { ...data, engine, workflow: workflow.key },
+        data: validateInput(workflow, data),
         tags: [WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
       });
     });
   }
 
   useEffect(() => {
-    if (type === 'video' && storeData) {
+    if (type === 'video' && storeData && workflow) {
       const registered = Object.keys(form.getValues());
       const { params } = storeData;
-      for (const [key, value] of Object.entries(params)) {
+      const validated = validateInput(workflow, params);
+      for (const [key, value] of Object.entries(validated)) {
         if (registered.includes(key) && key !== 'engine') form.setValue(key as any, value);
       }
       generationStore.clearData();
     }
-  }, [storeData, type]);
+  }, [storeData, type, workflow]);
 
   useEffect(() => {
     if (!error) return;
@@ -538,7 +529,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
 
   useEffect(() => {
     const { whatIf = [] } = engineDefinitions[engine] ?? {};
-    const { defaultValues } = workflow;
+    // const { defaultValues } = workflow;
     const subscription = watch(() => {
       const formData = getValues();
       const whatIfData = whatIf.reduce<Record<string, unknown>>(
@@ -547,12 +538,13 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
       );
 
       try {
-        const result = schema.parse({
-          engine,
-          workflow: workflow.key,
-          ...defaultValues,
-          ...whatIfData,
-        });
+        // const result = schema.parse({
+        //   engine,
+        //   workflow: workflow.key,
+        //   ...defaultValues,
+        //   ...whatIfData,
+        // });
+        const result = validateInput(workflow, whatIfData);
         setQuery(result);
         setError(null);
       } catch (e: any) {
@@ -584,3 +576,20 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
 }
 
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
+
+function validateInput(workflow: GenerationWorkflowConfig, data?: Record<string, unknown>) {
+  const { sourceImageUrl, width, height } = useGenerationFormStore.getState();
+  const enhancementType = workflow.subType.startsWith('img')
+    ? EnhancementType.IMG
+    : EnhancementType.TXT;
+
+  return workflow.validate({
+    ...data,
+    engine: workflow.engine,
+    workflow: workflow.key,
+    sourceImageUrl,
+    width,
+    height,
+    enhancementType,
+  });
+}

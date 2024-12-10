@@ -113,7 +113,11 @@ export function GeneratedImage({
 
   const handleGenerate = (
     { seed, ...rest }: Partial<TextToImageParams> = {},
-    { type, workflow: workflow }: { type: MediaType; workflow?: string } = {
+    {
+      type,
+      workflow: workflow,
+      sourceImageUrl,
+    }: { type: MediaType; workflow?: string; sourceImageUrl?: string } = {
       type: image.type,
       workflow: step.params.workflow,
     }
@@ -125,6 +129,7 @@ export function GeneratedImage({
       remixOfId: step.metadata?.remixOfId,
       type,
       workflow: workflow ?? step.params.workflow,
+      sourceImageUrl,
     });
   };
 
@@ -361,19 +366,19 @@ export function GeneratedImage({
               {!isVideo && !!img2vidConfigs?.length && (
                 <>
                   <Menu.Divider />
-                  {img2vidConfigs.map(({ name, key, type, engine, subType }) => (
-                    <Menu.Item
-                      key={key}
-                      onClick={() =>
-                        handleGenerate({ sourceImageUrl: image.url } as any, {
-                          type,
-                          workflow: key,
-                        })
-                      }
-                    >
-                      {name} - {engine}
-                    </Menu.Item>
-                  ))}
+                  <Menu.Item
+                    onClick={() =>
+                      handleGenerate(
+                        {},
+                        {
+                          type: 'video',
+                          sourceImageUrl: image.url,
+                        }
+                      )
+                    }
+                  >
+                    Image To Video
+                  </Menu.Item>
                 </>
               )}
               <Menu.Divider />
@@ -450,19 +455,21 @@ export function GeneratedImage({
                           {workflow.name}
                         </Menu.Item>
                       ))}
-                  {img2vidConfigs?.map(({ name, key, type }) => (
+                  {!isVideo && !!img2vidConfigs?.length && (
                     <Menu.Item
-                      key={key}
                       onClick={() =>
-                        handleGenerate({ sourceImageUrl: image.url } as any, {
-                          type,
-                          workflow: key,
-                        })
+                        handleGenerate(
+                          {},
+                          {
+                            type: 'video',
+                            sourceImageUrl: image.url,
+                          }
+                        )
                       }
                     >
-                      {name}
+                      Image To Video
                     </Menu.Item>
-                  ))}
+                  )}
                 </Menu.Dropdown>
               </Menu>
             )}
