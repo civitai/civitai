@@ -94,7 +94,6 @@ import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFil
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import { CollectionItemStatus } from '@prisma/client';
 import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import {} from '~/shared/constants/browsingLevel.constants';
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );

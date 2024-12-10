@@ -214,7 +214,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     <InputDatePicker
                       name="metadata.submissionEndDate"
                       label="Submission End Date"
-                      placeholder="Select an start date"
+                      placeholder="Select an end date"
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
@@ -294,7 +294,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     <InputBrowsingLevels
                       name="metadata.forcedBrowsingLevel"
                       label="Forced Browsing Level"
-                      description="Forces browsing level on this collection so that users will see all types of content regardless of settings."
+                      description="Forces browsing level on this collection so that users will only see content based on this value regardless of their global settings."
                     />
 
                     {isImageCollection && (
