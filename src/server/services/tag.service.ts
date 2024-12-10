@@ -100,7 +100,11 @@ export const getTags = async ({
   AND.push(Prisma.sql`t.id NOT IN (SELECT "toTagId" FROM "TagsOnTags" WHERE type = 'Replace')`);
 
   if (query) AND.push(Prisma.sql`t."name" LIKE ${query + '%'}`);
-  else nsfwLevel = NsfwLevel.PG; // When getting top tags, only get PG tags
+  else {
+    // When getting top tags,
+    nsfwLevel = NsfwLevel.PG; // only get PG tags
+    AND.push(Prisma.sql`NOT t.unfeatured`); // Exclude unfeatured tags
+  }
   if (types?.length) AND.push(Prisma.sql`t."type"::text IN (${Prisma.join(types)})`);
   if (entityType)
     AND.push(Prisma.sql`t."target" && (ARRAY[${Prisma.join(entityType)}]::"TagTarget"[])`);
