@@ -35,19 +35,24 @@ export function AnnouncementEditModal({
 }) {
   const dialog = useDialogContext();
 
-  const startsAt = announcement?.startsAt ?? new Date();
-  const date = new Date(startsAt);
-  if (!announcement?.endsAt) date.setDate(startsAt.getDate() + 1);
+  // const startsAt = announcement?.startsAt ?? new Date();
+  // const date = new Date(startsAt);
+  // if (!announcement?.endsAt) date.setDate(startsAt.getDate() + 1);
   const endsAt = announcement?.endsAt;
   const action = announcement?.metadata?.actions?.[0];
   const queryUtils = trpc.useUtils();
   const startsAtRef = useRef<Date | null>(null);
+  const isToday = announcement?.startsAt?.toDateString() === new Date().toDateString();
 
   const form = useForm({
     schema,
     defaultValues: {
       ...announcement,
-      startsAt: startsAt,
+      startsAt: announcement?.startsAt
+        ? isToday
+          ? announcement.startsAt
+          : startOfDay(dateWithoutTimezone(announcement.startsAt))
+        : new Date(),
       endsAt: endsAt ? startOfDay(dateWithoutTimezone(endsAt)) : null,
       image: announcement?.metadata?.image,
       linkText: action?.linkText,
