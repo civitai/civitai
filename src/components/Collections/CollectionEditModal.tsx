@@ -9,6 +9,7 @@ import {
 } from '~/components/Collections/collection.utils';
 import {
   Form,
+  InputBrowsingLevels,
   InputCheckbox,
   InputDatePicker,
   InputNumber,
@@ -62,7 +63,15 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const upsertCollectionMutation = trpc.collection.upsert.useMutation();
   const handleSubmit = (data: UpsertCollectionInput) => {
     upsertCollectionMutation.mutate(
-      { ...data, mode: data.mode || null },
+      {
+        ...data,
+        mode: data.mode || null,
+        metadata: {
+          ...(data.metadata ?? {}),
+          // Ensures we NEVER send out 0.
+          forcedBrowsingLevel: data.metadata?.forcedBrowsingLevel || undefined,
+        },
+      },
       {
         onSuccess: async (collection) => {
           await queryUtils.collection.getInfinite.invalidate();
@@ -205,7 +214,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                     <InputDatePicker
                       name="metadata.submissionEndDate"
                       label="Submission End Date"
-                      placeholder="Select an start date"
+                      placeholder="Select an end date"
                       icon={<IconCalendar size={16} />}
                       clearable
                     />
@@ -294,6 +303,11 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       placeholder="Select a voting period start date"
                       icon={<IconCalendar size={16} />}
                       clearable
+                    />
+                    <InputBrowsingLevels
+                      name="metadata.forcedBrowsingLevel"
+                      label="Forced Browsing Level"
+                      description="Forces browsing level on this collection so that users will only see content based on this value regardless of their global settings."
                     />
                     {isImageCollection && (
                       <>
