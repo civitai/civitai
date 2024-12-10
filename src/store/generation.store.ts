@@ -8,7 +8,6 @@ import {
   GenerationResource,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
-import { GenerationWorkflowCategoryConfig } from '~/shared/types/generation.types';
 import { QS } from '~/utils/qs';
 
 export type RunType = 'run' | 'remix' | 'replay';
@@ -25,7 +24,14 @@ type GenerationState = {
   close: () => void;
   setView: (view: GenerationPanelView) => void;
   setType: (type: MediaType) => void;
-  setData: (args: GenerationData & { type: MediaType; workflow?: string }) => void;
+  setData: (
+    args: GenerationData & {
+      type: MediaType;
+      workflow?: string;
+      sourceImageUrl?: string;
+      engine?: string;
+    }
+  ) => void;
   clearData: () => void;
 };
 
@@ -72,10 +78,8 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: ({ type, remixOf, workflow, ...data }) => {
-        console.log({ type, workflow });
-        generationFormStore.setType(type);
-        generationFormStore.setWorkflow(workflow);
+      setData: ({ type, remixOf, workflow, sourceImageUrl, engine, ...data }) => {
+        useGenerationFormStore.setState({ type, workflow, sourceImageUrl, engine });
         set((state) => {
           state.remixOf = remixOf;
           state.data = { ...data, runType: 'replay' };
@@ -134,6 +138,9 @@ export const useGenerationFormStore = create<{
   type: MediaType;
   engine?: string;
   workflow?: string;
+  sourceImageUrl?: string;
+  width?: number;
+  height?: number;
 }>()(persist((set) => ({ type: 'image' }), { name: 'generation-form' }));
 
 export const generationFormStore = {
@@ -152,19 +159,10 @@ export const generationFormStore = {
     useGenerationFormStore.setState({ workflow: updatedWorkflow, engine });
   },
   setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
+  setSourceImageUrl: (sourceImageUrl?: string) =>
+    useGenerationFormStore.setState({ sourceImageUrl }),
+  reset: () => useGenerationFormStore.setState((state) => ({ type: state.type }), true),
 };
-
-export function useGenerationFormWorkflowConfig(
-  filters: { type: MediaType; engine: string } & GenerationWorkflowCategoryConfig
-) {
-  const selectedWorkflow = useGenerationFormStore((state) => state.workflow);
-  const availableWorkflows = generationFormWorkflowConfigurations.filter((config) =>
-    Object.entries(filters).every(([key, value]) => config[key as keyof typeof config] === value)
-  );
-  const workflow =
-    availableWorkflows.find((x) => x.key === selectedWorkflow) ?? availableWorkflows[0];
-  return { workflow, availableWorkflows };
-}
 
 export const useRemixStore = create<{
   resources?: GenerationResource[];

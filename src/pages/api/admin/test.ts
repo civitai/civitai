@@ -46,6 +46,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   await addGenerationEngine({ engine: 'civitai', disabled: true, message: undefined });
   await addGenerationEngine({ engine: 'haiper', disabled: false, message: undefined });
   await addGenerationEngine({ engine: 'mochi', disabled: false, message: undefined });
+  await addGenerationEngine({ engine: 'kling', disabled: false, message: undefined });
+  await addGenerationEngine({ engine: 'minimax', disabled: false, message: undefined });
 
   return res.status(200).json({ data });
   // return res.status(200).json(await formatTextToImageResponses(items as TextToImageResponse[]));
