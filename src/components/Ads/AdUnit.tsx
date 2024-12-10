@@ -64,19 +64,11 @@ export const AdUnitSide_3 = adUnitFactory({
   ],
 });
 
-// export const AdUnitOutstream = adUnitFactory({
-//   adUnit: 'outstream',
-//   sizes: null,
-//   id: 'adngin-outstream-0',
-// });
-
-export function AdUnitOutstream() {
-  return (
-    <AdUnitRenderable>
-      <div id="adngin-outstream-0"></div>
-    </AdUnitRenderable>
-  );
-}
+export const AdUnitOutstream = adUnitFactory({
+  adUnit: 'outstream',
+  sizes: [[1, 1]],
+  id: 'adngin-outstream-0',
+});
 
 export const AdUnitTop = adUnitFactory({
   adUnit: 'top',
