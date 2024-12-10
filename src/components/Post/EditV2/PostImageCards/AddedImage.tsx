@@ -320,6 +320,8 @@ const ResourceHeader = () => {
   const { image, allowedResources, addResource, isAddingResource, isOnSite } =
     useAddedImageContext();
 
+  const cantAdd = image.resourceHelper.length >= status.limits.resources;
+
   return (
     <div className="group flex items-center justify-between">
       <div className="flex items-center gap-2">
@@ -359,28 +361,32 @@ const ResourceHeader = () => {
               </Stack>
             </InfoPopover>
           </Box>
-          <ResourceSelectMultiple
-            buttonLabel="RESOURCE"
-            isTraining={true}
-            options={{
-              resources: allowedResources,
-            }}
-            buttonProps={{
-              size: 'sm',
-              compact: true,
-              className: 'text-sm',
-              loading: isAddingResource,
-              disabled: image.resourceHelper.length >= status.limits.resources,
-            }}
-            onChange={(val) => {
-              const vals = val as Generation.Resource[] | undefined;
-              if (!vals || !vals.length || image.resourceHelper.length >= status.limits.resources)
-                return;
-              vals.forEach((val) => {
-                addResource(val.id);
-              });
-            }}
-          />
+          <Tooltip
+            label={`Maximum resources reached (${status.limits.resources})`}
+            disabled={!cantAdd}
+          >
+            <ResourceSelectMultiple
+              buttonLabel="RESOURCE"
+              isTraining={true}
+              options={{
+                resources: allowedResources,
+              }}
+              buttonProps={{
+                size: 'sm',
+                compact: true,
+                className: 'text-sm',
+                loading: isAddingResource,
+                disabled: cantAdd,
+              }}
+              onChange={(val) => {
+                const vals = val as Generation.Resource[] | undefined;
+                if (!vals || !vals.length || cantAdd) return;
+                vals.forEach((val) => {
+                  addResource(val.id);
+                });
+              }}
+            />
+          </Tooltip>
         </Group>
       ) : (
         <Badge color="cyan">Made on-site</Badge>
@@ -455,7 +461,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   });
 
   const handleRemoveResource = () => {
-    if (isOnSite || !modelVersionId) return;
+    if (isOnSite || !modelVersionId || detected) return;
     openConfirmModal({
       centered: true,
       title: 'Remove Resource',
@@ -470,7 +476,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   };
 
   const handleCopyResource = () => {
-    if (!otherAvailableIDs.length || !modelVersionId) return;
+    if (!otherAvailableIDs.length || !modelVersionId || detected) return;
     openConfirmModal({
       centered: true,
       title: 'Copy to All',
@@ -513,36 +519,38 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         </Box>
       </Link>
 
-      <Group spacing={4} noWrap>
-        {!otherAvailableIDs.length ? (
-          <></>
-        ) : (
-          <Tooltip label="Copy to All">
-            <ActionIcon
-              color="violet"
-              size="sm"
-              onClick={handleCopyResource}
-              loading={copyResourceMutation.isLoading}
-            >
-              <IconArrowFork size={16} />
-            </ActionIcon>
-          </Tooltip>
-        )}
-        {isOnSite ? (
-          <></>
-        ) : (
-          <Tooltip label="Delete">
-            <ActionIcon
-              color="red"
-              size="sm"
-              onClick={handleRemoveResource}
-              loading={removeResourceMutation.isLoading}
-            >
-              <IconTrash size={16} />
-            </ActionIcon>
-          </Tooltip>
-        )}
-      </Group>
+      {!detected && (
+        <Group spacing={4} noWrap>
+          {!otherAvailableIDs.length ? (
+            <></>
+          ) : (
+            <Tooltip label="Copy to All">
+              <ActionIcon
+                color="violet"
+                size="sm"
+                onClick={handleCopyResource}
+                loading={copyResourceMutation.isLoading}
+              >
+                <IconArrowFork size={16} />
+              </ActionIcon>
+            </Tooltip>
+          )}
+          {isOnSite ? (
+            <></>
+          ) : (
+            <Tooltip label="Delete">
+              <ActionIcon
+                color="red"
+                size="sm"
+                onClick={handleRemoveResource}
+                loading={removeResourceMutation.isLoading}
+              >
+                <IconTrash size={16} />
+              </ActionIcon>
+            </Tooltip>
+          )}
+        </Group>
+      )}
     </Group>
   ) : (
     <div className="flex items-center justify-between gap-3">
