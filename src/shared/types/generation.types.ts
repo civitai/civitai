@@ -17,8 +17,6 @@ interface BaseGenerationWorkflowConfig {
   batchSize?: number;
   /** displays an alert message about the generation workflow  */
   message?: string;
-  /** default values used for generation */
-  defaultValues?: Record<string, any>;
   metadataDisplayProps?: string[];
   validate: (args: any) => any;
   disabled?: boolean;

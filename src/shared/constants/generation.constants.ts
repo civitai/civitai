@@ -555,14 +555,6 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'haiper',
     key: 'haiper-txt2vid',
-    defaultValues: {
-      prompt: '',
-      negativePrompt: '',
-      aspectRatio: '1:1',
-      duration: 4,
-      seed: undefined,
-      enablePromptEnhancer: true,
-    },
     metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
     validate: Haiper.validateInput,
   },
@@ -573,13 +565,6 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'haiper',
     key: 'haiper-img2vid',
-    defaultValues: {
-      prompt: '',
-      duration: 4,
-      seed: undefined,
-      enablePromptEnhancer: true,
-      sourceImageUrl: undefined,
-    },
     metadataDisplayProps: ['duration', 'seed', 'resolution'],
     validate: Haiper.validateInput,
   },
@@ -590,11 +575,6 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'mochi',
     key: 'mochi-txt2vid',
-    defaultValues: {
-      prompt: '',
-      seed: undefined,
-      enablePromptEnhancer: true,
-    },
     metadataDisplayProps: ['seed'],
     validate: Mochi.validateInput,
   },
@@ -605,15 +585,6 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'kling',
     key: 'kling-txt2vid',
-    defaultValues: {
-      prompt: '',
-      negativePrompt: '',
-      aspectRatio: '1:1', // custom aspect ratios
-      cfgScale: 0.5, // custom cfgScale
-      mode: KlingMode.STANDARD, // custom mode
-      duration: 5, // custom duration
-      seed: undefined,
-    },
     metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
     validate: Kling.validateInput,
   },
@@ -624,14 +595,6 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'kling',
     key: 'kling-img2vid',
-    defaultValues: {
-      prompt: '',
-      negativePrompt: '',
-      cfgScale: 0.5, // custom cfgScale
-      mode: KlingMode.STANDARD, // custom mode
-      duration: 5, // custom duration
-      seed: undefined,
-    },
     metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
     validate: Kling.validateInput,
   },
@@ -642,10 +605,6 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'minimax',
     key: 'minimax-txt2vid',
-    defaultValues: {
-      prompt: '',
-      enablePromptEnhancer: true,
-    },
     metadataDisplayProps: [],
     validate: Minimax.validateInput,
   },
@@ -656,10 +615,6 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'minimax',
     key: 'minimax-img2vid',
-    defaultValues: {
-      prompt: '',
-      enablePromptEnhancer: true,
-    },
     metadataDisplayProps: [],
     validate: Minimax.validateInput,
   },

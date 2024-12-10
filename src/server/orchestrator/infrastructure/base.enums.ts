@@ -3,9 +3,11 @@ export enum EnhancementType {
   IMG = 'img',
 }
 
-// export enum OrchestratorEngine {
-//   Kling = 'kling',
-//   Mochi = 'mochi',
-//   Haiper = 'haiper',
-//   Minimax = 'minimax',
-// }
+export const OrchestratorEngine = {
+  Kling: 'kling',
+  Mochi: 'mochi',
+  Haiper: 'haiper',
+  Minimax: 'minimax',
+} as const;
+export type OrchestratorEngine = (typeof orchestratorEngines)[number];
+const orchestratorEngines = Object.values(OrchestratorEngine);

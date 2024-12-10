@@ -9,6 +9,8 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { QS } from '~/utils/qs';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export type RunType = 'run' | 'remix' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
@@ -79,7 +81,8 @@ export const useGenerationStore = create<GenerationState>()(
         });
       },
       setData: ({ type, remixOf, workflow, sourceImageUrl, engine, ...data }) => {
-        useGenerationFormStore.setState({ type, workflow, sourceImageUrl, engine });
+        useGenerationFormStore.setState({ type, workflow, sourceImageUrl });
+        if (engine) useGenerationFormStore.setState({ engine });
         set((state) => {
           state.remixOf = remixOf;
           state.data = { ...data, runType: 'replay' };
@@ -137,7 +140,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
 export const useGenerationFormStore = create<{
   type: MediaType;
   engine?: string;
-  workflow?: string;
+  workflow?: string; // is this needed?
   sourceImageUrl?: string;
   width?: number;
   height?: number;
@@ -169,3 +172,25 @@ export const useRemixStore = create<{
   params?: Record<string, unknown>;
   remixOf?: RemixOfProps;
 }>()(persist(() => ({}), { name: 'remixOf' }));
+
+export function useVideoGenerationWorkflows() {
+  const { data, isLoading } = trpc.generation.getGenerationEngines.useQuery();
+  const workflows = generationFormWorkflowConfigurations
+    .map((config) => {
+      const engine = data?.find((x) => x.engine === config.engine);
+      if (!engine) return null;
+      return { ...config, ...engine };
+    })
+    .filter(isDefined);
+  return { data: workflows, isLoading };
+}
+
+export function useSelectedVideoWorkflow() {
+  const { data } = useVideoGenerationWorkflows();
+  const selectedEngine = useGenerationFormStore((state) => state.engine);
+  const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
+  const workflows = data.filter(({ subType, type }) =>
+    type === 'video' && sourceImageUrl ? subType.startsWith('img') : subType.startsWith('txt')
+  );
+  return workflows.find((x) => x.engine === selectedEngine) ?? workflows[0];
+}

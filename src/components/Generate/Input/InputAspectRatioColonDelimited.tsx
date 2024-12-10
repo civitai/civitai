@@ -8,7 +8,7 @@ export function InputAspectRatioColonDelimited({
 }: {
   name: string;
   label: string;
-  options: string[];
+  options: string[] | readonly string[];
 }) {
   return (
     <div className="flex flex-col gap-0.5">

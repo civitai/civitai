@@ -15,7 +15,6 @@ import {
 } from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import {
-  VideoGenerationInput,
   VideoGenerationSchema,
   videoGenerationSchema,
 } from '~/server/schema/orchestrator/orchestrator.schema';
@@ -30,6 +29,8 @@ import {
   useGenerationFormStore,
   generationFormStore,
   useGenerationStore,
+  useVideoGenerationWorkflows,
+  useSelectedVideoWorkflow,
 } from '~/store/generation.store';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
@@ -45,11 +46,15 @@ import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert
 import { hashify } from '~/utils/string-helpers';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { useGetGenerationEngines } from '~/components/Generate/hooks/useGetGenerationEngines';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { KlingMode, KlingVideoGenDuration } from '@civitai/client';
-import { EnhancementType } from '~/server/orchestrator/infrastructure/base.enums';
+import { KlingMode } from '@civitai/client';
+import {
+  EnhancementType,
+  type OrchestratorEngine,
+} from '~/server/orchestrator/infrastructure/base.enums';
+import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
+import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
 
 const schema = videoGenerationSchema;
 
@@ -64,27 +69,28 @@ function useWorkflowContext() {
 }
 
 export function VideoGenerationForm() {
-  const { data: engines, isLoading } = useGetGenerationEngines();
-
-  const selectedEngine = useGenerationFormStore((state) => state.engine);
+  const { data: workflows, isLoading } = useVideoGenerationWorkflows();
+  const workflow = useSelectedVideoWorkflow();
   const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
-  const engineData = engines?.find((x) => x.engine === selectedEngine) ?? engines?.[0];
-  const engine = engineData?.engine;
-  const availableWorkflows = generationFormWorkflowConfigurations.filter((config) =>
-    Object.entries({ type: 'video', engine }).every(
-      ([key, value]) => config[key as keyof typeof config] === value
-    )
-  );
+  // const availableWorkflows = generationFormWorkflowConfigurations.filter((config) =>
+  //   Object.entries({ type: 'video', engine }).every(
+  //     ([key, value]) => config[key as keyof typeof config] === value
+  //   )
+  // );
 
-  const workflow =
-    availableWorkflows.length > 0
-      ? availableWorkflows.find((x) =>
-          sourceImageUrl ? x.subType === 'img2vid' : x.subType === 'txt2vid'
-        ) ?? availableWorkflows[0]
-      : undefined;
+  // const workflow =
+  //   availableWorkflows.length > 0
+  //     ? availableWorkflows.find((x) =>
+  //         sourceImageUrl ? x.subType === 'img2vid' : x.subType === 'txt2vid'
+  //       ) ?? availableWorkflows[0]
+  //     : undefined;
 
   const availableEngines = Object.keys(engineDefinitions)
-    .filter((key) => engines?.some((x) => x.engine === key && !x.disabled))
+    .filter((key) =>
+      workflows
+        ?.filter((x) => (sourceImageUrl ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
+        .some((x) => x.engine === key && !x.disabled)
+    )
     .map((key) => ({ key, ...engineDefinitions[key] }));
 
   return (
@@ -113,14 +119,14 @@ export function VideoGenerationForm() {
         <div className="flex items-center justify-center p-3">
           <Loader />
         </div>
-      ) : engineData?.disabled ? (
-        <Alert color="yellow" className="mx-3" title={`${engine} generation disabled`}>
-          {engineData?.message && <Text className="mb-2">{engineData?.message}</Text>}
-          {engines && (
+      ) : workflow?.disabled ? (
+        <Alert color="yellow" className="mx-3" title={`${workflow?.engine} generation disabled`}>
+          {workflow?.message && <Text className="mb-2">{workflow?.message}</Text>}
+          {workflows && (
             <>
               <Text className="mb-1">Try out another of our generation tools</Text>
               <div className="flex flex-wrap gap-2">
-                {engines
+                {workflows
                   .filter((x) => !x.disabled)
                   .map(({ engine }) => (
                     <Button
@@ -135,15 +141,13 @@ export function VideoGenerationForm() {
             </>
           )}
         </Alert>
-      ) : workflow && engine ? (
+      ) : workflow ? (
         <>
           <div className="flex flex-col gap-2 px-3">
             <Select
               label="Tool"
-              value={engine}
-              description={
-                engineData?.message && !engineData?.disabled ? engineData.message : undefined
-              }
+              value={workflow.engine}
+              description={workflow?.message && !workflow?.disabled ? workflow.message : undefined}
               onChange={(value) => generationFormStore.setEngine(value!)}
               data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
             />
@@ -155,7 +159,7 @@ export function VideoGenerationForm() {
               />
             )}
           </div>
-          <WorkflowContext.Provider value={{ workflow, engine }}>
+          <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
             <EngineForm />
           </WorkflowContext.Provider>
         </>
@@ -194,14 +198,14 @@ function KlingTextToVideoForm() {
       <InputAspectRatioColonDelimited
         name="aspectRatio"
         label="Aspect Ratio"
-        options={['16:9', '1:1', '9:16']}
+        options={klingAspectRatios}
       />
 
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={Object.values(KlingVideoGenDuration).map((value) => ({
+          data={klingDuration.map((value) => ({
             label: `${value}s`,
             value,
           }))}
@@ -262,7 +266,7 @@ function KlingImageToVideoForm() {
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={Object.values(KlingVideoGenDuration).map((value) => ({
+          data={klingDuration.map((value) => ({
             label: `${value}s`,
             value,
           }))}
@@ -324,7 +328,7 @@ function HaiperTxt2VidGenerationForm() {
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={[2, 4, 8].map((value) => ({ label: `${value}s`, value }))}
+          data={haiperDuration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
       <InputSeed name="seed" label="Seed" />
@@ -342,7 +346,7 @@ function HaiperImg2VidGenerationForm() {
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={[2, 4, 8].map((value) => ({ label: `${value}s`, value }))}
+          data={haiperDuration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
       <InputSeed name="seed" label="Seed" />
@@ -386,12 +390,11 @@ function MinimaxImg2VidGenerationForm() {
   );
 }
 
-type Engine = VideoGenerationInput['engine'];
 function FormWrapper({
   engine,
   children,
 }: {
-  engine: Engine;
+  engine: OrchestratorEngine;
   children: React.ReactNode | ((form: UseFormReturn) => React.ReactNode);
 }) {
   const type = useGenerationFormStore((state) => state.type);
@@ -513,7 +516,7 @@ function FormWrapper({
   );
 }
 
-function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }) {
+function SubmitButton2({ loading, engine }: { loading: boolean; engine: OrchestratorEngine }) {
   const [query, setQuery] = useState<VideoGenerationSchema | null>(null);
   const { getValues, watch } = useFormContext();
   const [error, setError] = useState<string | null>(null);
