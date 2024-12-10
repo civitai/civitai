@@ -1,7 +1,10 @@
-export enum EnhancementType {
-  TXT = 'txt',
-  IMG = 'img',
-}
+export type GenerationType = keyof typeof GenerationType;
+export const GenerationType = {
+  txt2img: 'txt2img',
+  img2img: 'img2img',
+  txt2vid: 'txt2vid',
+  img2vid: 'img2vid',
+} as const;
 
 export const OrchestratorEngine = {
   Kling: 'kling',

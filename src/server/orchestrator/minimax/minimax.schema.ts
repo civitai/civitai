@@ -1,12 +1,12 @@
 import { MiniMaxVideoGenModel } from '@civitai/client';
 import z from 'zod';
-import { EnhancementType } from '~/server/orchestrator/infrastructure/base.enums';
+import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 import {
   imageEnhancementSchema,
   promptSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { unsupportedEnhancementType } from '~/server/orchestrator/infrastructure/base.utils';
+import { unsupportedGenerationType } from '~/server/orchestrator/infrastructure/base.utils';
 
 const baseMinimaxSchema = z.object({
   engine: z.literal('minimax'),
@@ -35,13 +35,13 @@ export namespace Minimax {
   // export type Img2VidSchema = z.infer<typeof minimaxImg2VidSchema>;
 
   export function validateInput(args: Txt2VidInput | Img2VidInput) {
-    switch (args.enhancementType) {
-      case EnhancementType.TXT:
+    switch (args.type) {
+      case GenerationType.txt2vid:
         return minimaxTxt2VidSchema.parse(args);
-      case EnhancementType.IMG:
+      case GenerationType.img2vid:
         return minimaxImg2VidSchema.parse(args);
       default:
-        throw unsupportedEnhancementType('minimax');
+        throw unsupportedGenerationType('minimax');
     }
   }
 }

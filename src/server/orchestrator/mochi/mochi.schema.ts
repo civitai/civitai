@@ -1,11 +1,11 @@
 import z from 'zod';
-import { EnhancementType } from '~/server/orchestrator/infrastructure/base.enums';
+import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 import {
   promptSchema,
   seedSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { unsupportedEnhancementType } from '~/server/orchestrator/infrastructure/base.utils';
+import { unsupportedGenerationType } from '~/server/orchestrator/infrastructure/base.utils';
 
 export const mochiTxt2VidSchema = textEnhancementSchema.extend({
   engine: z.literal('mochi'),
@@ -20,11 +20,11 @@ export namespace Mochi {
   // export type Txt2VidSchema = z.infer<typeof mochiTxt2VidSchema>;
 
   export function validateInput(args: Txt2VidInput) {
-    switch (args.enhancementType) {
-      case EnhancementType.TXT:
+    switch (args.type) {
+      case GenerationType.txt2vid:
         return mochiTxt2VidSchema.parse(args);
       default:
-        throw unsupportedEnhancementType('mochi');
+        throw unsupportedGenerationType('mochi');
     }
   }
 }

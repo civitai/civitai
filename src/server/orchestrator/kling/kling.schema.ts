@@ -1,6 +1,6 @@
 import { KlingMode, KlingModel } from '@civitai/client';
 import z from 'zod';
-import { EnhancementType } from '~/server/orchestrator/infrastructure/base.enums';
+import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 import {
   imageEnhancementSchema,
   negativePromptSchema,
@@ -8,7 +8,7 @@ import {
   seedSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { unsupportedEnhancementType } from '~/server/orchestrator/infrastructure/base.utils';
+import { unsupportedGenerationType } from '~/server/orchestrator/infrastructure/base.utils';
 
 export const klingAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const klingDuration = ['5', '10'] as const;
@@ -39,13 +39,13 @@ export namespace Kling {
   // export type Img2VidSchema = z.infer<typeof imageEnhancementSchema>;
 
   export function validateInput(args: Txt2VidInput | Img2VidInput) {
-    switch (args.enhancementType) {
-      case EnhancementType.TXT:
+    switch (args.type) {
+      case GenerationType.txt2vid:
         return klingTxt2VidSchema.parse(args);
-      case EnhancementType.IMG:
+      case GenerationType.img2vid:
         return klingImg2VidSchema.parse(args);
       default:
-        throw unsupportedEnhancementType('kling');
+        throw unsupportedGenerationType('kling');
     }
   }
 }

@@ -1,5 +1,5 @@
 import z from 'zod';
-import { EnhancementType } from '~/server/orchestrator/infrastructure/base.enums';
+import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 
 export const promptSchema = z
   .string()
@@ -14,12 +14,12 @@ export const negativePromptSchema = z
 export const seedSchema = z.number().optional();
 
 export const textEnhancementSchema = z.object({
-  enhancementType: z.literal(EnhancementType.TXT),
+  type: z.literal(GenerationType.txt2vid).catch(GenerationType.txt2vid),
   prompt: promptSchema,
 });
 
 export const imageEnhancementSchema = z.object({
-  enhancementType: z.literal(EnhancementType.IMG),
+  type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
   sourceImageUrl: z.string(),
   height: z.number().optional(),
   width: z.number().optional(),

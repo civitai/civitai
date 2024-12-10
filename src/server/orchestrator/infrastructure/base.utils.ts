@@ -1,3 +1,3 @@
-export function unsupportedEnhancementType(type: string) {
+export function unsupportedGenerationType(type: string) {
   return new Error(`unsupported ${type} enhancement type`);
 }

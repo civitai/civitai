@@ -49,10 +49,7 @@ import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { KlingMode } from '@civitai/client';
-import {
-  EnhancementType,
-  type OrchestratorEngine,
-} from '~/server/orchestrator/infrastructure/base.enums';
+import { type OrchestratorEngine } from '~/server/orchestrator/infrastructure/base.enums';
 import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
 import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
 
@@ -72,18 +69,6 @@ export function VideoGenerationForm() {
   const { data: workflows, isLoading } = useVideoGenerationWorkflows();
   const workflow = useSelectedVideoWorkflow();
   const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
-  // const availableWorkflows = generationFormWorkflowConfigurations.filter((config) =>
-  //   Object.entries({ type: 'video', engine }).every(
-  //     ([key, value]) => config[key as keyof typeof config] === value
-  //   )
-  // );
-
-  // const workflow =
-  //   availableWorkflows.length > 0
-  //     ? availableWorkflows.find((x) =>
-  //         sourceImageUrl ? x.subType === 'img2vid' : x.subType === 'txt2vid'
-  //       ) ?? availableWorkflows[0]
-  //     : undefined;
 
   const availableEngines = Object.keys(engineDefinitions)
     .filter((key) =>
@@ -383,7 +368,6 @@ function MinimaxTxt2VidGenerationForm() {
 function MinimaxImg2VidGenerationForm() {
   return (
     <FormWrapper engine="minimax">
-      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
     </FormWrapper>
@@ -400,7 +384,6 @@ function FormWrapper({
   const type = useGenerationFormStore((state) => state.type);
   const storeData = useGenerationStore((state) => state.data);
   const { workflow } = useWorkflowContext();
-  // const { defaultValues } = workflow ?? {};
   const status = useGenerationStatus();
   const messageHash = useMemo(
     () => (status.message ? hashify(status.message).toString() : undefined),
@@ -413,7 +396,6 @@ function FormWrapper({
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     defaultValues: validateInput(workflow),
-    // defaultValues: { ...defaultValues, engine, workflow: workflow.key },
     storage: localStorage,
   });
 
@@ -541,12 +523,6 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
       );
 
       try {
-        // const result = schema.parse({
-        //   engine,
-        //   workflow: workflow.key,
-        //   ...defaultValues,
-        //   ...whatIfData,
-        // });
         const result = validateInput(workflow, whatIfData);
         setQuery(result);
         setError(null);
@@ -582,9 +558,6 @@ const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
 
 function validateInput(workflow: GenerationWorkflowConfig, data?: Record<string, unknown>) {
   const { sourceImageUrl, width, height } = useGenerationFormStore.getState();
-  const enhancementType = workflow.subType.startsWith('img')
-    ? EnhancementType.IMG
-    : EnhancementType.TXT;
 
   return workflow.validate({
     ...data,
@@ -593,6 +566,6 @@ function validateInput(workflow: GenerationWorkflowConfig, data?: Record<string,
     sourceImageUrl,
     width,
     height,
-    enhancementType,
+    type: workflow.subType,
   });
 }
