@@ -25,7 +25,7 @@ import {
 import { normalizeText } from '~/utils/normalize-text';
 import { signalClient } from '~/utils/signal-client';
 
-const REQUIRED_SCANS = [TagSource.WD14, TagSource.Hive];
+const REQUIRED_SCANS = 2;
 
 const tagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
@@ -427,7 +427,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
         )
         UPDATE "Image" i SET "scannedAt" = NOW(), "updatedAt" = NOW(), "createdAt" = NOW(), "ingestion" ='Scanned'
         FROM scan_count s
-        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS.length}
+        WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS}
         RETURNING "ingestion";
       `;
       data.ingestion = ingestion;
