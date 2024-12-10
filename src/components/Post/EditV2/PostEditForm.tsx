@@ -8,13 +8,14 @@ import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { Group } from '@mantine/core';
 import { CollectionSelectDropdown } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
+import { isDefined } from '~/utils/type-guards';
 
 const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
 
 export function PostEditForm() {
   const post = usePostEditStore((state) => state.post);
-  const { postTitle } = usePostEditParams();
+  const { postTitle, collectionId } = usePostEditParams();
   const form = useForm({
     schema: formSchema,
     defaultValues: { ...post, title: post?.title ?? postTitle },
@@ -49,6 +50,8 @@ export function PostEditForm() {
     };
   }, []); // eslint-disable-line
 
+  const controls = ['heading', 'formatting', 'list', 'link', collectionId ? undefined : 'media', 'mentions'].filter(isDefined);
+
   return (
     <Form form={form} className="flex flex-col gap-3">
       <InputTextArea
@@ -64,7 +67,9 @@ export function PostEditForm() {
       <InputRTE
         name="detail"
         placeholder="Add a description..."
-        includeControls={['heading', 'formatting', 'list', 'link', 'media', 'mentions']}
+        // Remove the `media` controls when the post is part of a collection.
+        // @ts-ignore - `includeControls` does not export types.
+        includeControls={controls} 
         editorSize="md"
       />
     </Form>
