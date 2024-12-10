@@ -406,6 +406,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   const otherAvailableIDs = useMemo(() => {
     return otherImages
       .map((oi) => {
+        if (!oi.resourceHelper.length) return oi.id;
         const otherAllowed = getAllowedResources(oi.resourceHelper);
         const resourceMatch = otherAllowed.find((oa) => oa.type === modelType);
         if (
