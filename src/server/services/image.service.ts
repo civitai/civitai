@@ -1,10 +1,12 @@
 import { Prisma } from '@prisma/client';
 import {
+  AppealStatus,
   Availability,
   BlockImageReason,
   CollectionMode,
   EntityMetric_EntityType_Type,
   EntityMetric_MetricType_Type,
+  EntityType,
   ImageIngestionStatus,
   MediaType,
   ModelType,
@@ -91,7 +93,7 @@ import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
-import { bulkSetReportStatus } from '~/server/services/report.service';
+import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import {
   getBlockedTags,
   getModeratedTags,
@@ -259,7 +261,8 @@ export const moderateImages = async ({
   needsReview,
   reviewType,
   reviewAction,
-}: ImageModerationSchema) => {
+  userId,
+}: ImageModerationSchema & { userId?: number }) => {
   if (reviewAction === 'delete') {
     const affected = await dbWrite.$queryRaw<AffectedImage[]>`
       SELECT id, "userId", "nsfwLevel", "pHash", "postId"
@@ -359,6 +362,15 @@ export const moderateImages = async ({
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
       data: { disabled: true },
+    });
+
+    // Resolve any pending appeals
+    await resolveEntityAppeal({
+      ids: results.map((x) => x.id),
+      entityType: EntityType.Image,
+      status: AppealStatus.Approved,
+      resolvedMessage: 'Image approved',
+      userId,
     });
 
     // Update nsfw level of image

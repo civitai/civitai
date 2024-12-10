@@ -74,8 +74,9 @@ export const moderateImageHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
-    const affected = await moderateImages(input);
-    await trackModActivity(ctx.user.id, {
+    const { id: userId } = ctx.user;
+    const affected = await moderateImages({ ...input, userId });
+    await trackModActivity(userId, {
       entityType: 'image',
       entityId: input.ids,
       activity: 'review',

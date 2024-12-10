@@ -478,7 +478,7 @@ export async function resolveEntityAppeal({
   internalNotes,
   resolvedMessage,
   userId,
-}: ResolveAppealInput & { userId: number }) {
+}: ResolveAppealInput & { userId?: number }) {
   const appeals = await dbRead.appeal.findMany({
     where: { entityId: { in: ids }, status: AppealStatus.Pending, entityType },
     select: {
@@ -492,6 +492,7 @@ export async function resolveEntityAppeal({
     },
   });
   const affectedIds = appeals.map((a) => a.id);
+  if (affectedIds.length === 0) return [];
 
   await dbWrite.appeal.updateMany({
     where: { id: { in: affectedIds } },
@@ -506,7 +507,12 @@ export async function resolveEntityAppeal({
         const image = await dbWrite.image.update({
           where: { id: appeal.entityId },
           data: approved
-            ? { needsReview: null, blockedFor: null, ingestion: ImageIngestionStatus.Scanned }
+            ? {
+                needsReview: null,
+                blockedFor: null,
+                ingestion: ImageIngestionStatus.Scanned,
+                nsfwLevel: 0,
+              }
             : { needsReview: null },
         });
 

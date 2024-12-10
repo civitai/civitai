@@ -39,6 +39,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       needsReview: undefined,
       reviewAction: 'delete',
       reviewType: 'blocked',
+      userId,
     });
 
     const tracker = new Tracker(req, res);

@@ -15,6 +15,7 @@ import {
 } from '~/server/schema/report.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getImageById } from '~/server/services/image.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import {
   bulkSetReportStatus,
@@ -339,6 +340,12 @@ export async function resolveEntityAppealHandler({
   try {
     const { id: userId } = ctx.user;
     const appeals = await resolveEntityAppeal({ ...input, userId });
+
+    await trackModActivity(userId, {
+      entityType: 'image',
+      entityId: input.ids,
+      activity: 'resolveAppeal',
+    });
 
     return appeals;
   } catch (error) {
