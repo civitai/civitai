@@ -7,18 +7,17 @@ import {
   Divider,
   Group,
   Modal,
-  ModalProps,
   ScrollArea,
   Select,
   Stack,
   Text,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
@@ -27,6 +26,8 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
@@ -39,8 +40,6 @@ import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';
-import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
 
 export function AddUserContentModal({ collectionId }: Props) {
   const dialog = useDialogContext();
@@ -174,6 +173,8 @@ export function AddUserContentModal({ collectionId }: Props) {
                     withMeta: undefined,
                     followed: undefined,
                     fromPlatform: undefined,
+                    hideAutoResources: undefined,
+                    hideManualResources: undefined,
                   }}
                   renderItem={SelectableImageCard}
                 />

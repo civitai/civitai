@@ -493,7 +493,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   return !!modelId && !!modelVersionId ? (
     <Group spacing="xs" noWrap mt={i === 0 ? 4 : undefined}>
       {!detected && (
-        <Tooltip label="Manually added" withArrow>
+        <Tooltip label="Manually-added" withArrow>
           <ThemeIcon color="cyan" variant="light" radius="xl" size="sm">
             <IconUserPlus size={14} />
           </ThemeIcon>

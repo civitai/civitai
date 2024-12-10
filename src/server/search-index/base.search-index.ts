@@ -367,6 +367,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         return;
       }
 
+      await setup({ indexName });
+
       console.log(
         `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: Called with ${items.length} items`
       );

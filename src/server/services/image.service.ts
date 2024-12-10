@@ -724,7 +724,8 @@ export const getAllImages = async (
     reviewId,
     prioritizedUserIds,
     include,
-    // excludeCrossPosts,
+    // hideAutoResources,
+    // hideManualResources,
     reactions,
     ids,
     includeBaseModel,
@@ -781,13 +782,6 @@ export const getAllImages = async (
     if (!targetUser) throw new Error('User not found');
     targetUserId = targetUser.id;
   }
-
-  // TODO.fix disable excludeCrossPosts
-  // if (excludeCrossPosts && modelVersionId) {
-  //   cacheTime = CacheTTL.day;
-  //   cacheTags.push(`images-modelVersion:${modelVersionId}`);
-  //   AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
-  // }
 
   // [x]
   if (ids && ids.length > 0) {
@@ -1313,6 +1307,8 @@ export const getAllImages = async (
       cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
       metadata: ImageMetadata | VideoMetadata | null;
       onSite: boolean;
+      modelVersionIds?: number[];
+      modelVersionIdsManual?: number[];
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -1320,6 +1316,8 @@ export const getAllImages = async (
 
       return {
         ...i,
+        modelVersionIds: [], // TODO doing this basically just for TS
+        modelVersionIdsManual: [],
         user: {
           id: creatorId,
           username,
@@ -1390,7 +1388,8 @@ export const getAllImagesIndex = async (
   //   scheduled,
   //   withMeta: hasMeta,
   //   excludedUserIds,
-  //   excludeCrossPosts,
+  //   hideAutoResources
+  //   hideManualResources
   //   hidden,
   //   followed,
   //   //
@@ -1586,7 +1585,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     isModerator,
     currentUserId,
     excludedUserIds,
-    excludeCrossPosts,
+    hideAutoResources,
+    hideManualResources,
     hidden,
     followed,
     limit = 100,
@@ -1677,16 +1677,18 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
   if (modelVersionId) {
-    if (excludeCrossPosts) {
-      filters.push(makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`));
-    } else {
-      filters.push(
-        `(${makeMeiliImageSearchFilter(
-          'modelVersionIds',
-          `IN [${modelVersionId}]`
-        )} OR ${makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)})`
+    const versionFilters = [makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)];
+
+    if (!hideAutoResources) {
+      versionFilters.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
+    }
+    if (!hideManualResources) {
+      versionFilters.push(
+        makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
       );
     }
+
+    filters.push(`(${versionFilters.join(' OR ')})`);
   }
 
   /*
