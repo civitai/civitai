@@ -2277,30 +2277,28 @@ export async function getImageGenerationResources(id: number) {
     select: { imageId: true, modelVersionId: true, hash: true, strength: true },
   });
   const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const resourceData = await resourceDataCache
-    .fetch(versionIds)
-    .then((resourceData) => formatGenerationResources(resourceData));
+  const resourceData = await resourceDataCache.fetch(versionIds);
 
   // TODO - determine a good way to return resources when some resources are unavailable
-  // const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
-  // if (index > -1 && !resourceData[index].available) {
-  //   const checkpoint = resourceData[index];
-  //   const latestVersion = await dbRead.modelVersion.findFirst({
-  //     where: {
-  //       modelId: checkpoint.model.id,
-  //       availability: { in: ['Public', 'EarlyAccess'] },
-  //       generationCoverage: { covered: true },
-  //     },
-  //     select: { id: true },
-  //     orderBy: { index: 'asc' },
-  //   });
-  //   if (latestVersion) {
-  //     const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
-  //     if (newCheckpoint) resourceData[index] = newCheckpoint;
-  //   }
-  // }
+  const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
+  if (index > -1 && !resourceData[index].available) {
+    const checkpoint = resourceData[index];
+    const latestVersion = await dbRead.modelVersion.findFirst({
+      where: {
+        modelId: checkpoint.model.id,
+        availability: { in: ['Public', 'EarlyAccess'] },
+        generationCoverage: { covered: true },
+      },
+      select: { id: true },
+      orderBy: { index: 'asc' },
+    });
+    if (latestVersion) {
+      const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
+      if (newCheckpoint) resourceData[index] = newCheckpoint;
+    }
+  }
 
-  return resourceData
+  return formatGenerationResources(resourceData)
     .map((resource) => {
       const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
       return {
