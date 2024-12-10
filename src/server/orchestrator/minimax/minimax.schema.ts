@@ -18,8 +18,15 @@ const baseMinimaxSchema = z.object({
   prompt: promptSchema,
 });
 
+const minRatio = 2 / 5;
+const maxRatio = 5 / 2;
+const minSize = 300;
+
 export const minimaxTxt2VidSchema = textEnhancementSchema.merge(baseMinimaxSchema);
 export const minimaxImg2VidSchema = imageEnhancementSchema.merge(baseMinimaxSchema);
+// .superRefine(({ sourceImageUrl, width, height }, ctx) => {
+//   const
+// });
 
 export namespace Minimax {
   export type Txt2VidInput = z.input<typeof minimaxTxt2VidSchema>;
