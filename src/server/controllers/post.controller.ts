@@ -186,7 +186,7 @@ export const updatePostHandler = async ({
 
       if (collection.metadata.entriesRequireTools) {
         // Check all images within this post has tools:
-        const exists = await dbWrite.image.findFirst({
+        const exists = await dbRead.image.findFirst({
           where: {
             postId: input.id,
             tools: {

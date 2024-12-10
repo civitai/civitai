@@ -1435,7 +1435,7 @@ export const updateCollectionItemsStatus = async ({
 
   if (status === CollectionItemStatus.ACCEPTED) {
     if (collectionMetadata?.judgesCanScoreEntries) {
-      const exists = await dbWrite.collectionItem.findFirst({
+      const exists = await dbRead.collectionItem.findFirst({
         where: {
           id: { in: collectionItemIds },
           scores: {
@@ -1452,7 +1452,7 @@ export const updateCollectionItemsStatus = async ({
     }
 
     if (collectionMetadata?.judgesApplyBrowsingLevel && collection.type === CollectionType.Image) {
-      const exists = await dbWrite.collectionItem.findFirst({
+      const exists = await dbRead.collectionItem.findFirst({
         where: {
           id: { in: collectionItemIds },
           image: {
@@ -1465,7 +1465,7 @@ export const updateCollectionItemsStatus = async ({
 
       if (exists) {
         throw throwBadRequestError(
-          'Some of the items selected have not been given an NSFW rating. Please ensure all items have an NSFW rating before approving them.'
+          'Some of the items selected have not been given a NSFW rating. Please ensure all items have a NSFW rating before approving them.'
         );
       }
     }
