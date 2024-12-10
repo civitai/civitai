@@ -1,8 +1,6 @@
 import { Prisma } from '@prisma/client';
-import { ImageIngestionStatus, TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
-import { topLevelModerationCategories } from '~/libs/moderation';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
@@ -16,6 +14,7 @@ import { getTagRules } from '~/server/services/system-cache';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getComputedTags } from '~/server/utils/tag-rules';
+import { ImageIngestionStatus, TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { logToDb } from '~/utils/logging';
 import {
   auditMetaData,
@@ -26,7 +25,7 @@ import {
 import { normalizeText } from '~/utils/normalize-text';
 import { signalClient } from '~/utils/signal-client';
 
-const REQUIRED_SCANS = [TagSource.WD14, TagSource.Rekognition];
+const REQUIRED_SCANS = [TagSource.WD14, TagSource.Hive];
 
 const tagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
@@ -65,9 +64,7 @@ const schema = z.object({
 });
 
 function shouldIgnore(tag: string, source: TagSource) {
-  return (
-    (tagsToIgnore[source]?.includes(tag) ?? false) || topLevelModerationCategories.includes(tag)
-  );
+  return tagsToIgnore[source]?.includes(tag) ?? false;
 }
 
 export default WebhookEndpoint(async function imageTags(req, res) {
@@ -179,10 +176,9 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
     throw new Error('Image not found');
   }
 
-  // Handle underscores coming out of WD14
-  if (source === TagSource.WD14) {
-    for (const tag of incomingTags) tag.tag = tag.tag.replace(/_/g, ' ');
-  }
+  // Preprocess tags
+  const preprocessor = tagPreprocessors[source];
+  if (preprocessor) incomingTags = preprocessor(incomingTags);
 
   // Add prompt based tags
   const imageMeta = image.meta as Prisma.JsonObject | undefined;
@@ -493,4 +489,43 @@ async function logScanResultError({
     message,
     error,
   });
+}
+
+// Tag Preprocessing
+// --------------------------------------------------
+const tagPreprocessors: Partial<Record<TagSource, (tags: IncomingTag[]) => IncomingTag[]>> = {
+  [TagSource.WD14]: processWDTags,
+  [TagSource.Hive]: processHiveTags,
+};
+
+function processWDTags(tags: IncomingTag[]) {
+  return tags.map((tag) => {
+    tag.tag = tag.tag.replace(/_/g, ' ');
+    return tag;
+  });
+}
+
+const hiveProcessing = {
+  ignore: ['general_not_nsfw_not_suggestive', 'natural'],
+  map: {
+    general_nsfw: 'nsfw',
+    general_suggestive: 'suggestive',
+  } as Record<string, string>,
+};
+
+function processHiveTags(tags: IncomingTag[]) {
+  const results: IncomingTag[] = [];
+
+  for (const tag of tags) {
+    // Handle ignored tags
+    if (tag.tag.startsWith('no_') || hiveProcessing.ignore.includes(tag.tag)) continue;
+
+    // Clean tag name
+    if (tag.tag.startsWith('yes_')) tag.tag = tag.tag.slice(4);
+    else if (hiveProcessing.map[tag.tag]) tag.tag = hiveProcessing.map[tag.tag];
+    tag.tag = tag.tag.replace(/_/g, ' ');
+
+    results.push(tag);
+  }
+  return results;
 }
