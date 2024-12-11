@@ -90,6 +90,7 @@ export enum ImageScanType {
   FaceDetection,
   WD14,
   Hash,
+  Hive,
 }
 
 export enum CommentV2Sort {

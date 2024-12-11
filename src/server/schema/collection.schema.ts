@@ -106,6 +106,7 @@ export const collectionMetadataSchema = z
     maxItemsPerUser: z.coerce.number().optional(),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
+    submissionsHiddenUntilEndDate: z.boolean().optional(),
     existingEntriesDisabled: z.coerce.boolean().optional(),
     votingPeriodStart: z.coerce.date().nullish(),
     uploadSettings: z
@@ -122,6 +123,9 @@ export const collectionMetadataSchema = z
     disableFollowOnSubmission: z.boolean().optional(),
     disableTagRequired: z.boolean().optional(),
     youtubeSupportEnabled: z.boolean().optional(),
+    forcedBrowsingLevel: z.number().optional(),
+    entriesRequireTitle: z.boolean().optional(),
+    entriesRequireTools: z.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

@@ -37,6 +37,7 @@ import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import {
   contestCollectionReactionsHidden,
@@ -84,6 +85,7 @@ import {
   CollectionType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
+import { CollectionMode, CollectionType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -335,7 +337,7 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters />
+            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -530,7 +532,9 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <>
+    <BrowsingModeOverrideProvider
+      browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
+    >
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
@@ -545,7 +549,9 @@ export function Collection({
           }
         />
       )}
-      <SensitiveShield contentNsfwLevel={collection.nsfwLevel}>
+      <SensitiveShield
+        contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
+      >
         <MasonryProvider
           columnWidth={constants.cardSizes.model}
           maxColumnCount={7}
@@ -779,9 +785,18 @@ export function Collection({
                     <AlertWithIcon icon={<IconAlertCircle />}>
                       <Text>
                         This collection is accepting entries until{' '}
-                        {formatDate(metadata.submissionEndDate)}. During the subsmission period, you
-                        will only see your entries, both reviewed and unreviewed. Once the
-                        submission period ends, you will see all entries.
+                        {formatDate(metadata.submissionEndDate)}.{' '}
+                        {metadata.submissionsHiddenUntilEndDate ? (
+                          <>
+                            You will only be able to see your own entries until the submission
+                            period is over.
+                          </>
+                        ) : (
+                          <>
+                            Entries that have been approved will be visible to the public. Entries
+                            under review are only visible to the owner.
+                          </>
+                        )}
                       </Text>
                     </AlertWithIcon>
                   )}
@@ -813,7 +828,7 @@ export function Collection({
           </MasonryContainer>
         </MasonryProvider>
       </SensitiveShield>
-    </>
+    </BrowsingModeOverrideProvider>
   );
 }
 
