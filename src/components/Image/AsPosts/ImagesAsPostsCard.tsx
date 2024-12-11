@@ -260,25 +260,24 @@ export function ImagesAsPostsCard({
                         ) : (
                           <Text>Not published</Text>
                         )}
-                        {fromAutoResource ||
-                          (fromManualResource && (
-                            <Group ml={6} spacing={4}>
-                              {fromAutoResource && (
-                                <Tooltip label="Auto-detected resource" withArrow>
-                                  <ThemeIcon color="teal" variant="light" radius="xl" size={18}>
-                                    <IconAutomaticGearbox size={16} />
-                                  </ThemeIcon>
-                                </Tooltip>
-                              )}
-                              {fromManualResource && (
-                                <Tooltip label="Manually-added resource" withArrow>
-                                  <ThemeIcon color="cyan" variant="light" radius="xl" size={18}>
-                                    <IconUserPlus size={16} />
-                                  </ThemeIcon>
-                                </Tooltip>
-                              )}
-                            </Group>
-                          ))}
+                        {(fromAutoResource || fromManualResource) && (
+                          <Group ml={6} spacing={4}>
+                            {fromAutoResource && (
+                              <Tooltip label="Auto-detected resource" withArrow>
+                                <ThemeIcon color="teal" variant="light" radius="xl" size={18}>
+                                  <IconAutomaticGearbox size={16} />
+                                </ThemeIcon>
+                              </Tooltip>
+                            )}
+                            {fromManualResource && (
+                              <Tooltip label="Manually-added resource" withArrow>
+                                <ThemeIcon color="cyan" variant="light" radius="xl" size={18}>
+                                  <IconUserPlus size={16} />
+                                </ThemeIcon>
+                              </Tooltip>
+                            )}
+                          </Group>
+                        )}
                       </Group>
                     }
                     subTextForce
