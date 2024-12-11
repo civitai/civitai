@@ -1681,6 +1681,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     if (!hideAutoResources) {
       versionFilters.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
     }
+    // TODO re-enable after backfilling
     // if (!hideManualResources) {
     //   versionFilters.push(
     //     makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
