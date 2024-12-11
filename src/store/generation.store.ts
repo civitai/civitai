@@ -8,8 +8,9 @@ import {
   GenerationResource,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
-import { GenerationWorkflowCategoryConfig } from '~/shared/types/generation.types';
 import { QS } from '~/utils/qs';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export type RunType = 'run' | 'remix' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
@@ -25,7 +26,14 @@ type GenerationState = {
   close: () => void;
   setView: (view: GenerationPanelView) => void;
   setType: (type: MediaType) => void;
-  setData: (args: GenerationData & { type: MediaType; workflow?: string }) => void;
+  setData: (
+    args: GenerationData & {
+      type: MediaType;
+      workflow?: string;
+      sourceImageUrl?: string;
+      engine?: string;
+    }
+  ) => void;
   clearData: () => void;
 };
 
@@ -72,10 +80,9 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: ({ type, remixOf, workflow, ...data }) => {
-        console.log({ type, workflow });
-        generationFormStore.setType(type);
-        generationFormStore.setWorkflow(workflow);
+      setData: ({ type, remixOf, workflow, sourceImageUrl, engine, ...data }) => {
+        useGenerationFormStore.setState({ type, workflow, sourceImageUrl });
+        if (engine) useGenerationFormStore.setState({ engine });
         set((state) => {
           state.remixOf = remixOf;
           state.data = { ...data, runType: 'replay' };
@@ -133,7 +140,10 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
 export const useGenerationFormStore = create<{
   type: MediaType;
   engine?: string;
-  workflow?: string;
+  workflow?: string; // is this needed?
+  sourceImageUrl?: string;
+  width?: number;
+  height?: number;
 }>()(persist((set) => ({ type: 'image' }), { name: 'generation-form' }));
 
 export const generationFormStore = {
@@ -152,22 +162,35 @@ export const generationFormStore = {
     useGenerationFormStore.setState({ workflow: updatedWorkflow, engine });
   },
   setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
+  setSourceImageUrl: (sourceImageUrl?: string) =>
+    useGenerationFormStore.setState({ sourceImageUrl }),
+  reset: () => useGenerationFormStore.setState((state) => ({ type: state.type }), true),
 };
-
-export function useGenerationFormWorkflowConfig(
-  filters: { type: MediaType; engine: string } & GenerationWorkflowCategoryConfig
-) {
-  const selectedWorkflow = useGenerationFormStore((state) => state.workflow);
-  const availableWorkflows = generationFormWorkflowConfigurations.filter((config) =>
-    Object.entries(filters).every(([key, value]) => config[key as keyof typeof config] === value)
-  );
-  const workflow =
-    availableWorkflows.find((x) => x.key === selectedWorkflow) ?? availableWorkflows[0];
-  return { workflow, availableWorkflows };
-}
 
 export const useRemixStore = create<{
   resources?: GenerationResource[];
   params?: Record<string, unknown>;
   remixOf?: RemixOfProps;
 }>()(persist(() => ({}), { name: 'remixOf' }));
+
+export function useVideoGenerationWorkflows() {
+  const { data, isLoading } = trpc.generation.getGenerationEngines.useQuery();
+  const workflows = generationFormWorkflowConfigurations
+    .map((config) => {
+      const engine = data?.find((x) => x.engine === config.engine);
+      if (!engine) return null;
+      return { ...config, ...engine };
+    })
+    .filter(isDefined);
+  return { data: workflows, isLoading };
+}
+
+export function useSelectedVideoWorkflow() {
+  const { data } = useVideoGenerationWorkflows();
+  const selectedEngine = useGenerationFormStore((state) => state.engine);
+  const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
+  const workflows = data.filter(({ subType, type }) =>
+    type === 'video' && sourceImageUrl ? subType.startsWith('img') : subType.startsWith('txt')
+  );
+  return workflows.find((x) => x.engine === selectedEngine) ?? workflows[0];
+}

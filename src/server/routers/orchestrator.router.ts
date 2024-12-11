@@ -1,6 +1,7 @@
 import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
+import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { CacheTTL } from '~/server/common/constants';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
@@ -236,11 +237,11 @@ export const orchestratorRouter = router({
       }
     }),
   whatIf: orchestratorGuardedProcedure
-    .input(generationSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .input(z.any())
+    .use(edgeCacheIt({ ttl: 60 }))
     .query(({ ctx, input }) => whatIf({ ...input, userId: ctx.user.id, token: ctx.token })),
   generate: orchestratorGuardedProcedure
-    .input(generationSchema)
+    .input(z.any())
     .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
   // #endregion
 

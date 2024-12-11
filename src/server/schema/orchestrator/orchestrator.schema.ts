@@ -1,3 +1,4 @@
+import { KlingModel, MiniMaxVideoGenModel } from '@civitai/client';
 import { z } from 'zod';
 
 const baseVideoSchema = z.object({
@@ -7,30 +8,35 @@ const baseVideoSchema = z.object({
   seed: z.number().min(0).max(4294967295).optional(),
   width: z.number().optional(),
   height: z.number().optional(),
+  sourceImageUrl: z.string().optional(),
 });
 
 export const haiperVideoGenerationSchema = baseVideoSchema.extend({
   engine: z.literal('haiper'),
   model: z.string().default('v2'),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
-  image: z.string().optional(),
   // cameraMovement: z.string().optional(),
-  duration: z.number().optional(),
+  duration: z.coerce.number().optional(),
   aspectRatio: z.string().optional(),
-  sourceImageUrl: z.string().optional(),
   resolution: z.number().default(1080),
   enablePromptEnhancer: z.boolean().optional(),
 });
 
 export const klingVideoGenerationSchema = baseVideoSchema.extend({
   engine: z.literal('kling'),
-  // negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
-  // image: z.string().optional(),
-  // cameraMovement: z.string().optional(),
-  // duration: z.number().optional(),
-  // aspectRatio: z.string().optional(),
-  // seed: z.number().optional(),
-  // quantity: z.number(),
+  model: z.string().default(KlingModel.V1_5),
+  negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
+  cfgScale: z.number().min(0).max(1).optional(),
+  mode: z.string().optional(),
+  duration: z.coerce.number().optional(),
+  seed: z.number().optional(),
+  aspectRatio: z.string().optional(),
+});
+
+export const minimaxVideoGenerationSchema = baseVideoSchema.extend({
+  engine: z.literal('minimax'),
+  model: z.string().default(MiniMaxVideoGenModel.HAILOU),
+  enablePromptEnhancer: z.boolean().optional(),
 });
 
 export const mochiVideoGenerationSchema = baseVideoSchema.extend({
@@ -46,6 +52,7 @@ export const videoGenerationSchema = z.discriminatedUnion('engine', [
   haiperVideoGenerationSchema,
   klingVideoGenerationSchema,
   mochiVideoGenerationSchema,
+  minimaxVideoGenerationSchema,
 ]);
 
 const baseGenerationSchema = z.object({

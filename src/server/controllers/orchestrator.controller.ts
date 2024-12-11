@@ -41,8 +41,8 @@ const blockedPromptLimiter = createLimiter({
 export async function generate({
   token,
   userId,
-  civitaiTip,
-  creatorTip,
+  civitaiTip = 0,
+  creatorTip = 0,
   tags = [],
   ...args
 }: GenerationSchema & Ctx) {

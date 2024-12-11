@@ -1,14 +1,21 @@
 import { Input, Paper, Text } from '@mantine/core';
 import { InputSegmentedControl } from '~/libs/form';
-import { haiperAspectRatios } from '~/server/orchestrator/haiper/haiper.schema';
 
-export function HaiperAspectRatio({ name, label }: { name: string; label: string }) {
+export function InputAspectRatioColonDelimited({
+  name,
+  label,
+  options,
+}: {
+  name: string;
+  label: string;
+  options: string[] | readonly string[];
+}) {
   return (
     <div className="flex flex-col gap-0.5">
       <Input.Label>{label}</Input.Label>
       <InputSegmentedControl
         name={name}
-        data={haiperAspectRatios.map((value) => {
+        data={options.map((value) => {
           const [width, height] = value.split(':').map(Number);
           return {
             label: (

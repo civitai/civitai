@@ -125,3 +125,14 @@ export function stripChecksAndEffects<TSchema extends ZodTypeAny>(schema: TSchem
 export function getDeepPartialWithoutChecks<TSchema extends AnyZodObject>(schema: TSchema) {
   return stripChecksAndEffects(schema).deepPartial();
 }
+
+export function numberEnum<Num extends number, T extends Readonly<Num[]>>(
+  args: T
+): z.ZodSchema<T[number]> {
+  return z.custom<T[number]>((val: any) => args.includes(val));
+}
+
+export type SchemaInputOutput<T extends z.ZodType<any, any, any>> = {
+  Input: z.input<T>;
+  Output: z.output<T>;
+};
