@@ -304,7 +304,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
     const tagsOnImage =
       (
         await dbWrite.tagsOnImage.findMany({
-          where: { imageId: id, automated: true, disabled: false },
+          where: { imageId: id, automated: true, disabledAt: null },
           select: { tag: { select: { type: true, name: true } } },
         })
       )?.map((x) => x.tag) ?? [];

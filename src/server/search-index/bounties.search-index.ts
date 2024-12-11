@@ -385,7 +385,7 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       .map((i) => i.id);
 
     const imageTags = await dbRead.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
+      where: { imageId: { in: imageIds }, disabledAt: null },
       select: imageTagSelect,
     });
 

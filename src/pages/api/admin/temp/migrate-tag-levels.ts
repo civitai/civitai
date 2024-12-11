@@ -45,7 +45,7 @@ async function migrateTagLevels(req: NextApiRequest, res: NextApiResponse) {
             FROM "TagsOnImage" toi
             JOIN "Tag" t ON t.id = toi."tagId"
             WHERE toi."imageId" = i.id
-              AND NOT toi.disabled
+              AND toi."disabledAt" IS NULL
           )
         WHERE id IN (${batch}) AND i.ingestion = '${ImageIngestionStatus.Scanned}'::"ImageIngestionStatus" AND NOT i."nsfwLevelLocked" AND i."nsfwLevel" = 1;
       `);

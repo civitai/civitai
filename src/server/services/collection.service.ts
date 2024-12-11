@@ -2046,7 +2046,7 @@ export const getCollectionCoverImages = async ({
   const tags = await dbRead.tagsOnImage.findMany({
     where: {
       imageId: { in: [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))] },
-      disabled: false,
+      disabledAt: null,
     },
     select: { imageId: true, tagId: true },
   });
