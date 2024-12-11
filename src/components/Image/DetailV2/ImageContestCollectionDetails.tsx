@@ -1,11 +1,10 @@
-import { Anchor, Button, Card, Divider, SegmentedControl, Text } from '@mantine/core';
+import { Anchor, Button, Card, Checkbox, Divider, Text } from '@mantine/core';
 import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
 import { IconBan, IconCheck, IconTournament } from '@tabler/icons-react';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import React, { useState } from 'react';
-import { useSetCollectionItemScore } from '~/components/Collections/collection.utils';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -13,10 +12,10 @@ import { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc, queryClient } from '~/utils/trpc';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
 import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
 export const ImageContestCollectionDetails = ({
   image,
@@ -104,21 +103,25 @@ export const ImageContestCollectionDetails = ({
             );
           };
 
-          if (isCollectionJudge && inReview) {
-            return (
-              <div key={item.collection.id} className="flex flex-col gap-3">
-                <Divider />
-                <Text>
-                  This image is part of the{' '}
-                  <Text weight="bold" component="span">
-                    {item.collection.name}
-                  </Text>{' '}
-                  contest{tagDisplay}.{' '}
-                </Text>
-                <ReviewActions itemId={item.id} collectionId={item.collection.id} />
-              </div>
-            );
-          }
+          return (
+            <div key={item.collection.id} className="flex flex-col gap-3">
+              <Divider />
+              <Text>
+                This image is part of the{' '}
+                <Text weight="bold" component="span">
+                  {item.collection.name}
+                </Text>{' '}
+                contest{tagDisplay}.{' '}
+              </Text>
+              <ReviewActions
+                itemId={item.id}
+                collectionId={item.collection.id}
+                imageId={image.id}
+              />
+            </div>
+          );
+          // if (isCollectionJudge && inReview) {
+          // }
 
           if (isOwnerOrMod || isCollectionJudge) {
             return (
@@ -245,8 +248,47 @@ export const ImageContestCollectionDetails = ({
   );
 };
 
-function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId: number }) {
+function ReviewActions({
+  itemId,
+  collectionId,
+  imageId,
+}: {
+  itemId: number;
+  collectionId: number;
+  imageId: number;
+}) {
   const queryUtils = trpc.useUtils();
+
+  const [minor, setMinor] = useState(false);
+
+  const updateImageMinorMutation = trpc.image.updateMinor.useMutation({
+    onMutate: ({ minor }) => {
+      setMinor(minor);
+      const prevData = queryUtils.image.get.getData({ id: imageId });
+
+      queryUtils.image.get.setData(
+        { id: imageId },
+        produce((old) => {
+          if (!old) return;
+          old.minor = minor;
+          return old;
+        })
+      );
+
+      return { prevData };
+    },
+    onError: (error, _, context) => {
+      showErrorNotification({
+        title: 'Failed to update image minor status',
+        error: new Error(error.message),
+      });
+      setMinor((curr) => !curr);
+      if (context?.prevData) queryUtils.image.get.setData({ id: imageId }, context.prevData);
+    },
+  });
+  const handleMinorChange = (minor: boolean) => {
+    updateImageMinorMutation.mutate({ minor, id: imageId, collectionId });
+  };
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
@@ -278,18 +320,10 @@ function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId:
       },
     });
 
-  const handleApproveSelected = () => {
+  const handleSubmit = (status: CollectionItemStatus) => () => {
     updateCollectionItemsStatusMutation.mutate({
       collectionItemIds: [itemId],
-      status: CollectionItemStatus.ACCEPTED,
-      collectionId,
-    });
-  };
-
-  const handleRejectSelected = () => {
-    updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: [itemId],
-      status: CollectionItemStatus.REJECTED,
+      status,
       collectionId,
     });
   };
@@ -298,38 +332,54 @@ function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId:
   const loading = updateCollectionItemsStatusMutation.isLoading;
 
   return (
-    <div className="flex items-center justify-center gap-4">
-      <PopConfirm
-        message={`Are you sure you want to reject this entry?`}
-        onConfirm={handleRejectSelected}
-        withArrow
-        withinPortal
-      >
-        <Button
-          className="flex-1"
-          leftIcon={<IconBan size="1.25rem" />}
-          color="red"
-          disabled={loading}
-          loading={loading && status === CollectionItemStatus.REJECTED}
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <Checkbox
+          label="Realistic depiction of a minor"
+          checked={minor}
+          disabled={updateImageMinorMutation.isLoading}
+          onChange={(e) => handleMinorChange(e.currentTarget.checked)}
+        />
+        <InfoPopover>
+          <Text size="xs">
+            Check this box if the image depicts an acceptable realistic depiction of a minor. This
+            will help ensure that the image is not displayed in public feeds.
+          </Text>
+        </InfoPopover>
+      </div>
+      <div className="flex items-center justify-center gap-4">
+        <PopConfirm
+          message={`Are you sure you want to reject this entry?`}
+          onConfirm={handleSubmit(CollectionItemStatus.REJECTED)}
+          withArrow
+          withinPortal
         >
-          Reject
-        </Button>
-      </PopConfirm>
-      <PopConfirm
-        message={`Are you sure you want to approve this entry?`}
-        onConfirm={handleApproveSelected}
-        withArrow
-        withinPortal
-      >
-        <Button
-          className="flex-1"
-          leftIcon={<IconCheck size="1.25rem" />}
-          disabled={loading}
-          loading={loading && status === CollectionItemStatus.ACCEPTED}
+          <Button
+            className="flex-1"
+            leftIcon={<IconBan size="1.25rem" />}
+            color="red"
+            disabled={loading}
+            loading={loading && status === CollectionItemStatus.REJECTED}
+          >
+            Reject
+          </Button>
+        </PopConfirm>
+        <PopConfirm
+          message={`Are you sure you want to approve this entry?`}
+          onConfirm={handleSubmit(CollectionItemStatus.ACCEPTED)}
+          withArrow
+          withinPortal
         >
-          Approve
-        </Button>
-      </PopConfirm>
+          <Button
+            className="flex-1"
+            leftIcon={<IconCheck size="1.25rem" />}
+            disabled={loading}
+            loading={loading && status === CollectionItemStatus.ACCEPTED}
+          >
+            Approve
+          </Button>
+        </PopConfirm>
+      </div>
     </div>
   );
 }
