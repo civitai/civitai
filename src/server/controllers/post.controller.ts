@@ -1,4 +1,3 @@
-import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { Context } from '~/server/createContext';
@@ -22,6 +21,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from './../schema/base.schema';
 import {
@@ -177,7 +177,7 @@ export const updatePostHandler = async ({
         !collectionTagId &&
         !collection.metadata?.disableTagRequired
       ) {
-        throw throwBadRequestError('You must select a tag for this collection');
+        throw throwBadRequestError('You must select an entry category for this collection');
       }
 
       if (collection.metadata.entriesRequireTitle && !post.title) {
@@ -498,7 +498,6 @@ export const addPostTagHandler = async ({
 
 export const removePostTagHandler = async ({
   input,
-  ctx,
 }: {
   input: RemovePostTagInput;
   ctx: DeepNonNullable<Context>;
@@ -528,7 +527,6 @@ export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }
 // #region [post for collections]
 export const getPostContestCollectionDetailsHandler = async ({
   input,
-  ctx,
 }: {
   input: GetByIdInput;
   ctx: Context;
