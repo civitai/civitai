@@ -470,6 +470,11 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
 
+  // TODO - this should be temporary until Koen updates the orchestrator - 12/11/2024
+  if (input.engine === 'kling' && (input as any).sourceImageUrl) {
+    if ('aspectRatio' in input) delete input.aspectRatio;
+  }
+
   return {
     $type: 'videoGen' as const,
     timeout: step.timeout,

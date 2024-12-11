@@ -292,6 +292,7 @@ function KlingImageToVideoForm() {
             </InfoPopover>
           </div>
         }
+        description="A value above 0.7 may cause visual errors due to conflicts between the image and the text"
         min={0}
         max={1}
         step={0.1}
