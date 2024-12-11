@@ -1,5 +1,5 @@
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import {
   AnnouncementMetaSchema,
@@ -26,7 +26,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
   const { limit = DEFAULT_PAGE_SIZE, page } = data ?? {};
   const { take, skip } = getPagination(limit, page);
 
-  const items = await dbRead.announcement.findMany({
+  const items = await dbWrite.announcement.findMany({
     skip,
     take,
     select: {
@@ -44,7 +44,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
     orderBy: { startsAt: { sort: 'desc', nulls: 'last' } },
   });
 
-  const count = await dbRead.announcement.count();
+  const count = await dbWrite.announcement.count();
   return getPagingData(
     {
       items: items.map((item) => ({
@@ -89,7 +89,7 @@ async function getAnnouncementsCached() {
 export type AnnouncementDTO = Awaited<ReturnType<typeof getAnnouncements>>[number];
 async function getAnnouncements() {
   const now = new Date();
-  const announcements = await dbRead.announcement.findMany({
+  const announcements = await dbWrite.announcement.findMany({
     where: {
       disabled: false,
       AND: [

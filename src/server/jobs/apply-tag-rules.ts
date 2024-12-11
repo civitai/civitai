@@ -90,7 +90,7 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
         SELECT "imageId", ${fromId}, automated, confidence, toi."needsReview", source
         FROM "TagsOnImage" toi
         WHERE "tagId" = ${toId}
-          AND NOT disabled
+          AND "disabledAt" IS NULL
           AND "imageId" >= ${start}
           AND "imageId" < ${end}
           AND EXISTS (SELECT 1 FROM "Image" WHERE id = toi."imageId") -- Ensure image exists
@@ -144,7 +144,7 @@ async function deleteTag({ toId }: TagRule, maxImageId: number, since?: Date) {
     return async () => {
       await dbWrite.$executeRaw`
         UPDATE "TagsOnImage" SET disabled = true, "disabledAt" = now(), "disabledReason" = 'Replaced'
-        WHERE "tagId" = ${toId} AND NOT disabled
+        WHERE "tagId" = ${toId} AND "disabledAt" IS NULL
           AND "imageId" >= ${start}
           AND "imageId" < ${end}
           ${sinceClause}

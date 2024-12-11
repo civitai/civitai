@@ -414,7 +414,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         },
       },
       tags: {
-        where: { disabled: false },
+        where: { disabledAt: null },
         select: {
           automated: true,
           tag: {
@@ -441,7 +441,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
 
   await dbWrite.tagsOnImage.updateMany({
-    where: { imageId: images[0].id, disabled: true },
+    where: { imageId: images[0].id, disabledAt: { not: null } },
     data: { disabled: false },
   });
 
@@ -2366,7 +2366,7 @@ export const getImagesForModelVersion = async ({
       Prisma.join(
         [
           Prisma.sql`i."nsfwLevel" != 0`,
-          Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
+          Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi."disabledAt" IS NULL AND toi."tagId" IN (${Prisma.join(
             excludedTagIds
           )}) )`,
         ],

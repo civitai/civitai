@@ -283,13 +283,14 @@ export function MediaFiltersDropdown({
           <>
             <Divider label="Resources" labelProps={{ weight: 'bold', size: 'sm' }} />
             <div className="flex gap-2">
-              <Chip
-                {...chipProps}
-                checked={mergedFilters.hideManualResources}
-                onChange={(checked) => handleChange({ hideManualResources: checked })}
-              >
-                Hide manually-added
-              </Chip>
+              {/*TODO reenable this*/}
+              {/*<Chip*/}
+              {/*  {...chipProps}*/}
+              {/*  checked={mergedFilters.hideManualResources}*/}
+              {/*  onChange={(checked) => handleChange({ hideManualResources: checked })}*/}
+              {/*>*/}
+              {/*  Hide manually-added*/}
+              {/*</Chip>*/}
               <Chip
                 {...chipProps}
                 checked={mergedFilters.hideAutoResources}

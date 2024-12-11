@@ -43,7 +43,7 @@ export const tagIdsForImagesCache = createCachedObject<{
     const db = fromWrite ? dbWrite : dbRead;
 
     const imageTags = await db.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
+      where: { imageId: { in: imageIds }, disabledAt: null },
       select: {
         imageId: true,
         source: true,
