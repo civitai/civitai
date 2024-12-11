@@ -85,7 +85,6 @@ import {
   CollectionType,
   MetricTimeframe,
 } from '~/shared/utils/prisma/enums';
-import { CollectionMode, CollectionType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';

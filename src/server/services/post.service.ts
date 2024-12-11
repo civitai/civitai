@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server.mjs';
@@ -1025,10 +1026,12 @@ export const addResourceToPostImage = async ({
     select: { id: true, imageId: true },
   });
 
-  await queueImageSearchIndexUpdate({
-    ids: createdResources.map((x) => x.imageId),
-    action: SearchIndexUpdateQueueAction.Update,
-  });
+  if (createdResources.length > 0) {
+    await queueImageSearchIndexUpdate({
+      ids: uniq(createdResources.map((x) => x.imageId)),
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+  }
 
   // TODO are these necessary?
   // - Cache Busting
