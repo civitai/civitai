@@ -11,10 +11,10 @@ import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { Flags } from '~/shared/utils';
 
 const BrowsingModeOverrideCtx = createContext<{
-  browsingLevelOverride?: number;
+  browsingLevelOverride: number;
   blurLevels: number;
   setBrowsingLevelOverride?: React.Dispatch<React.SetStateAction<number | undefined>>;
-}>({ blurLevels: nsfwBrowsingLevelsFlag });
+}>({ browsingLevelOverride: publicBrowsingLevelsFlag, blurLevels: nsfwBrowsingLevelsFlag });
 export const useBrowsingModeOverrideContext = () => useContext(BrowsingModeOverrideCtx);
 export function BrowsingModeOverrideProvider({
   children,
