@@ -30,7 +30,8 @@ const rankingRules = ['sort'];
 const filterableAttributes = [
   'id',
   'sortAtUnix',
-  'modelVersionIds',
+  'modelVersionIds', // auto-detected going forward, auto + postedTo historically
+  'modelVersionIdsManual',
   'postedToId',
   'baseModel',
   'type',
@@ -149,7 +150,8 @@ type Metrics = {
 type ModelVersions = {
   id: number;
   baseModel: string;
-  modelVersionIds: number[];
+  modelVersionIdsAuto: number[];
+  modelVersionIdsManual: number[];
 };
 
 type ImageTool = {
@@ -184,9 +186,13 @@ const transformData = async ({
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
 
-      const { modelVersionIds, baseModel } = modelVersions.find(
+      const { modelVersionIdsAuto, modelVersionIdsManual, baseModel } = modelVersions.find(
         (mv) => mv.id === imageRecord.id
-      ) || { modelVersionIds: [], baseModel: '' };
+      ) || {
+        modelVersionIdsAuto: [] as number[],
+        modelVersionIdsManual: [] as number[],
+        baseModel: '',
+      };
 
       const imageMetrics = metrics.find((m) => m.id === imageRecord.id) ?? {
         id: imageRecord.id,
@@ -206,7 +212,8 @@ const transformData = async ({
           ? imageRecord.nsfwLevel
           : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
         baseModel,
-        modelVersionIds,
+        modelVersionIds: modelVersionIdsAuto,
+        modelVersionIdsManual,
         toolIds: imageTools.map((t) => t.toolId),
         techniqueIds: imageTechniques.map((t) => t.techniqueId),
         publishedAtUnix: publishedAt?.getTime(),
@@ -413,7 +420,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
           SELECT
             ir."imageId" as id,
             string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
-            array_agg(mv."id") as "modelVersionIds"
+            coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is true), '{}') as "modelVersionIdsAuto",
+            coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is not true), '{}') as "modelVersionIdsManual"
           FROM "ImageResource" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"

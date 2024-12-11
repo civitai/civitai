@@ -9,7 +9,6 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconBan,
@@ -46,6 +45,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { imageStore, useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
 
@@ -217,7 +217,7 @@ function ImageMenuItems(
         </>
       )}
       {/* OWNER */}
-      {!disableDelete && (isOwner || isModerator) && (
+      {(isOwner || isModerator) && (
         <>
           {postId && (
             <Menu.Item
@@ -227,13 +227,16 @@ function ImageMenuItems(
               Edit Post
             </Menu.Item>
           )}
-          <Menu.Item
-            color="red"
-            icon={<IconTrash size={14} stroke={1.5} />}
-            onClick={() => deleteImage({ imageId })}
-          >
-            Delete
-          </Menu.Item>
+
+          {!disableDelete && (
+            <Menu.Item
+              color="red"
+              icon={<IconTrash size={14} stroke={1.5} />}
+              onClick={() => deleteImage({ imageId })}
+            >
+              Delete
+            </Menu.Item>
+          )}
         </>
       )}
       {additionalMenuItemsAfter?.(image)}

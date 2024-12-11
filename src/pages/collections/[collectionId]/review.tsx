@@ -501,6 +501,14 @@ function ModerationControls({
       onSuccess() {
         showSuccessNotification({ message: `The items have been reviewed` });
       },
+      onError(error) {
+        showNotification({
+          id: 'error',
+          title: 'Error',
+          message: error.message,
+          color: 'red',
+        });
+      },
     });
 
   const handleRejectSelected = () => {

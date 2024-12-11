@@ -1,7 +1,6 @@
 import { Select, SelectProps } from '@mantine/core';
 import { useState } from 'react';
 import { useCollection } from '~/components/Collections/collection.utils';
-import { toPascalCase } from '~/utils/string-helpers';
 
 // eslint-disable-next-line @typescript-eslint/ban-types
 type Value = 'all' | (string & {});
@@ -28,7 +27,7 @@ export function CollectionCategorySelect({ collectionId, value, onChange, ...sel
               { value: 'all', label: 'All' },
               ...collection.tags?.map((tag) => ({
                 value: tag.id.toString(),
-                label: toPascalCase(tag.name),
+                label: tag.name.toUpperCase(),
               })),
             ]
           : []

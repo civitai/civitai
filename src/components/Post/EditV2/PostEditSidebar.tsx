@@ -1,23 +1,23 @@
-import { Button, Title, Badge, Tooltip, Text, TooltipProps, ThemeIcon } from '@mantine/core';
+import { Alert, Badge, Button, Text, ThemeIcon, Title, Tooltip, TooltipProps } from '@mantine/core';
+import { IconClock, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
-import { trpc } from '~/utils/trpc';
-import { PostDetailEditable } from '~/server/services/post.service';
 import { useRouter } from 'next/router';
+import { useRef, useState } from 'react';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { DeletePostButton } from '~/components/Post/DeletePostButton';
+import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
+import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
-import { useRef, useState } from 'react';
-import { IconClock, IconTrash } from '@tabler/icons-react';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
-import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { DeletePostButton } from '~/components/Post/DeletePostButton';
-import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -25,7 +25,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const params = usePostEditParams();
   const { returnUrl, afterPublish } = params;
   const [deleted, setDeleted] = useState(false);
-  const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId] =
+  const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId, images] =
     usePostEditStore((state) => [
       state.updatePost,
       state.isReordering,
@@ -33,6 +33,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       state.images.length > 1,
       state.collectionId,
       state.collectionTagId,
+      state.images,
     ]);
   const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
@@ -112,11 +113,25 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   });
   // #endregion
 
+  const postLabel = collectionId ? 'Entry' : 'Post';
+
   return (
     <>
       <div className="flex flex-col gap-0">
+        {collectionId && (
+          <Alert mb="xs">
+            <div className="flex">
+              <Text size="xs">
+                Did you tag the tools you used in your entry? Adding the tools used to create your
+                entry may make you elegible for more prizes.
+              </Text>
+            </div>
+          </Alert>
+        )}
         <div className="flex items-center justify-between">
-          <Title size="sm">POST</Title>
+          <div className="flex items-center gap-2">
+            <Title size="sm">{postLabel}</Title>
+          </div>
           <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">
             {mutating > 0 ? 'Saving' : 'Saved'}
           </Badge>
@@ -125,7 +140,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         <Text size="xs">
           {!post.publishedAt ? (
             <>
-              Your post is currently{' '}
+              Your {postLabel} is currently{' '}
               <Tooltip
                 label={`Click the ${publishLabel} button to make your post Public to share with the Civitai community for comments and reactions.`}
                 {...tooltipProps}
@@ -221,6 +236,24 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       )}
 
       {showReorder && <ReorderImagesButton />}
+
+      {post.publishedAt && images.length > 0 && (
+        <Button
+          onClick={() => {
+            const [image] = images;
+            if (images.length > 1) {
+              router.push(`/posts/${post.id}`);
+            } else if (images.length === 1 && image && image.data.hasOwnProperty('id')) {
+              // @ts-ignore - we know it's an image that has ID based off of the above.
+              router.push(`/images/${image.data.id}`);
+            }
+          }}
+          variant="outline"
+          color="blue"
+        >
+          View {postLabel}
+        </Button>
+      )}
 
       <DeletePostButton postId={post.id}>
         {({ onClick, isLoading }) => (

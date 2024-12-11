@@ -4,7 +4,7 @@ import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
-import { TagSort } from '~/server/common/enums';
+import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -100,6 +100,11 @@ export const getTags = async ({
   AND.push(Prisma.sql`t.id NOT IN (SELECT "toTagId" FROM "TagsOnTags" WHERE type = 'Replace')`);
 
   if (query) AND.push(Prisma.sql`t."name" LIKE ${query + '%'}`);
+  else {
+    // When getting top tags,
+    nsfwLevel = NsfwLevel.PG; // only get PG tags
+    AND.push(Prisma.sql`NOT t.unfeatured`); // Exclude unfeatured tags
+  }
   if (types?.length) AND.push(Prisma.sql`t."type"::text IN (${Prisma.join(types)})`);
   if (entityType)
     AND.push(Prisma.sql`t."target" && (ARRAY[${Prisma.join(entityType)}]::"TagTarget"[])`);

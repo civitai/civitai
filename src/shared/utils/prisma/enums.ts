@@ -355,6 +355,7 @@ export const TagSource = {
   WD14: 'WD14',
   Computed: 'Computed',
   ImageHash: 'ImageHash',
+  Hive: 'Hive',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];

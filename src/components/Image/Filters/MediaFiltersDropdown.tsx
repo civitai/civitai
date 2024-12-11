@@ -14,7 +14,6 @@ import {
   Stack,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
@@ -26,6 +25,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
@@ -115,6 +115,8 @@ export function MediaFiltersDropdown({
     (mergedFilters.withMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
+    (mergedFilters.hideManualResources ? 1 : 0) +
+    (mergedFilters.hideAutoResources ? 1 : 0) +
     (mergedFilters.notPublished ? 1 : 0) +
     (mergedFilters.scheduled ? 1 : 0) +
     (!!mergedFilters.tools?.length ? 1 : 0) +
@@ -130,6 +132,8 @@ export function MediaFiltersDropdown({
       fromPlatform: false,
       notPublished: false,
       scheduled: false,
+      hideManualResources: false,
+      hideAutoResources: false,
       tools: [],
       techniques: [],
       period: MetricTimeframe.AllTime,
@@ -274,6 +278,29 @@ export function MediaFiltersDropdown({
             Made On-site
           </Chip>
         </div>
+
+        {filterType === 'modelImages' && (
+          <>
+            <Divider label="Resources" labelProps={{ weight: 'bold', size: 'sm' }} />
+            <div className="flex gap-2">
+              {/*TODO reenable this*/}
+              {/*<Chip*/}
+              {/*  {...chipProps}*/}
+              {/*  checked={mergedFilters.hideManualResources}*/}
+              {/*  onChange={(checked) => handleChange({ hideManualResources: checked })}*/}
+              {/*>*/}
+              {/*  Hide manually-added*/}
+              {/*</Chip>*/}
+              <Chip
+                {...chipProps}
+                checked={mergedFilters.hideAutoResources}
+                onChange={(checked) => handleChange({ hideAutoResources: checked })}
+              >
+                Hide auto-detected
+              </Chip>
+            </div>
+          </>
+        )}
 
         {isModerator && (
           <>

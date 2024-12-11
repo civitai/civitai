@@ -1,14 +1,19 @@
 import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
-import { ModelType } from '~/shared/utils/prisma/enums';
-import { Sampler, generation, getGenerationConfig } from '~/server/common/constants';
-import { BaseModelSetType, baseModelSets } from '~/server/common/constants';
+import {
+  baseModelSets,
+  BaseModelSetType,
+  generation,
+  getGenerationConfig,
+  Sampler,
+} from '~/server/common/constants';
 import { ResourceData } from '~/server/redis/caches';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosest } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
