@@ -100,9 +100,7 @@ export const contestCollectionYoutubeUpload = createJob(
               continue;
             }
 
-            const callbackUrl = `${
-              'https://156f-148-255-88-252.ngrok-free.app' ?? env.NEXT_PUBLIC_BASE_URL
-            }/api/webhooks/youtube-upload?token=${env.WEBHOOK_TOKEN}`;
+            const callbackUrl = `${env.NEXT_PUBLIC_BASE_URL}/api/webhooks/youtube-upload?token=${env.WEBHOOK_TOKEN}`;
 
             console.log(callbackUrl);
 
