@@ -103,25 +103,25 @@ export const ImageContestCollectionDetails = ({
             );
           };
 
-          return (
-            <div key={item.collection.id} className="flex flex-col gap-3">
-              <Divider />
-              <Text>
-                This image is part of the{' '}
-                <Text weight="bold" component="span">
-                  {item.collection.name}
-                </Text>{' '}
-                contest{tagDisplay}.{' '}
-              </Text>
-              <ReviewActions
-                itemId={item.id}
-                collectionId={item.collection.id}
-                imageId={image.id}
-              />
-            </div>
-          );
-          // if (isCollectionJudge && inReview) {
-          // }
+          if (isCollectionJudge && inReview) {
+            return (
+              <div key={item.collection.id} className="flex flex-col gap-3">
+                <Divider />
+                <Text>
+                  This image is part of the{' '}
+                  <Text weight="bold" component="span">
+                    {item.collection.name}
+                  </Text>{' '}
+                  contest{tagDisplay}.{' '}
+                </Text>
+                <ReviewActions
+                  itemId={item.id}
+                  collectionId={item.collection.id}
+                  imageId={image.id}
+                />
+              </div>
+            );
+          }
 
           if (isOwnerOrMod || isCollectionJudge) {
             return (
