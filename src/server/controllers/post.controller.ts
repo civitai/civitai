@@ -4,7 +4,11 @@ import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { PostCreateInput } from '~/server/schema/post.schema';
+import {
+  AddResourceToPostImageInput,
+  PostCreateInput,
+  RemoveResourceFromPostImageInput,
+} from '~/server/schema/post.schema';
 import {
   bulkSaveItems,
   getCollectionById,
@@ -36,6 +40,7 @@ import {
 } from './../schema/post.schema';
 import {
   addPostTag,
+  addResourceToPostImage,
   createPost,
   deletePost,
   getPostContestCollectionDetails,
@@ -44,6 +49,7 @@ import {
   getPostsInfinite,
   getPostTags,
   removePostTag,
+  removeResourceFromPostImage,
   reorderPostImages,
   updatePost,
   updatePostCollectionTagId,
@@ -426,6 +432,36 @@ export const updatePostImageHandler = async ({
 }) => {
   try {
     return await updatePostImage({ ...input });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const addResourceToPostImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddResourceToPostImageInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await addResourceToPostImage({ ...input, user: ctx.user });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const removeResourceFromPostImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: RemoveResourceFromPostImageInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await removeResourceFromPostImage({ ...input, user: ctx.user });
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

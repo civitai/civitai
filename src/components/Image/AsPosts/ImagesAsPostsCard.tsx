@@ -15,6 +15,7 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import {
+  IconAutomaticGearbox,
   IconBrush,
   IconExclamationMark,
   IconInfoCircle,
@@ -23,9 +24,9 @@ import {
   IconPinned,
   IconPinnedOff,
   IconProps,
+  IconUserPlus,
 } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -38,8 +39,11 @@ import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { TwCard } from '~/components/TwCard/TwCard';
+import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -49,8 +53,6 @@ import { generationPanel } from '~/store/generation.store';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
-import { TwCard } from '~/components/TwCard/TwCard';
 
 export function ImagesAsPostsCard({
   data,
@@ -70,9 +72,16 @@ export function ImagesAsPostsCard({
   const { modelVersions, showModerationOptions, model, filters } =
     useImagesAsPostsInfiniteContext();
   const targetModelVersion = modelVersions?.find((x) => x.id === data.modelVersionId);
-  const modelVersionName = targetModelVersion?.name;
+
   const postId = data.postId ?? undefined;
   const currentModelVersionId = filters.modelVersionId as number;
+
+  const fromAutoResource =
+    !targetModelVersion &&
+    data.images.some((i) => i.modelVersionIds?.includes(currentModelVersionId));
+  const fromManualResource =
+    !targetModelVersion &&
+    data.images.some((i) => i.modelVersionIdsManual?.includes(currentModelVersionId));
 
   const image = data.images[0];
 
@@ -245,15 +254,32 @@ export function ImagesAsPostsCard({
                   <UserAvatar
                     user={data.user}
                     subText={
-                      <>
+                      <Group spacing="xs" noWrap>
                         {data.publishedAt ? (
                           <DaysFromNow date={data.publishedAt} />
                         ) : (
-                          'Not published'
+                          <Text>Not published</Text>
                         )}
-                        {' - '}
-                        {modelVersionName ?? 'Cross-post'}
-                      </>
+                        {fromAutoResource ||
+                          (fromManualResource && (
+                            <Group ml={6} spacing={4}>
+                              {fromAutoResource && (
+                                <Tooltip label="Auto-detected resource" withArrow>
+                                  <ThemeIcon color="teal" variant="light" radius="xl" size={18}>
+                                    <IconAutomaticGearbox size={16} />
+                                  </ThemeIcon>
+                                </Tooltip>
+                              )}
+                              {fromManualResource && (
+                                <Tooltip label="Manually-added resource" withArrow>
+                                  <ThemeIcon color="cyan" variant="light" radius="xl" size={18}>
+                                    <IconUserPlus size={16} />
+                                  </ThemeIcon>
+                                </Tooltip>
+                              )}
+                            </Group>
+                          ))}
+                      </Group>
                     }
                     subTextForce
                     size="md"

@@ -1,4 +1,4 @@
-import { Button, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
+import { Button, ButtonProps, Divider, Input, InputWrapperProps, Stack, Text } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { forwardRef, useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
@@ -13,23 +13,27 @@ type ResourceSelectMultipleProps = {
   value?: Generation.Resource[];
   onChange?: (value?: Generation.Resource[]) => void;
   buttonLabel: React.ReactNode;
+  buttonProps?: Omit<ButtonProps, 'onClick'>;
   options?: ResourceSelectOptions;
   modalOpened?: boolean;
   onCloseModal?: () => void;
   hideButton?: boolean;
+  isTraining?: boolean;
 } & Omit<InputWrapperProps, 'children'>;
 
-const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
+export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
   (
     {
       limit,
       value = [],
       onChange,
       buttonLabel,
+      buttonProps,
       options = {},
       modalOpened,
       onCloseModal,
       hideButton = false,
+      isTraining = false,
       ...inputWrapperProps
     },
     ref
@@ -116,6 +120,7 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
                       <ResourceSelectCard
                         key={resource.id}
                         resource={resource}
+                        isTraining={isTraining}
                         onUpdate={handleUpdate}
                         onRemove={handleRemove}
                       />
@@ -126,7 +131,12 @@ const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultiple
             );
           })}
           {canAdd && !hideButton && (
-            <Button variant="light" leftIcon={<IconPlus size={18} />} onClick={handleOpenModal}>
+            <Button
+              variant="light"
+              leftIcon={<IconPlus size={18} />}
+              onClick={handleOpenModal}
+              {...buttonProps}
+            >
               {buttonLabel}
             </Button>
           )}

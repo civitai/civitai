@@ -75,6 +75,8 @@ export const imageResourceHelperSelect = Prisma.validator<Prisma.ImageResourceHe
   modelThumbsUpCount: true,
   modelThumbsDownCount: true,
   modelType: true,
+  modelVersionBaseModel: true,
+  detected: true,
 });
 
 const imageResourceHelper = Prisma.validator<Prisma.ImageResourceHelperDefaultArgs>()({

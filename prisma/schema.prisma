@@ -3937,6 +3937,8 @@ model ImageResourceHelper {
   modelThumbsUpCount    Int?
   modelThumbsDownCount  Int?
   modelType             ModelType?
+  modelVersionBaseModel String?
+  detected              Boolean?
 
   @@unique([imageId, name, modelVersionId])
 }

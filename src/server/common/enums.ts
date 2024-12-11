@@ -107,22 +107,6 @@ export enum ArticleSort {
   Newest = 'Newest',
 }
 
-export enum ModelType {
-  Checkpoint = 'Checkpoint',
-  TextualInversion = 'TextualInversion',
-  MotionModule = 'MotionModule',
-  Hypernetwork = 'Hypernetwork',
-  AestheticGradient = 'AestheticGradient',
-  LORA = 'LORA',
-  LoCon = 'LoCon',
-  Controlnet = 'Controlnet',
-  Upscaler = 'Upscaler',
-  VAE = 'VAE',
-  Poses = 'Poses',
-  Wildcards = 'Wildcards',
-  Other = 'Other',
-}
-
 export enum CheckpointType {
   Trained = 'Trained',
   Merge = 'Merge',

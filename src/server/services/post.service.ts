@@ -1,22 +1,16 @@
 import { Prisma } from '@prisma/client';
-import {
-  Availability,
-  CollectionContributorPermission,
-  CollectionMode,
-  CollectionReadConfiguration,
-  CollectionType,
-  TagTarget,
-  TagType,
-} from '~/shared/utils/prisma/enums';
-import { ImageResource } from '~/shared/utils/prisma/models';
+import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
+import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server.mjs';
-import { PostSort } from '~/server/common/enums';
+import { PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
+import { userContentOverviewCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ImageSchema, externalMetaSchema } from '~/server/schema/image.schema';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { externalMetaSchema, ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import {
   editPostImageSelect,
@@ -25,6 +19,7 @@ import {
   postSelect,
 } from '~/server/selectors/post.selector';
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getCollectionById,
   getUserCollectionPermissionsById,
@@ -37,42 +32,49 @@ import {
   getImagesForPosts,
   purgeImageGenerationDataCache,
   purgeResizeCache,
+  queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
+import { getTechniqueByName } from '~/server/services/technique.service';
 import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
+import { getPeriods } from '~/server/utils/enum-helpers';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import {
+  Availability,
+  CollectionContributorPermission,
+  CollectionMode,
+  CollectionReadConfiguration,
+  CollectionType,
+  ModelHashType,
+  TagTarget,
+  TagType,
+} from '~/shared/utils/prisma/enums';
+import { ImageResource } from '~/shared/utils/prisma/models';
 import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { CacheTTL } from '../common/constants';
 import {
   AddPostTagInput,
+  AddResourceToPostImageInput,
   GetPostTagsInput,
   PostCreateInput,
   PostsQueryInput,
   PostUpdateInput,
   RemovePostTagInput,
+  RemoveResourceFromPostImageInput,
   ReorderPostImagesInput,
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
-import { getPeriods } from '~/server/utils/enum-helpers';
-import { userContentOverviewCache } from '~/server/redis/caches';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { getTechniqueByName } from '~/server/services/technique.service';
-import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
-import {
-  CollectionMetadataSchema,
-  getCollectionPermissionDetails,
-} from '~/server/schema/collection.schema';
-import NewModelVersion from '~/pages/models/[id]/model-versions/create';
 
 type GetAllPostsRaw = {
   id: number;
@@ -962,6 +964,144 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
 
   purgeImageGenerationDataCache(image.id);
   await userContentOverviewCache.bust(result.userId);
+};
+
+export const addResourceToPostImage = async ({
+  id: imageIds,
+  modelVersionId,
+  user,
+}: AddResourceToPostImageInput & { user: SessionUser }) => {
+  if (!imageIds.length) {
+    throw throwBadRequestError('Must include at least one image.');
+  }
+
+  const modelVersion = await dbRead.modelVersion.findFirst({
+    where: { id: modelVersionId },
+    select: {
+      model: { select: { name: true, id: true } },
+      name: true,
+      files: {
+        select: {
+          hashes: {
+            select: {
+              hash: true,
+            },
+            where: {
+              type: ModelHashType.AutoV2,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!modelVersion) throw throwNotFoundError('Model version not found.');
+
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { postId: true, meta: true },
+  });
+
+  if (images.length !== imageIds.length) {
+    throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
+  }
+  // TODO technically this can be called with a combo of on/off site imgs
+  if (images.some((i) => isMadeOnSite(i.meta as ImageMetaProps))) {
+    throw throwBadRequestError('Cannot add resources to on-site generations.');
+  }
+
+  // noinspection JSPotentiallyInvalidTargetOfIndexedPropertyAccess
+  const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();
+  const name = `${modelVersion.model.name} - ${modelVersion.name}`;
+
+  const createdResources = await dbWrite.imageResource.createManyAndReturn({
+    data: imageIds.map((imageId) => ({
+      modelVersionId,
+      imageId,
+      name,
+      hash,
+      detected: false,
+    })),
+    skipDuplicates: true,
+    select: { id: true, imageId: true },
+  });
+
+  if (createdResources.length > 0) {
+    await queueImageSearchIndexUpdate({
+      ids: uniq(createdResources.map((x) => x.imageId)),
+      action: SearchIndexUpdateQueueAction.Update,
+    });
+  }
+
+  // TODO are these necessary?
+  // - Cache Busting
+
+  await bustCacheTag(`images-user:${user.id}`);
+  await bustCacheTag(`images-modelVersion:${modelVersionId}`);
+  await bustCacheTag(`images-model:${modelVersion.model.id}`);
+
+  // for (const imageId of imageIds) {
+  //   purgeImageGenerationDataCache(imageId);
+  // }
+
+  for (const image of images) {
+    if (!!image.postId) {
+      await preventReplicationLag('postImages', image.postId);
+      await bustCachesForPost(image.postId);
+    }
+  }
+
+  return dbWrite.imageResourceHelper.findMany({
+    where: { id: { in: createdResources.map((x) => x.id) } },
+  });
+};
+
+export const removeResourceFromPostImage = async ({
+  id: imageId,
+  modelVersionId,
+  user,
+}: RemoveResourceFromPostImageInput & { user: SessionUser }) => {
+  const image = await dbRead.image.findFirst({
+    where: { id: imageId },
+    select: { postId: true },
+  });
+
+  if (!image) throw throwNotFoundError('Image not found.');
+  // TODO add check for isOnSite and return
+
+  // nb: possible issue with deduped "name" field?
+  const resource = await dbWrite.imageResource.findFirst({
+    where: { imageId, modelVersionId },
+  });
+
+  if (!resource) throw throwNotFoundError('Image resource not found.');
+
+  const deleted = await dbWrite.imageResource.delete({
+    where: { id: resource.id },
+  });
+
+  await queueImageSearchIndexUpdate({
+    ids: [imageId],
+    action: SearchIndexUpdateQueueAction.Update,
+  });
+
+  // TODO are these necessary?
+  // - Cache Busting
+
+  await bustCacheTag(`images-user:${user.id}`);
+  await bustCacheTag(`images-modelVersion:${modelVersionId}`);
+  // await bustCacheTag(`images-model:${modelVersion.model.id}`);
+
+  // for (const imageId of imageIds) {
+  //   purgeImageGenerationDataCache(imageId);
+  // }
+
+  if (!!image.postId) {
+    await preventReplicationLag('postImages', image.postId);
+    await bustCachesForPost(image.postId);
+  }
+
+  return deleted;
 };
 
 export const reorderPostImages = async ({ id: postId, imageIds }: ReorderPostImagesInput) => {
