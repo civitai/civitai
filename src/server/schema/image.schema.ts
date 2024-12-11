@@ -1,3 +1,8 @@
+import dayjs from 'dayjs';
+import { z } from 'zod';
+import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
+import { constants } from '~/server/common/constants';
+import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
 import {
   ImageGenerationProcess,
   MediaType,
@@ -5,11 +10,6 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
-import { z } from 'zod';
-import { SearchIndexEntityTypes } from '~/components/Search/parsers/base';
-import { constants } from '~/server/common/constants';
-import { baseQuerySchema, paginationSchema, periodModeSchema } from '~/server/schema/base.schema';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
 
@@ -254,7 +254,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     baseModels: z.enum(constants.baseModels).array().optional(),
     collectionId: z.number().optional(),
     collectionTagId: z.number().optional(),
-    excludeCrossPosts: z.boolean().optional(),
+    hideAutoResources: z.boolean().optional(),
+    hideManualResources: z.boolean().optional(),
     followed: z.boolean().optional(),
     fromPlatform: z.coerce.boolean().optional(),
     hidden: z.boolean().optional(),

@@ -1,12 +1,3 @@
-import {
-  CheckpointType,
-  ImageGenerationProcess,
-  MediaType,
-  MetricTimeframe,
-  ModelStatus,
-  ModelType,
-  ToolType,
-} from '~/shared/utils/prisma/enums';
 import { createContext, useCallback, useContext, useRef } from 'react';
 import { z } from 'zod';
 import { createStore, useStore } from 'zustand';
@@ -31,6 +22,15 @@ import {
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { getInfiniteClubSchema } from '~/server/schema/club.schema';
+import {
+  CheckpointType,
+  ImageGenerationProcess,
+  MediaType,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+  ToolType,
+} from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
@@ -65,10 +65,11 @@ const imageFilterSchema = z.object({
   periodMode: periodModeSchema.optional(),
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  excludeCrossPosts: z.boolean().optional(),
   types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
+  hideAutoResources: z.boolean().optional(),
+  hideManualResources: z.boolean().optional(),
   notPublished: z.boolean().optional(),
   scheduled: z.boolean().optional(),
   hidden: z.boolean().optional(),
@@ -78,6 +79,7 @@ const imageFilterSchema = z.object({
   baseModels: z.enum(constants.baseModels).array().optional(),
 });
 
+type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
 const modelImageFilterSchema = imageFilterSchema.extend({
   sort: z.nativeEnum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
@@ -141,9 +143,7 @@ const clubFilterSchema = z
   );
 
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
-const videoFilterSchema = imageFilterSchema.omit({
-  excludeCrossPosts: true,
-});
+const videoFilterSchema = imageFilterSchema;
 
 type ThreadFilterSchema = z.infer<typeof threadFilterSchema>;
 const threadFilterSchema = z.object({
@@ -167,7 +167,7 @@ type StorageState = {
   models: ModelFilterSchema;
   questions: QuestionFilterSchema;
   images: ImageFilterSchema;
-  modelImages: ImageFilterSchema;
+  modelImages: ModelImageFilterSchema;
   posts: PostFilterSchema;
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
@@ -191,7 +191,7 @@ type StoreState = FilterState & {
   setModelFilters: (filters: Partial<ModelFilterSchema>) => void;
   setQuestionFilters: (filters: Partial<QuestionFilterSchema>) => void;
   setImageFilters: (filters: Partial<ImageFilterSchema>) => void;
-  setModelImageFilters: (filters: Partial<ImageFilterSchema>) => void;
+  setModelImageFilters: (filters: Partial<ModelImageFilterSchema>) => void;
   setPostFilters: (filters: Partial<PostFilterSchema>) => void;
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;

@@ -1545,6 +1545,7 @@ enum TagSource {
   WD14
   Computed
   ImageHash
+  Hive
 }
 
 model TagsOnImage {
@@ -3937,6 +3938,8 @@ model ImageResourceHelper {
   modelThumbsUpCount    Int?
   modelThumbsDownCount  Int?
   modelType             ModelType?
+  modelVersionBaseModel String?
+  detected              Boolean?
 
   @@unique([imageId, name, modelVersionId])
 }

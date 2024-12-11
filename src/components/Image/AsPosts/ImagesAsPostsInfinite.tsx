@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Anchor,
-  Box,
   Button,
   Center,
   Group,
@@ -14,7 +13,6 @@ import {
   Title,
 } from '@mantine/core';
 import {
-  IconArrowsCross,
   IconCloudOff,
   IconEye,
   IconEyeOff,
@@ -22,7 +20,6 @@ import {
   IconSettings,
   IconStar,
 } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -42,8 +39,8 @@ import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ModelGenerationCard } from '~/components/Model/Generation/ModelGenerationCard';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useSetFilters } from '~/providers/FiltersProvider';
 import { Flags } from '~/shared/utils';
 import { ModelById } from '~/types/router';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -98,7 +95,6 @@ export default function ImagesAsPostsInfinite({
   const [showHidden, setShowHidden] = useState(false);
 
   const imageFilters = useImageFilters('modelImages');
-  const setFilters = useSetFilters('modelImages');
   const filters = removeEmpty({
     ...imageFilters,
     modelVersionId: selectedVersionId,
@@ -162,7 +158,6 @@ export default function ImagesAsPostsInfinite({
   }, [gallerySettings?.hiddenImages]);
 
   const isMuted = currentUser?.muted ?? false;
-  const { excludeCrossPosts } = imageFilters;
   const hasModerationPreferences =
     !!gallerySettings?.hiddenImages.length ||
     !!gallerySettings?.hiddenUsers.length ||
@@ -211,16 +206,6 @@ export default function ImagesAsPostsInfinite({
               <Group ml="auto" spacing={8}>
                 <SortFilter type="modelImages" variant="button" />
                 <MediaFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
-                <ButtonTooltip label={`${excludeCrossPosts ? 'Show' : 'Hide'} Cross-posts`}>
-                  <ActionIcon
-                    radius="xl"
-                    variant={excludeCrossPosts ? 'light' : 'filled'}
-                    color={excludeCrossPosts ? 'red' : undefined}
-                    onClick={() => setFilters({ excludeCrossPosts: !excludeCrossPosts })}
-                  >
-                    <IconArrowsCross size={16} />
-                  </ActionIcon>
-                </ButtonTooltip>
                 {showModerationOptions && (
                   <>
                     {!!gallerySettings?.hiddenImages.length && (

@@ -1,11 +1,14 @@
-import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { PostCreateInput } from '~/server/schema/post.schema';
+import {
+  AddResourceToPostImageInput,
+  PostCreateInput,
+  RemoveResourceFromPostImageInput,
+} from '~/server/schema/post.schema';
 import {
   bulkSaveItems,
   getCollectionById,
@@ -22,6 +25,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from './../schema/base.schema';
 import {
@@ -36,6 +40,7 @@ import {
 } from './../schema/post.schema';
 import {
   addPostTag,
+  addResourceToPostImage,
   createPost,
   deletePost,
   getPostContestCollectionDetails,
@@ -44,6 +49,7 @@ import {
   getPostsInfinite,
   getPostTags,
   removePostTag,
+  removeResourceFromPostImage,
   reorderPostImages,
   updatePost,
   updatePostCollectionTagId,
@@ -131,6 +137,7 @@ export const updatePostHandler = async ({
         collectionId: true,
         id: true,
         nsfwLevel: true,
+        title: true,
       },
     });
 
@@ -176,7 +183,27 @@ export const updatePostHandler = async ({
         !collectionTagId &&
         !collection.metadata?.disableTagRequired
       ) {
-        throw throwBadRequestError('You must select a tag for this collection');
+        throw throwBadRequestError('You must select an entry category for this collection');
+      }
+
+      if (collection.metadata.entriesRequireTitle && !post.title) {
+        throw throwBadRequestError('Your entry must have a title to be submitted');
+      }
+
+      if (collection.metadata.entriesRequireTools) {
+        // Check all images within this post has tools:
+        const exists = await dbRead.image.findFirst({
+          where: {
+            postId: input.id,
+            tools: {
+              none: {},
+            },
+          },
+        });
+
+        if (exists) {
+          throw throwBadRequestError('All images must have tools to be submitted');
+        }
       }
 
       if (collection.mode === CollectionMode.Contest) {
@@ -411,6 +438,36 @@ export const updatePostImageHandler = async ({
   }
 };
 
+export const addResourceToPostImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddResourceToPostImageInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await addResourceToPostImage({ ...input, user: ctx.user });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const removeResourceFromPostImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: RemoveResourceFromPostImageInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await removeResourceFromPostImage({ ...input, user: ctx.user });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 export const reorderPostImagesHandler = async ({
   input,
 }: {
@@ -477,7 +534,6 @@ export const addPostTagHandler = async ({
 
 export const removePostTagHandler = async ({
   input,
-  ctx,
 }: {
   input: RemovePostTagInput;
   ctx: DeepNonNullable<Context>;
@@ -507,7 +563,6 @@ export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }
 // #region [post for collections]
 export const getPostContestCollectionDetailsHandler = async ({
   input,
-  ctx,
 }: {
   input: GetByIdInput;
   ctx: Context;

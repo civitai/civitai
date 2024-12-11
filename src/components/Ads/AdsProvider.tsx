@@ -55,11 +55,9 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
     function callback() {
       // check for cmp consent
       window.__tcfapi('addEventListener', 2, function (tcData: any, success: boolean) {
-        // console.log({ tcData, success });
         if (['tcloaded', 'useractioncomplete'].includes(tcData.eventStatus)) {
           window.__tcfapi('removeEventListener', 2, null, tcData.listenerId);
           // AdConsent finished asking for consent, do something that is dependend on user consent ...
-          // console.log('This code is triggered only once', tcData);
           if (!success) useAdProviderStore.setState({ adsBlocked: true });
           else useAdProviderStore.setState({ ready: true });
         }

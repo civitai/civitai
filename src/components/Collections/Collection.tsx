@@ -17,12 +17,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import {
-  Availability,
-  CollectionMode,
-  CollectionType,
-  MetricTimeframe,
-} from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus } from '@prisma/client';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -32,15 +27,17 @@ import {
   IconPhoto,
 } from '@tabler/icons-react';
 import { capitalize, truncate } from 'lodash-es';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import React, { CSSProperties } from 'react';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
+import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
+import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import {
   contestCollectionReactionsHidden,
@@ -48,21 +45,29 @@ import {
   useCollection,
   useCollectionEntryCount,
 } from '~/components/Collections/collection.utils';
+import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { CollectionFollowAction } from '~/components/Collections/components/CollectionFollow';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { SortFilter } from '~/components/Filters';
 import { AdaptiveFiltersDropdown } from '~/components/Filters/AdaptiveFiltersDropdown';
 import { ImageContextMenuProvider } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
+import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { RemoveFromCollectionMenuItem } from '~/components/MenuItems/RemoveFromCollectionMenuItem';
+import { ModelContextMenuProvider } from '~/components/Model/Actions/ModelCardContextMenu';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { PostCategories } from '~/components/Post/Infinite/PostCategories';
+import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
@@ -74,25 +79,22 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
+import {
+  Availability,
+  CollectionMode,
+  CollectionType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 import { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
-import { getDisplayName, removeTags } from '~/utils/string-helpers';
+import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { Meta } from '../Meta/Meta';
-import { ModelContextMenuProvider } from '~/components/Model/Actions/ModelCardContextMenu';
 import { isDefined } from '~/utils/type-guards';
-import { RemoveFromCollectionMenuItem } from '~/components/MenuItems/RemoveFromCollectionMenuItem';
-import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import dynamic from 'next/dynamic';
-import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
-import { MediaFiltersDropdown } from '~/components/Image/Filters/MediaFiltersDropdown';
-import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
-import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
-import { CollectionItemStatus } from '@prisma/client';
+import { Meta } from '../Meta/Meta';
+
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
 );
@@ -210,7 +212,8 @@ const ImageCollection = ({
     ? {
         generation: undefined,
         view: undefined,
-        excludeCrossPosts: undefined,
+        hideAutoResources: undefined,
+        hideManualResources: undefined,
         types: undefined,
         withMeta: undefined,
         hidden: undefined,
@@ -333,7 +336,7 @@ const ImageCollection = ({
               hideReactions: contestCollectionReactionsHidden(collection),
             }}
           >
-            <ImagesInfinite filters={filters} disableStoreFilters />
+            <ImagesInfinite filters={filters} disableStoreFilters collectionId={collection.id} />
           </ReactionSettingsProvider>
         </IsClient>
       </Stack>
@@ -528,7 +531,9 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <>
+    <BrowsingModeOverrideProvider
+      browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
+    >
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
@@ -543,7 +548,9 @@ export function Collection({
           }
         />
       )}
-      <SensitiveShield contentNsfwLevel={collection.nsfwLevel}>
+      <SensitiveShield
+        contentNsfwLevel={collection.metadata.forcedBrowsingLevel || collection.nsfwLevel}
+      >
         <MasonryProvider
           columnWidth={constants.cardSizes.model}
           maxColumnCount={7}
@@ -777,9 +784,18 @@ export function Collection({
                     <AlertWithIcon icon={<IconAlertCircle />}>
                       <Text>
                         This collection is accepting entries until{' '}
-                        {formatDate(metadata.submissionEndDate)}. During the subsmission period, you
-                        will only see your entries, both reviewed and unreviewed. Once the
-                        submission period ends, you will see all entries.
+                        {formatDate(metadata.submissionEndDate)}.{' '}
+                        {metadata.submissionsHiddenUntilEndDate ? (
+                          <>
+                            You will only be able to see your own entries until the submission
+                            period is over.
+                          </>
+                        ) : (
+                          <>
+                            Entries that have been approved will be visible to the public. Entries
+                            under review are only visible to the owner.
+                          </>
+                        )}
                       </Text>
                     </AlertWithIcon>
                   )}
@@ -811,7 +827,7 @@ export function Collection({
           </MasonryContainer>
         </MasonryProvider>
       </SensitiveShield>
-    </>
+    </BrowsingModeOverrideProvider>
   );
 }
 
