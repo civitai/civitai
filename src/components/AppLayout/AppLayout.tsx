@@ -11,6 +11,7 @@ import { Announcements } from '~/components/Announcements/Announcements';
 import { ScrollAreaProps } from '~/components/ScrollArea/ScrollArea';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useRouter } from 'next/router';
 
 export function AppLayout({
   children,
@@ -37,6 +38,7 @@ export function AppLayout({
   announcements?: boolean;
 }) {
   const currentUser = useCurrentUser();
+  const router = useRouter();
 
   return (
     <>
@@ -63,7 +65,7 @@ export function AppLayout({
           )}
         </div>
       )}
-      {!currentUser?.isPaidMember && <AdhesiveAd />}
+      {!currentUser?.isPaidMember && !router.asPath.includes('/moderator') && <AdhesiveAd />}
     </>
   );
 }
