@@ -1,11 +1,10 @@
 import { CollectionMode, CollectionType } from '@prisma/client';
-import { createJob, getJobDate } from './job';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { getYoutubeAuthClient, uploadYoutubeVideo } from '~/server/youtube/client';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { logToAxiom } from '~/server/logging/client';
-import sanitize from 'sanitize-html';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server.mjs';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { createJob, getJobDate } from '~/server/jobs/job';
+import { logToAxiom } from '~/server/logging/client';
+import { VideoMetadata } from '~/server/schema/media.schema';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -24,6 +23,11 @@ export const contestCollectionYoutubeUpload = createJob(
   'collection-contest-youtube-upload',
   '0 * * * *',
   async () => {
+    if (!env.YOUTUBE_VIDEO_UPLOAD_URL) {
+      logWebhook({ error: 'Youtube video upload URL not set' });
+      return;
+    }
+
     const [lastRun, setLastRun] = await getJobDate('collection-contest-youtube-upload');
 
     const contestColletionsWithYoutube = await dbRead.collection.findMany({
@@ -56,25 +60,16 @@ export const contestCollectionYoutubeUpload = createJob(
           {
             imageId: number;
             imageUrl: string;
-            title: string;
-            detail: string;
-            mimeType: string;
             metadata: VideoMetadata;
-            username: string;
           }[]
         >`
           SELECT 
             i.id as "imageId",
             i.url as "imageUrl",
-            p.title,
-            p.detail,
             i."mimeType",
-            i.metadata,
-            u."username"
+            i.metadata
           FROM "CollectionItem" ci
           JOIN "Image" i ON i.id = ci."imageId"
-          JOIN "Post" p ON p.id = i."postId"
-          JOIN "User" u ON u.id = p."userId"
           WHERE ci."collectionId" = ${collection.id}
             AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
@@ -87,7 +82,7 @@ export const contestCollectionYoutubeUpload = createJob(
           ORDER BY i.metadata->'size' ASC
         `;
 
-        const authClient = await getYoutubeAuthClient(authKey.value as string);
+        console.log(collectionItems);
 
         for (const item of collectionItems) {
           try {
@@ -101,38 +96,46 @@ export const contestCollectionYoutubeUpload = createJob(
               continue;
             }
 
-            const userProfile = item.username
-              ? `${env.NEXT_PUBLIC_BASE_URL}/user/${item.username}`
-              : undefined;
+            if (!!item.metadata.youtubeUploadEnqueuedAt) {
+              continue;
+            }
 
-            const uploadedVideo = await uploadYoutubeVideo({
-              url: item.imageUrl,
-              title: item.title,
-              description: `
-                ${sanitize(item.detail, {
-                  allowedTags: [],
-                  allowedAttributes: {},
-                })}
-                
-                Created by ${item.username}:
-                ${userProfile}
+            const callbackUrl = `${
+              'https://156f-148-255-88-252.ngrok-free.app' ?? env.NEXT_PUBLIC_BASE_URL
+            }/api/webhooks/youtube-upload?token=${env.WEBHOOK_TOKEN}`;
 
-                Check out more entries at:
-                ${env.NEXT_PUBLIC_BASE_URL}/collections/${collection.id}
-              `,
-              mimeType: item.mimeType,
-              client: authClient,
-            });
+            console.log(callbackUrl);
 
-            await dbWrite.image.update({
-              where: { id: item.imageId },
-              data: {
-                metadata: {
-                  ...item.metadata,
-                  youtubeVideoId: uploadedVideo?.id,
-                },
+            const res = await fetch(env.YOUTUBE_VIDEO_UPLOAD_URL, {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
               },
+              body: JSON.stringify({
+                imageId: item.imageId,
+                sourceUrl: getEdgeUrl(item.imageUrl, {
+                  original: true,
+                }),
+                callbackUrl,
+                youtubeRefreshToken: authKey.value,
+              }),
             });
+
+            if (!res.ok) {
+              throw new Error(`Failed to upload video ${item.imageId}`);
+            }
+
+            console.log(res);
+
+            // await dbWrite.image.update({
+            //   where: { id: item.imageId },
+            //   data: {
+            //     metadata: {
+            //       ...item.metadata,
+            //       youtubeUploadEnqueuedAt: new Date().toISOString(),
+            //     },
+            //   },
+            // });
           } catch (error) {
             console.error(`Error uploading video ${item.imageId}: ${(error as Error).message}`);
             logWebhook({ error, imageId: item.imageId });
@@ -146,6 +149,16 @@ export const contestCollectionYoutubeUpload = createJob(
                 },
               },
             });
+
+            await dbWrite.collectionItem.updateMany({
+              where: {
+                imageId: item.imageId,
+                collectionId: collection.id,
+              },
+              data: {
+                updatedAt: new Date(),
+              },
+            });
           }
         }
       } catch (error) {
@@ -154,6 +167,6 @@ export const contestCollectionYoutubeUpload = createJob(
       }
     }
 
-    await setLastRun();
+    // await setLastRun();
   }
 );
