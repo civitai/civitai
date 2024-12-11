@@ -415,7 +415,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         },
       },
       tags: {
-        where: { disabled: false },
+        where: { disabledAt: null },
         select: {
           automated: true,
           tag: {
