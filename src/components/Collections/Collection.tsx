@@ -17,7 +17,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
-import { Availability, CollectionItemStatus } from '@prisma/client';
+import { CollectionItemStatus } from '@prisma/client';
 import {
   IconAlertCircle,
   IconCirclePlus,
@@ -29,7 +29,7 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { CSSProperties } from 'react';
+import React, { CSSProperties } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -79,7 +79,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
-import { CollectionMode, CollectionType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  CollectionMode,
+  CollectionType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 import { CollectionByIdModel } from '~/types/router';
 import { getRandom } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
@@ -207,7 +212,8 @@ const ImageCollection = ({
     ? {
         generation: undefined,
         view: undefined,
-        excludeCrossPosts: undefined,
+        hideAutoResources: undefined,
+        hideManualResources: undefined,
         types: undefined,
         withMeta: undefined,
         hidden: undefined,

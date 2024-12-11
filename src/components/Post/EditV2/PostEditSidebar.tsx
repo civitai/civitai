@@ -1,23 +1,23 @@
-import { Button, Title, Badge, Tooltip, Text, TooltipProps, ThemeIcon, Group } from '@mantine/core';
+import { Alert, Badge, Button, Text, ThemeIcon, Title, Tooltip, TooltipProps } from '@mantine/core';
+import { IconClock, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
-import { trpc } from '~/utils/trpc';
-import { PostDetailEditable } from '~/server/services/post.service';
 import { useRouter } from 'next/router';
+import { useRef, useState } from 'react';
+import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { DeletePostButton } from '~/components/Post/DeletePostButton';
+import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
+import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
-import { useRef, useState } from 'react';
-import { IconClock, IconInfoCircle, IconTrash } from '@tabler/icons-react';
-import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
-import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { DeletePostButton } from '~/components/Post/DeletePostButton';
-import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
-import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
-import { removeEmpty } from '~/utils/object-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -118,17 +118,18 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   return (
     <>
       <div className="flex flex-col gap-0">
+        {collectionId && (
+          <Alert mb="xs">
+            <div className="flex">
+              <Text size="xs">
+                Did you tag the tools you used in your entry? Adding the tools used to create your
+                entry may make you elegible for more prizes.
+              </Text>
+            </div>
+          </Alert>
+        )}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {collectionId && (
-              <Tooltip
-                maw={350}
-                multiline
-                label="Did you tag the tools you used in your entry? Adding the tools used to create your entry may make you elegible for more prizes."
-              >
-                <IconInfoCircle size={18} />
-              </Tooltip>
-            )}
             <Title size="sm">{postLabel}</Title>
           </div>
           <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">

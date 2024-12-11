@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  Badge,
   Button,
   Code,
   CopyButton,
@@ -14,11 +13,11 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { ImageGenerationProcess, ModelType } from '~/shared/utils/prisma/enums';
 import { IconBrush, IconCheck, IconCopy } from '@tabler/icons-react';
 import { cloneElement, useMemo, useState } from 'react';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ComfyMetaSchema, ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageGenerationProcess, ModelType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { fromJson } from '~/utils/json-helpers';
 import { encodeMetadata } from '~/utils/metadata';
@@ -86,6 +85,7 @@ export function ImageMeta({
       hasControlNet = (meta.controlNets as string[])?.length > 0;
     }
 
+    // TODO check for generationFormWorkflowConfigurations?
     const onSite = 'civitaiResources' in meta;
     const software =
       meta.software?.toString() ?? (onSite ? 'Civitai Generator' : 'External Generator');

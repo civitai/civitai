@@ -28,7 +28,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
       automated: true,
       needsReview: true,
     },
-    where: { disabled: false },
+    where: { disabledAt: null },
   },
 });
 
@@ -75,6 +75,8 @@ export const imageResourceHelperSelect = Prisma.validator<Prisma.ImageResourceHe
   modelThumbsUpCount: true,
   modelThumbsDownCount: true,
   modelType: true,
+  modelVersionBaseModel: true,
+  detected: true,
 });
 
 const imageResourceHelper = Prisma.validator<Prisma.ImageResourceHelperDefaultArgs>()({

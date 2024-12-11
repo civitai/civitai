@@ -32,7 +32,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   await batchProcessor({
     params: { concurrency: 5, batchSize: 500, start: 0 },
-    runContext: { on: () => {} }, // Dummy to avoid issues
+    runContext: { on: () => null }, // Dummy to avoid issues
     async batchFetcher() {
       const query = await pgDbWrite.cancellableQuery<{ id: number }>(`
         SELECT
@@ -54,7 +54,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
             FROM "TagsOnImage" toi
             JOIN "Tag" t ON t.id = toi."tagId"
             WHERE toi."imageId" = i.id
-              AND NOT toi.disabled
+              AND toi."disabledAt" IS NULL
           ),
           "updatedAt" = NOW()
         WHERE id IN (${batch})

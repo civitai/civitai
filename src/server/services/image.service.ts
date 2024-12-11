@@ -1,17 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  Availability,
-  BlockImageReason,
-  CollectionMode,
-  EntityMetric_EntityType_Type,
-  EntityMetric_MetricType_Type,
-  ImageIngestionStatus,
-  MediaType,
-  ModelType,
-  ReportReason,
-  ReportStatus,
-  ReviewReactions,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
@@ -84,7 +71,6 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { ImageResourceHelperModel, imageSelect } from '~/server/selectors/image.selector';
 import { ImageV2Model } from '~/server/selectors/imagev2.selector';
 import { imageTagCompositeSelect, simpleTagSelect } from '~/server/selectors/tag.selector';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { upsertImageFlag } from '~/server/services/image-flag.service';
@@ -117,7 +103,24 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import {
+  formatGenerationResources,
+  generationFormWorkflowConfigurations,
+} from '~/shared/constants/generation.constants';
 import { Flags } from '~/shared/utils';
+import {
+  Availability,
+  BlockImageReason,
+  CollectionMode,
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
+  ImageIngestionStatus,
+  MediaType,
+  ModelType,
+  ReportReason,
+  ReportStatus,
+  ReviewReactions,
+} from '~/shared/utils/prisma/enums';
 import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -130,10 +133,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import {
-  formatGenerationResources,
-  generationFormWorkflowConfigurations,
-} from '~/shared/constants/generation.constants';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -415,7 +414,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         },
       },
       tags: {
-        where: { disabled: false },
+        where: { disabledAt: null },
         select: {
           automated: true,
           tag: {
@@ -442,7 +441,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
 
   await dbWrite.tagsOnImage.updateMany({
-    where: { imageId: images[0].id, disabled: true },
+    where: { imageId: images[0].id, disabledAt: { not: null } },
     data: { disabled: false },
   });
 
@@ -723,7 +722,8 @@ export const getAllImages = async (
     reviewId,
     prioritizedUserIds,
     include,
-    // excludeCrossPosts,
+    // hideAutoResources,
+    // hideManualResources,
     reactions,
     ids,
     includeBaseModel,
@@ -780,13 +780,6 @@ export const getAllImages = async (
     if (!targetUser) throw new Error('User not found');
     targetUserId = targetUser.id;
   }
-
-  // TODO.fix disable excludeCrossPosts
-  // if (excludeCrossPosts && modelVersionId) {
-  //   cacheTime = CacheTTL.day;
-  //   cacheTags.push(`images-modelVersion:${modelVersionId}`);
-  //   AND.push(Prisma.sql`p."modelVersionId" = ${modelVersionId}`);
-  // }
 
   // [x]
   if (ids && ids.length > 0) {
@@ -1313,6 +1306,8 @@ export const getAllImages = async (
       cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
       metadata: ImageMetadata | VideoMetadata | null;
       onSite: boolean;
+      modelVersionIds?: number[];
+      modelVersionIdsManual?: number[];
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -1320,6 +1315,8 @@ export const getAllImages = async (
 
       return {
         ...i,
+        modelVersionIds: [], // TODO doing this basically just for TS
+        modelVersionIdsManual: [],
         user: {
           id: creatorId,
           username,
@@ -1390,7 +1387,8 @@ export const getAllImagesIndex = async (
   //   scheduled,
   //   withMeta: hasMeta,
   //   excludedUserIds,
-  //   excludeCrossPosts,
+  //   hideAutoResources
+  //   hideManualResources
   //   hidden,
   //   followed,
   //   //
@@ -1586,7 +1584,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     isModerator,
     currentUserId,
     excludedUserIds,
-    excludeCrossPosts,
+    hideAutoResources,
+    hideManualResources,
     hidden,
     followed,
     limit = 100,
@@ -1677,16 +1676,19 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   filters.push(`(${nsfwFilters.join(' OR ')})`);
 
   if (modelVersionId) {
-    if (excludeCrossPosts) {
-      filters.push(makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`));
-    } else {
-      filters.push(
-        `(${makeMeiliImageSearchFilter(
-          'modelVersionIds',
-          `IN [${modelVersionId}]`
-        )} OR ${makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)})`
-      );
+    const versionFilters = [makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)];
+
+    if (!hideAutoResources) {
+      versionFilters.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
     }
+    // TODO re-enable after backfilling
+    // if (!hideManualResources) {
+    //   versionFilters.push(
+    //     makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
+    //   );
+    // }
+
+    filters.push(`(${versionFilters.join(' OR ')})`);
   }
 
   /*
@@ -2257,7 +2259,9 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."modelThumbsDownCount",
       irh."modelDownloadCount",
       irh."modelCommentCount",
-      irh."modelType"
+      irh."modelType",
+      irh."modelVersionBaseModel",
+      irh."detected"
     FROM
       "ImageResourceHelper" irh
     JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
@@ -2362,7 +2366,7 @@ export const getImagesForModelVersion = async ({
       Prisma.join(
         [
           Prisma.sql`i."nsfwLevel" != 0`,
-          Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi.disabled = false AND toi."tagId" IN (${Prisma.join(
+          Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi."disabledAt" IS NULL AND toi."tagId" IN (${Prisma.join(
             excludedTagIds
           )}) )`,
         ],

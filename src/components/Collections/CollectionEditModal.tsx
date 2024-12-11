@@ -1,12 +1,18 @@
 import { Button, Center, Divider, Group, Input, Loader, Modal, Stack, Text } from '@mantine/core';
 
+import { IconCalendar } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import {
   collectionReadPrivacyData,
   collectionWritePrivacyData,
   useCollection,
   useMutateCollection,
 } from '~/components/Collections/collection.utils';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputBrowsingLevels,
@@ -21,16 +27,10 @@ import {
   useForm,
 } from '~/libs/form';
 import { UpsertCollectionInput, upsertCollectionInput } from '~/server/schema/collection.schema';
-import { trpc } from '~/utils/trpc';
-import { NotFound } from '~/components/AppLayout/NotFound';
 import { CollectionMode, CollectionType, TagTarget } from '~/shared/utils/prisma/enums';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getDisplayName } from '~/utils/string-helpers';
-import { IconCalendar } from '@tabler/icons-react';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { useRouter } from 'next/router';
+import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
 export default function CollectionEditModal({ collectionId }: { collectionId?: number }) {
   const router = useRouter();
@@ -120,7 +120,6 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const canEdit = !!collection && permissions.manage;
   const isCreate = !collectionId;
   const isImageCollection = collection?.type === CollectionType.Image;
-  const isPostCollection = collection?.type === CollectionType.Post;
   const isContestMode = collection?.mode === CollectionMode.Contest;
 
   return (
@@ -192,6 +191,11 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                 {isContestMode && (
                   <>
                     <Divider label="Contest Details" />
+                    <InputText
+                      name="metadata.termsOfServicesUrl"
+                      label="Terms of Service"
+                      description="If added, an alert will be shown when creating an entry for this contest mentioning the user agrees to the terms of service."
+                    />
                     <InputDatePicker
                       name="metadata.endsAt"
                       label="End Date"

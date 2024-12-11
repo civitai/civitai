@@ -20,7 +20,7 @@ BEGIN
       END "nsfwLevel"
     FROM "TagsOnImage" toi
     LEFT JOIN "Tag" t ON t.id = toi."tagId" AND (t.nsfw != 'None' OR t."nsfwLevel" > 1)
-    WHERE toi."imageId" = ANY(image_ids) AND NOT toi.disabled
+    WHERE toi."imageId" = ANY(image_ids) AND toi."disabledAt" IS NULL
     GROUP BY toi."imageId"
   )
   UPDATE "Image" i SET nsfw = il.nsfw, "nsfwLevel" = il."nsfwLevel"

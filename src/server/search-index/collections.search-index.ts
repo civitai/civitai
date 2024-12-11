@@ -435,7 +435,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
     logger(`PullData :: Pulled collection images.`);
 
     const tags = await dbRead.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabled: false },
+      where: { imageId: { in: imageIds }, disabledAt: null },
       select: { imageId: true, tagId: true },
     });
 
