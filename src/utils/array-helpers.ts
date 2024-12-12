@@ -54,7 +54,7 @@ const modelTypeOrder: { [k in ModelType]: number } = {
   [ModelType.Hypernetwork]: 13,
   [ModelType.Other]: 14,
 };
-export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[]) {
+export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[] = []) {
   return data.toSorted((a, b) => {
     const mA = a.modelType;
     const mB = b.modelType;
