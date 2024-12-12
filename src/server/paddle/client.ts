@@ -9,7 +9,6 @@ import {
 } from '@paddle/paddle-node-sdk';
 import { isDev } from '~/env/other';
 import { env } from '~/env/server.mjs';
-import { PaginationInput } from '~/server/schema/base.schema';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 

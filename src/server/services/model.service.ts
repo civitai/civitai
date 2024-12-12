@@ -310,13 +310,19 @@ export const getModelsRaw = async ({
   }
 
   if (tagname ?? tag) {
-    AND.push(
-      Prisma.sql`EXISTS (
-          SELECT 1 FROM "TagsOnModels" tom
-          JOIN "Tag" t on tom."tagId" = t."id"
-          WHERE tom."modelId" = m."id" AND t."name" = ${tagname ?? tag}
-        )`
-    );
+    const tagId = await dbRead.tag.findUnique({
+      where: { name: tagname ?? tag },
+      select: { id: true },
+    });
+
+    if (tagId) {
+      AND.push(
+        Prisma.sql`EXISTS (
+            SELECT 1 FROM "TagsOnModels" tom
+            WHERE tom."modelId" = m."id" AND tom."tagId" = ${tagId?.id}
+          )`
+      );
+    }
   }
 
   if (fromPlatform) {
