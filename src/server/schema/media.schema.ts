@@ -20,5 +20,8 @@ export const videoMetadataSchema = z.object({
   youtubeVideoId: z.string().optional(),
   youtubeUploadAttempt: z.number().optional(),
   youtubeUploadEnqueuedAt: z.string().optional(),
+  vimeoVideoId: z.string().optional(),
+  vimeoUploadAttempt: z.number().optional(),
+  vimeoUploadEnqueuedAt: z.string().optional(),
   // hasSound: z.boolean().default(false), not accessible from HTMLVideoElement
 });

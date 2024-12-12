@@ -343,6 +343,17 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         </Input.Wrapper>
                       </>
                     )}
+
+                    {isImageCollection && (
+                      <>
+                        <Divider label="Vimeo Support" />
+                        <InputCheckbox
+                          name="metadata.vimeoSupportEnabled"
+                          label="Enables vimeo support for this collection"
+                          description="Approved videos longer than 30s will be uploaded to vimeo on an hourly basis."
+                        />
+                      </>
+                    )}
                   </>
                 )}
               </>
