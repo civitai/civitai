@@ -1,13 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  CommercialUse,
-  MetricTimeframe,
-  ModelModifier,
-  ModelStatus,
-  ModelType,
-  ModelUploadType,
-  TagTarget,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { isEmpty } from 'lodash-es';
@@ -20,6 +11,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
+import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -27,9 +19,9 @@ import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
   GetModelVersionsSchema,
-  MigrateResourceToCollectionInput,
   IngestModelInput,
   ingestModelSchema,
+  MigrateResourceToCollectionInput,
   ModelGallerySettingsSchema,
   ModelInput,
   ModelMeta,
@@ -52,10 +44,10 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
   getUserCollectionPermissionsById,
-  removeCollectionItem,
   saveItemInCollections,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -91,6 +83,15 @@ import {
   nsfwBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import {
+  CommercialUse,
+  MetricTimeframe,
+  ModelModifier,
+  ModelStatus,
+  ModelType,
+  ModelUploadType,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
 import { decreaseDate, isFutureDate } from '~/utils/date-helpers';
 import { prepareFile } from '~/utils/file-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -102,10 +103,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { upsertModelFlag } from '~/server/services/model-flag.service';
-import { modelMetrics } from '~/server/metrics';
-import { isProd } from '~/env/other';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
