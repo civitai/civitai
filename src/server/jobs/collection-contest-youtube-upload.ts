@@ -82,8 +82,6 @@ export const contestCollectionYoutubeUpload = createJob(
           ORDER BY i.metadata->'size' ASC
         `;
 
-        console.log(collectionItems);
-
         for (const item of collectionItems) {
           try {
             if (item.metadata.youtubeVideoId) {
@@ -101,8 +99,6 @@ export const contestCollectionYoutubeUpload = createJob(
             }
 
             const callbackUrl = `${env.NEXT_PUBLIC_BASE_URL}/api/webhooks/youtube-upload?token=${env.WEBHOOK_TOKEN}`;
-
-            console.log(callbackUrl);
 
             const res = await fetch(env.YOUTUBE_VIDEO_UPLOAD_URL, {
               method: 'POST',
@@ -123,17 +119,15 @@ export const contestCollectionYoutubeUpload = createJob(
               throw new Error(`Failed to upload video ${item.imageId}`);
             }
 
-            console.log(res);
-
-            // await dbWrite.image.update({
-            //   where: { id: item.imageId },
-            //   data: {
-            //     metadata: {
-            //       ...item.metadata,
-            //       youtubeUploadEnqueuedAt: new Date().toISOString(),
-            //     },
-            //   },
-            // });
+            await dbWrite.image.update({
+              where: { id: item.imageId },
+              data: {
+                metadata: {
+                  ...item.metadata,
+                  youtubeUploadEnqueuedAt: new Date().toISOString(),
+                },
+              },
+            });
           } catch (error) {
             console.error(`Error uploading video ${item.imageId}: ${(error as Error).message}`);
             logWebhook({ error, imageId: item.imageId });

@@ -43,8 +43,6 @@ export const contestCollectionVimeoUpload = createJob(
       },
     });
 
-    console.log(contestColletionsWithVimeo);
-
     for (const collection of contestColletionsWithVimeo) {
       try {
         const collectionItems = await dbRead.$queryRaw<
@@ -75,14 +73,12 @@ export const contestCollectionVimeoUpload = createJob(
             AND i.type = 'video'
             AND i."ingestion" = 'Scanned'
             -- We only want to upload videos that are longer than 30 seconds
-            -- AND (i.metadata->'duration')::int > 30  
+            AND (i.metadata->'duration')::int > 30  
             AND (i.metadata->'vimeoVideoId') IS NULL
             AND ci."updatedAt" > ${lastRun}
           -- Ensures that we try to upload smaller videos first as a safeguard.
           ORDER BY i.metadata->'size' ASC
         `;
-
-        console.log(collectionItems);
 
         for (const item of collectionItems) {
           try {
