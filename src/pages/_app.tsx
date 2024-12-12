@@ -150,44 +150,46 @@ function MyApp(props: CustomAppProps) {
                   <AccountProvider>
                     <CivitaiSessionProvider>
                       <BrowserSettingsProvider>
-                        <SignalProvider>
-                          <ActivityReportingProvider>
-                            <ReferralsProvider>
-                              <FiltersProvider>
-                                <AdsProvider>
-                                  <PaddleProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider
-                                          className="notifications-container"
-                                          zIndex={9999}
-                                        >
-                                          <BrowserRouterProvider>
-                                            <GenerationProvider>
-                                              <IntersectionObserverProvider>
-                                                <BaseLayout>
-                                                  {isProd && <TrackPageView />}
-                                                  <ChatContextProvider>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </ChatContextProvider>
-                                                </BaseLayout>
-                                              </IntersectionObserverProvider>
-                                            </GenerationProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaddleProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
-                          </ActivityReportingProvider>
-                        </SignalProvider>
+                        <BrowsingModeOverrideProvider>
+                          <SignalProvider>
+                            <ActivityReportingProvider>
+                              <ReferralsProvider>
+                                <FiltersProvider>
+                                  <AdsProvider>
+                                    <PaddleProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <NotificationsProvider
+                                            className="notifications-container"
+                                            zIndex={9999}
+                                          >
+                                            <BrowserRouterProvider>
+                                              <GenerationProvider>
+                                                <IntersectionObserverProvider>
+                                                  <BaseLayout>
+                                                    {isProd && <TrackPageView />}
+                                                    <ChatContextProvider>
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
+                                                    </ChatContextProvider>
+                                                  </BaseLayout>
+                                                </IntersectionObserverProvider>
+                                              </GenerationProvider>
+                                            </BrowserRouterProvider>
+                                          </NotificationsProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaddleProvider>
+                                  </AdsProvider>
+                                </FiltersProvider>
+                              </ReferralsProvider>
+                            </ActivityReportingProvider>
+                          </SignalProvider>
+                        </BrowsingModeOverrideProvider>
                       </BrowserSettingsProvider>
                     </CivitaiSessionProvider>
                   </AccountProvider>
