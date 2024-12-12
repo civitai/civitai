@@ -17,6 +17,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { Flags } from '~/shared/utils';
 import { useRouter } from 'next/router';
+import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 
 const BrowsingModeOverrideCtx = createContext<{
   browsingLevelOverride: number;
@@ -54,6 +55,12 @@ export function BrowsingModeOverrideProvider({
     showNsfw,
     canViewNsfw,
   ]);
+
+  // const [browsingLevel, setBrowsingLevel] = useState(publicBrowsingLevelsFlag)
+  // const {type} = useCivitaiSessionContext()
+  // useEffect(() => {
+  //   if(type === 'authed') setBrowsingLevel(current)
+  // }, [type])
 
   const [debouncedBrowsingLevel] = useDebouncedValue(browsingLevel, 1000);
   const blurLevels = useMemo(

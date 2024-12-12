@@ -103,35 +103,35 @@ export const AdUnitTop = adUnitFactory({
   ],
 });
 
-export const AdUnitImageDetailBanner = adUnitFactory({
-  adUnit: 'top',
-  lutSizes: [
-    [
-      [0, 759],
-      [
-        [320, 100],
-        [320, 50],
-        [300, 100],
-        [300, 50],
-      ],
-    ],
-    [
-      [760, 1023],
-      [
-        [468, 60],
-        [728, 90],
-      ],
-    ],
-    [
-      [1024],
-      [
-        [728, 90],
-        [970, 90],
-        [980, 90],
-      ],
-    ],
-  ],
-});
+// export const AdUnitImageDetailBanner = adUnitFactory({
+//   adUnit: 'top',
+//   lutSizes: [
+//     [
+//       [0, 759],
+//       [
+//         [320, 100],
+//         [320, 50],
+//         [300, 100],
+//         [300, 50],
+//       ],
+//     ],
+//     [
+//       [760, 1023],
+//       [
+//         [468, 60],
+//         [728, 90],
+//       ],
+//     ],
+//     [
+//       [1024],
+//       [
+//         [728, 90],
+//         [970, 90],
+//         [980, 90],
+//       ],
+//     ],
+//   ],
+// });
 
 export const AdUnitAdhesive = adUnitFactory({
   adUnit: 'adhesive',
