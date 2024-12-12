@@ -193,6 +193,6 @@ export const contestCollectionVimeoUpload = createJob(
       }
     }
 
-    // await setLastRun();
+    await setLastRun();
   }
 );
