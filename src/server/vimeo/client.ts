@@ -1,9 +1,5 @@
-import { OAuth2Client } from 'google-auth-library';
-import { google, youtube_v3 } from 'googleapis';
-import { Readable } from 'node:stream';
 import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { fetchBlob } from '~/utils/file-utils';
 
 type S3ToVimeoUpload = {
   url: string;
@@ -51,4 +47,37 @@ export const uploadVimeoVideo = async ({
   }
 
   return await res.json();
+};
+
+export const checkVideoAvailable = async ({
+  id,
+  accessToken,
+}: {
+  id: string;
+  accessToken: string;
+}) => {
+  const res = await fetch(
+    `https://api.vimeo.com/videos/${id}?fields=uri,upload.status,transcode.status`,
+    {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: 'application/vnd.vimeo.*+json;version=3.4',
+        contentType: 'application/json',
+      },
+    }
+  );
+
+  if (!res.ok) {
+    return false;
+  }
+
+  const data: { uri: string; upload: { status: string }; transcode: { status: string } } =
+    await res.json();
+
+  if (data.upload?.status !== 'complete' || data.transcode?.status !== 'complete') {
+    return false;
+  }
+
+  return true;
 };

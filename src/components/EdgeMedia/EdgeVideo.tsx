@@ -1,4 +1,4 @@
-import { ActionIcon, AspectRatio, Box, createStyles } from '@mantine/core';
+import { ActionIcon, createStyles } from '@mantine/core';
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
