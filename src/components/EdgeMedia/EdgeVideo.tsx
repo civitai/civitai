@@ -136,8 +136,6 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     }
 
     if (vimeoVideoId) {
-      console.log('USE VIMEO :V');
-
       return (
         <VimeoEmbed
           style={{ display: 'block', width: '100%', height: 'auto', ...style }}

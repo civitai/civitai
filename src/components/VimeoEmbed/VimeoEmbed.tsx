@@ -1,4 +1,4 @@
-import { Box, BoxProps, Center, Loader } from '@mantine/core';
+import { Box, BoxProps, Loader } from '@mantine/core';
 import Player from '@vimeo/player';
 import { useEffect, useRef, useState } from 'react';
 import { trpc } from '~/utils/trpc';
@@ -47,25 +47,10 @@ export const VimeoEmbed = ({
 
   if (isLoading) {
     return (
-      <Box
-        {...props}
-        sx={{
-          overflow: 'hidden',
-          position: 'relative',
-          height: 0,
-          paddingBottom: '56.25%',
-          iframe: {
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            width: '100%',
-            height: '100%',
-          },
-        }}
-      >
-        <Center>
-          <Loader />
-        </Center>
+      <Box {...props}>
+        {/* <Center> */}
+        <Loader m="auto" />
+        {/* </Center> */}
       </Box>
     );
   }
@@ -88,8 +73,6 @@ export const VimeoEmbed = ({
       }}
       id={videoId}
       data-vimeo-id={videoId}
-    >
-      para raran...
-    </Box>
+    ></Box>
   );
 };
