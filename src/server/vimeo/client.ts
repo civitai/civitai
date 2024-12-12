@@ -35,10 +35,9 @@ export const uploadVimeoVideo = async ({
         allowedTags: [],
         allowedAttributes: {},
       }),
-      // TODO: Add privacy settings. This requires a Plus/Pro account.
-      // privacy: {
-      //   view: 'unlisted',
-      // },
+      privacy: {
+        view: 'unlisted',
+      },
     }),
   });
 
@@ -57,7 +56,7 @@ export const checkVideoAvailable = async ({
   accessToken: string;
 }) => {
   const res = await fetch(
-    `https://api.vimeo.com/videos/${id}?fields=uri,upload.status,transcode.status`,
+    `https://api.vimeo.com/videos/${id}?fields=link,upload.status,transcode.status`,
     {
       method: 'GET',
       headers: {
@@ -69,15 +68,15 @@ export const checkVideoAvailable = async ({
   );
 
   if (!res.ok) {
-    return false;
+    return null;
   }
 
-  const data: { uri: string; upload: { status: string }; transcode: { status: string } } =
+  const data: { link: string; upload: { status: string }; transcode: { status: string } } =
     await res.json();
 
   if (data.upload?.status !== 'complete' || data.transcode?.status !== 'complete') {
-    return false;
+    return null;
   }
 
-  return true;
+  return data.link;
 };

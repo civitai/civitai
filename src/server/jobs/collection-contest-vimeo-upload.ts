@@ -1,4 +1,5 @@
 import { CollectionMode, CollectionType } from '@prisma/client';
+import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server.mjs';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -6,7 +7,6 @@ import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { uploadVimeoVideo } from '../vimeo/client';
-import sanitize from 'sanitize-html';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -130,7 +130,7 @@ export const contestCollectionVimeoUpload = createJob(
               // Assume we're uploading from the CRON Job:
               const userProfile = `${env.NEXT_PUBLIC_BASE_URL}/user/${item.username}`;
 
-              const data: { link: string } = await uploadVimeoVideo({
+              const data: { uri: string } = await uploadVimeoVideo({
                 url: item.imageUrl,
                 accessToken: env.VIMEO_ACCESS_TOKEN,
                 title: item.title,
@@ -149,8 +149,8 @@ export const contestCollectionVimeoUpload = createJob(
                 size: item.metadata.size as number,
               });
 
-              const { link } = data;
-              const videoId = link.split('/').pop();
+              const { uri } = data;
+              const videoId = uri.split('/').pop();
 
               await dbWrite.image.update({
                 where: { id: item.imageId },

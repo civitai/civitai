@@ -17,13 +17,18 @@ export const VimeoEmbed = ({
   const [useFallbackContent, setUseFallbackContent] = useState(false);
 
   useEffect(() => {
+    if (!data && !isLoading) {
+      setUseFallbackContent(true);
+      return;
+    }
+
     if (!data) {
       return;
     }
 
     try {
       ref.current = new Player(videoId, {
-        id: Number(videoId),
+        url: data,
         autoplay,
       });
 
