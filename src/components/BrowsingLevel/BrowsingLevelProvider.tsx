@@ -1,4 +1,11 @@
-import React, { createContext, useContext, useDeferredValue, useMemo, useState } from 'react';
+import React, {
+  createContext,
+  useContext,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useState,
+} from 'react';
 import {
   browsingLevels,
   nsfwBrowsingLevelsArray,
@@ -47,7 +54,6 @@ export function BrowsingModeOverrideProvider({
   ]);
 
   const [debouncedBrowsingLevel] = useDebouncedValue(browsingLevel, 1000);
-  const deferredDebouncedBrowsingLevel = useDeferredValue(debouncedBrowsingLevel);
   const blurLevels = useMemo(
     () =>
       blurNsfw
@@ -55,14 +61,14 @@ export function BrowsingModeOverrideProvider({
         : Flags.arrayToInstance(
             nsfwBrowsingLevelsArray.filter((level) => !Flags.hasFlag(currentBrowsingLevel, level))
           ),
-    [deferredDebouncedBrowsingLevel, blurNsfw]
+    [debouncedBrowsingLevel, blurNsfw]
   );
 
   return (
     <BrowsingModeOverrideCtx.Provider
       value={{
         blurLevels,
-        browsingLevelOverride: deferredDebouncedBrowsingLevel,
+        browsingLevelOverride: debouncedBrowsingLevel,
         setBrowsingLevelOverride,
       }}
     >

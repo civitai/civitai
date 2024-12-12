@@ -12,7 +12,6 @@ type PageOptions = {
   scrollable?: boolean;
   footer?: React.ReactNode | null;
   announcements?: boolean;
-  browsingLevel?: number;
 };
 
 export type CustomNextPage = NextPage<any> & PageOptions;
@@ -28,7 +27,6 @@ export function Page(Component: CustomNextPage, options?: PageOptions) {
   Component.scrollable = options?.scrollable;
   Component.footer = options?.footer;
   Component.announcements = options?.announcements;
-  Component.browsingLevel = options?.browsingLevel;
 
   return Component;
 }

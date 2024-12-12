@@ -28,4 +28,4 @@ function Home() {
   );
 }
 
-export default Page(Home, { announcements: true, browsingLevel: publicBrowsingLevelsFlag });
+export default Page(Home, { announcements: true });

@@ -88,7 +88,7 @@ function MyApp(props: CustomAppProps) {
     pageProps: {
       session,
       colorScheme,
-      cookies,
+      cookies = parseCookies(getCookies()),
       flags,
       seed = Date.now(),
       hasAuthCookie,
@@ -106,23 +106,22 @@ function MyApp(props: CustomAppProps) {
   //       </FeatureLayout>
   //     );
   //   });
+  console.log({ willIBARichMan_nananana: cookies.disableHidden });
 
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
-      <BrowsingModeOverrideProvider browsingLevel={Component.browsingLevel}>
-        {Component.getLayout?.(page) ?? (
-          <AppLayout
-            left={Component.left}
-            right={Component.right}
-            subNav={Component.subNav}
-            scrollable={Component.scrollable}
-            footer={Component.footer}
-            announcements={Component.announcements}
-          >
-            {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
-          </AppLayout>
-        )}
-      </BrowsingModeOverrideProvider>
+      {Component.getLayout?.(page) ?? (
+        <AppLayout
+          left={Component.left}
+          right={Component.right}
+          subNav={Component.subNav}
+          scrollable={Component.scrollable}
+          footer={Component.footer}
+          announcements={Component.announcements}
+        >
+          {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+        </AppLayout>
+      )}
     </FeatureLayout>
   );
 
@@ -146,54 +145,52 @@ function MyApp(props: CustomAppProps) {
             >
               <FeatureFlagsProvider flags={flags}>
                 <GoogleAnalytics />
-                <CookiesProvider value={cookies}>
-                  <AccountProvider>
-                    <CivitaiSessionProvider>
-                      <BrowserSettingsProvider>
-                        <BrowsingModeOverrideProvider>
-                          <SignalProvider>
-                            <ActivityReportingProvider>
-                              <ReferralsProvider>
-                                <FiltersProvider>
-                                  <AdsProvider>
-                                    <PaddleProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <NotificationsProvider
-                                            className="notifications-container"
-                                            zIndex={9999}
-                                          >
-                                            <BrowserRouterProvider>
-                                              <GenerationProvider>
-                                                <IntersectionObserverProvider>
-                                                  <BaseLayout>
-                                                    {isProd && <TrackPageView />}
-                                                    <ChatContextProvider>
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </ChatContextProvider>
-                                                  </BaseLayout>
-                                                </IntersectionObserverProvider>
-                                              </GenerationProvider>
-                                            </BrowserRouterProvider>
-                                          </NotificationsProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </PaddleProvider>
-                                  </AdsProvider>
-                                </FiltersProvider>
-                              </ReferralsProvider>
-                            </ActivityReportingProvider>
-                          </SignalProvider>
-                        </BrowsingModeOverrideProvider>
-                      </BrowserSettingsProvider>
-                    </CivitaiSessionProvider>
-                  </AccountProvider>
-                </CookiesProvider>
+                <AccountProvider>
+                  <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                    <BrowserSettingsProvider>
+                      <BrowsingModeOverrideProvider>
+                        <SignalProvider>
+                          <ActivityReportingProvider>
+                            <ReferralsProvider {...cookies.referrals}>
+                              <FiltersProvider>
+                                <AdsProvider>
+                                  <PaddleProvider>
+                                    <HiddenPreferencesProvider>
+                                      <CivitaiLinkProvider>
+                                        <NotificationsProvider
+                                          className="notifications-container"
+                                          zIndex={9999}
+                                        >
+                                          <BrowserRouterProvider>
+                                            <GenerationProvider>
+                                              <IntersectionObserverProvider>
+                                                <BaseLayout>
+                                                  {isProd && <TrackPageView />}
+                                                  <ChatContextProvider>
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      {/* <StripeSetupSuccessProvider /> */}
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
+                                              </IntersectionObserverProvider>
+                                            </GenerationProvider>
+                                          </BrowserRouterProvider>
+                                        </NotificationsProvider>
+                                      </CivitaiLinkProvider>
+                                    </HiddenPreferencesProvider>
+                                  </PaddleProvider>
+                                </AdsProvider>
+                              </FiltersProvider>
+                            </ReferralsProvider>
+                          </ActivityReportingProvider>
+                        </SignalProvider>
+                      </BrowsingModeOverrideProvider>
+                    </BrowserSettingsProvider>
+                  </CivitaiSessionProvider>
+                </AccountProvider>
               </FeatureFlagsProvider>
             </SessionProvider>
           </IsClientProvider>
