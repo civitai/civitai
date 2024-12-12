@@ -26,7 +26,7 @@ class ErrorBoundary extends Component<Props, State> {
     if (!this.state.hasError) return this.props.children;
 
     return (
-      <div className="w-full h-full flex justify-center items-center">
+      <div className="flex size-full items-center justify-center">
         <div className="flex flex-col gap-3">
           <h2>Application error!</h2>
           {/* <p>{this.state.error?.message}</p>

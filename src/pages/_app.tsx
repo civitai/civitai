@@ -42,7 +42,6 @@ import { isDev, isProd } from '~/env/other';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
-import { CookiesProvider } from '~/providers/CookiesProvider';
 import { CustomModalsProvider } from '~/providers/CustomModalsProvider';
 // import { ImageProcessingProvider } from '~/components/ImageProcessing';
 import { FeatureFlagsProvider } from '~/providers/FeatureFlagsProvider';
@@ -95,18 +94,6 @@ function MyApp(props: CustomAppProps) {
       ...pageProps
     },
   } = props;
-
-  // const getLayout =
-  //   Component.getLayout ??
-  //   ((page: ReactElement) => {
-  //     const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
-  //     return (
-  //       <FeatureLayout conditional={Component.options?.features}>
-  //         <AppLayout>{InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}</AppLayout>
-  //       </FeatureLayout>
-  //     );
-  //   });
-  console.log({ willIBARichMan_nananana: cookies.disableHidden });
 
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>

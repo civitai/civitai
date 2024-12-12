@@ -33,7 +33,7 @@ export function useAdsContext() {
 
 const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean }>(() => ({
   ready: false,
-  adsBlocked: false,
+  adsBlocked: true,
 }));
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
@@ -49,6 +49,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });
+  }
+
+  function handleLoaded() {
+    useAdProviderStore.setState({ adsBlocked: false });
   }
 
   useEffect(() => {
@@ -131,6 +135,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
             async
             src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
             onError={handleLoadedError}
+            onLoad={handleLoaded}
           />
 
           {/* Cleanup old ad tags */}
