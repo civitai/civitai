@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
+import { BlockedReason } from '~/server/common/enums';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
@@ -136,6 +137,7 @@ export type SearchBaseImage = {
   postedToId?: number;
   needsReview: string | null;
   promptNsfw?: boolean;
+  blockedFor: BlockedReason | null;
 };
 
 type Metrics = {
@@ -306,6 +308,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."type",
         i."userId",
         i."needsReview",
+        i."blockedFor",
         p."publishedAt",
         (
           CASE

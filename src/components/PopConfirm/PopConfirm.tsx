@@ -37,7 +37,7 @@ export function PopConfirm({
       <Popover.Dropdown>
         <Stack>
           {message}
-          <Group position="right">
+          <Group spacing={8} position="right">
             <Button variant="outline" compact onClick={handleCancel}>
               No
             </Button>

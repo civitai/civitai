@@ -46,6 +46,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       needsReview: null,
       reviewAction: undefined,
       reviewType: 'blocked',
+      userId,
     });
 
     const tracker = new Tracker(req, res);

@@ -1,4 +1,19 @@
 import { Prisma } from '@prisma/client';
+import {
+  AppealStatus,
+  Availability,
+  BlockImageReason,
+  CollectionMode,
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
+  EntityType,
+  ImageIngestionStatus,
+  MediaType,
+  ModelType,
+  ReportReason,
+  ReportStatus,
+  ReviewReactions,
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
@@ -77,7 +92,7 @@ import { upsertImageFlag } from '~/server/services/image-flag.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustCachesForPost, updatePostNsfwLevel } from '~/server/services/post.service';
-import { bulkSetReportStatus } from '~/server/services/report.service';
+import { bulkSetReportStatus, resolveEntityAppeal } from '~/server/services/report.service';
 import {
   getBlockedTags,
   getModeratedTags,
@@ -258,7 +273,8 @@ export const moderateImages = async ({
   needsReview,
   reviewType,
   reviewAction,
-}: ImageModerationSchema) => {
+  userId,
+}: ImageModerationSchema & { userId?: number }) => {
   if (reviewAction === 'delete') {
     const affected = await dbWrite.$queryRaw<AffectedImage[]>`
       SELECT id, "userId", "nsfwLevel", "pHash", "postId"
@@ -293,7 +309,7 @@ export const moderateImages = async ({
         details: {
           modelName: img.postId ? `post #${img.postId}` : 'a post',
           entity: 'image',
-          url: `/posts/${img.postId ?? ''}`,
+          url: `/images/${img.id ?? ''}`,
         },
       }).catch();
     }
@@ -358,6 +374,15 @@ export const moderateImages = async ({
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
       data: { disabled: true },
+    });
+
+    // Resolve any pending appeals
+    await resolveEntityAppeal({
+      ids: results.map((x) => x.id),
+      entityType: EntityType.Image,
+      status: AppealStatus.Approved,
+      resolvedMessage: 'Image approved',
+      userId,
     });
 
     // Update nsfw level of image
@@ -674,6 +699,7 @@ type GetAllImagesRaw = {
   mimeType: string | null;
   scannedAt: Date | null;
   ingestion: ImageIngestionStatus;
+  blockedFor: BlockedReason | null;
   needsReview: string | null;
   userId: number;
   index: number | null;
@@ -1160,6 +1186,7 @@ export const getAllImages = async (
       i.type,
       i.metadata,
       i.ingestion,
+      i."blockedFor",
       i."scannedAt",
       i."needsReview",
       i."userId",
@@ -2149,6 +2176,7 @@ export const getImage = async ({
       i."needsReview",
       i."postId",
       i.ingestion,
+      i."blockedFor",
       i.type,
       i.metadata,
       i."nsfwLevel",
@@ -2195,7 +2223,7 @@ export const getImage = async ({
         : // Now that moderators can review images without post, we need to make this optional
           // in case they land in an image-specific review flow
           `${isModerator ? 'LEFT ' : ''}JOIN "Post" p ON p.id = i."postId" ${
-            !isModerator ? 'AND p."publishedAt" < now()' : ''
+            !isModerator ? `AND (p."publishedAt" < now() OR p."userId" = ${userId})` : ''
           }`
     )}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -3325,6 +3353,43 @@ export const updateEntityImages = async ({
   }
 };
 
+const imageReviewQueueJoinMap = {
+  report: {
+    select: `
+      report.id as "reportId",
+      report.reason as "reportReason",
+      report.status as "reportStatus",
+      report.details as "reportDetails",
+      array_length("alsoReportedBy", 1) as "reportCount",
+      ur.username as "reportUsername",
+      ur.id as "reportUserId",
+    `,
+    join: `
+      JOIN "ImageReport" imgr ON i.id = imgr."imageId"
+      JOIN "Report" report ON report.id = imgr."reportId"
+      JOIN "User" ur ON ur.id = report."userId"
+    `,
+  },
+  appeal: {
+    select: `
+      appeal.id as "appealId",
+      appeal."appealMessage" as "appealMessage",
+      appeal."createdAt" as "appealCreatedAt",
+      au.id as "appealUserId",
+      au.username as "appealUsername",
+      mu.id as "moderatorId",
+      mu.username as "moderatorUsername",
+    `,
+    join: `
+      JOIN "Appeal" appeal ON appeal."entityId" = i.id AND appeal."entityType" = 'Image'
+      JOIN "User" au ON au.id = appeal."userId"
+      JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
+      JOIN "User" mu ON mu.id = ma."userId"
+    `,
+  },
+} as const;
+type AdditionalQueryKey = keyof typeof imageReviewQueueJoinMap;
+
 type GetImageModerationReviewQueueRaw = {
   id: number;
   name: string;
@@ -3340,6 +3405,7 @@ type GetImageModerationReviewQueueRaw = {
   mimeType: string;
   scannedAt: Date;
   ingestion: ImageIngestionStatus;
+  blockedFor: BlockedReason | null;
   needsReview: string | null;
   userId: number;
   index: number;
@@ -3364,6 +3430,13 @@ type GetImageModerationReviewQueueRaw = {
   reportUsername?: string;
   reportUserId?: number;
   reportCount?: number;
+  appealId?: number;
+  appealMessage?: string;
+  appealCreatedAt?: Date;
+  appealUserId?: number;
+  appealUsername?: string;
+  moderatorId?: number;
+  moderatorUsername?: string;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3416,21 +3489,8 @@ export const getImageModerationReviewQueue = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
-  const reportsJoin = `
-    JOIN "ImageReport" imgr ON i.id = imgr."imageId"
-    JOIN "Report" report ON report.id = imgr."reportId"
-    JOIN "User" ur ON ur.id = report."userId"
-  `;
-
-  const reportsSelect = `
-    report.id as "reportId",
-    report.reason as "reportReason",
-    report.status as "reportStatus",
-    report.details as "reportDetails",
-    array_length("alsoReportedBy", 1) as "reportCount",
-    ur.username as "reportUsername",
-    ur.id as "reportUserId",
-  `;
+  const queryKey = reportReview ? 'report' : (needsReview as AdditionalQueryKey);
+  const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
     -- Image moderation queue
@@ -3450,6 +3510,7 @@ export const getImageModerationReviewQueue = async ({
       i.type,
       i.metadata,
       i.ingestion,
+      i."blockedFor",
       i."scannedAt",
       i."needsReview",
       i."userId",
@@ -3463,13 +3524,13 @@ export const getImageModerationReviewQueue = async ({
       u."deletedAt",
       ic."entityType",
       ic."entityId",
-      ${Prisma.raw(reportReview ? reportsSelect : '')}
+      ${Prisma.raw(additionalQuery ? additionalQuery.select : '')}
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} "cursorId"
       FROM "Image" i
       JOIN "User" u ON u.id = i."userId"
       LEFT JOIN "Post" p ON p.id = i."postId"
       LEFT JOIN "ImageConnection" ic on ic."imageId" = i.id
-      ${Prisma.raw(reportReview ? reportsJoin : '')}
+      ${Prisma.raw(additionalQuery ? additionalQuery.join : '')}
       WHERE ${Prisma.join(AND, ' AND ')}
       ORDER BY ${Prisma.raw(orderBy)}
       LIMIT ${limit + 1}
@@ -3545,6 +3606,15 @@ export const getImageModerationReviewQueue = async ({
             user: { id: number; username?: string | null };
           }
         | undefined;
+      appeal?:
+        | {
+            id: number;
+            reason: string;
+            createdAt: Date;
+            user: { id: number; username?: string | null };
+            moderator?: { id: number; username?: string | null };
+          }
+        | undefined;
       publishedAt?: Date | null;
       modelVersionId?: number | null;
       entityType?: string | null;
@@ -3564,6 +3634,13 @@ export const getImageModerationReviewQueue = async ({
       reportUsername,
       reportUserId,
       reportCount,
+      appealId,
+      appealMessage,
+      appealCreatedAt,
+      appealUserId,
+      appealUsername,
+      moderatorId,
+      moderatorUsername,
       ...i
     }) => ({
       ...i,
@@ -3588,6 +3665,15 @@ export const getImageModerationReviewQueue = async ({
             status: reportStatus as ReportStatus,
             count: (reportCount ?? 0) + 1,
             user: { id: reportUserId as number, username: reportUsername },
+          }
+        : undefined,
+      appeal: appealId
+        ? {
+            id: appealId,
+            reason: appealMessage as string,
+            createdAt: appealCreatedAt as Date,
+            user: { id: appealUserId as number, username: appealUsername },
+            moderator: { id: moderatorId as number, username: moderatorUsername },
           }
         : undefined,
     })
