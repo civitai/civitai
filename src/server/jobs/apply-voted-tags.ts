@@ -194,7 +194,7 @@ async function applyDownvotes() {
       WHERE
           vote.vote < 0
         AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
-        AND applied."disabledAT" IS NULL
+        AND applied."disabledAt" IS NULL
     ), under_threshold AS (
       SELECT
         a."imageId",

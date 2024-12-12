@@ -207,6 +207,13 @@ export const serverSchema = z.object({
   // Youtube related:
   YOUTUBE_APP_CLIENT_ID: z.string().optional(),
   YOUTUBE_APP_CLIENT_SECRET: z.string().optional(),
+  YOUTUBE_VIDEO_UPLOAD_URL: z.string().optional(),
+
+  // Vimeo related:
+  VIMEO_ACCESS_TOKEN: z.string().optional(),
+  VIMEO_SECRET: z.string().optional(),
+  VIMEO_CLIENT_ID: z.string().optional(),
+  VIMEO_VIDEO_UPLOAD_URL: z.string().optional(),
 });
 
 /**

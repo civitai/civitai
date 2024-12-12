@@ -50,9 +50,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
         disableHidden: disableHidden ?? true,
         allowAds: user.allowAds ?? !isMember ? true : false,
         autoplayGifs: user.autoplayGifs ?? true,
-        blurNsfw: !Flags.intersection(user.browsingLevel, nsfwBrowsingLevelsFlag)
-          ? true
-          : user.blurNsfw,
+        blurNsfw: user.blurNsfw,
       },
     };
     if (!canViewNsfw) currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };

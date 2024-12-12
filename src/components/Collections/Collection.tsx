@@ -15,7 +15,7 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip,
+  Tooltip
 } from '@mantine/core';
 import { CollectionItemStatus } from '@prisma/client';
 import {
@@ -29,7 +29,7 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import React, { CSSProperties } from 'react';
+import { CSSProperties } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -72,7 +72,7 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
+import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -315,13 +315,13 @@ const ImageCollection = ({
               <AdaptiveFiltersDropdown>
                 <Stack>
                   <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
-                  <ToolSelect
-                    value={(query.tools ?? [])[0]}
-                    onChange={(toolId) => {
-                      if (!toolId) {
+                  <ToolMultiSelect
+                    value={query.tools ?? []}
+                    onChange={(tools) => {
+                      if (!tools) {
                         replace({ tools: undefined });
                       } else {
-                        replace({ tools: [toolId as number] });
+                        replace({ tools });
                       }
                     }}
                     placeholder="Created with..."
