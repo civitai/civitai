@@ -1,4 +1,4 @@
-import { ActionIcon, AspectRatio, Box, createStyles } from '@mantine/core';
+import { ActionIcon, createStyles } from '@mantine/core';
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
@@ -136,6 +136,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     }
 
     if (vimeoVideoId) {
+      console.log('USE VIMEO :V');
+
       return (
         <VimeoEmbed
           style={{ display: 'block', width: '100%', height: 'auto', ...style }}
