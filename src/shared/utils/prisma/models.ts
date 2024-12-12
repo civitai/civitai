@@ -1033,6 +1033,7 @@ export interface Image {
   scanJobs: JsonValue | null;
   assignedUser?: User | null;
   sortAt: Date;
+  minor: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   thread?: Thread | null;
