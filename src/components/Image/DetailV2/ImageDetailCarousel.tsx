@@ -201,6 +201,11 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.youtubeVideoId
                   : undefined
               }
+              vimeoVideoId={
+                image.type === 'video' && image.metadata
+                  ? (image.metadata as VideoMetadata)?.vimeoVideoId
+                  : undefined
+              }
             />
           )}
         </div>
