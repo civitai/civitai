@@ -4,7 +4,6 @@ import PersonalizedHomepage from '~/pages/home';
 import ModelsPage from '~/pages/models';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,

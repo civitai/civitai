@@ -16,6 +16,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { Flags } from '~/shared/utils';
+import { useRouter } from 'next/router';
 
 const BrowsingModeOverrideCtx = createContext<{
   browsingLevelOverride: number;
@@ -30,6 +31,7 @@ export function BrowsingModeOverrideProvider({
   children: React.ReactNode;
   browsingLevel?: number;
 }) {
+  const router = useRouter();
   const { canViewNsfw } = useFeatureFlags();
   const currentBrowsingLevel = useBrowsingSettings((state) => state.browsingLevel);
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
@@ -58,9 +60,11 @@ export function BrowsingModeOverrideProvider({
     () =>
       blurNsfw
         ? nsfwBrowsingLevelsFlag
-        : Flags.arrayToInstance(
+        : !router.asPath.startsWith('/moderator')
+        ? Flags.arrayToInstance(
             nsfwBrowsingLevelsArray.filter((level) => !Flags.hasFlag(currentBrowsingLevel, level))
-          ),
+          )
+        : 0, // TODO - allow mods to view all levels unblurred
     [debouncedBrowsingLevel, blurNsfw]
   );
 

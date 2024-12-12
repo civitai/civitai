@@ -15,7 +15,7 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Tooltip
+  Tooltip,
 } from '@mantine/core';
 import { CollectionItemStatus } from '@prisma/client';
 import {
@@ -29,7 +29,7 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { CSSProperties } from 'react';
+import { CSSProperties, useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -207,9 +207,12 @@ const ImageCollection = ({
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
+  const [toolSearchOpened, setToolSearchOpened] = useState(false);
+
   // For contest collections, we need to keep the filters clean from outside intervention.
   const filters = isContestCollection
     ? {
+        ...query,
         generation: undefined,
         view: undefined,
         hideAutoResources: undefined,
@@ -312,7 +315,10 @@ const ImageCollection = ({
           )}
           {isContestCollection && (
             <Group position="right">
-              <AdaptiveFiltersDropdown>
+              <AdaptiveFiltersDropdown
+                // Small hack to make the dropdown visible when the dropdown is open
+                dropdownProps={{ className: toolSearchOpened ? '!overflow-visible' : undefined }}
+              >
                 <Stack>
                   <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
                   <ToolMultiSelect
@@ -325,6 +331,9 @@ const ImageCollection = ({
                       }
                     }}
                     placeholder="Created with..."
+                    // Needed to hack the select dropdown to be visible when the dropdown is open
+                    onDropdownOpen={() => setToolSearchOpened(true)}
+                    onDropdownClose={() => setToolSearchOpened(false)}
                   />
                 </Stack>
               </AdaptiveFiltersDropdown>

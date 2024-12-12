@@ -95,17 +95,6 @@ function MyApp(props: CustomAppProps) {
     },
   } = props;
 
-  // const getLayout =
-  //   Component.getLayout ??
-  //   ((page: ReactElement) => {
-  //     const InnerLayout = Component.options?.InnerLayout ?? Component.options?.innerLayout;
-  //     return (
-  //       <FeatureLayout conditional={Component.options?.features}>
-  //         <AppLayout>{InnerLayout ? <InnerLayout>{page}</InnerLayout> : page}</AppLayout>
-  //       </FeatureLayout>
-  //     );
-  //   });
-
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
       {Component.getLayout?.(page) ?? (

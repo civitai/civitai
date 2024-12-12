@@ -2,7 +2,7 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AdFeedItem, useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
