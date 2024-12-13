@@ -1,7 +1,8 @@
 import { Card, CardProps, createPolymorphicComponent } from '@mantine/core';
-import { forwardRef } from 'react';
+import { forwardRef, useMemo } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { useFrameStyles } from '~/components/Cards/Cards.styles';
+import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
 
 type MasonryCardProps = CardProps & {
   height?: number;
@@ -20,6 +21,7 @@ const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
     return (
       <div ref={ref} className={frameDecoration ? classes.glow : undefined}>
         <div className={frameDecoration ? classes.frame : undefined}>
+          <CosmeticLights frameDecoration={frameDecoration} />
           <Card style={{ height, ...style }} className={cx(classes.root, className)} {...props}>
             {children}
           </Card>

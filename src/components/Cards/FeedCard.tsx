@@ -3,6 +3,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { useFrameStyles } from '~/components/Cards/Cards.styles';
+import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -79,6 +80,7 @@ export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
         <div
           className={cx(frameDecoration && 'frame-decoration', frameDecoration && classes.frame)}
         >
+          <CosmeticLights frameDecoration={frameDecoration} />
           {card}
         </div>
       </div>

@@ -38,6 +38,7 @@ export function TwCosmeticWrapper({
       styleRef.current['--borderWidth'] = `${borderWidth ?? 1}px`;
     }
   }
+  // TODO.holiday - add CosmeticLights
 
   return (
     <div

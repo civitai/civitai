@@ -1,0 +1,121 @@
+$offset: -3px;
+
+.light {
+  position: absolute;
+  top: 10px;
+  left: $offset;
+  right: $offset;
+  bottom: 10px;
+
+  span {
+    width: 10px;
+    height: 15px;
+    position: absolute;
+
+    &::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      filter: blur(3px);
+    }
+
+    &:nth-child(odd) {
+      border-radius: 50% 0 0 50%;
+      left: 0;
+      &::before {
+        left: -3px;
+      }
+    }
+
+    &:nth-child(even) {
+      border-radius: 0 50% 50% 0;
+      right: 0;
+      &::before {
+        right: -3px;
+      }
+    }
+
+    @for $i from 1 through 12 {
+      &:nth-child(#{$i}) {
+        top: calc(100% / 6 * #{($i - 1) / 2});
+      }
+    }
+  }
+
+  &.red span {
+    background: rgba(255, 0, 0, 0.8);
+    &::before {
+      background: rgba(255, 0, 0, 0.5);
+    }
+  }
+
+  &.green span {
+    background: rgba(0, 255, 0, 0.8);
+    &::before {
+      background: rgba(0, 255, 0, 0.5);
+    }
+  }
+
+  &.blue span {
+    background: rgba(0, 250, 255, 0.8);
+    &::before {
+      background: rgba(0, 150, 255, 0.5);
+    }
+  }
+
+  &.yellow span {
+    background: rgba(255, 255, 0, 0.8);
+    &::before {
+      background: rgba(255, 255, 0, 0.5);
+    }
+  }
+
+  // TODO.holiday - make brightness affect before distance on left and right
+
+  // TODO.holiday - add animation to pulsate opacity of before
+
+  // &.brightness-100 span {
+  //   opacity: 1;
+  // }
+
+  // &.brightness-75 span {
+  //   opacity: 0.75;
+  //   &::before {
+  //     opacity: 0.5;
+  //   }
+  // }
+
+  // &.brightness-50 span {
+  //   opacity: 0.75;
+  //   &::before {
+  //     opacity: 0.75;
+  //   }
+  //   &:nth-child(even) {
+  //     &::before {
+  //       right: -3px;
+  //     }
+  //   }
+  //   &:nth-child(odd) {
+  //     &::before {
+  //       left: -3px;
+  //     }
+  //   }
+  // }
+
+  // &.brightness-25 span {
+  //   opacity: 0.5;
+  //   &::before {
+  //     opacity: 0.75;
+  //   }
+  //   &:nth-child(even) {
+  //     &::before {
+  //       right: -1px;
+  //     }
+  //   }
+  //   &:nth-child(odd) {
+  //     &::before {
+  //       left: -1px;
+  //     }
+  //   }
+  // }
+}
