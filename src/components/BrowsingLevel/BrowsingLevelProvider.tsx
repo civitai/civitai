@@ -16,7 +16,9 @@ const BrowsingModeOverrideCtx = createContext<{
   blurLevels: number;
   setBrowsingLevelOverride?: React.Dispatch<React.SetStateAction<number | undefined>>;
 }>({ browsingLevel: publicBrowsingLevelsFlag, blurLevels: nsfwBrowsingLevelsFlag });
+
 export const useBrowsingLevelContext = () => useContext(BrowsingModeOverrideCtx);
+
 export function BrowsingLevelProvider({
   children,
   browsingLevel: parentBrowsingLevelOverride,
@@ -60,7 +62,8 @@ export function BrowsingLevelProvider({
     <BrowsingModeOverrideCtx.Provider
       value={{
         blurLevels,
-        browsingLevel: currentBrowsingLevel < browsingLevel ? currentBrowsingLevel : browsingLevel,
+        // browsingLevel: currentBrowsingLevel < browsingLevel ? currentBrowsingLevel : browsingLevel,
+        browsingLevel,
         setBrowsingLevelOverride,
       }}
     >

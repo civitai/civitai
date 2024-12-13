@@ -540,9 +540,7 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <BrowsingLevelProvider
-      browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
-    >
+    <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
