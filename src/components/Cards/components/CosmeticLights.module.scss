@@ -3,15 +3,15 @@ $width: 10px;
 $height: 15px;
 
 .light {
-  position: relative;
-  // top: 10px;
-  // left: $offset;
-  // right: $offset;
-  // bottom: 10px;
+  position: absolute;
+  top: 10px;
+  left: $offset;
+  right: $offset;
+  bottom: 10px;
 
   span {
-    width: $width;
-    height: $height;
+    width: 10px;
+    height: 15px;
     position: absolute;
 
     &::before {
@@ -23,9 +23,9 @@ $height: 15px;
 
     &:nth-child(odd) {
       border-radius: 50% 0 0 50%;
-      left: -$width;
+      left: 0;
       &::before {
-        left: -calc($width + 3px);
+        left: -3px;
       }
     }
 
@@ -33,7 +33,7 @@ $height: 15px;
       border-radius: 0 50% 50% 0;
       right: 0;
       &::before {
-        right: 3px;
+        right: -3px;
       }
     }
 

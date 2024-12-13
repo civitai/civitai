@@ -43,14 +43,6 @@ export function TwCosmeticWrapper({
       styleRef.current['--borderWidth'] = `${borderWidth ?? 1}px`;
     }
   }
-  // TODO.holiday - add CosmeticLights
-
-  const content =
-    type === 'holiday-frame' ? (
-      <CosmeticLights cosmetic={cosmetic as any}>{children}</CosmeticLights>
-    ) : (
-      children
-    );
 
   return (
     <div
@@ -66,8 +58,8 @@ export function TwCosmeticWrapper({
       )}
       {...props}
     >
-      <CosmeticLights cosmetic={cosmetic as any}>{children}</CosmeticLights>
-      {/* {content} */}
+      <CosmeticLights cosmetic={cosmetic as any} />
+      {children}
     </div>
   );
 }
