@@ -23,7 +23,13 @@ export type EdgeMediaProps = EdgeUrlProps &
     metadata?: ImageMetadata | VideoMetadata | null;
     youtubeVideoId?: string;
     vimeoVideoId?: string;
+    thumbnailUrl?: string | null;
   };
+
+type InternalState = {
+  src: string;
+  anim?: boolean;
+};
 
 export function EdgeMedia({
   src,
@@ -53,6 +59,7 @@ export function EdgeMedia({
   videoRef,
   youtubeVideoId,
   vimeoVideoId,
+  thumbnailUrl,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -62,14 +69,17 @@ export function EdgeMedia({
   useEffect(() => {
     mediaRef?.[1](imgRef.current);
   }, [mediaRef]);
-  const [internalAnim, setInternalAnim] = useState(anim);
+  const [internalState, setInternalState] = useState<InternalState>({
+    anim,
+    src: thumbnailUrl ?? src,
+  });
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
-  const { url, type: inferredType } = useEdgeUrl(src, {
+  const { url, type: inferredType } = useEdgeUrl(internalState.src, {
     width,
     height,
     fit,
-    anim: internalAnim ?? anim,
+    anim: internalState.anim ?? anim,
     transcode,
     blur,
     quality,
@@ -81,16 +91,17 @@ export function EdgeMedia({
   });
 
   const { start, clear } = useTimeout(() => {
-    setInternalAnim(true);
+    setInternalState({ anim: true, src: src });
   }, 1000);
 
   const handleMouseOut = () => {
-    if (!anim && internalAnim) setInternalAnim(false);
+    if (!anim && internalState.anim) setInternalState({ anim: false, src: thumbnailUrl ?? src });
     clear();
   };
 
   switch (inferredType) {
     case 'image': {
+      // TODO: rework video cover logic
       const img = (
         // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
         <img

@@ -98,6 +98,7 @@ function UnroutedImageCard({ data }: Props) {
                   <EdgeMedia2
                     metadata={data.metadata}
                     src={data.url}
+                    thumbnailUrl={data.thumbnailUrl}
                     name={data.name ?? data.id.toString()}
                     alt={data.name ?? undefined}
                     type={data.type}

@@ -374,6 +374,7 @@ export function ImagesAsPostsCard({
                               <EdgeMedia2
                                 metadata={image.metadata}
                                 src={image.url}
+                                thumbnailUrl={image.thumbnailUrl}
                                 name={image.name ?? image.id.toString()}
                                 alt={image.name ?? undefined}
                                 type={image.type}
@@ -498,6 +499,7 @@ export function ImagesAsPostsCard({
                                         <EdgeMedia2
                                           metadata={image.metadata}
                                           src={image.url}
+                                          thumbnailUrl={image.thumbnailUrl}
                                           name={image.name ?? image.id.toString()}
                                           alt={image.name ?? undefined}
                                           type={image.type}

@@ -233,7 +233,7 @@ export function BrowsingLevelBadge({
       className={badgeClass}
       {...badgeProps}
     >
-      {browsingLevelLabels[browsingLevel as NsfwLevel]}
+      {browsingLevelLabels[browsingLevel as NsfwLevel] ?? '?'}
     </Badge>
   );
 }

@@ -942,7 +942,6 @@ function EditDetail() {
                           src: image.url,
                           duration: metadata?.duration ?? 1,
                           width: metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH,
-                          height: metadata?.height ?? 1,
                           postId,
                           thumbnailFrame: metadata?.thumbnailFrame,
                         },
@@ -954,19 +953,14 @@ function EditDetail() {
                   </Button>
                 </div>
                 <div className="flex items-center gap-2">
-                  {image.metadata &&
-                  'thumbnailFrame' in image.metadata &&
-                  image.metadata.thumbnailFrame != null ? (
-                    <CurrentThumbnail
-                      imageId={image.id}
-                      postId={postId}
-                      src={image.url}
-                      thumbnailFrame={image.metadata.thumbnailFrame}
-                      width={image.metadata.width}
-                    />
-                  ) : (
-                    <Text>Thumbnail will be auto generated.</Text>
-                  )}
+                  <CurrentThumbnail
+                    imageId={image.id}
+                    postId={postId}
+                    src={image.url}
+                    thumbnailFrame={(image.metadata as VideoMetadata)?.thumbnailFrame}
+                    thumbnailUrl={image.thumbnailUrl}
+                    width={image.metadata.width}
+                  />
                 </div>
               </CustomCard>
             )}

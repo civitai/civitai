@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -78,6 +77,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       <EdgeMedia2
                         metadata={image.metadata}
                         src={image.url}
+                        thumbnailUrl={image.thumbnailUrl}
                         className={cx(sharedClasses.image, { ['opacity-30']: isBlocked })}
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}

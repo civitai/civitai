@@ -12,7 +12,12 @@ import { dbRead } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { tagCache, tagIdsForImagesCache, userBasicCache } from '~/server/redis/caches';
+import {
+  tagCache,
+  tagIdsForImagesCache,
+  thumbnailCache,
+  userBasicCache,
+} from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
@@ -167,6 +172,7 @@ const transformData = async ({
   tools,
   techs,
   modelVersions,
+  thumbnails,
 }: {
   images: BaseImage[];
   imageTags: ImageTags;
@@ -178,6 +184,7 @@ const transformData = async ({
   tools: { imageId: number; tool: string }[];
   techs: { imageId: number; tech: string }[];
   modelVersions: ModelVersions[];
+  thumbnails: Awaited<ReturnType<typeof thumbnailCache.fetch>>;
 }) => {
   console.log(`transformData :: Transforming data for ${images.length} images`);
 
@@ -199,14 +206,17 @@ const transformData = async ({
       const toolNames = tools.filter((t) => t.imageId === id).map((t) => t.tool);
       const techniqueNames = techs.filter((t) => t.imageId === id).map((t) => t.tech);
       const baseModel = modelVersions.find((m) => m.id === id)?.baseModel?.find((bm) => !!bm);
+      const thumbnail = thumbnails[id] ?? null;
+
+      const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, imageRecord.nsfwLevel);
 
       return {
         ...imageRecord,
         id,
-        nsfwLevel: imageRecord.nsfwLevel,
+        nsfwLevel,
         combinedNsfwLevel: nsfwLevelLocked
-          ? imageRecord.nsfwLevel
-          : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
+          ? nsfwLevel
+          : Math.max(nsfwLevel, imageRecord.aiNsfwLevel),
         createdAtUnix: imageRecord.createdAt.getTime(),
         aspectRatio:
           !imageRecord.width || !imageRecord.height
@@ -227,6 +237,7 @@ const transformData = async ({
         techniqueNames,
         baseModel,
         reactions: [],
+        thumbnailUrl: thumbnail?.url ?? null,
         cosmetic: imageCosmetics[id] ?? null,
         stats: {
           cryCountAllTime: imageMetrics?.cryCount ?? 0,
@@ -255,7 +266,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   indexName: INDEX_ID,
   setup: onIndexSetup,
   maxQueueSize: 100, // Avoids hogging too much memory.
-  pullSteps: 6,
+  pullSteps: 7,
   prepareBatches: async ({ pg, jobContext }, lastUpdatedAt) => {
     const lastUpdateIso = lastUpdatedAt?.toISOString();
 
@@ -510,6 +521,17 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
 
         result.techs ??= [];
         result.techs.push(...techs);
+        continue;
+      }
+
+      // Get thumbnails
+      if (step === 6) {
+        logger(`Pulling thumbnails :: ${indexName} ::`, batchLogKey, subBatchLogKey);
+
+        const thumbnails = await thumbnailCache.fetch(batch);
+
+        result.thumbnails ??= {};
+        Object.assign(result.thumbnails, thumbnails);
         continue;
       }
 

@@ -10,7 +10,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { Dropzone, FileWithPath } from '@mantine/dropzone';
+import { Dropzone, DropzoneProps, FileWithPath } from '@mantine/dropzone';
 import { useDidUpdate } from '@mantine/hooks';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPhoto, IconTrash, IconUpload, IconX } from '@tabler/icons-react';
@@ -28,13 +28,15 @@ import { formatBytes } from '~/utils/number-helpers';
 type SimpleImageUploadProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?:
     | string
-    | { id: number; nsfwLevel?: number; userId?: number; user?: { id: number }; url: string };
+    | { id?: number; nsfwLevel?: number; userId?: number; user?: { id: number }; url: string };
   onChange?: (value: DataFromFile | null) => void;
   previewWidth?: number;
   maxSize?: number;
   aspectRatio?: number;
   children?: React.ReactNode;
+  dropzoneProps?: Omit<DropzoneProps, 'children' | 'onDrop'>;
   previewDisabled?: boolean;
+  withNsfwLevel?: boolean;
 };
 
 export function SimpleImageUpload({
@@ -45,6 +47,8 @@ export function SimpleImageUpload({
   aspectRatio,
   children,
   previewDisabled,
+  dropzoneProps,
+  withNsfwLevel = true,
   ...props
 }: SimpleImageUploadProps) {
   const theme = useMantineTheme();
@@ -166,7 +170,7 @@ export function SimpleImageUpload({
                   }
             }
           >
-            {!!value && typeof value !== 'string' && (
+            {withNsfwLevel && !!value && typeof value !== 'string' && (
               <BrowsingLevelBadge
                 browsingLevel={value.nsfwLevel}
                 className="absolute left-2 top-2 z-10"
@@ -183,10 +187,6 @@ export function SimpleImageUpload({
         </div>
       ) : (
         <Dropzone
-          onDrop={handleDrop}
-          accept={IMAGE_MIME_TYPE}
-          maxFiles={1}
-          // maxSize={maxSize}
           mt={5}
           styles={(theme) => ({
             root:
@@ -197,6 +197,11 @@ export function SimpleImageUpload({
                   }
                 : undefined,
           })}
+          {...dropzoneProps}
+          onDrop={handleDrop}
+          accept={IMAGE_MIME_TYPE}
+          maxFiles={1}
+          // maxSize={maxSize}
         >
           <Dropzone.Accept>
             <Group position="center" spacing="xs">
