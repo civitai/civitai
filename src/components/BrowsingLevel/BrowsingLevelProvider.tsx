@@ -60,7 +60,7 @@ export function BrowsingLevelProvider({
     <BrowsingModeOverrideCtx.Provider
       value={{
         blurLevels,
-        browsingLevel,
+        browsingLevel: currentBrowsingLevel < browsingLevel ? currentBrowsingLevel : browsingLevel,
         setBrowsingLevelOverride,
       }}
     >
