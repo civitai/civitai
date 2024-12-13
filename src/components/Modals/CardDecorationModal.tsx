@@ -249,7 +249,7 @@ export const PreviewCard = ({
     <MasonryCard
       height={cardHeight}
       frameDecoration={decoration}
-      className={decoration && classes.frameAdjustment}
+      // className={decoration && classes.frameAdjustment}
     >
       <EdgeMedia src={image.url} className={classes.image} width={imageWidth} anim={true} />
     </MasonryCard>
