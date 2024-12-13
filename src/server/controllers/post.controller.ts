@@ -1,9 +1,11 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
+import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { VideoMetadata } from '~/server/schema/media.schema';
 import {
   AddResourceToPostImageInput,
   PostCreateInput,
@@ -24,8 +26,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
+import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from './../schema/base.schema';
 import {
@@ -138,6 +142,7 @@ export const updatePostHandler = async ({
         id: true,
         nsfwLevel: true,
         title: true,
+        detail: true,
       },
     });
 
@@ -232,6 +237,14 @@ export const updatePostHandler = async ({
       user: ctx.user,
     });
 
+    const collection = updatedPost.collectionId
+      ? await getCollectionById({
+          input: {
+            id: updatedPost.collectionId,
+          },
+        })
+      : undefined;
+
     const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
     if (wasPublished) {
       const postTags = await dbRead.postTag.findMany({
@@ -255,14 +268,8 @@ export const updatePostHandler = async ({
       }
 
       // Technically, collectionPosts cannot be scheduled.
-      if (!!updatedPost?.collectionId) {
+      if (!!updatedPost?.collectionId && collection) {
         // Create the relevant collectionItem:
-        const collection = await getCollectionById({
-          input: {
-            id: updatedPost.collectionId,
-          },
-        });
-
         const permissions = await getUserCollectionPermissionsById({
           id: updatedPost.collectionId,
           userId: ctx.user.id,
@@ -358,6 +365,48 @@ export const updatePostHandler = async ({
           entityType: 'post',
           entityId: updatedPost.id,
         });
+      }
+    }
+
+    if (
+      post?.collectionId &&
+      collection?.metadata?.vimeoSupportEnabled &&
+      (post.title !== updatedPost.title || post.detail !== updatedPost.detail) &&
+      // We need title for Vimeo. This is required.
+      !!updatedPost.title &&
+      // We need the access token to update the video.
+      env.VIMEO_ACCESS_TOKEN
+    ) {
+      // UPDATE VIMEO ITEMS IF EXISTS:
+      const images = await dbWrite.image.findMany({
+        where: {
+          postId: updatedPost.id,
+        },
+        select: {
+          id: true,
+          metadata: true,
+        },
+      });
+
+      const vimeoVideoIds = images
+        .map((i) => (i.metadata as VideoMetadata).vimeoVideoId)
+        .filter(isDefined);
+
+      if (vimeoVideoIds.length) {
+        await Promise.all(
+          vimeoVideoIds.map(async (vimeoVideoId) => {
+            try {
+              await updateVimeoVideo({
+                videoId: vimeoVideoId,
+                title: updatedPost.title as string,
+                description: updatedPost.detail,
+                accessToken: env.VIMEO_ACCESS_TOKEN as string,
+              });
+            } catch (error) {
+              // Do nothing atm. We just ignore the error.
+            }
+          })
+        );
       }
     }
   } catch (error) {
