@@ -12,12 +12,12 @@ import { Flags } from '~/shared/utils';
 import { useRouter } from 'next/router';
 
 const BrowsingModeOverrideCtx = createContext<{
-  browsingLevelOverride: number;
+  browsingLevel: number;
   blurLevels: number;
   setBrowsingLevelOverride?: React.Dispatch<React.SetStateAction<number | undefined>>;
-}>({ browsingLevelOverride: publicBrowsingLevelsFlag, blurLevels: nsfwBrowsingLevelsFlag });
-export const useBrowsingModeOverrideContext = () => useContext(BrowsingModeOverrideCtx);
-export function BrowsingModeOverrideProvider({
+}>({ browsingLevel: publicBrowsingLevelsFlag, blurLevels: nsfwBrowsingLevelsFlag });
+export const useBrowsingLevelContext = () => useContext(BrowsingModeOverrideCtx);
+export function BrowsingLevelProvider({
   children,
   browsingLevel: parentBrowsingLevelOverride,
 }: {
@@ -48,11 +48,11 @@ export function BrowsingModeOverrideProvider({
     () =>
       blurNsfw
         ? nsfwBrowsingLevelsFlag
-        : !router.asPath.includes('moderator')
-        ? Flags.arrayToInstance(
+        : router.asPath.includes('moderator')
+        ? 0 // allow mods to view all levels unblurred
+        : Flags.arrayToInstance(
             nsfwBrowsingLevelsArray.filter((level) => !Flags.hasFlag(currentBrowsingLevel, level))
-          )
-        : 0, // TODO - allow mods to view all levels unblurred
+          ),
     [browsingLevel, blurNsfw]
   );
 
@@ -60,7 +60,7 @@ export function BrowsingModeOverrideProvider({
     <BrowsingModeOverrideCtx.Provider
       value={{
         blurLevels,
-        browsingLevelOverride: browsingLevel,
+        browsingLevel,
         setBrowsingLevelOverride,
       }}
     >
@@ -70,6 +70,20 @@ export function BrowsingModeOverrideProvider({
 }
 
 export function useBrowsingLevelDebounced() {
-  const { browsingLevelOverride } = useBrowsingModeOverrideContext();
+  const { browsingLevel: browsingLevelOverride } = useBrowsingLevelContext();
   return browsingLevelOverride;
+}
+
+export function BrowsingLevelProviderOptional({
+  children,
+  browsingLevel,
+}: {
+  children: React.ReactElement;
+  browsingLevel?: number;
+}) {
+  return browsingLevel ? (
+    <BrowsingLevelProvider browsingLevel={browsingLevel}>{children}</BrowsingLevelProvider>
+  ) : (
+    children
+  );
 }

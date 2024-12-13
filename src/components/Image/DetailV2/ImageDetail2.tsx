@@ -37,7 +37,7 @@ import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
@@ -217,7 +217,7 @@ export function ImageDetail2() {
       />
       <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
         <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
-        <BrowsingModeOverrideProvider browsingLevel={image.nsfwLevel}>
+        <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
               <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
@@ -451,7 +451,7 @@ export function ImageDetail2() {
             </div>
             <AdhesiveAd closeable={false} preserveLayout />
           </div>
-        </BrowsingModeOverrideProvider>
+        </BrowsingLevelProvider>
       </SensitiveShield>
     </>
   );

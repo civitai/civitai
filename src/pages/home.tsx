@@ -23,7 +23,7 @@ import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { isProd } from '~/env/other';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
 import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
@@ -75,7 +75,7 @@ export default function Home() {
             },
           })}
         >
-          <BrowsingModeOverrideProvider browsingLevel={sfwBrowsingLevelsFlag}>
+          <BrowsingLevelProvider browsingLevel={sfwBrowsingLevelsFlag}>
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 1 && i > 0;
               return (
@@ -108,8 +108,8 @@ export default function Home() {
                 </React.Fragment>
               );
             })}
-          </BrowsingModeOverrideProvider>
-          <BrowsingModeOverrideProvider browsingLevel={publicBrowsingLevelsFlag}>
+          </BrowsingLevelProvider>
+          <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
             {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
               <Box ref={ref}>
                 <MasonryContainer py={32}>
@@ -247,7 +247,7 @@ export default function Home() {
                 </MasonryContainer>
               </Box>
             )}
-          </BrowsingModeOverrideProvider>
+          </BrowsingLevelProvider>
         </Box>
       </MasonryProvider>
     </>

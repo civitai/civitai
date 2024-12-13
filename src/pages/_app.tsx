@@ -22,7 +22,10 @@ import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { CustomNextPage } from '~/components/AppLayout/Page';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  BrowsingLevelProviderOptional,
+  BrowsingLevelProvider,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
 // import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -97,7 +100,7 @@ function MyApp(props: CustomAppProps) {
 
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
-      <BrowsingModeOverrideProvider browsingLevel={Component.browsingLevel}>
+      <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
         {Component.getLayout?.(page) ?? (
           <AppLayout
             left={Component.left}
@@ -110,7 +113,7 @@ function MyApp(props: CustomAppProps) {
             {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
           </AppLayout>
         )}
-      </BrowsingModeOverrideProvider>
+      </BrowsingLevelProviderOptional>
     </FeatureLayout>
   );
 
@@ -137,7 +140,7 @@ function MyApp(props: CustomAppProps) {
                 <AccountProvider>
                   <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
                     <BrowserSettingsProvider>
-                      <BrowsingModeOverrideProvider>
+                      <BrowsingLevelProvider>
                         <SignalProvider>
                           <ActivityReportingProvider>
                             <ReferralsProvider {...cookies.referrals}>
@@ -176,7 +179,7 @@ function MyApp(props: CustomAppProps) {
                             </ReferralsProvider>
                           </ActivityReportingProvider>
                         </SignalProvider>
-                      </BrowsingModeOverrideProvider>
+                      </BrowsingLevelProvider>
                     </BrowserSettingsProvider>
                   </CivitaiSessionProvider>
                 </AccountProvider>
