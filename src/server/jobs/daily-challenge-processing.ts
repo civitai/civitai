@@ -114,6 +114,7 @@ async function createUpcomingChallenge() {
         AND ci."status" = 'ACCEPTED'
         AND m."userId" = ${randomUser.userId}
         AND m.status = 'Published'
+        AND m.mode IS NULL
       `;
     if (!resourceIds.length) continue;
 
