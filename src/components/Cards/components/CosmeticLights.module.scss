@@ -1,15 +1,17 @@
-$offset: -3px;
+$offset: 3px;
+$width: 10px;
+$height: 15px;
 
 .light {
-  position: absolute;
-  top: 10px;
-  left: $offset;
-  right: $offset;
-  bottom: 10px;
+  position: relative;
+  // top: 10px;
+  // left: $offset;
+  // right: $offset;
+  // bottom: 10px;
 
   span {
-    width: 10px;
-    height: 15px;
+    width: $width;
+    height: $height;
     position: absolute;
 
     &::before {
@@ -21,9 +23,9 @@ $offset: -3px;
 
     &:nth-child(odd) {
       border-radius: 50% 0 0 50%;
-      left: 0;
+      left: -$width;
       &::before {
-        left: -3px;
+        left: -calc($width + 3px);
       }
     }
 
@@ -31,7 +33,7 @@ $offset: -3px;
       border-radius: 0 50% 50% 0;
       right: 0;
       &::before {
-        right: -3px;
+        right: 3px;
       }
     }
 
@@ -71,51 +73,91 @@ $offset: -3px;
   }
 
   // TODO.holiday - make brightness affect before distance on left and right
-
   // TODO.holiday - add animation to pulsate opacity of before
 
-  // &.brightness-100 span {
-  //   opacity: 1;
-  // }
+  &.brightness-100 span {
+    animation: flicker-100 1s ease-in-out infinite alternate
+  }
 
-  // &.brightness-75 span {
-  //   opacity: 0.75;
-  //   &::before {
-  //     opacity: 0.5;
-  //   }
-  // }
+  &.brightness-75 span {
+    opacity: 0.75;
+    &::before {
+      opacity: 0.5;
+    }
+  }
 
-  // &.brightness-50 span {
-  //   opacity: 0.75;
-  //   &::before {
-  //     opacity: 0.75;
-  //   }
-  //   &:nth-child(even) {
-  //     &::before {
-  //       right: -3px;
-  //     }
-  //   }
-  //   &:nth-child(odd) {
-  //     &::before {
-  //       left: -3px;
-  //     }
-  //   }
-  // }
+  &.brightness-50 span {
+    opacity: 0.75;
+    &::before {
+      opacity: 0.75;
+    }
+    &:nth-child(even) {
+      &::before {
+        right: -3px;
+      }
+    }
+    &:nth-child(odd) {
+      &::before {
+        left: -3px;
+      }
+    }
+  }
 
-  // &.brightness-25 span {
-  //   opacity: 0.5;
-  //   &::before {
-  //     opacity: 0.75;
-  //   }
-  //   &:nth-child(even) {
-  //     &::before {
-  //       right: -1px;
-  //     }
-  //   }
-  //   &:nth-child(odd) {
-  //     &::before {
-  //       left: -1px;
-  //     }
-  //   }
-  // }
+  &.brightness-25 span {
+    opacity: 0.5;
+    &::before {
+      opacity: 0.75;
+    }
+    &:nth-child(even) {
+      &::before {
+        right: -1px;
+      }
+    }
+    &:nth-child(odd) {
+      &::before {
+        left: -1px;
+      }
+    }
+  }
+}
+
+
+@keyframes flicker-100 {
+  0% {
+    opacity: 0.95;
+  }
+
+  100% {
+    opacity: 1;
+  }
+}
+
+@keyframes flicker-75 {
+  0% {
+    opacity: 0.85;
+  }
+
+  100% {
+    opacity: 0.9;
+  }
+}
+
+@keyframes flicker-50 {
+  0% {
+    opacity: 0.75;
+  }
+
+  100% {
+    opacity: 0.8;
+  }
+}
+
+@keyframes flicker-25 {
+  0% {
+    opacity: 0.65;
+  }
+
+  100% {
+    opacity: 0.7;
+  }
 }
