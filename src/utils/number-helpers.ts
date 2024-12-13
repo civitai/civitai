@@ -83,7 +83,6 @@ export function abbreviateNumber(
   if (floor) {
     value = Math.floor(value);
   }
-  console.log({ value });
 
   const formattedValue =
     Math.round(value * Math.pow(10, decimals ?? 0)) / Math.pow(10, decimals ?? 0);
