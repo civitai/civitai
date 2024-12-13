@@ -55,13 +55,13 @@ export function WelcomeCard({ event, about }: { event: string; about: string }) 
             <Group spacing="lg" noWrap>
               <IconMoodPlus size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                Join the contest to get your lights.
+                Join the event to get your lights.
               </Text>
             </Group>
             <Group spacing="lg" noWrap>
               <IconBulb size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                Earn a lightbulb for every day you post new content.
+                Earn a lightbulb for each holiday challenge you participate in.
               </Text>
             </Group>
             <Group spacing="lg" noWrap>
@@ -73,8 +73,7 @@ export function WelcomeCard({ event, about }: { event: string; about: string }) 
             <Group spacing="lg" noWrap>
               <IconHeartHandshake size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                All Buzz purchased and put into the Spirit Bank will be donated to the Juvenile
-                Diabetes Research Foundation.
+                All Buzz purchased and put into the Spirit Bank will be donated to Breakthrough T1D (formerly JDRF).
               </Text>
             </Group>
           </Stack>

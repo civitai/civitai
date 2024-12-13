@@ -31,6 +31,7 @@ import { markdownToHtml } from '~/utils/markdown-helpers';
 import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { createJob } from './job';
+import { eventEngine } from '~/server/events';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -450,6 +451,18 @@ async function reviewEntries() {
   // Get users that have recently added new entries
   const userIds = [...new Set(recentEntries.map((entry) => entry.userId))];
   if (userIds.length > 0) {
+    // Process event engagement for approved entries
+    const eventEngagementTasks = userIds.map((userId) => async () => {
+      eventEngine.processEngagement({
+        entityType: 'challenge',
+        entityId: currentChallenge.articleId,
+        type: 'entered',
+        userId,
+      });
+    });
+    await limitConcurrency(eventEngagementTasks, 3);
+
+    // Send prizes to users that have met the entry requirement
     const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
       SELECT
       i."userId",

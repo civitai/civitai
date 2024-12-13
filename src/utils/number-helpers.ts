@@ -83,8 +83,10 @@ export function abbreviateNumber(
   if (floor) {
     value = Math.floor(value);
   }
+  console.log({ value });
 
-  const formattedValue = value.toFixed(value < 99 && index > 0 ? decimals : 0);
+  const formattedValue =
+    Math.round(value * Math.pow(10, decimals ?? 0)) / Math.pow(10, decimals ?? 0);
 
   return `${formattedValue}${suffixes[index]}`;
 }

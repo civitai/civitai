@@ -76,9 +76,9 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
 
     // Update database
     await dbWrite.$executeRaw`
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "obtainedAt", "equippedAt")
-      VALUES (${userId}, ${cosmeticId}, NOW(), NOW())
-      ON CONFLICT ("userId", "cosmeticId") DO UPDATE SET "equippedAt" = NOW()
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "obtainedAt", "equippedAt")
+      VALUES (${userId}, ${cosmeticId}, ${event}, NOW(), NOW())
+      ON CONFLICT ("userId", "cosmeticId", "claimKey") DO UPDATE SET "equippedAt" = NOW()
     `;
 
     const { data } = (await dbWrite.userCosmetic.findUnique({

@@ -58,6 +58,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
+import { BreakthroughT1DLogo } from '~/components/Logo/BreakthroughT1DLogo';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -97,7 +98,7 @@ const options: ChartOptions<'line'> = {
 const resetTime = dayjs().utc().endOf('day').toDate();
 
 const aboutText =
-  "Your challenge is to post an image, model or article on a daily basis throughout December. For each day you complete a post, you'll receive a new lightbulb on your garland in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more Buzz donated to your team bank, the brighter your lights shine. The brighter your lights shine, the bigger your bragging rights. The team with the brightest lights and highest Spirit Bank score wins a shiny new animated badge!";
+  "Your challenge is to complete daily holiday challenges throughout the rest of December. For each day you complete a post, you'll receive a new lightbulb on your garland in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more Buzz donated to your team bank, the brighter your lights shine. The brighter your lights shine, the bigger your bragging rights. The team with the brightest lights and highest Spirit Bank score wins a shiny new animated badge!";
 
 export default function EventPageDetails({
   event,
@@ -251,7 +252,7 @@ export default function EventPageDetails({
                           {cosmeticData?.lights ?? 0}
                         </Text>
                         <Text size={32} weight={590} color="dimmed">
-                          / 31
+                          / 12
                         </Text>
                       </div>
                       <Text size="sm" weight={500} color={userTeam} tt="capitalize" mt={5}>
@@ -262,11 +263,12 @@ export default function EventPageDetails({
                       <Stack spacing="sm" w="100%">
                         <Button
                           component={Link}
-                          href="/posts/create"
+                          href="/challenges"
                           color="gray"
                           variant="filled"
                           radius="xl"
                           fullWidth
+                          disabled={cosmeticData?.lights >= 12}
                         >
                           <Group spacing={4} noWrap>
                             <IconBulb size={18} />
@@ -331,7 +333,6 @@ export default function EventPageDetails({
                                     {teamScore.rank}
                                   </Text>
                                   <Lightbulb
-                                    variant="star"
                                     color={color}
                                     brightness={brightness}
                                     size={32}
@@ -602,14 +603,14 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
   return (
     <>
       <HeroCard
-        title={<JdrfLogo width={145} height={40} />}
-        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, the Juvenile Diabetes Research Foundation. Want to contribute to the cause without competing? [Donate here!](https://www2.jdrf.org/site/TR?fr_id=9410&pg=personal&px=13945459)"
-        imageUrl="https://www.jdrf.org/wp-content/uploads/2023/02/d-b-1-800x474-1.png"
-        externalLink="https://www.jdrf.org/"
+        title={<BreakthroughT1DLogo width={262} height={100} />}
+        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, Breakthrough T1D (Formerly JDRF). Want to contribute to the cause without competing? [Donate here!](https://www2.breakthrought1d.org/site/TR?fr_id=9410&pg=personal&px=13945459)"
+        imageUrl="https://www.breakthrought1d.org/wp-content/uploads/2023/02/d-b-1-800x474-1.png"
+        externalLink="https://www.breakthrought1d.org/"
       />
       <SectionCard
-        title="Matching Partners"
-        subtitle="Each partner will match the Buzz amount donated by the end of the month."
+        title="Matching Organizations"
+        subtitle="These organizations will match the Buzz amount donated by the end of the month."
       >
         <div className={classes.partnerGrid}>
           {partners?.map((partner, index) => (
