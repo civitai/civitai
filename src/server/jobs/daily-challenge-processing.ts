@@ -43,7 +43,7 @@ const dailyChallengeSetupJob = createJob(
 
 const processDailyChallengeEntriesJob = createJob(
   'daily-challenge-process-entries',
-  '55 * * * *',
+  '*/10 * * * *',
   reviewEntries
 );
 
@@ -164,7 +164,7 @@ async function createUpcomingChallenge() {
       metadata: {
         modelId: resource.modelId,
         challengeDate,
-        maxItemsPerUser: config.entryPrizeRequirement,
+        maxItemsPerUser: config.entryPrizeRequirement * 2,
         endsAt: dayjs(challengeDate).add(1, 'day').toDate(),
         disableTagRequired: true,
         disableFollowOnSubmission: true,
@@ -255,7 +255,7 @@ async function reviewEntries() {
   if (!currentChallenge) return;
   log('Processing entries for challenge:', currentChallenge);
   const config = await getChallengeConfig();
-  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
+  const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
 
   // Update pending entries
   // ----------------------------------------------
@@ -530,7 +530,7 @@ async function pickWinners() {
     await startNextChallenge(config);
     return;
   }
-  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
+  const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
 
   log('Picking winners for challenge:', currentChallenge);
 

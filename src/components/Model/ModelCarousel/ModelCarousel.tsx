@@ -10,7 +10,7 @@ import {
   Stack,
 } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -106,9 +106,9 @@ const useStyles = createStyles((theme) => ({
 
 export function ModelCarousel(props: Props) {
   return (
-    <BrowsingModeOverrideProvider>
+    <BrowsingLevelProvider>
       <ModelCarouselContent {...props} />
-    </BrowsingModeOverrideProvider>
+    </BrowsingLevelProvider>
   );
 }
 

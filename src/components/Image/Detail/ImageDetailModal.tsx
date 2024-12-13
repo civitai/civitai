@@ -9,7 +9,7 @@ import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 import { useMemo } from 'react';
 import { useCollection } from '~/components/Collections/collection.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 export default function ImageDetailModal({
   imageId,

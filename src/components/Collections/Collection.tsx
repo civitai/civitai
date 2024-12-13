@@ -37,7 +37,7 @@ import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import {
   contestCollectionReactionsHidden,
@@ -540,9 +540,7 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <BrowsingModeOverrideProvider
-      browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
-    >
+    <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
@@ -836,7 +834,7 @@ export function Collection({
           </MasonryContainer>
         </MasonryProvider>
       </SensitiveShield>
-    </BrowsingModeOverrideProvider>
+    </BrowsingLevelProvider>
   );
 }
 

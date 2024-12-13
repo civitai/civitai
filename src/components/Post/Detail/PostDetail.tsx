@@ -27,7 +27,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { Collection } from '~/components/Collection/Collection';
@@ -72,9 +72,9 @@ type Props = { postId: number };
 
 export function PostDetail(props: Props) {
   return (
-    <BrowsingModeOverrideProvider>
+    <BrowsingLevelProvider>
       <PostDetailContent {...props} />
-    </BrowsingModeOverrideProvider>
+    </BrowsingLevelProvider>
   );
 }
 
@@ -163,7 +163,7 @@ export function PostDetailContent({ postId }: Props) {
         isLoading={!!(post?.collectionId && isLoadingPostCollection)}
       >
         <TrackView entityId={post.id} entityType="Post" type="PostView" />
-        <BrowsingModeOverrideProvider browsingLevel={forcedBrowsingLevel || aggregateBrowsingLevel}>
+        <BrowsingLevelProvider browsingLevel={forcedBrowsingLevel || aggregateBrowsingLevel}>
           <ReactionSettingsProvider
             settings={{
               hideReactions: collectionItems.some((ci) =>
@@ -413,7 +413,7 @@ export function PostDetailContent({ postId }: Props) {
               </div>
             </div>
           </ReactionSettingsProvider>
-        </BrowsingModeOverrideProvider>
+        </BrowsingLevelProvider>
       </SensitiveShield>
     </>
   );

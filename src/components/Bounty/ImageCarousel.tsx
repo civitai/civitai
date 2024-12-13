@@ -13,7 +13,7 @@ import {
   ExplainHiddenImages,
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -101,9 +101,9 @@ const useStyles = createStyles((theme) => ({
 
 export function ImageCarousel(props: Props) {
   return (
-    <BrowsingModeOverrideProvider>
+    <BrowsingLevelProvider>
       <ImageCarouselContent {...props} />
-    </BrowsingModeOverrideProvider>
+    </BrowsingLevelProvider>
   );
 }
 

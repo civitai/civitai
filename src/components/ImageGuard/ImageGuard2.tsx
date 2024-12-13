@@ -18,7 +18,7 @@ import { Flags } from '~/shared/utils';
 import { useImageStore } from '~/store/image.store';
 import classes from './ImageGuard.module.scss';
 import cx from 'clsx';
-import { useBrowsingModeOverrideContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type ImageProps = {
   id: number;
@@ -85,7 +85,7 @@ type UseImageGuardProps = {
 
 function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const currentUser = useCurrentUser();
-  const { blurLevels } = useBrowsingModeOverrideContext();
+  const { blurLevels } = useBrowsingLevelContext();
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
   const { nsfwLevel = 0, ...rest } = useImageStore(image);

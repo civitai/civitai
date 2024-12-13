@@ -76,8 +76,8 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
 
     // Update database
     await dbWrite.$executeRaw`
-      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "obtainedAt", "equippedAt")
-      VALUES (${userId}, ${cosmeticId}, ${event}, NOW(), NOW())
+      INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "obtainedAt")
+      VALUES (${userId}, ${cosmeticId}, ${event}, NOW())
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO UPDATE SET "equippedAt" = NOW()
     `;
 

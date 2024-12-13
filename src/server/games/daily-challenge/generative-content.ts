@@ -159,12 +159,12 @@ export async function generateArticle({
 
     Winners will be announced at 12am UTC in this article and notified via on-site notification.
 
-    **Full participants will receive**:
-    - <span style="color:#228be6">${entryPrize.buzz} Buzz</span>, ${
+    **Participation rewards!**:
+    If you submit ${entryPrizeRequirement} entries, you'll be rewarded <span style="color:#228be6">${
+    entryPrize.buzz
+  } Buzz</span> and ${
     entryPrize.points
-  } Challenge Points
-
-    To be considered a full participant, you must **submit ${entryPrizeRequirement} entries**.
+  } Challenge Points. Make sure your entries follow the rules though, because only valid entries will be rewarded!
 
 
     ## 📝 How to Enter
@@ -178,7 +178,7 @@ export async function generateArticle({
       'MMMM DD'
     )} (23:59 UTC).
     2. All submitted images must be SFW (PG) and adhere to our **Terms of Service**.
-    3. Participants can submit up to ${entryPrizeRequirement} images.
+    3. Participants can submit up to ${entryPrizeRequirement * 2} images.
     4. Entries must use the provided model.
   `);
   const content = await markdownToHtml(markdownContent);

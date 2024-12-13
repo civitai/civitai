@@ -3,6 +3,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { redis } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
 import { createEvent, DonationCosmeticData } from './base.event';
+import { cosmeticEntityCaches } from '~/server/redis/caches';
 
 type CosmeticData = {
   lights: number;
@@ -17,8 +18,8 @@ const donationRewards = {
   'Golden Donor': 25000,
 };
 export const holiday2024 = createEvent('holiday2024', {
-  title: 'Getting Buzzed for the Holidays',
-  startDate: new Date('2024-12-12T08:00:00.000Z'),
+  title: 'Get Lit & Give Back 2024',
+  startDate: new Date('2024-12-14T00:00:00.000Z'),
   endDate: new Date('2025-01-01T08:00:00.000Z'),
   teams: ['Yellow', 'Red', 'Green', 'Blue'],
   bankIndex: -110,
@@ -39,7 +40,7 @@ export const holiday2024 = createEvent('holiday2024', {
     if (!cosmeticId) return;
     const userCosmetic = await db.userCosmetic.findFirst({
       where: { cosmeticId, userId },
-      select: { data: true },
+      select: { data: true, equippedToId: true, equippedToType: true },
     });
     if (!userCosmetic) return;
     const data = (userCosmetic.data ?? {}) as CosmeticData;
@@ -66,6 +67,9 @@ export const holiday2024 = createEvent('holiday2024', {
 
     // Update cache
     await holiday2024.clearUserCosmeticCache(userId);
+    // Refresh equipped entity
+    if (userCosmetic.equippedToId && userCosmetic.equippedToType)
+      await cosmeticEntityCaches[userCosmetic.equippedToType].refresh(userCosmetic.equippedToId);
 
     // Check for milestone
     const milestone = lightMilestones.find((m) => data.lights == m);
