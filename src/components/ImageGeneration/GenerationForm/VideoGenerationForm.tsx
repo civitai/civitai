@@ -401,6 +401,7 @@ function FormWrapper({
   });
 
   const { mutate, isLoading, error } = useGenerate();
+  const [debouncedIsLoading, setDebouncedIsLoading] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
     type: 'Generation',
     message: (requiredBalance) =>
@@ -420,6 +421,7 @@ function FormWrapper({
 
   function handleSubmit(data: z.infer<typeof schema>) {
     if (isLoading) return;
+    setDebouncedIsLoading(true);
 
     const { cost } = useCostStore.getState();
     const totalCost = cost;
@@ -431,6 +433,11 @@ function FormWrapper({
         tags: [WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
       });
     });
+    // if the workflow uses the same input, it will be short-circuited and the workflow will return an immediate success.
+    // use `debouncedIsLoading` to better show that a submission has occurred
+    setTimeout(() => {
+      setDebouncedIsLoading(false);
+    }, 1000);
   }
 
   useEffect(() => {
@@ -476,7 +483,7 @@ function FormWrapper({
         <DailyBoostRewardClaim />
         <QueueSnackbar />
         <div className="flex gap-2">
-          <SubmitButton2 loading={isLoading} engine={engine} />
+          <SubmitButton2 loading={isLoading || debouncedIsLoading} engine={engine} />
           <Button onClick={handleReset} variant="default" className="h-auto px-3">
             Reset
           </Button>

@@ -364,7 +364,8 @@ export async function formatGenerationResponse(workflows: Workflow[]) {
       steps: (workflow.steps ?? [])?.map((step) =>
         formatWorkflowStep({
           workflowId: workflow.id as string,
-          step,
+          // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
+          step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
           resources: [...resources, ...injectable],
         })
       ),
