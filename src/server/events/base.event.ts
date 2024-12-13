@@ -64,7 +64,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     return getTeamCosmetic(await getUserTeam(userId));
   }
   async function clearUserCosmeticCache(userId: number) {
-    await userCosmeticCache.refresh(userId);
+    await redis.hDel(`event:${name}:cosmetic`, userId.toString());
   }
   async function getRewards() {
     const rewards = await dbWrite.cosmetic.findMany({

@@ -66,6 +66,8 @@ export const holiday2024 = createEvent('holiday2024', {
     });
 
     // Update cache
+    await holiday2024.clearUserCosmeticCache(userId);
+    // Refresh equipped entity
     if (userCosmetic.equippedToId && userCosmetic.equippedToType)
       await cosmeticEntityCaches[userCosmetic.equippedToType].refresh(userCosmetic.equippedToId);
 
