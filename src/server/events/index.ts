@@ -19,7 +19,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { holiday2024 } from '~/server/events/holiday2024.event';
 
 // Only include events that aren't completed
-export const events = [holiday2023, holiday2024];
+export const events = [holiday2024];
 export const activeEvents = events.filter((x) => x.endDate >= new Date());
 
 export const eventEngine = {

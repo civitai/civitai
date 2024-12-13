@@ -73,7 +73,7 @@ export function WelcomeCard({ event, about }: { event: string; about: string }) 
             <Group spacing="lg" noWrap>
               <IconHeartHandshake size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                All Buzz purchased and put into the Spirit Bank will be donated to Breakthrough T1D (formerly JDRF).
+                All Buzz purchased and put into the Spirit Bank will be donated to All Hands and Hearts.
               </Text>
             </Group>
           </Stack>

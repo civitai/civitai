@@ -43,7 +43,7 @@ const dailyChallengeSetupJob = createJob(
 
 const processDailyChallengeEntriesJob = createJob(
   'daily-challenge-process-entries',
-  '55 * * * *',
+  '*/10 * * * *',
   reviewEntries
 );
 
@@ -164,7 +164,7 @@ async function createUpcomingChallenge() {
       metadata: {
         modelId: resource.modelId,
         challengeDate,
-        maxItemsPerUser: config.entryPrizeRequirement,
+        maxItemsPerUser: config.entryPrizeRequirement * 2,
         endsAt: dayjs(challengeDate).add(1, 'day').toDate(),
         disableTagRequired: true,
         disableFollowOnSubmission: true,
