@@ -91,10 +91,7 @@ function UnroutedImageCard({ data }: Props) {
                 )}
               </Group>
               {safe ? (
-                <div
-                  // className={data.cosmetic ? sharedClasses.frameAdjustment : undefined}
-                  style={{ height: '100%' }}
-                >
+                <div style={{ height: '100%' }}>
                   <EdgeMedia2
                     metadata={data.metadata}
                     src={data.url}

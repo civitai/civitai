@@ -59,11 +59,7 @@ export function PostsCard({
                   />
                 )}
 
-                <RoutedDialogLink
-                  name="postDetail"
-                  state={{ postId: id }}
-                  className={cosmetic && safe ? sharedClasses.frameAdjustment : undefined}
-                >
+                <RoutedDialogLink name="postDetail" state={{ postId: id }}>
                   {!safe ? (
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />

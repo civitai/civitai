@@ -90,10 +90,7 @@ export function GenericImageCard({
                     </>
                   )}
                   {safe ? (
-                    <div
-                      className={image.cosmetic ? sharedClasses.frameAdjustment : undefined}
-                      style={{ height: '100%' }}
-                    >
+                    <div style={{ height: '100%' }}>
                       <EdgeMedia2
                         metadata={image.metadata}
                         src={image.url}
