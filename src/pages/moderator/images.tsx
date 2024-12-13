@@ -287,91 +287,79 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
       }}
     >
       <>
-        <Card.Section sx={{ height: `${height}px` }}>
+        <Card.Section sx={{ height: `${height}px` }} className="relative">
           {inView && (
             <>
               <Checkbox
                 checked={selected}
                 onChange={() => toggleSelected(image.id)}
                 size="lg"
-                sx={{
-                  position: 'absolute',
-                  top: 5,
-                  right: 5,
-                  zIndex: 9,
-                }}
+                className="absolute right-2 top-2 z-10"
               />
-              <div className="relative" onClick={() => toggleSelected(image.id)}>
-                <ImageGuard2 image={image}>
-                  {(safe) => (
-                    <>
-                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                      {!safe ? (
-                        <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
-                          <MediaHash {...image} />
-                        </AspectRatio>
-                      ) : (
-                        <>
-                          <EdgeMedia
-                            src={image.url}
-                            name={image.name ?? image.id.toString()}
-                            alt={image.name ?? undefined}
-                            type={image.type}
-                            width={450}
-                            placeholder="empty"
-                          />
-                          {!!entityUrl && (
-                            <Link legacyBehavior href={entityUrl} passHref>
-                              <ActionIcon
-                                component="a"
-                                variant="transparent"
-                                style={{ position: 'absolute', bottom: '5px', left: '5px' }}
-                                size="lg"
-                                target="_blank"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                }}
-                              >
-                                <IconExternalLink
-                                  color="white"
-                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                  opacity={0.8}
-                                  strokeWidth={2.5}
-                                  size={26}
-                                />
-                              </ActionIcon>
-                            </Link>
-                          )}
-                          {image.meta ? (
-                            <ImageMetaPopover meta={image.meta}>
-                              <ActionIcon
-                                variant="transparent"
-                                style={{ position: 'absolute', bottom: '5px', right: '5px' }}
-                                size="lg"
-                              >
-                                <IconInfoCircle
-                                  color="white"
-                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                  opacity={0.8}
-                                  strokeWidth={2.5}
-                                  size={26}
-                                />
-                              </ActionIcon>
-                            </ImageMetaPopover>
-                          ) : image.metadata?.profilePicture ? (
-                            <Badge
-                              variant="filled"
-                              style={{ position: 'absolute', bottom: '10px', right: '5px' }}
-                            >
-                              Avatar
-                            </Badge>
-                          ) : null}
-                        </>
-                      )}
-                    </>
-                  )}
-                </ImageGuard2>
-              </div>
+
+              <ImageGuard2 image={image}>
+                {(safe) => (
+                  <div className="relative" onClick={() => toggleSelected(image.id)}>
+                    <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                    {!safe ? (
+                      <AspectRatio ratio={(image.width ?? 1) / (image.height ?? 1)}>
+                        <MediaHash {...image} />
+                      </AspectRatio>
+                    ) : (
+                      <EdgeMedia
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        type={image.type}
+                        width={450}
+                        placeholder="empty"
+                      />
+                    )}
+                  </div>
+                )}
+              </ImageGuard2>
+              {!!entityUrl && (
+                <ActionIcon
+                  component={Link}
+                  href={`${entityUrl}?moderator`}
+                  variant="transparent"
+                  style={{ position: 'absolute', bottom: '5px', left: '5px' }}
+                  size="lg"
+                  target="_blank"
+                >
+                  <IconExternalLink
+                    color="white"
+                    filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                    opacity={0.8}
+                    strokeWidth={2.5}
+                    size={26}
+                  />
+                </ActionIcon>
+              )}
+              {image.meta ? (
+                <ImageMetaPopover meta={image.meta}>
+                  <ActionIcon
+                    variant="transparent"
+                    style={{ position: 'absolute', bottom: '5px', right: '5px' }}
+                    size="lg"
+                  >
+                    <IconInfoCircle
+                      color="white"
+                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                      opacity={0.8}
+                      strokeWidth={2.5}
+                      size={26}
+                    />
+                  </ActionIcon>
+                </ImageMetaPopover>
+              ) : image.metadata?.profilePicture ? (
+                <Badge
+                  variant="filled"
+                  style={{ position: 'absolute', bottom: '10px', right: '5px' }}
+                >
+                  Avatar
+                </Badge>
+              ) : null}
             </>
           )}
         </Card.Section>

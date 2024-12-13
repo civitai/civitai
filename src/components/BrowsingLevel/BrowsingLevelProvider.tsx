@@ -48,7 +48,7 @@ export function BrowsingModeOverrideProvider({
     () =>
       blurNsfw
         ? nsfwBrowsingLevelsFlag
-        : !router.asPath.startsWith('/moderator')
+        : !router.asPath.includes('moderator')
         ? Flags.arrayToInstance(
             nsfwBrowsingLevelsArray.filter((level) => !Flags.hasFlag(currentBrowsingLevel, level))
           )
