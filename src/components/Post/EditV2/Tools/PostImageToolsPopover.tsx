@@ -1,12 +1,13 @@
 import { Button, Checkbox, Divider, Text, UnstyledButton } from '@mantine/core';
-import React, { useState, useMemo } from 'react';
-import { PostEditImageDetail, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { trpc } from '~/utils/trpc';
-import { isDefined } from '~/utils/type-guards';
-import { getDisplayName } from '~/utils/string-helpers';
+import React, { useMemo, useState } from 'react';
 import { AlwaysOpenCombobox } from '~/components/Combobox/AlwaysOpenComboBox';
 import { ComboboxOption } from '~/components/Combobox/combobox.types';
+import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { useQueryTools } from '~/components/Tool/tools.utils';
+import type { PostEditImageDetail } from '~/server/services/post.service';
+import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export function ImageToolsPopover({
   image,

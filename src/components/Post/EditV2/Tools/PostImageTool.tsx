@@ -1,10 +1,10 @@
-import { ActionIcon, Text, Collapse, Textarea } from '@mantine/core';
-import { IconTrash } from '@tabler/icons-react';
-import { IconMessagePlus } from '@tabler/icons-react';
+import { ActionIcon, Collapse, Text, Textarea } from '@mantine/core';
+import { IconMessagePlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import ConfirmDialog  from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { PostEditImageDetail, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import type { PostEditImageDetail } from '~/server/services/post.service';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';

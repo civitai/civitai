@@ -29,7 +29,7 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import React, { CSSProperties } from 'react';
+import { CSSProperties, useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -37,7 +37,7 @@ import { useArticleQueryParams } from '~/components/Article/article.utils';
 import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategories';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import {
   contestCollectionReactionsHidden,
@@ -72,7 +72,7 @@ import PostsInfinite from '~/components/Post/Infinite/PostsInfinite';
 import { usePostQueryParams } from '~/components/Post/post.utils';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
-import { ToolSelect } from '~/components/Tool/ToolMultiSelect';
+import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -207,9 +207,12 @@ const ImageCollection = ({
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
+  const [toolSearchOpened, setToolSearchOpened] = useState(false);
+
   // For contest collections, we need to keep the filters clean from outside intervention.
   const filters = isContestCollection
     ? {
+        ...query,
         generation: undefined,
         view: undefined,
         hideAutoResources: undefined,
@@ -312,19 +315,25 @@ const ImageCollection = ({
           )}
           {isContestCollection && (
             <Group position="right">
-              <AdaptiveFiltersDropdown>
+              <AdaptiveFiltersDropdown
+                // Small hack to make the dropdown visible when the dropdown is open
+                dropdownProps={{ className: toolSearchOpened ? '!overflow-visible' : undefined }}
+              >
                 <Stack>
                   <Divider label="Tools" labelProps={{ weight: 'bold', size: 'sm' }} />
-                  <ToolSelect
-                    value={(query.tools ?? [])[0]}
-                    onChange={(toolId) => {
-                      if (!toolId) {
+                  <ToolMultiSelect
+                    value={query.tools ?? []}
+                    onChange={(tools) => {
+                      if (!tools) {
                         replace({ tools: undefined });
                       } else {
-                        replace({ tools: [toolId as number] });
+                        replace({ tools });
                       }
                     }}
                     placeholder="Created with..."
+                    // Needed to hack the select dropdown to be visible when the dropdown is open
+                    onDropdownOpen={() => setToolSearchOpened(true)}
+                    onDropdownClose={() => setToolSearchOpened(false)}
                   />
                 </Stack>
               </AdaptiveFiltersDropdown>
@@ -531,9 +540,7 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <BrowsingModeOverrideProvider
-      browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}
-    >
+    <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
       {collection && (
         <Meta
           title={`${collection.name} - collection posted by ${collection.user.username}`}
@@ -827,7 +834,7 @@ export function Collection({
           </MasonryContainer>
         </MasonryProvider>
       </SensitiveShield>
-    </BrowsingModeOverrideProvider>
+    </BrowsingLevelProvider>
   );
 }
 

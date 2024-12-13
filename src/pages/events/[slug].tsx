@@ -14,9 +14,8 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Popover,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import {
   CategoryScale,
@@ -48,13 +47,14 @@ import { EventPartners, useMutateEvent, useQueryEvent } from '~/components/Event
 import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
 import { HeroCard } from '~/components/HeroCard/HeroCard';
-import { JdrfLogo } from '~/components/Logo/JdrfLogo';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { env } from '~/env/client.mjs';
 import { constants } from '~/server/common/constants';
 import { eventSchema } from '~/server/schema/event.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
@@ -97,7 +97,7 @@ const options: ChartOptions<'line'> = {
 const resetTime = dayjs().utc().endOf('day').toDate();
 
 const aboutText =
-  "Your challenge is to post an image, model or article on a daily basis throughout December. For each day you complete a post, you'll receive a new lightbulb on your garland in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more Buzz donated to your team bank, the brighter your lights shine. The brighter your lights shine, the bigger your bragging rights. The team with the brightest lights and highest Spirit Bank score wins a shiny new animated badge!";
+  "Your challenge is to participate in daily holiday challenges throughout the rest of December. Once CivBot has approved your entry, you'll receive a new lightbulb on your garland in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more Buzz donated to your team bank, the brighter your lights shine. The brighter your lights shine, the bigger your bragging rights. The team with the brightest lights and highest Spirit Bank score wins a shiny new animated badge!";
 
 export default function EventPageDetails({
   event,
@@ -171,7 +171,8 @@ export default function EventPageDetails({
                 ? `url(${getEdgeUrl(eventData.coverImage, { width: 1600 })})`
                 : undefined,
               backgroundRepeat: 'no-repeat',
-              backgroundPosition: 'top',
+              backgroundPosition: 'bottom left',
+              backgroundSize: 'cover',
               display: 'flex',
               flexDirection: 'column',
               justifyContent: 'flex-end',
@@ -251,22 +252,31 @@ export default function EventPageDetails({
                           {cosmeticData?.lights ?? 0}
                         </Text>
                         <Text size={32} weight={590} color="dimmed">
-                          / 31
+                          / 12
                         </Text>
                       </div>
                       <Text size="sm" weight={500} color={userTeam} tt="capitalize" mt={5}>
                         {userTeam} Team
                       </Text>
+                      <Popover withinPortal shadow="md">
+                        <Popover.Target>
+                          <Text size="xs" color="dimmed" td="underline" className='cursor-pointer'>Missing a Bulb?</Text>
+                        </Popover.Target>
+                        <Popover.Dropdown maw={300} p="sm">
+                          <Text size="xs" color="dimmed">CivBot reviews challenge entries every 10 minutes and will give you your bulb for the day after approving your entry. If you haven't received it, wait, then make sure your entry was approved and refresh this page.</Text>
+                        </Popover.Dropdown>
+                      </Popover>
                     </Stack>
                     {eventCosmetic.available && !ended && (
                       <Stack spacing="sm" w="100%">
                         <Button
                           component={Link}
-                          href="/posts/create"
+                          href="/challenges"
                           color="gray"
                           variant="filled"
                           radius="xl"
                           fullWidth
+                          disabled={cosmeticData?.lights >= 12}
                         >
                           <Group spacing={4} noWrap>
                             <IconBulb size={18} />
@@ -331,7 +341,6 @@ export default function EventPageDetails({
                                     {teamScore.rank}
                                   </Text>
                                   <Lightbulb
-                                    variant="star"
                                     color={color}
                                     brightness={brightness}
                                     size={32}
@@ -602,14 +611,14 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
   return (
     <>
       <HeroCard
-        title={<JdrfLogo width={145} height={40} />}
-        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, the Juvenile Diabetes Research Foundation. Want to contribute to the cause without competing? [Donate here!](https://www2.jdrf.org/site/TR?fr_id=9410&pg=personal&px=13945459)"
-        imageUrl="https://www.jdrf.org/wp-content/uploads/2023/02/d-b-1-800x474-1.png"
-        externalLink="https://www.jdrf.org/"
+        title={<img src="/images/event/holiday2024/ahh_logo.png" alt="All Hands and Hearts" style={{height: 50}}  />}
+        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, All Hands and Hearts. Want to contribute to the cause without competing? [Donate here!](https://give.allhandsandhearts.org/campaign/635787/donate)"
+        imageUrl="https://www.allhandsandhearts.org/wp-content/uploads/2019/12/400_1147_PR_Construction_Volunteer_5416_18.02.15-460x295.jpg"
+        externalLink="https://www.allhandsandhearts.org/"
       />
       <SectionCard
-        title="Matching Partners"
-        subtitle="Each partner will match the Buzz amount donated by the end of the month."
+        title="Matching Organizations"
+        subtitle="These organizations will match the Buzz amount donated by the end of the month."
       >
         <div className={classes.partnerGrid}>
           {partners?.map((partner, index) => (

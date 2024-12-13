@@ -1,10 +1,10 @@
 import { OAuth2Client } from 'google-auth-library';
 import { google, youtube_v3 } from 'googleapis';
+import { Readable } from 'node:stream';
+import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server.mjs';
 import { fetchBlob } from '~/utils/file-utils';
-import { Readable } from 'node:stream';
-import sanitize from 'sanitize-html';
 
 const OAuth2 = google.auth.OAuth2;
 
@@ -58,27 +58,6 @@ export const getYoutubeAuthClient = async (refreshToken: string) => {
   return client;
 };
 
-export const getYoutubeVideos = (client: OAuth2Client) => {
-  return new Promise<youtube_v3.Schema$VideoListResponse | null | undefined>((resolve, reject) => {
-    const service = google.youtube('v3');
-    service.videos.list(
-      {
-        auth: client,
-        part: ['snippet', 'contentDetails', 'statistics'],
-        chart: 'mostPopular',
-      },
-      (err, response) => {
-        if (err) {
-          reject(err);
-          return;
-        }
-
-        resolve(response?.data);
-      }
-    );
-  });
-};
-
 type S3ToYoutubeInput = {
   url: string;
   title: string;
@@ -122,6 +101,50 @@ export const uploadYoutubeVideo = async ({
           mimeType: mimeType,
           // @ts-ignore - Readable stream is supported here.
           body: Readable.fromWeb(stream),
+        },
+      },
+      (err, response) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+
+        resolve(response?.data);
+      }
+    );
+  });
+};
+
+type UpdateYoutubeVideoInput = {
+  videoId: string;
+  title: string;
+  description: string;
+  client: OAuth2Client;
+};
+
+export const updateYoutubeVideo = async ({
+  videoId,
+  client,
+  title,
+  description,
+}: UpdateYoutubeVideoInput) => {
+  const service = google.youtube('v3');
+
+  return new Promise<youtube_v3.Schema$Video | undefined>((resolve, reject) => {
+    service.videos.update(
+      {
+        auth: client,
+        part: ['snippet', 'status'],
+        requestBody: {
+          id: videoId,
+          snippet: {
+            title: title,
+            // Youtube doesn't like HTML into their descriptions.
+            description: sanitize(description, {
+              allowedTags: [],
+              allowedAttributes: {},
+            }),
+          },
         },
       },
       (err, response) => {

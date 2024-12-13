@@ -1,20 +1,12 @@
 import { Prisma } from '@prisma/client';
-import {
-  ArticleEngagementType,
-  BountyEngagementType,
-  CollectionMode,
-  CollectionType,
-  CosmeticSource,
-  CosmeticType,
-  ModelEngagementType,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
+import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
-import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BanReasonCode, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
+import { logToAxiom } from '~/server/logging/client';
 import { searchClient } from '~/server/meilisearch/client';
 import {
   articleMetrics,
@@ -23,7 +15,9 @@ import {
   postMetrics,
   userMetrics,
 } from '~/server/metrics';
+import { updatePaddleCustomerEmail } from '~/server/paddle/client';
 import { profilePictureCache, userBasicCache, userCosmeticCache } from '~/server/redis/caches';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   ComputeDeviceFingerprintInput,
@@ -51,6 +45,12 @@ import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.s
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
+import { unpublishModelById } from '~/server/services/model.service';
+import {
+  cancelAllPaddleSubscriptions,
+  cancelSubscriptionPlan,
+} from '~/server/services/paddle.service';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { BlockedByUsers, HiddenModels } from '~/server/services/user-preferences.service';
 import {
@@ -63,8 +63,19 @@ import { encryptText, generateKey, generateSecretHash } from '~/server/utils/key
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import {
+  ArticleEngagementType,
+  BountyEngagementType,
+  CollectionMode,
+  CollectionType,
+  CosmeticSource,
+  CosmeticType,
+  ModelEngagementType,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
+import { getUserBanDetails } from '~/utils/user-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 import { profileImageSelect } from '../selectors/image.selector';
 import {
@@ -73,17 +84,6 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
-import { SessionUser } from 'next-auth';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
-import {
-  cancelAllPaddleSubscriptions,
-  cancelSubscriptionPlan,
-} from '~/server/services/paddle.service';
-import { logToAxiom } from '~/server/logging/client';
-import { getUserBanDetails } from '~/utils/user-helpers';
-import { updatePaddleCustomerEmail } from '~/server/paddle/client';
-import { unpublishModelById } from '~/server/services/model.service';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -612,16 +612,22 @@ export async function setLeaderboardEligibility({ id, setTo }: { id: number; set
 }
 
 /** Soft delete will ban the user, unsubscribe the user, and restrict access to the user's models/images  */
-export async function softDeleteUser({ id }: { id: number }) {
+export async function softDeleteUser({ id, userId }: { id: number; userId: number }) {
   const user = await dbWrite.user.findFirst({
     where: { id },
     select: { isModerator: true, paddleCustomerId: true },
   });
   if (user?.isModerator) return;
-  await dbWrite.model.updateMany({
-    where: { userId: id },
-    data: { status: 'UnpublishedViolation' },
+
+  await toggleBan({
+    id,
+    reasonCode: BanReasonCode.SexualMinor,
+    detailsInternal: 'Banned for CSAM content.',
+    isModerator: false,
+    userId,
+    force: true,
   });
+
   await dbWrite.image.updateMany({
     where: { userId: id },
     data: {
@@ -631,10 +637,10 @@ export async function softDeleteUser({ id }: { id: number }) {
       needsReview: 'blocked',
     },
   });
-  await dbWrite.user.update({ where: { id }, data: { bannedAt: new Date() } });
-  await invalidateSession(id);
+
   await usersSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
 
+  // this is slightly duplicated in toggleBan
   if (user?.paddleCustomerId) {
     await cancelAllPaddleSubscriptions({ customerId: user.paddleCustomerId }).catch((error) =>
       logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
@@ -1023,12 +1029,15 @@ export const toggleBan = async ({
   detailsExternal,
   userId,
   isModerator,
-}: ToggleBanUser & { userId: number; isModerator?: boolean }) => {
+  force,
+}: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
   const user = await getUserById({ id, select: { bannedAt: true, meta: true } });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
 
   const userMeta = (user.meta ?? {}) as UserMeta;
-  const updatedMeta = user.bannedAt
+  const bannedAt = force ? null : user.bannedAt;
+
+  const updatedMeta = bannedAt
     ? {
         ...(userMeta ?? {}),
         banDetails: undefined,
@@ -1044,11 +1053,11 @@ export const toggleBan = async ({
 
   const updatedUser = await updateUserById({
     id,
-    data: { bannedAt: user.bannedAt ? null : new Date(), meta: updatedMeta },
+    data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
   });
   await invalidateSession(id);
 
-  if (!user.bannedAt) {
+  if (!bannedAt) {
     // Unpublish their models
     const models = await dbRead.model.findMany({
       where: { userId: id, status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },

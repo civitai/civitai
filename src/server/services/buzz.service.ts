@@ -442,10 +442,11 @@ export async function completeStripeBuzzTransaction({
       },
     });
 
-    await eventEngine.processPurchase({
-      userId,
-      amount,
-    });
+    // 2024-12-12: Deprecated
+    // await eventEngine.processPurchase({
+    //   userId,
+    //   amount,
+    // });
 
     return data;
   } catch (error) {

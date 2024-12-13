@@ -1,10 +1,10 @@
-import { ReportStatus } from '~/shared/utils/prisma/enums';
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import { Context } from '~/server/createContext';
 import { CreateCsamReportSchema } from '~/server/schema/csam.schema';
 import { createCsamReport } from '~/server/services/csam.service';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { softDeleteUser } from '~/server/services/user.service';
+import { ReportStatus } from '~/shared/utils/prisma/enums';
 
 export async function createCsamReportHandler({
   input,
@@ -34,6 +34,6 @@ export async function createCsamReportHandler({
   }
 
   if (userId !== -1) {
-    await softDeleteUser({ id: userId });
+    await softDeleteUser({ id: userId, userId: reportedById });
   }
 }

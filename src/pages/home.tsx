@@ -19,8 +19,11 @@ import { env } from '~/env/client.mjs';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { isProd } from '~/env/other';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
 import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
@@ -72,7 +75,7 @@ export default function Home() {
             },
           })}
         >
-          <BrowsingModeOverrideProvider browsingLevel={sfwBrowsingLevelsFlag}>
+          <BrowsingLevelProvider browsingLevel={sfwBrowsingLevelsFlag}>
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 1 && i > 0;
               return (
@@ -105,144 +108,146 @@ export default function Home() {
                 </React.Fragment>
               );
             })}
-          </BrowsingModeOverrideProvider>
-          {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
-            <Box ref={ref}>
-              <MasonryContainer py={32}>
-                {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
-                  <IsClient>
-                    <Group mb="md" position="apart">
-                      <Group>
-                        <Title
-                          sx={(theme) => ({
-                            fontSize: 32,
+          </BrowsingLevelProvider>
+          <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
+            {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
+              <Box ref={ref}>
+                <MasonryContainer py={32}>
+                  {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
+                    <IsClient>
+                      <Group mb="md" position="apart">
+                        <Group>
+                          <Title
+                            sx={(theme) => ({
+                              fontSize: 32,
 
-                            [containerQuery.smallerThan('sm')]: {
-                              fontSize: 24,
-                            },
-                          })}
-                        >
-                          Images
-                        </Title>
-                        <Popover withArrow width={380}>
-                          <Popover.Target>
-                            <Box
-                              display="inline-block"
-                              sx={{ lineHeight: 0.3, cursor: 'pointer' }}
-                              color="white"
-                            >
-                              <IconInfoCircle size={20} />
-                            </Box>
-                          </Popover.Target>
-                          <Popover.Dropdown maw="100%">
-                            <Text size="sm" mb="xs">
-                              Pre-filtered list of the highest rated images post by the community
-                              over the last week
-                            </Text>
-                          </Popover.Dropdown>
-                        </Popover>
+                              [containerQuery.smallerThan('sm')]: {
+                                fontSize: 24,
+                              },
+                            })}
+                          >
+                            Images
+                          </Title>
+                          <Popover withArrow width={380}>
+                            <Popover.Target>
+                              <Box
+                                display="inline-block"
+                                sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                                color="white"
+                              >
+                                <IconInfoCircle size={20} />
+                              </Box>
+                            </Popover.Target>
+                            <Popover.Dropdown maw="100%">
+                              <Text size="sm" mb="xs">
+                                Pre-filtered list of the highest rated images post by the community
+                                over the last week
+                              </Text>
+                            </Popover.Dropdown>
+                          </Popover>
+                        </Group>
+
+                        <Link legacyBehavior href="/images" passHref>
+                          <Button
+                            h={34}
+                            component="a"
+                            variant="subtle"
+                            rightIcon={<IconArrowRight size={16} />}
+                          >
+                            View all
+                          </Button>
+                        </Link>
                       </Group>
 
-                      <Link legacyBehavior href="/images" passHref>
-                        <Button
-                          h={34}
-                          component="a"
-                          variant="subtle"
-                          rightIcon={<IconArrowRight size={16} />}
-                        >
-                          View all
-                        </Button>
-                      </Link>
-                    </Group>
+                      <ImagesInfinite
+                        showAds
+                        filters={{
+                          // Required to override localStorage filters
+                          period: MetricTimeframe.Week,
+                          sort: ImageSort.MostReactions,
+                          types: undefined,
+                          hidden: undefined,
+                          followed: false,
+                          withMeta: true,
+                        }}
+                      />
+                    </IsClient>
+                  )}
+                </MasonryContainer>
+              </Box>
+            ) : (
+              <Box ref={ref}>
+                <MasonryContainer py={32}>
+                  {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
+                    <IsClient>
+                      <Group mb="md" position="apart">
+                        <Group>
+                          <Title
+                            sx={(theme) => ({
+                              fontSize: 32,
 
-                    <ImagesInfinite
-                      showAds
-                      filters={{
-                        // Required to override localStorage filters
-                        period: MetricTimeframe.Week,
-                        sort: ImageSort.MostReactions,
-                        types: undefined,
-                        hidden: undefined,
-                        followed: false,
-                        withMeta: true,
-                      }}
-                    />
-                  </IsClient>
-                )}
-              </MasonryContainer>
-            </Box>
-          ) : (
-            <Box ref={ref}>
-              <MasonryContainer py={32}>
-                {displayModelsInfiniteFeed && !isLoadingExcludedTags && (
-                  <IsClient>
-                    <Group mb="md" position="apart">
-                      <Group>
-                        <Title
-                          sx={(theme) => ({
-                            fontSize: 32,
+                              [containerQuery.smallerThan('sm')]: {
+                                fontSize: 24,
+                              },
+                            })}
+                          >
+                            Models
+                          </Title>
+                          <Popover withArrow width={380}>
+                            <Popover.Target>
+                              <Box
+                                display="inline-block"
+                                sx={{ lineHeight: 0.3, cursor: 'pointer' }}
+                                color="white"
+                              >
+                                <IconInfoCircle size={20} />
+                              </Box>
+                            </Popover.Target>
+                            <Popover.Dropdown maw="100%">
+                              <Text size="sm" mb="xs">
+                                Pre-filtered list of models upload by the community that are the
+                                highest rated over the last week
+                              </Text>
+                            </Popover.Dropdown>
+                          </Popover>
+                        </Group>
 
-                            [containerQuery.smallerThan('sm')]: {
-                              fontSize: 24,
-                            },
-                          })}
-                        >
-                          Models
-                        </Title>
-                        <Popover withArrow width={380}>
-                          <Popover.Target>
-                            <Box
-                              display="inline-block"
-                              sx={{ lineHeight: 0.3, cursor: 'pointer' }}
-                              color="white"
-                            >
-                              <IconInfoCircle size={20} />
-                            </Box>
-                          </Popover.Target>
-                          <Popover.Dropdown maw="100%">
-                            <Text size="sm" mb="xs">
-                              Pre-filtered list of models upload by the community that are the
-                              highest rated over the last week
-                            </Text>
-                          </Popover.Dropdown>
-                        </Popover>
+                        <Link legacyBehavior href="/models" passHref>
+                          <Button
+                            h={34}
+                            component="a"
+                            variant="subtle"
+                            rightIcon={<IconArrowRight size={16} />}
+                          >
+                            View all
+                          </Button>
+                        </Link>
                       </Group>
 
-                      <Link legacyBehavior href="/models" passHref>
-                        <Button
-                          h={34}
-                          component="a"
-                          variant="subtle"
-                          rightIcon={<IconArrowRight size={16} />}
-                        >
-                          View all
-                        </Button>
-                      </Link>
-                    </Group>
-
-                    <ModelsInfinite
-                      showAds
-                      disableStoreFilters
-                      filters={{
-                        // excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
-                        excludedTagIds: homeExcludedTags.map((tag) => tag.id),
-                        // Required to override localStorage filters
-                        period: isProd ? MetricTimeframe.Week : MetricTimeframe.AllTime,
-                        sort: ModelSort.HighestRated,
-                        types: undefined,
-                        collectionId: undefined,
-                        earlyAccess: false,
-                        status: undefined,
-                        checkpointType: undefined,
-                        baseModels: undefined,
-                        hidden: undefined,
-                      }}
-                    />
-                  </IsClient>
-                )}
-              </MasonryContainer>
-            </Box>
-          )}
+                      <ModelsInfinite
+                        showAds
+                        disableStoreFilters
+                        filters={{
+                          // excludedImageTagIds: homeExcludedTags.map((tag) => tag.id),
+                          excludedTagIds: homeExcludedTags.map((tag) => tag.id),
+                          // Required to override localStorage filters
+                          period: isProd ? MetricTimeframe.Week : MetricTimeframe.AllTime,
+                          sort: ModelSort.HighestRated,
+                          types: undefined,
+                          collectionId: undefined,
+                          earlyAccess: false,
+                          status: undefined,
+                          checkpointType: undefined,
+                          baseModels: undefined,
+                          hidden: undefined,
+                        }}
+                      />
+                    </IsClient>
+                  )}
+                </MasonryContainer>
+              </Box>
+            )}
+          </BrowsingLevelProvider>
         </Box>
       </MasonryProvider>
     </>

@@ -14,7 +14,6 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -34,12 +33,15 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
+import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
@@ -61,6 +63,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
@@ -71,11 +74,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -217,7 +217,7 @@ export function ImageDetail2() {
       />
       <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
         <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
-        <BrowsingModeOverrideProvider browsingLevel={image.nsfwLevel}>
+        <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
               <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
@@ -394,6 +394,7 @@ export function ImageDetail2() {
                         entityType={EntityType.Post}
                         creatorCardProps={{
                           className: 'rounded-xl',
+                          withActions: true,
                         }}
                       />
                     )}
@@ -417,15 +418,17 @@ export function ImageDetail2() {
                       collapsible
                       nsfwLevel={image.nsfwLevel}
                     />
-                    {post && post.detail && (
+                    {post && (post.title || post.detail) && (
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
                           <IconLayoutList />
                           <span>{post.title}</span>
                         </Text>
-                        <ContentClamp maxHeight={75}>
-                          <RenderHtml html={post.detail} />
-                        </ContentClamp>
+                        {post.detail && (
+                          <ContentClamp maxHeight={75}>
+                            <RenderHtml html={post.detail} />
+                          </ContentClamp>
+                        )}
                       </Card>
                     )}
                     <ImageProcess imageId={image.id} />
@@ -450,7 +453,7 @@ export function ImageDetail2() {
             </div>
             <AdhesiveAd closeable={false} preserveLayout />
           </div>
-        </BrowsingModeOverrideProvider>
+        </BrowsingLevelProvider>
       </SensitiveShield>
     </>
   );

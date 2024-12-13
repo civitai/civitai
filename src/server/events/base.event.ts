@@ -2,6 +2,7 @@ import { PrismaClient } from '@prisma/client';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
+import { userCosmeticCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 
 // Disable pod memory keeping for now... We might not need it.
@@ -63,13 +64,13 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     return getTeamCosmetic(await getUserTeam(userId));
   }
   async function clearUserCosmeticCache(userId: number) {
-    await clearUserCosmeticCache(userId);
     await redis.hDel(`event:${name}:cosmetic`, userId.toString());
   }
   async function getRewards() {
     const rewards = await dbWrite.cosmetic.findMany({
       where: { name: { startsWith: definition.badgePrefix }, source: 'Claim', type: 'Badge' },
       select: { id: true, name: true, data: true, description: true },
+      orderBy: { id: 'asc' },
     });
 
     return rewards.map(({ name, ...reward }) => ({
@@ -114,8 +115,8 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
 
 export type EngagementEvent = {
   userId: number;
-  type: 'published';
-  entityType: 'post' | 'model' | 'modelVersion' | 'article';
+  type: 'published' | 'entered';
+  entityType: 'post' | 'model' | 'modelVersion' | 'article' | 'challenge';
   entityId: number;
 };
 

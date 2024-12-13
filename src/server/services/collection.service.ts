@@ -1,17 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  CollectionContributorPermission,
-  CollectionItemStatus,
-  CollectionMode,
-  CollectionReadConfiguration,
-  CollectionType,
-  CollectionWriteConfiguration,
-  HomeBlockType,
-  ImageIngestionStatus,
-  MediaType,
-  MetricTimeframe,
-  TagTarget,
-} from '~/shared/utils/prisma/enums';
 import { uniq, uniqBy } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
@@ -30,7 +17,6 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import {
   GetByIdInput,
-  getByIdSchema,
   UserPreferencesInput,
   userPreferencesSchema,
 } from '~/server/schema/base.schema';
@@ -70,9 +56,21 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { isDefined } from '~/utils/type-guards';
 import { getYoutubeRefreshToken } from '~/server/youtube/client';
-import { number } from 'zod';
+import {
+  CollectionContributorPermission,
+  CollectionItemStatus,
+  CollectionMode,
+  CollectionReadConfiguration,
+  CollectionType,
+  CollectionWriteConfiguration,
+  HomeBlockType,
+  ImageIngestionStatus,
+  MediaType,
+  MetricTimeframe,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
+import { isDefined } from '~/utils/type-guards';
 
 export type CollectionContributorPermissionFlags = {
   collectionId: number;
@@ -1474,7 +1472,10 @@ export const updateCollectionItemsStatus = async ({
   if (collectionItemIds.length > 0) {
     await dbWrite.$executeRaw`
       UPDATE "CollectionItem"
-      SET "reviewedById" = ${userId}, "reviewedAt" = ${new Date()}, "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
+      SET "reviewedById" = ${userId}, 
+      "reviewedAt" = ${new Date()},
+      "updatedAt" = ${new Date()},
+      "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
       collection.mode === CollectionMode.Contest
         ? ', "randomId" = FLOOR(RANDOM() * 1000000000)'
         : ''

@@ -14,9 +14,12 @@ import { purgeCache } from '~/server/cloudflare/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { discord } from '~/server/integrations/discord';
 import { updateLeaderboardRank } from '~/server/services/user.service';
+import { clickhouse } from '~/server/clickhouse/client';
+import { logToAxiom } from '~/server/logging/client';
+import { holiday2024 } from '~/server/events/holiday2024.event';
 
 // Only include events that aren't completed
-export const events = [holiday2023];
+export const events = [holiday2024];
 export const activeEvents = events.filter((x) => x.endDate >= new Date());
 
 export const eventEngine = {
@@ -329,7 +332,7 @@ export const eventEngine = {
     const { team, accountId } = await this.getUserData({ event, userId });
     if (!team || !accountId) throw new Error("You don't have a team for this event");
 
-    const { title } = await this.getEventData(event);
+    const { title, startDate, endDate } = await this.getEventData(event);
 
     await createBuzzTransaction({
       toAccountId: accountId,
@@ -351,50 +354,77 @@ export const eventEngine = {
     const userCosmeticData = (userCosmetic?.data ?? {}) as DonationCosmeticData;
     userCosmeticData.donated = (userCosmeticData.donated ?? 0) + amount;
 
+    // Get current purchased total
+    let purchased = 0;
+    try {
+      [{ purchased }] = (await clickhouse?.$query<{ purchased: number }>(`
+        SELECT
+          sum(amount) as purchased
+        FROM buzzTransactions
+        WHERE toAccountId = ${userId}
+        AND fromAccountId = 0
+        AND type = 'purchase'
+        AND toAccountType = 'user'
+        AND date BETWEEN ${startDate} AND ${endDate};
+      `)) ?? [{ purchased: 0 }];
+      userCosmeticData.purchased = purchased;
+    } catch (e) {
+      const error = e as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'event-donation-error',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      });
+    }
+
     // Update user cosmetic
+    const toUpdate = {
+      donated: userCosmeticData.donated,
+      purchased: userCosmeticData.purchased,
+    };
     await dbWrite.$queryRaw`
-        UPDATE "UserCosmetic"
-        SET data = jsonb_set(
-          COALESCE(data, '{}'::jsonb),
-          '{donated}',
-          to_jsonb(${userCosmeticData.donated})
-        )
-        WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId}; -- Your conditions here
-      `;
+      UPDATE "UserCosmetic"
+      SET data = COALESCE(data, '{}'::jsonb) || to_jsonb(${JSON.stringify(toUpdate)})
+      WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId};
+    `;
     await eventDef.onDonate?.({ userId, amount, db: dbWrite, userCosmeticData });
 
     return { team, title, accountId };
   },
-  async processPurchase({ userId, amount }: { userId: number; amount: number }) {
-    for (const eventDef of activeEvents) {
-      if (eventDef.startDate <= new Date() && eventDef.endDate >= new Date()) {
-        // Record to user cosmetic
-        const cosmeticId = await eventDef.getUserCosmeticId(userId);
-        if (!cosmeticId) continue;
+  // 2024-12-12: Deprecated in favor of direct query on donation
+  // async processPurchase({ userId, amount }: { userId: number; amount: number }) {
 
-        // Get current purchased total
-        const userCosmetic = await dbWrite.userCosmetic.findFirst({
-          where: { cosmeticId, userId },
-          select: { data: true },
-        });
-        const userCosmeticData = (userCosmetic?.data ?? {}) as DonationCosmeticData;
-        userCosmeticData.purchased = (userCosmeticData.purchased ?? 0) + amount;
+  // for (const eventDef of activeEvents) {
+  //   if (eventDef.startDate <= new Date() && eventDef.endDate >= new Date()) {
+  //     // Record to user cosmetic
+  //     const cosmeticId = await eventDef.getUserCosmeticId(userId);
+  //     if (!cosmeticId) continue;
 
-        // Update user cosmetic
-        await dbWrite.$queryRaw`
-          UPDATE "UserCosmetic"
-          SET data = jsonb_set(
-            COALESCE(data, '{}'::jsonb),
-            '{purchased}',
-            to_jsonb(${userCosmeticData.purchased})
-          )
-          WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId}; -- Your conditions here
-        `;
+  //     // Get current purchased total
+  //     const userCosmetic = await dbWrite.userCosmetic.findFirst({
+  //       where: { cosmeticId, userId },
+  //       select: { data: true },
+  //     });
+  //     const userCosmeticData = (userCosmetic?.data ?? {}) as DonationCosmeticData;
+  //     userCosmeticData.purchased = (userCosmeticData.purchased ?? 0) + amount;
 
-        await eventDef.onPurchase?.({ userId, amount, db: dbWrite, userCosmeticData });
-      }
-    }
-  },
+  //     // Update user cosmetic
+  //     await dbWrite.$queryRaw`
+  //       UPDATE "UserCosmetic"
+  //       SET data = jsonb_set(
+  //         COALESCE(data, '{}'::jsonb),
+  //         '{purchased}',
+  //         to_jsonb(${userCosmeticData.purchased})
+  //       )
+  //       WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId}; -- Your conditions here
+  //     `;
+
+  //     await eventDef.onPurchase?.({ userId, amount, db: dbWrite, userCosmeticData });
+  //   }
+  // }
+  // },
   async getTopContributors(event: string, limit = 10) {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
