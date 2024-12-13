@@ -10,6 +10,7 @@ import { useMutateEvent } from '~/components/Events/events.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '../LoginRedirect/LoginRedirect';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 const useStyles = createStyles((theme) => ({
   card: {
@@ -55,13 +56,13 @@ export function WelcomeCard({ event, about }: { event: string; about: string }) 
             <Group spacing="lg" noWrap>
               <IconMoodPlus size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                Join the event to get your lights.
+                Join the event to get your holiday garland and lights.
               </Text>
             </Group>
             <Group spacing="lg" noWrap>
               <IconBulb size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                Earn a lightbulb for each holiday challenge you participate in.
+                Earn a lightbulb for each <Text component={Link} href="/challenges" td="underline">holiday challenge</Text> you participate in.
               </Text>
             </Group>
             <Group spacing="lg" noWrap>
