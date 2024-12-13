@@ -255,7 +255,7 @@ async function reviewEntries() {
   if (!currentChallenge) return;
   log('Processing entries for challenge:', currentChallenge);
   const config = await getChallengeConfig();
-  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
+  const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
 
   // Update pending entries
   // ----------------------------------------------
@@ -530,7 +530,7 @@ async function pickWinners() {
     await startNextChallenge(config);
     return;
   }
-  const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
+  const challengeTypeConfig = await getChallengeTypeConfig(currentChallenge.type);
 
   log('Picking winners for challenge:', currentChallenge);
 
