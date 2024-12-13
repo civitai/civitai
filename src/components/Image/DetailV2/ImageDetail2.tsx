@@ -418,15 +418,17 @@ export function ImageDetail2() {
                       collapsible
                       nsfwLevel={image.nsfwLevel}
                     />
-                    {post && post.detail && (
+                    {post && (post.title || post.detail) && (
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
                           <IconLayoutList />
                           <span>{post.title}</span>
                         </Text>
-                        <ContentClamp maxHeight={75}>
-                          <RenderHtml html={post.detail} />
-                        </ContentClamp>
+                        {post.detail && (
+                          <ContentClamp maxHeight={75}>
+                            <RenderHtml html={post.detail} />
+                          </ContentClamp>
+                        )}
                       </Card>
                     )}
                     <ImageProcess imageId={image.id} />

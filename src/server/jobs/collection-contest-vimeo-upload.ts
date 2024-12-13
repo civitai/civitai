@@ -72,8 +72,6 @@ export const contestCollectionVimeoUpload = createJob(
             AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
             AND i."ingestion" = 'Scanned'
-            -- We only want to upload videos that are longer than 30 seconds
-            AND (i.metadata->'duration')::int > 30  
             AND (i.metadata->'vimeoVideoId') IS NULL
             AND ci."updatedAt" > ${lastRun}
           -- Ensures that we try to upload smaller videos first as a safeguard.
