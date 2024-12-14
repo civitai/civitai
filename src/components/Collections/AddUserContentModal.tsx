@@ -150,7 +150,7 @@ export function AddUserContentModal({ collectionId }: Props) {
           </AlertWithIcon>
         )}
 
-        <Button component={Link} href={`/posts/create?collectionId=${collectionId}`}>
+        <Button component={Link} href={`/posts/create?collectionId=${collectionId}`} onClick={()=>dialog.onClose()}>
           Create a new image post
         </Button>
 

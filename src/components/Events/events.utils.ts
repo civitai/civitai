@@ -5,12 +5,13 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export const useQueryEvent = ({ event }: EventInput) => {
   const currentUser = useCurrentUser();
-  const { data: eventData, isLoading: loadingData } = trpc.event.getData.useQuery({ event });
+  const { data: eventData, isLoading: loadingData } = trpc.event.getData.useQuery(
+    { event },
+    { enabled: !!event }
+  );
   const { data: teamScores = [], isLoading: loadingScores } = trpc.event.getTeamScores.useQuery(
-    {
-      event,
-    },
-    { trpc: { context: { skipBatch: true } } }
+    { event },
+    { enabled: !!event, trpc: { context: { skipBatch: true } } }
   );
   const ended = eventData && eventData.endDate < new Date();
   const window = ended ? 'day' : 'hour';
@@ -24,29 +25,26 @@ export const useQueryEvent = ({ event }: EventInput) => {
     );
   const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery(
     { event },
-    { enabled: !!currentUser }
+    { enabled: !!currentUser && !!event }
   );
   const { data: rewards = [], isLoading: loadingRewards } = trpc.event.getRewards.useQuery(
-    {
-      event,
-    },
-    { trpc: { context: { skipBatch: true } } }
+    { event },
+    { enabled: !!event, trpc: { context: { skipBatch: true } } }
   );
   const { data: userRank, isLoading: loadingUserRank } = trpc.event.getUserRank.useQuery(
     { event },
     {
       enabled:
         !!currentUser &&
+        !!event &&
         eventCosmetic?.available &&
         eventCosmetic?.obtained &&
         eventCosmetic?.equipped,
     }
   );
   const { data: partners, isLoading: loadingPartners } = trpc.event.getPartners.useQuery(
-    {
-      event,
-    },
-    { trpc: { context: { skipBatch: true } } }
+    { event },
+    { enabled: !!event, trpc: { context: { skipBatch: true } } }
   );
 
   return {
@@ -67,7 +65,7 @@ export const useQueryEvent = ({ event }: EventInput) => {
 export type EventPartners = ReturnType<typeof useQueryEvent>['partners'];
 
 export const useMutateEvent = () => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const activateCosmeticMutation = trpc.event.activateCosmetic.useMutation({
     onSuccess: async (_, payload) => {
@@ -107,7 +105,7 @@ export const useMutateEvent = () => {
 };
 
 export const useQueryEventContributors = ({ event }: { event: string }) => {
-  const { data: contributors, isLoading } = trpc.event.getContributors.useQuery(
+  const { data: contributors, isLoading } = trpc.event.getDonors.useQuery(
     { event },
     { trpc: { context: { skipBatch: true } } }
   );

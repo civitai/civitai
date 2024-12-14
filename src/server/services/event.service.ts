@@ -38,8 +38,11 @@ type EventCosmetic = Awaited<ReturnType<typeof cosmeticStatus>> & {
 export async function getEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
     // TODO optimize, let's cache this to avoid multiple queries
-    const cacheJson = await redis.hGet(`event:${event}:cosmetic`, userId.toString());
-    if (cacheJson) return JSON.parse(cacheJson) as EventCosmetic;
+    const cacheJson = await redis.packed.hGet<EventCosmetic>(
+      `packed:event:${event}:cosmetic`,
+      userId.toString()
+    );
+    if (cacheJson) return cacheJson;
 
     const { cosmeticId } = await eventEngine.getUserData({ event, userId });
     if (!cosmeticId)
@@ -50,7 +53,7 @@ export async function getEventCosmetic({ event, userId }: EventInput & { userId:
     // Get the userCosmetic record so we can display the data
 
     const result: EventCosmetic = { ...status, cosmetic };
-    await redis.hSet(`event:${event}:cosmetic`, userId.toString(), JSON.stringify(result));
+    await redis.packed.hSet(`packed:event:${event}:cosmetic`, userId.toString(), result);
 
     return result;
   } catch (error) {
@@ -87,11 +90,13 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
     })) ?? { data: {} };
 
     // Update cache
-    await redis.hSet(
-      `event:${event}:cosmetic`,
-      userId.toString(),
-      JSON.stringify({ equipped: true, available: true, obtained: true, data, cosmetic })
-    );
+    await redis.packed.hSet(`packed:event:${event}:cosmetic`, userId.toString(), {
+      equipped: true,
+      available: true,
+      obtained: true,
+      data,
+      cosmetic,
+    });
 
     // Queue adding to role
     await eventEngine.queueAddRole({ event, team, userId });

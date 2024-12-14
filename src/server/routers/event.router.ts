@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
-import { edgeCacheIt } from '~/server/middleware.trpc';
-import { eventSchema, teamScoreHistorySchema } from '~/server/schema/event.schema';
+import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
+import { EventInput, eventSchema, teamScoreHistorySchema } from '~/server/schema/event.schema';
 import {
   activateEventCosmetic,
   donate,
@@ -46,12 +46,18 @@ export const eventRouter = router({
   donate: protectedProcedure
     .input(eventSchema.extend({ amount: z.number() }))
     .mutation(({ input, ctx }) => donate({ userId: ctx.user.id, ...input })),
-  getContributors: publicProcedure
+  getDonors: publicProcedure
     .input(eventSchema)
     .use(
-      edgeCacheIt({
+      cacheIt({
         ttl: CacheTTL.day,
-        tags: () => ['event-contributors'],
+        tags: (input: EventInput) => ['event-donors', `event-donors:${input.event}`],
+      })
+    )
+    .use(
+      edgeCacheIt({
+        ttl: CacheTTL.xs,
+        tags: () => ['event-donors'],
       })
     )
     .query(({ input }) => getEventContributors(input)),
