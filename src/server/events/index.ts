@@ -230,8 +230,8 @@ export const eventEngine = {
         ORDER BY ci."createdAt" DESC
         LIMIT 1
       `;
-      coverImage = banner.url;
-      coverImageUser = banner.username;
+      coverImage = banner?.url;
+      coverImageUser = banner?.username;
     }
 
     return {
