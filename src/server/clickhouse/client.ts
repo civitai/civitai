@@ -79,7 +79,7 @@ if (shouldConnect) {
 }
 
 function formatSqlType(value: any): string {
-  if (value instanceof Date) return dayjs(value).toISOString();
+  if (value instanceof Date) return "parseDateTimeBestEffort('" + dayjs(value).toISOString() + "')";
   if (typeof value === 'object') {
     if (Array.isArray(value)) return value.map(formatSqlType).join(',');
     if (value === null) return 'null';

@@ -352,7 +352,7 @@ export const eventEngine = {
     // Get current purchased total
     let purchased = 0;
     try {
-      [{ purchased }] = (await clickhouse?.$query<{ purchased: number }>(`
+      [{ purchased }] = (await clickhouse!.$query<{ purchased: number }>`
         SELECT
           sum(amount) as purchased
         FROM buzzTransactions
@@ -361,7 +361,7 @@ export const eventEngine = {
         AND type = 'purchase'
         AND toAccountType = 'user'
         AND date BETWEEN ${startDate} AND ${endDate};
-      `)) ?? [{ purchased: 0 }];
+      `) ?? [{ purchased: 0 }];
       userCosmeticData.purchased = purchased;
     } catch (e) {
       const error = e as Error;
@@ -379,6 +379,7 @@ export const eventEngine = {
       donated: userCosmeticData.donated,
       purchased: userCosmeticData.purchased,
     };
+    console.log('update user cosmetic', toUpdate);
     await dbWrite.$queryRawUnsafe(`
       UPDATE "UserCosmetic"
       SET data = COALESCE(data, '{}'::jsonb) || to_jsonb('${JSON.stringify(toUpdate)}'::jsonb)
