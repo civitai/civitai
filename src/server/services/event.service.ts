@@ -48,6 +48,7 @@ export async function getEventCosmetic({ event, userId }: EventInput & { userId:
     if (!cosmeticId)
       return { available: false, obtained: false, equipped: false, data: {}, cosmetic: null };
 
+    // TODO.holiday optimization - We should probably store the cosmetic separately so we don't repeat it over and over in the cache
     const cosmetic = await getCosmeticDetail({ id: cosmeticId });
     const status = await cosmeticStatus({ id: cosmeticId, userId });
     // Get the userCosmetic record so we can display the data
