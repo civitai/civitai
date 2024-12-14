@@ -124,19 +124,19 @@ export const holiday2024 = createEvent('holiday2024', {
     if (newMilestones.length) {
       const cosmeticId = await holiday2024.getUserCosmeticId(buzzEvent.userId);
       const json = JSON.stringify(newMilestones);
-      await buzzEvent.db.$executeRaw`
+      await buzzEvent.db.$executeRawUnsafe(`
         UPDATE "UserCosmetic"
         SET data = jsonb_set(
           COALESCE(data, '{}'::jsonb),
           '{milestonesEarned}',
           COALESCE(
-              (data->'milestonesEarned')::jsonb || to_jsonb(${json}::jsonb),
-              to_jsonb(${json}::jsonb)
+              (data->'milestonesEarned')::jsonb || to_jsonb('${json}'::jsonb),
+              to_jsonb('${json}'::jsonb)
           ),
           true
         )
         WHERE "cosmeticId" = ${cosmeticId} AND "userId" = ${buzzEvent.userId}
-      `;
+      `);
     }
   },
   async onDailyReset({ scores, db }) {
