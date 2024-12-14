@@ -5,20 +5,41 @@ import { useFrameStyles } from '~/components/Cards/Cards.styles';
 import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { TwCard, TwCardAnchor } from '~/components/TwCard/TwCard';
+import clsx from 'clsx';
 
 type MasonryCardProps = CardProps & {
   height?: number;
   uniform?: boolean;
   frameDecoration?: ContentDecorationCosmetic | null;
+  onClick?: () => void;
 };
 
 // TODO - when children not in view, replace child react nodes with static html
 const _MasonryCard = forwardRef<HTMLDivElement, MasonryCardProps>(
-  ({ height, children, style, uniform, frameDecoration, className, ...props }, ref) => {
+  (
+    {
+      height,
+      children,
+      style,
+      uniform,
+      frameDecoration,
+      className,
+      onClick,
+      withBorder,
+      shadow,
+      ...props
+    },
+    ref
+  ) => {
     return (
       <TwCosmeticWrapper cosmetic={frameDecoration?.data}>
         {/* <CosmeticLights frameDecoration={frameDecoration} /> */}
-        <TwCard ref={ref as any} style={{ height, ...style }} className={className}>
+        <TwCard
+          ref={ref as any}
+          style={{ height, ...style }}
+          className={clsx(className, { ['border']: withBorder, ['shadow']: shadow !== undefined })}
+          onClick={onClick}
+        >
           {children}
         </TwCard>
       </TwCosmeticWrapper>
