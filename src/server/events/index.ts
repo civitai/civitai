@@ -379,11 +379,11 @@ export const eventEngine = {
       donated: userCosmeticData.donated,
       purchased: userCosmeticData.purchased,
     };
-    await dbWrite.$queryRaw`
+    await dbWrite.$queryRawUnsafe(`
       UPDATE "UserCosmetic"
-      SET data = COALESCE(data, '{}'::jsonb) || to_jsonb(${JSON.stringify(toUpdate)})
+      SET data = COALESCE(data, '{}'::jsonb) || to_jsonb('${JSON.stringify(toUpdate)}'::jsonb)
       WHERE "userId" = ${userId} AND "cosmeticId" = ${cosmeticId};
-    `;
+    `);
     await eventDef.onDonate?.({ userId, amount, db: dbWrite, userCosmeticData });
 
     return { team, title, accountId };
