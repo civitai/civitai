@@ -41,7 +41,7 @@ const aspectRatioValues: Record<
 };
 
 export const FeedCard = forwardRef<HTMLElement, Props>(
-  ({ href, children, aspectRatio = 'portrait', className, frameDecoration }, ref) => {
+  ({ href, children, aspectRatio = 'portrait', className, frameDecoration, onClick }, ref) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
 
     return (
@@ -53,6 +53,7 @@ export const FeedCard = forwardRef<HTMLElement, Props>(
             style={{ aspectRatio: stringRatio }}
             href={href}
             className={className}
+            onClick={onClick}
           >
             {children}
           </TwCardAnchor>
