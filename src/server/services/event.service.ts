@@ -1,12 +1,11 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { profilePictureCache, userBasicCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
 import { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
-import { cosmeticStatus } from '~/server/services/user.service';
+import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
 
 export async function getEventData({ event }: EventInput) {
   try {
@@ -132,18 +131,28 @@ export async function getEventRewards({ event }: EventInput) {
 export async function getEventContributors({ event }: EventInput) {
   try {
     const contributors = await eventEngine.getTopContributors(event);
-    const userIds = new Set<number>();
+    const userIdSet = new Set<number>();
     for (const team of Object.values(contributors.teams)) {
-      for (const user of team) userIds.add(user.userId);
+      for (const user of team) userIdSet.add(user.userId);
     }
-    for (const user of contributors.allTime) userIds.add(user.userId);
-    for (const user of contributors.day) userIds.add(user.userId);
+    for (const user of contributors.allTime) userIdSet.add(user.userId);
+    for (const user of contributors.day) userIdSet.add(user.userId);
 
-    const users = await dbRead.user.findMany({
-      where: { id: { in: [...userIds] } },
-      select: { id: true, username: true, image: true },
-    });
-    const userMap = new Map(users.map((user) => [user.id, user]));
+    const userIds = Array.from(userIdSet);
+    const users = await userBasicCache.fetch(userIds);
+    const profilePictures = await profilePictureCache.fetch(userIds);
+    const userCosmetics = await getCosmeticsForUsers(userIds);
+
+    const userMap = new Map(
+      Object.values(users).map((user) => [
+        user.id,
+        {
+          ...user,
+          profilePicture: profilePictures[user.id],
+          cosmetics: userCosmetics[user.id] ?? [],
+        },
+      ])
+    );
 
     return {
       allTime: contributors.allTime.map((user) => ({
