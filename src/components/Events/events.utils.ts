@@ -107,7 +107,7 @@ export const useMutateEvent = () => {
 };
 
 export const useQueryEventContributors = ({ event }: { event: string }) => {
-  const { data: contributors, isLoading } = trpc.event.getContributors.useQuery(
+  const { data: contributors, isLoading } = trpc.event.getDonors.useQuery(
     { event },
     { trpc: { context: { skipBatch: true } } }
   );

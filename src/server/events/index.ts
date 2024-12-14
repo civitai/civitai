@@ -10,7 +10,6 @@ import {
 } from '~/server/services/buzz.service';
 import { TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import dayjs from 'dayjs';
-import { purgeCache } from '~/server/cloudflare/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { discord } from '~/server/integrations/discord';
 import { updateLeaderboardRank } from '~/server/services/user.service';
@@ -204,17 +203,13 @@ export const eventEngine = {
 
       // Purge cache
       await redis.del(`event:${eventDef.name}:contributors`);
-      await purgeCache({
-        tags: [
-          `event-contributors-${eventDef.name}`,
-          ...leaderboardIds.map((id) => `${eventDef.name}:${id}`),
-        ],
-      });
+      await redis.purgeTags(leaderboardIds.map((id) => `leaderboard:${eventDef.name}:${id}`));
+      await redis.purgeTags([`event-donors:${eventDef.name}`]);
       updated = true;
     }
 
     // Purge leaderboard positions cache
-    if (updated) await purgeCache({ tags: ['leaderboard-positions'] });
+    if (updated) await redis.purgeTags('leaderboard-positions');
   },
   async getEventData(event: string) {
     const eventDef = events.find((x) => x.name === event);

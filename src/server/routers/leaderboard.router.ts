@@ -1,6 +1,7 @@
 import { CacheTTL } from '~/server/common/constants';
 import { cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
 import {
+  GetLeaderboardInput,
   getLeaderboardPositionsSchema,
   getLeaderboardSchema,
 } from '~/server/schema/leaderboard.schema';
@@ -12,10 +13,6 @@ import {
 } from '~/server/services/leaderboard.service';
 import { publicProcedure, router } from '~/server/trpc';
 
-const leaderboardCache = cacheIt({
-  ttl: CacheTTL.day,
-  tags: () => ['leaderboard'],
-});
 const leaderboardEdgeCache = edgeCacheIt({
   ttl: CacheTTL.xs,
 });
@@ -26,7 +23,7 @@ export const leaderboardRouter = router({
   ),
   getLeaderboardPositions: publicProcedure
     .input(getLeaderboardPositionsSchema)
-    .use(leaderboardCache)
+    .use(cacheIt({ ttl: CacheTTL.day, tags: () => ['leaderboard', 'leaderboard-positions'] }))
     .query(({ input, ctx }) =>
       getLeaderboardPositions({
         ...input,
@@ -36,14 +33,28 @@ export const leaderboardRouter = router({
     ),
   getLeaderboard: publicProcedure
     .input(getLeaderboardSchema)
-    .use(leaderboardCache)
+    .use(
+      cacheIt({
+        ttl: CacheTTL.day,
+        tags: (input: GetLeaderboardInput) => ['leaderboard', `leaderboard:${input.id}`],
+      })
+    )
     .use(leaderboardEdgeCache)
     .query(({ input, ctx }) =>
       getLeaderboard({ ...input, isModerator: ctx?.user?.isModerator ?? false })
     ),
   getLeadboardLegends: publicProcedure
     .input(getLeaderboardSchema)
-    .use(leaderboardCache)
+    .use(
+      cacheIt({
+        ttl: CacheTTL.day,
+        tags: (input: GetLeaderboardInput) => [
+          'leaderboard',
+          `leaderboard:${input.id}`,
+          `leaderboard:${input.id}:legends`,
+        ],
+      })
+    )
     .use(leaderboardEdgeCache)
     .query(({ input, ctx }) =>
       getLeaderboardLegends({ ...input, isModerator: ctx?.user?.isModerator ?? false })
