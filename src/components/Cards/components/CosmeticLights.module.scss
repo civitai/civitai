@@ -1,39 +1,57 @@
-$offset: 3px;
-$width: 10px;
-$height: 15px;
+$padding-y: 15px;
+$offset: -2px;
+$width: 18px;
+$height: 14px;
+$bulbEndRadius: 6px;
+$baseGlowOffset: -3px;
+
+$yellow: rgb(255, 255, 0);
+$red: rgb(255, 0, 0);
+$green: rgb(0, 255, 0);
+$blue: rgb(0, 200, 255);
 
 .light {
   position: absolute;
-  top: 10px;
+  top: $padding-y;
   left: $offset;
   right: $offset;
-  bottom: 10px;
+  bottom: $padding-y;
+  z-index: 1001;
 
   span {
-    width: 10px;
-    height: 15px;
+    width: $width;
+    height: $height;
     position: absolute;
+    box-shadow: inset 0px 0px 1px 1px rgba(0, 0, 0, 0.3);
 
     &::before {
       content: '';
       position: absolute;
-      inset: 0;
       filter: blur(3px);
+      width: #{$width + abs($baseGlowOffset)};
+      height: #{$height * 1.5};
+      top: 50%;
+      transform: translateY(-50%);
+      will-change: width, opacity;
+      opacity: 0.5;
+      z-index: -1;
     }
 
     &:nth-child(odd) {
-      border-radius: 50% 0 0 50%;
+      border-radius: $bulbEndRadius 50% 50% $bulbEndRadius;
       left: 0;
       &::before {
-        left: -3px;
+        left: 0;
+        border-radius: $bulbEndRadius 50% 50% $bulbEndRadius;
       }
     }
 
     &:nth-child(even) {
-      border-radius: 0 50% 50% 0;
+      border-radius: 50% $bulbEndRadius $bulbEndRadius 50%;
       right: 0;
       &::before {
-        right: -3px;
+        border-radius: 50% $bulbEndRadius $bulbEndRadius 50%;
+        right: 0;
       }
     }
 
@@ -45,119 +63,128 @@ $height: 15px;
   }
 
   &.red span {
-    background: rgba(255, 0, 0, 0.8);
+    background: $red;
     &::before {
-      background: rgba(255, 0, 0, 0.5);
+      background: darken($red, 10%);
     }
   }
 
   &.green span {
-    background: rgba(0, 255, 0, 0.8);
+    background: $green;
     &::before {
-      background: rgba(0, 255, 0, 0.5);
+      background: $green;
     }
   }
 
   &.blue span {
-    background: rgba(0, 250, 255, 0.8);
+    background: $blue;
     &::before {
-      background: rgba(0, 150, 255, 0.5);
+      background: darken($blue, 10%);
     }
   }
 
   &.yellow span {
-    background: rgba(255, 255, 0, 0.8);
+    background: $yellow;
     &::before {
-      background: rgba(255, 255, 0, 0.5);
+      background: $yellow;
     }
   }
 
-  // TODO.holiday - make brightness affect before distance on left and right
-  // TODO.holiday - add animation to pulsate opacity of before
-
   &.brightness-100 span {
-    animation: flicker-100 1s ease-in-out infinite alternate
+    &::before {
+      animation: flicker-100 1s ease infinite alternate;
+    }
   }
 
   &.brightness-75 span {
-    opacity: 0.75;
     &::before {
-      opacity: 0.5;
+      animation: flicker-75 1.25s ease infinite alternate;
     }
   }
 
   &.brightness-50 span {
-    opacity: 0.75;
+    &.yellow span {
+      background: darken($yellow, 5%);
+    }
+    &.red span {
+      background: darken($red, 5%);
+    }
+    &.green span {
+      background: darken($green, 5%);
+    }
+    &.blue span {
+      background: darken($blue, 5%);
+    }
     &::before {
-      opacity: 0.75;
-    }
-    &:nth-child(even) {
-      &::before {
-        right: -3px;
-      }
-    }
-    &:nth-child(odd) {
-      &::before {
-        left: -3px;
-      }
+      animation: flicker-50 1.5s ease infinite alternate;
     }
   }
 
-  &.brightness-25 span {
-    opacity: 0.5;
-    &::before {
-      opacity: 0.75;
+  &.brightness-25 {
+    &.yellow span {
+      background: darken($yellow, 10%);
     }
-    &:nth-child(even) {
-      &::before {
-        right: -1px;
-      }
+    &.red span {
+      background: darken($red, 10%);
     }
-    &:nth-child(odd) {
+    &.green span {
+      background: darken($green, 10%);
+    }
+    &.blue span {
+      background: darken($blue, 10%);
+    }
+    span {
       &::before {
-        left: -1px;
+        animation: flicker-25 2s ease infinite alternate;
       }
     }
   }
 }
 
-
 @keyframes flicker-100 {
   0% {
-    opacity: 0.95;
+    opacity: 0.25;
+    width: #{$width + abs($baseGlowOffset * 1)};
   }
 
   100% {
-    opacity: 1;
+    opacity: 0.6;
+    width: #{$width + abs($baseGlowOffset * 4)};
   }
 }
 
 @keyframes flicker-75 {
   0% {
-    opacity: 0.85;
+    opacity: 0.15;
+    width: #{$width + abs($baseGlowOffset * 1)};
   }
 
   100% {
-    opacity: 0.9;
+    opacity: 0.4;
+    width: #{$width + abs($baseGlowOffset * 3)};
   }
 }
 
 @keyframes flicker-50 {
   0% {
-    opacity: 0.75;
+    opacity: 0.05;
+    width: #{$width + abs($baseGlowOffset * 1)};
   }
 
   100% {
-    opacity: 0.8;
+    opacity: 0.3;
+    width: #{$width + abs($baseGlowOffset * 2.5)};
   }
 }
 
 @keyframes flicker-25 {
   0% {
-    opacity: 0.65;
+    opacity: 0.05;
+    width: #{$width + abs($baseGlowOffset * 1)};
   }
 
   100% {
-    opacity: 0.7;
+    opacity: 0.2;
+    width: #{$width + abs($baseGlowOffset * 2)};
   }
 }

@@ -52,6 +52,7 @@ export function TwCosmeticWrapper({
         {
           [styles.border]: border,
           [styles.cssFrame]: cssFrame,
+          [styles.texture]: texture,
           [clsx(styles.glow, 'before:rounded-md before:blur-[6px]')]: glow && !border,
         },
         className
