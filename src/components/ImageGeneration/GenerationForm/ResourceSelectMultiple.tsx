@@ -33,7 +33,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
       modalOpened,
       onCloseModal,
       hideButton = false,
-      isTraining = false,
+      isTraining = false, // TODO change to type/source
       ...inputWrapperProps
     },
     ref

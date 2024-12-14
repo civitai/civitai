@@ -366,6 +366,7 @@ const ResourceHeader = () => {
               isTraining={true}
               options={{
                 resources: allowedResources,
+                excludeIds: image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined),
               }}
               buttonProps={{
                 size: 'sm',

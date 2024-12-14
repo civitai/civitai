@@ -23,6 +23,7 @@ import {
   IconInfoCircle,
   IconTagOff,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Configure,
@@ -35,6 +36,8 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
+import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
@@ -43,6 +46,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
@@ -58,11 +62,8 @@ import { Generation } from '~/server/services/generation/generation.types';
 import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
 import { aDayAgo } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-import { ResourceSelectOptions } from './resource-select.types';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import clsx from 'clsx';
 import { isDefined } from '~/utils/type-guards';
-import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { ResourceSelectOptions } from './resource-select.types';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -79,7 +80,7 @@ export default function ResourceSelectModal({
 }: ResourceSelectModalProps) {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
-  const { resources = [], canGenerate } = options;
+  const { resources = [], excludeIds = [], canGenerate } = options;
 
   const filters: string[] = [];
   const or: string[] = [];
@@ -88,13 +89,18 @@ export default function ResourceSelectModal({
     if (!baseModels?.length) or.push(`type = ${type}`);
     else
       or.push(
-        `type = ${type} AND versions.baseModel IN [${baseModels.map((x) => `"${x}"`).join(',')}]`
+        `(type = ${type} AND versions.baseModel IN [${baseModels.map((x) => `"${x}"`).join(',')}])`
       );
   }
-  if (or.length) filters.push(or.join(' OR '));
+  if (or.length) filters.push(`(${or.join(' OR ')})`);
 
   const exclude: string[] = [];
   exclude.push('NOT tags.name = "celebrity"');
+
+  // nb - it would be nice to do this, but meili filters the entire top level object only
+  // if (excludeIds.length > 0) {
+  //   exclude.push(`versions.id NOT IN [${excludeIds.join(',')}]`);
+  // }
 
   function handleSelect(value: GenerationResource) {
     onSelect(value);
@@ -124,7 +130,11 @@ export default function ResourceSelectModal({
               <CustomSearchBox isMobile={isMobile} autoFocus />
               <CategoryTagFilters />
             </div>
-            <ResourceHitList resourceTypes={resources} canGenerate={canGenerate} />
+            <ResourceHitList
+              resources={resources}
+              canGenerate={canGenerate}
+              excludeIds={excludeIds}
+            />
           </InstantSearch>
         </ResourceSelectContext.Provider>
       </div>
@@ -132,6 +142,7 @@ export default function ResourceSelectModal({
   );
 }
 
+// TODO I don't think canGenerate and resources are being used here
 const ResourceSelectContext = React.createContext<{
   canGenerate?: boolean;
   resources: { type: string; baseModels?: string[] }[];
@@ -167,33 +178,31 @@ function CategoryTagFilters() {
 
 function ResourceHitList({
   canGenerate,
-  resourceTypes,
-}: {
-  canGenerate?: boolean;
-  resourceTypes: { type: string; baseModels?: string[] }[];
-}) {
+  resources,
+  excludeIds,
+}: ResourceSelectOptions & Required<Pick<ResourceSelectOptions, 'resources' | 'excludeIds'>>) {
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
   const { classes } = useSearchLayoutStyles();
-  const { hits, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
+  const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const {
     items: models,
     loadingPreferences,
     hiddenCount,
   } = useApplyHiddenPreferences({
     type: 'models',
-    data: hits,
+    data: items,
   });
   const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
   const filtered = useMemo(() => {
-    if (!canGenerate && !resourceTypes.length) return models;
+    if (!canGenerate && !resources.length) return models;
 
     return models
       .map((model) => {
-        const resourceType = resourceTypes.find((x) => x.type === model.type);
+        const resourceType = resources.find((x) => x.type === model.type);
         if (!resourceType) return null;
 
         const versions = model.versions.filter((version) => {
@@ -201,20 +210,21 @@ function ResourceHitList({
             (canGenerate ? canGenerate === version.canGenerate : true) &&
             (!!resourceType.baseModels?.length
               ? resourceType.baseModels.includes(version.baseModel)
-              : true)
+              : true) &&
+            !excludeIds.includes(version.id)
           );
         });
         if (!versions.length) return null;
         return { ...model, versions };
       })
       .filter(isDefined);
-  }, [canGenerate, models, resourceTypes]);
+  }, [canGenerate, excludeIds, models, resources]);
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
   }, [status]);
 
-  if (loading && !hits.length)
+  if (loading && !items.length)
     return (
       <div className="p-3 py-5">
         <Center mt="md">
@@ -223,7 +233,7 @@ function ResourceHitList({
       </div>
     );
 
-  if (!hits.length)
+  if (!items.length)
     return (
       <div className="p-3 py-5">
         <Center>
@@ -262,7 +272,7 @@ function ResourceHitList({
             <ResourceSelectCard key={model.id} data={model} />
           ))}
       </div>
-      {hits.length > 0 && !isLastPage && (
+      {items.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
           <Center sx={{ height: 36 }} my="md">
             <Loader />
@@ -388,7 +398,7 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
     // Visually hide card if there are no versions
     <TwCard
       className={clsx(classes.root, 'justify-between')}
-      onClick={handleSelect}
+      // onClick={handleSelect}
       style={{ display: versions.length === 0 ? 'none' : undefined }}
     >
       {/* {inView && ( */}
@@ -399,16 +409,18 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
               return (
                 <div className="relative overflow-hidden aspect-portrait">
                   {safe ? (
-                    <EdgeMedia
-                      src={image.url}
-                      name={image.name ?? image.id.toString()}
-                      alt={image.name ?? undefined}
-                      type={image.type}
-                      width={width}
-                      placeholder="empty"
-                      className={classes.image}
-                      loading="lazy"
-                    />
+                    <Link href={`/models/${data.id}?modelVersionId=${selected}`} target="_blank">
+                      <EdgeMedia
+                        src={image.url}
+                        name={image.name ?? image.id.toString()}
+                        alt={image.name ?? undefined}
+                        type={image.type}
+                        width={width}
+                        placeholder="empty"
+                        className={classes.image}
+                        loading="lazy"
+                      />
+                    </Link>
                   ) : (
                     <MediaHash {...image} />
                   )}
@@ -503,27 +515,25 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
           </ImageGuard2>
         )}
 
-        <div className="flex flex-col gap-2 p-3">
+        <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
           <Text size="sm" weight={700} lineClamp={1} lh={1}>
             {data.name}
           </Text>
           <Group noWrap position="apart">
-            {versions.length === 1 ? (
-              <span>{versions[0].name}</span>
-            ) : (
-              <Select
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                value={selected?.toString()}
-                data={versions.map((version) => ({
-                  label: version.name,
-                  value: version.id.toString(),
-                }))}
-                onChange={(id) => setSelected(id !== null ? Number(id) : undefined)}
-              />
-            )}
+            <Select
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+              }}
+              readOnly={versions.length <= 1}
+              value={selected?.toString()}
+              data={versions.map((version) => ({
+                label: version.name,
+                value: version.id.toString(),
+              }))}
+              onChange={(id) => setSelected(id !== null ? Number(id) : undefined)}
+              styles={{ input: { cursor: versions.length <= 1 ? 'auto !important' : undefined } }}
+            />
             <Button
               onClick={(e) => {
                 e.preventDefault();
