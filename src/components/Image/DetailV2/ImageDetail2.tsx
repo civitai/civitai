@@ -61,6 +61,7 @@ import { useImageContestCollectionDetails } from '~/components/Image/image.utils
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -178,9 +179,8 @@ export function ImageDetail2() {
         </Text>
       </Button>
       {image.postId && (
-        <RoutedDialogLink
-          name="postDetail"
-          state={{ postId: image.postId }}
+        <NextLink
+          href={`/posts/${image.postId}`}
           className="hidden @md:block"
           onClick={() => {
             if (videoRef.current) videoRef.current.stop();
@@ -192,7 +192,7 @@ export function ImageDetail2() {
               View Post
             </Text>
           </Button>
-        </RoutedDialogLink>
+        </NextLink>
       )}
       <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
         <Badge

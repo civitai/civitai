@@ -15,6 +15,7 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },
@@ -59,7 +60,7 @@ export function PostsCard({
                   />
                 )}
 
-                <RoutedDialogLink name="postDetail" state={{ postId: id }}>
+                <NextLink href={`/posts/${id}`}>
                   {!safe ? (
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />
@@ -77,7 +78,7 @@ export function PostsCard({
                       placeholder="empty"
                     />
                   )}
-                </RoutedDialogLink>
+                </NextLink>
                 <PostReactions
                   className={classes.reactions}
                   imageCount={imageCount}

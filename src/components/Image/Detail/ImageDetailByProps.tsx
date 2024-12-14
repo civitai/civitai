@@ -50,6 +50,7 @@ import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMen
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 export function ImageDetailByProps({
   imageId,
@@ -171,25 +172,20 @@ export function ImageDetailByProps({
                   <Group position="apart" spacing={8}>
                     <Group spacing={8}>
                       {image.postId && (
-                        <RoutedDialogLink
-                          passHref
-                          name="postDetail"
-                          state={{ postId: image.postId }}
+                        <Button
+                          component={NextLink}
+                          href={`/posts/${image.postId}`}
+                          size="md"
+                          radius="xl"
+                          color="gray"
+                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          compact
                         >
-                          <Button
-                            component="a"
-                            size="md"
-                            radius="xl"
-                            color="gray"
-                            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                            compact
-                          >
-                            <Group spacing={4}>
-                              <IconEye size={14} />
-                              <Text size="xs">View post</Text>
-                            </Group>
-                          </Button>
-                        </RoutedDialogLink>
+                          <Group spacing={4}>
+                            <IconEye size={14} />
+                            <Text size="xs">View post</Text>
+                          </Group>
+                        </Button>
                       )}
                       <Button
                         size="md"
