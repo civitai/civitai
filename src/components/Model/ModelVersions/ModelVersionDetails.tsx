@@ -1305,13 +1305,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          {!model.nsfw && (
-            <AdUnitRenderable>
-              <TwCard className="mx-auto border p-2 shadow">
-                <AdUnitSide_2 />
-              </TwCard>
-            </AdUnitRenderable>
-          )}
+          {!model.nsfw && <AdUnitSide_2 />}
         </Stack>
       </ContainerGrid.Col>
 

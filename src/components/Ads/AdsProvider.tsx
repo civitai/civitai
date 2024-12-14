@@ -37,7 +37,7 @@ const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean }>(() =>
   adsBlocked: true,
 }));
 
-const blockedUrls: string[] = ['/collections/6503138'];
+const blockedUrls: string[] = ['/collections/6503138', '/moderator'];
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -50,7 +50,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = isDev
-    ? false
+    ? true
     : features.adsEnabled &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url));
