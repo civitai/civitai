@@ -8,7 +8,7 @@ type Props = {
 };
 
 export function CosmeticLights({ cosmetic }: Props) {
-  const { lights, color, brightness } = cosmetic ?? {};
+  const { lights = 12, color = 'yellow', brightness = 1 } = cosmetic ?? {};
   if (!lights) return null;
 
   return (
