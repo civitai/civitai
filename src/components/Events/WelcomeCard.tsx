@@ -1,4 +1,4 @@
-import { Button, Card, Grid, Group, Stack, Text, createStyles } from '@mantine/core';
+import { Anchor, Button, Card, Grid, Group, Stack, Text, createStyles } from '@mantine/core';
 import {
   IconBolt,
   IconBulb,
@@ -10,7 +10,7 @@ import { useMutateEvent } from '~/components/Events/events.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '../LoginRedirect/LoginRedirect';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 
 const useStyles = createStyles((theme) => ({
   card: {
@@ -28,7 +28,15 @@ const useStyles = createStyles((theme) => ({
   },
 }));
 
-export function WelcomeCard({ event, about }: { event: string; about: string }) {
+export function WelcomeCard({
+  event,
+  about,
+  learnMore,
+}: {
+  event: string;
+  about: string;
+  learnMore?: string;
+}) {
   const { classes } = useStyles();
   const mobile = useIsMobile();
 
@@ -62,7 +70,11 @@ export function WelcomeCard({ event, about }: { event: string; about: string }) 
             <Group spacing="lg" noWrap>
               <IconBulb size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                Earn a lightbulb for each <Text component={Link} href="/challenges" td="underline">holiday challenge</Text> you participate in.
+                Earn a lightbulb for each{' '}
+                <Text component={Link} href="/challenges" td="underline">
+                  holiday challenge
+                </Text>{' '}
+                you participate in.
               </Text>
             </Group>
             <Group spacing="lg" noWrap>
@@ -74,13 +86,19 @@ export function WelcomeCard({ event, about }: { event: string; about: string }) 
             <Group spacing="lg" noWrap>
               <IconHeartHandshake size={48} stroke={1.5} style={{ minWidth: 48 }} />
               <Text size={20} weight={600}>
-                All Buzz purchased and put into the Spirit Bank will be donated to All Hands and Hearts.
+                All Buzz purchased and put into the Spirit Bank will be donated to All Hands and
+                Hearts.
               </Text>
             </Group>
           </Stack>
         </Grid.Col>
         <Grid.Col xs={12} sm="auto">
           <Text lh={1.8}>{about}</Text>
+          {learnMore && (
+            <Anchor component={NextLink} href={learnMore}>
+              Learn more
+            </Anchor>
+          )}
         </Grid.Col>
         <Grid.Col span={12}>
           <LoginRedirect reason="perform-action">

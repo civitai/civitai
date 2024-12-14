@@ -56,12 +56,7 @@ export function ArticleCard({ data, aspectRatio }: Props) {
           {coverImage && (
             <ImageGuard2 image={coverImage}>
               {(safe) => (
-                <div
-                  className={cx(
-                    'relative flex-1 h-full',
-                    data.cosmetic && safe && classes.frameAdjustment
-                  )}
-                >
+                <div className={cx('relative flex-1 h-full')}>
                   <Group
                     spacing={4}
                     position="apart"

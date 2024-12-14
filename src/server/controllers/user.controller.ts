@@ -1011,7 +1011,19 @@ export const getUserCosmeticsHandler = async ({
     const coverImages = await getEntityCoverImage({ entities: inUseCosmeticEntities });
 
     const cosmetics = user.cosmetics.reduce(
-      (acc, { obtainedAt, equippedToId, equippedToType, claimKey, cosmetic, forId, forType }) => {
+      (
+        acc,
+        {
+          obtainedAt,
+          equippedToId,
+          equippedToType,
+          claimKey,
+          cosmetic,
+          data: userData,
+          forId,
+          forType,
+        }
+      ) => {
         const { type, data, ...rest } = cosmetic;
         const sharedData = {
           ...rest,
@@ -1035,12 +1047,17 @@ export const getUserCosmeticsHandler = async ({
             ...sharedData,
             data: data as ContentDecorationCosmetic['data'],
           });
-        else if (type === CosmeticType.ContentDecoration)
+        else if (type === CosmeticType.ContentDecoration) {
+          const contentDecorationData = data as ContentDecorationCosmetic['data'];
+          const uData = userData as ContentDecorationCosmetic['data'];
+          if (uData) {
+            contentDecorationData.lights = uData.lights;
+          }
           acc.contentDecorations.push({
             ...sharedData,
-            data: data as ContentDecorationCosmetic['data'],
+            data: contentDecorationData,
           });
-        else if (type === CosmeticType.ProfileBackground)
+        } else if (type === CosmeticType.ProfileBackground)
           acc.profileBackground.push({
             ...sharedData,
             data: data as ProfileBackgroundCosmetic['data'],

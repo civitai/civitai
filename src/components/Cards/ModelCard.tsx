@@ -408,10 +408,7 @@ export function ModelCard({ data, forceInView }: Props) {
                         </div>
                       </Group>
                       {safe ? (
-                        <div
-                          className={data.cosmetic ? classes.frameAdjustment : undefined}
-                          style={{ height: '100%' }}
-                        >
+                        <div style={{ height: '100%' }}>
                           <EdgeMedia2
                             metadata={image.metadata as MixedObject}
                             src={image.url}

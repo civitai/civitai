@@ -38,12 +38,14 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
       grid: {
         display: 'grid',
         gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(auto-fill, 320px)`,
+        gridTemplateColumns: `repeat(auto-fill, 336px)`,
         // gap: theme.spacing.md,
         gridTemplateRows: `repeat(${rows}, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
-        gap: 16,
+        gap: 0,
+        margin: -8,
+
         // margin: -theme.spacing.md / 2,
         // marginTop: -theme.spacing.md,
         // paddingBottom: theme.spacing.md,
@@ -54,7 +56,7 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
 
         [containerQuery.smallerThan('md')]: {
           gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count / 2}, 280px)`,
+          gridTemplateColumns: `repeat(${count / 2}, 296px)`,
           gridTemplateRows: `repeat(${rows}, auto)`,
           scrollSnapType: 'x mandatory',
           overflowX: 'auto',
@@ -62,7 +64,7 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
 
         [containerQuery.smallerThan('sm')]: {
           gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${count}, 280px)`,
+          gridTemplateColumns: `repeat(${count}, 296px)`,
           gridTemplateRows: 'auto',
           scrollSnapType: 'x mandatory',
           overflowX: 'auto',
@@ -99,7 +101,7 @@ export const useHomeBlockGridStyles = createStyles<string, { count: number; rows
 
       gridCarousel: {
         gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${count}, 280px)`,
+        gridTemplateColumns: `repeat(${count}, 296px)`,
         gridTemplateRows: 'auto',
         scrollSnapType: 'x mandatory',
         overflowX: 'auto',
