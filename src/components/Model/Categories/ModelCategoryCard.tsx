@@ -269,7 +269,7 @@ export function ModelCategoryCard({
   }, [modelId, data.id]);
 
   return (
-    <MasonryCard shadow="sm" p={0} {...props} className={classes.card}>
+    <MasonryCard shadow="sm" {...props} className={classes.card}>
       <Indicator
         disabled={!isNew && !isUpdated}
         withBorder

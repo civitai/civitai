@@ -275,8 +275,6 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   return (
     <MasonryCard
       shadow="sm"
-      p={0}
-      sx={{ opacity: !image.needsReview && !pendingReport ? 0.2 : undefined }}
       withBorder
       ref={mergedRef as any}
       style={{
@@ -284,6 +282,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         outline: selected
           ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`
           : undefined,
+        opacity: !image.needsReview && !pendingReport ? 0.2 : undefined,
       }}
     >
       <>

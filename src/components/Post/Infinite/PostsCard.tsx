@@ -32,7 +32,7 @@ export function PostsCard({
   const isOwner = currentUser?.id === user.id;
 
   return (
-    <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
+    <MasonryCard withBorder shadow="sm" height={height} ref={ref} frameDecoration={cosmetic}>
       {inView && (
         <>
           <ImageGuard2 image={image} connectType="post" connectId={id}>
