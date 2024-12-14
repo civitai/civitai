@@ -17,17 +17,13 @@ export const modelNotifications = createNotificationProcessor({
       url: `/models/${details.modelId}`,
     }),
     prepareQuery: async ({ lastSent, clickhouse }) => {
-      const affected = (await clickhouse
-        ?.query({
-          query: `
-            SELECT DISTINCT modelId
-            FROM modelVersionEvents
-            WHERE time > parseDateTimeBestEffortOrNull('${lastSent}')
-            AND type = 'Download'
-        `,
-          format: 'JSONEachRow',
-        })
-        .then((x) => x.json())) as [{ modelId: number }];
+      if (!clickhouse) return;
+      const affected = await clickhouse.$query<{ modelId: number }>`
+        SELECT DISTINCT modelId
+        FROM modelVersionEvents
+        WHERE time > ${lastSent}
+        AND type = 'Download'
+      `;
 
       const affectedJson = JSON.stringify(affected.map((x) => x.modelId));
       return `
@@ -231,7 +227,7 @@ export const modelNotifications = createNotificationProcessor({
           mv."publishedAt" updated_published_at
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
-        where 
+        where
           (mv."earlyAccessConfig"->>'originalTimeframe')::int > 0
         AND mv."publishedAt" >= '${lastSent}'
       ), early_access_complete AS (

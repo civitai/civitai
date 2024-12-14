@@ -244,7 +244,7 @@ async function getCommentTasks(ctx: ImageMetricContext) {
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE t."imageId" IN (${ids})
-        AND t."imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]} 
+        AND t."imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY t."imageId", tf.timeframe
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
@@ -274,7 +274,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
       FROM "CollectionItem" ci
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE ci."imageId" IN (${ids})
-        AND ci."imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]} 
+        AND ci."imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY ci."imageId", tf.timeframe
     `;
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
@@ -325,14 +325,13 @@ type ImageMetricView = {
 async function getViewTasks(ctx: ImageMetricContext) {
   if (ctx.lastViewUpdate.isAfter(ctx.lastViewUpdate.subtract(1, 'day'))) return [];
 
-  const clickhouseSince = dayjs(ctx.lastUpdate).toISOString();
   const viewed = await ctx.ch.$query<ImageMetricView>`
     WITH targets AS (
       SELECT
         entityId
       FROM views
       WHERE entityType = 'Image'
-      AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+      AND time >= ${ctx.lastUpdate}
     )
     SELECT
       entityId AS imageId,

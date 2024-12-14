@@ -914,7 +914,7 @@ type ModelVersionForGeneratedImages = {
   modelVersionName: string;
   userId: number;
 };
-
+type Row = { modelVersionId: number; createdAt: Date; generations: number };
 export const modelVersionGeneratedImagesOnTimeframe = async ({
   userId,
   // Timeframe is on days
@@ -941,27 +941,22 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
     dayjs().startOf('month').subtract(1, 'day').toDate()
   ).toISOString();
 
-  const generationData = await clickhouse
-    .query({
-      query: `
+  const generationData = await clickhouse.$query<Row>`
+    SELECT
+        resourceId as modelVersionId,
+        createdAt,
+        SUM(1) as generations
+    FROM (
         SELECT
-            resourceId as modelVersionId,
-            createdAt,
-            SUM(1) as generations
-        FROM (
-            SELECT
-                arrayJoin(resourcesUsed) as resourceId,
-                createdAt::date as createdAt
-            FROM orchestration.textToImageJobs
-            WHERE createdAt >= parseDateTimeBestEffortOrNull('${date}')
-        )
-        WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
-        GROUP BY resourceId, createdAt
-        ORDER BY createdAt DESC, generations DESC;
-      `,
-      format: 'JSONEachRow',
-    })
-    .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
+            arrayJoin(resourcesUsed) as resourceId,
+            createdAt::date as createdAt
+        FROM orchestration.textToImageJobs
+        WHERE createdAt >= ${date}
+    )
+    WHERE resourceId IN (${modelVersions.map((x) => x.id)})
+    GROUP BY resourceId, createdAt
+    ORDER BY createdAt DESC, generations DESC;
+  `;
 
   const versions = modelVersions
     .map((version) => {

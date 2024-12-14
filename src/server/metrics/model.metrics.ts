@@ -100,7 +100,7 @@ async function getDownloadTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT modelVersionId
     FROM modelVersionEvents
     WHERE type = 'Download'
-      AND time >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate.valueOf()}');
+      AND time >= ${ctx.lastUpdate};
   `;
   const affected = downloaded.map((x) => x.modelVersionId);
 
@@ -159,7 +159,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
     SELECT DISTINCT modelVersionId
     FROM (SELECT arrayJoin(resourcesUsed) as modelVersionId
           FROM orchestration.textToImageJobs
-          WHERE createdAt >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate.valueOf()}'))
+          WHERE createdAt >= ${ctx.lastUpdate})
   `;
   const affected = generated
     .map((x) => x.modelVersionId)
@@ -372,7 +372,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
   const commentEvents = await ctx.ch.$query<{ modelId: number }>`
     SELECT DISTINCT entityId AS modelId
     FROM comments
-    WHERE time >= parseDateTimeBestEffortOrNull('${ctx.lastUpdate.valueOf()}')
+    WHERE time >= ${ctx.lastUpdate}
       AND type = 'Model'
   `;
   const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])];

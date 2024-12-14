@@ -94,14 +94,14 @@ export async function runPayout(lastUpdate: Date) {
   if (lastUpdate < COMP_START_DATE) return;
 
   const date = dayjs.utc(lastUpdate).startOf('day');
-  const compensations = await clickhouse.$query<Compensation>(`
+  const compensations = await clickhouse.$query<Compensation>`
     SELECT
       modelVersionId,
       comp,
       tip
     FROM buzz_resource_compensation
-    WHERE date = parseDateTimeBestEffortOrNull('${date.toISOString()}');
-  `);
+    WHERE date = ${date};
+  `;
   if (!compensations.length) return;
 
   const creatorsToPay: Record<number, Compensation[]> = {};

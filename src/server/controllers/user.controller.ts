@@ -1141,19 +1141,19 @@ export const reportProhibitedRequestHandler = async ({
     source: input.source,
   });
   if (ctx.user.isModerator) return false;
+  if (!clickhouse) return false;
 
   try {
     const userId = ctx.user.id;
-    const countRes = await clickhouse?.query({
-      query: `
-        SELECT
-          COUNT(*) as count
-        FROM prohibitedRequests
-        WHERE userId = ${userId} AND time > subtractHours(now(), 24);
-      `,
-      format: 'JSONEachRow',
-    });
-    const count = ((await countRes?.json()) as [{ count: number }])?.[0]?.count ?? 0;
+    const count =
+      (
+        await clickhouse.$query<{ count: number }>`
+      SELECT
+        COUNT(*) as count
+      FROM prohibitedRequests
+      WHERE userId = ${userId} AND time > subtractHours(now(), 24);
+    `
+      )[0]?.count ?? 0;
     const limit =
       constants.imageGeneration.requestBlocking.muted -
       constants.imageGeneration.requestBlocking.notified;

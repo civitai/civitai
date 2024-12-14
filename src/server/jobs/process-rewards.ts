@@ -16,8 +16,6 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
 
   const [lastUpdate, setLastUpdate] = await getJobDate('process-rewards');
   const now = new Date();
-  const chLastUpdate = dayjs(lastUpdate).toISOString();
-  const chNow = dayjs(now).toISOString();
 
   timers.optimized += await mergeUniqueEvents();
 
@@ -36,8 +34,8 @@ export const processRewards = createJob('rewards-process', '*/1 * * * *', async 
       transactionDetails
     FROM buzzEvents
     WHERE status = 'pending'
-      AND time >= parseDateTimeBestEffortOrNull('${chLastUpdate}')
-      AND time < parseDateTimeBestEffortOrNull('${chNow}')
+      AND time >= ${lastUpdate}
+      AND time < ${now}
   `;
 
   for (const reward of rewards) {
