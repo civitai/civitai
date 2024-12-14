@@ -17,6 +17,7 @@ $blue: rgb(0, 200, 255);
   right: $offset;
   bottom: $padding-y;
   z-index: 1001;
+  pointer-events: none;
 
   span {
     width: $width;
