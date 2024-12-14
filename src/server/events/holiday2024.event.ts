@@ -52,10 +52,8 @@ export const holiday2024 = createEvent('holiday2024', {
     if (alreadyEarned) return;
 
     // Increment lights
-    data.lights += 1;
-    if (data.lights > data.earned.length) data.lights = data.earned.length; // Cap at earned
-    if (data.lights > 12) data.lights = 12; // Cap at 12
     data.earned.push([entityId, Date.now()]);
+    data.lights = data.earned.length < 12 ? data.earned.length : 12; // Cap at 12
 
     // Set redis key for day
     await redis.packed.hSet(dayKey, `${userId}`, true);
