@@ -58,7 +58,7 @@ export const FeedCard = forwardRef<HTMLElement, Props>(
             {children}
           </TwCardAnchor>
         ) : (
-          <TwCard ref={ref as any} style={{ aspectRatio: stringRatio }}>
+          <TwCard ref={ref as any} style={{ aspectRatio: stringRatio }} onClick={onClick}>
             {children}
           </TwCard>
         )}
@@ -73,7 +73,7 @@ type Props = CardProps & {
   children: React.ReactNode;
   href?: string;
   aspectRatio?: AspectRatio;
-  onClick?: React.MouseEventHandler<HTMLAnchorElement>;
+  onClick?: React.MouseEventHandler;
   useCSSAspectRatio?: boolean;
   frameDecoration?: ContentDecorationCosmetic | null;
 };
