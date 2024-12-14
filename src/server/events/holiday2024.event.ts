@@ -53,6 +53,7 @@ export const holiday2024 = createEvent('holiday2024', {
 
     // Increment lights
     data.lights += 1;
+    if (data.lights > data.earned.length) data.lights = data.earned.length; // Cap at earned
     if (data.lights > 12) data.lights = 12; // Cap at 12
     data.earned.push([entityId, Date.now()]);
 
