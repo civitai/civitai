@@ -2,14 +2,12 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { IconCategory, IconPhoto } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function GenericImageCard({
@@ -26,7 +24,6 @@ export function GenericImageCard({
   const { classes: sharedClasses } = useCardStyles({
     aspectRatio: image.width && image.height ? image.width / image.height : 1,
   });
-  const currentUser = useCurrentUser();
 
   const url = (() => {
     if (!entityType || !entityId) return undefined;
