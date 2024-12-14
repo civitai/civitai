@@ -36,7 +36,7 @@ export const leaderboardRouter = router({
     .use(
       cacheIt({
         ttl: CacheTTL.day,
-        tags: (input: GetLeaderboardInput) => ['leaderboard', `leaderboard:${input.id}`],
+        tags: (input: GetLeaderboardInput) => ['leaderboard', `leaderboard-${input.id}`],
       })
     )
     .use(leaderboardEdgeCache)
@@ -50,8 +50,8 @@ export const leaderboardRouter = router({
         ttl: CacheTTL.day,
         tags: (input: GetLeaderboardInput) => [
           'leaderboard',
-          `leaderboard:${input.id}`,
-          `leaderboard:${input.id}:legends`,
+          `leaderboard-${input.id}`,
+          `leaderboard-${input.id}-legends`,
         ],
       })
     )

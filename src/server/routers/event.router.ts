@@ -51,7 +51,7 @@ export const eventRouter = router({
     .use(
       cacheIt({
         ttl: CacheTTL.day,
-        tags: (input: EventInput) => ['event-donors', `event-donors:${input.event}`],
+        tags: (input: EventInput) => ['event-donors', `event-donors-${input.event}`],
       })
     )
     .use(

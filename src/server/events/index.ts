@@ -203,8 +203,8 @@ export const eventEngine = {
 
       // Purge cache
       await redis.del(`event:${eventDef.name}:contributors`);
-      await redis.purgeTags(leaderboardIds.map((id) => `leaderboard:${eventDef.name}:${id}`));
-      await redis.purgeTags([`event-donors:${eventDef.name}`]);
+      await redis.purgeTags(leaderboardIds.map((id) => `leaderboard-${eventDef.name}:${id}`));
+      await redis.purgeTags([`event-donors-${eventDef.name}`]);
       updated = true;
     }
 
