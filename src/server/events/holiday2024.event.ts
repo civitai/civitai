@@ -44,8 +44,9 @@ export const holiday2024 = createEvent('holiday2024', {
     });
     if (!userCosmetic) return;
     const data = (userCosmetic.data ?? {}) as CosmeticData;
-    if (!data.lights) data.lights = 0;
-    if (!data.earned) data.earned = [];
+    data.lights ??= 0;
+    data.earned ??= [];
+    data.milestonesEarned ??= [];
 
     // Check for duplicate engagement
     const alreadyEarned = data.earned.some(([id]) => id === entityId);
@@ -53,10 +54,35 @@ export const holiday2024 = createEvent('holiday2024', {
 
     // Increment lights
     data.earned.push([entityId, Date.now()]);
-    data.lights = data.earned.length < 12 ? data.earned.length : 12; // Cap at 12
+    data.lights = Math.min(data.earned.length, 12); // Cap at 12
 
     // Set redis key for day
     await redis.packed.hSet(dayKey, `${userId}`, true);
+
+    // Check for milestone
+    for (const milestone of lightMilestones) {
+      if (data.milestonesEarned.includes(milestone)) continue;
+      if (data.lights < milestone) continue;
+
+      // Send notification about available award
+      const milestoneCosmeticId = await holiday2024.getCosmetic(
+        `Holiday 2024: ${milestone} lights`
+      );
+      if (!milestoneCosmeticId) return;
+      await createNotification({
+        userId,
+        key: `holiday2024:${userId}:${milestone}lights`,
+        type: 'system-announcement',
+        category: NotificationCategory.System,
+        details: {
+          message: `You've earned the ${milestone} lights badge! Claim it now.`,
+          url: `/claim/cosmetic/${milestoneCosmeticId}`,
+        },
+      });
+
+      // Append for update
+      data.milestonesEarned.push(milestone);
+    }
 
     // Update userCosmetic
     await db.userCosmetic.updateMany({
@@ -69,24 +95,6 @@ export const holiday2024 = createEvent('holiday2024', {
     // Refresh equipped entity
     if (userCosmetic.equippedToId && userCosmetic.equippedToType)
       await cosmeticEntityCaches[userCosmetic.equippedToType].refresh(userCosmetic.equippedToId);
-
-    // Check for milestone
-    const milestone = lightMilestones.find((m) => data.lights == m);
-    if (!milestone) return;
-
-    // Send notification about available award
-    const milestoneCosmeticId = await holiday2024.getCosmetic(`Holiday 2024: ${milestone} lights`);
-    if (!milestoneCosmeticId) return;
-    await createNotification({
-      userId,
-      key: `holiday2024:${userId}:${milestone}lights`,
-      type: 'system-announcement',
-      category: NotificationCategory.System,
-      details: {
-        message: `You've earned the ${milestone} lights badge! Claim it now.`,
-        url: `/claim/cosmetic/${milestoneCosmeticId}`,
-      },
-    });
   },
   async onDonate(buzzEvent) {
     const data = (buzzEvent.userCosmeticData ?? {}) as CosmeticData;

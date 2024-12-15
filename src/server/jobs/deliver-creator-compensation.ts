@@ -18,7 +18,7 @@ export const updateCreatorResourceCompensation = createJob(
   async () => {
     if (!clickhouse) return;
 
-    await clickhouse.$query(`
+    await clickhouse.$query`
       INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total)
       SELECT
         toStartOfDay(createdAt) as date,
@@ -67,7 +67,7 @@ export const updateCreatorResourceCompensation = createJob(
       GROUP BY date, modelVersionId
       HAVING total >= 1
       ORDER BY total DESC;
-    `);
+    `;
 
     await clickhouse.$query('OPTIMIZE TABLE buzz_resource_compensation;');
 
@@ -93,7 +93,7 @@ export async function runPayout(lastUpdate: Date) {
   if (!clickhouse) return;
   if (lastUpdate < COMP_START_DATE) return;
 
-  const date = dayjs.utc(lastUpdate).startOf('day');
+  const date = dayjs.utc(lastUpdate).startOf('day').toDate();
   const compensations = await clickhouse.$query<Compensation>`
     SELECT
       modelVersionId,
