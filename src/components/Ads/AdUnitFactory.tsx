@@ -48,7 +48,6 @@ function AdUnitContent({
           gpIdUniquifier: adUnitDictionary[adUnit],
           sizes,
         };
-        console.log(payload);
         window.adngin.cmd.startAuction([payload]);
       });
     }

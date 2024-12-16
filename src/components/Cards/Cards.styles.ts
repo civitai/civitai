@@ -9,7 +9,6 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
     const topRef = getRef('top');
     const bottomRef = getRef('bottom');
     const { aspectRatio } = params;
-    const framePadding = constants.cosmetics.frame.padding;
 
     return {
       root: {
@@ -23,31 +22,6 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
             transform: 'scale(1.05)',
             opacity: 0,
           },
-        },
-      },
-
-      frameAdjustment: {
-        height: '100%',
-        '&:after': {
-          content: '""',
-          position: 'absolute',
-          pointerEvents: 'none',
-          top: framePadding,
-          left: framePadding,
-          right: framePadding,
-          bottom: framePadding,
-          borderRadius: theme.radius.md - 2,
-          boxShadow: 'inset 0 1px 2px 1px rgba(255,255,255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4)',
-          zIndex: 1000,
-          transition: 'transform 400ms ease, opacity 400ms ease',
-        },
-        [`& .${imageRef}`]: {
-          padding: framePadding,
-          borderRadius: 8 + framePadding,
-          height: '100%',
-          width: '100%',
-          objectFit: 'cover',
-          zIndex: 2,
         },
       },
 
@@ -65,10 +39,6 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
         padding: '12px',
         background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[2],
         width: '100%',
-      },
-
-      blurHash: {
-        opacity: 1,
       },
 
       content: {

@@ -1,6 +1,6 @@
-import { ActionIcon, ActionIconProps, Menu, MenuItemProps, MenuProps } from '@mantine/core';
+import { ActionIconProps, Menu, MenuItemProps, MenuProps } from '@mantine/core';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { IconDotsVertical, IconEdit, IconReceiptRefund, IconTrash } from '@tabler/icons-react';
+import { IconEdit, IconReceiptRefund, IconTrash } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -10,12 +10,9 @@ import { ReportMenuItem } from '../MenuItems/ReportMenuItem';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { ToggleSearchableMenuItem } from '../MenuItems/ToggleSearchableMenuItem';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 
-export function BountyContextMenu({
-  bounty,
-  buttonProps: { iconSize, ...buttonProps } = { iconSize: 16 },
-  ...menuProps
-}: Props) {
+export function BountyContextMenu({ bounty, buttonProps, ...menuProps }: Props) {
   const currentUser = useCurrentUser();
   const router = useRouter();
   const isModerator = currentUser?.isModerator ?? false;
@@ -113,18 +110,13 @@ export function BountyContextMenu({
   return (
     <Menu {...menuProps}>
       <Menu.Target>
-        <ActionIcon
-          color="gray"
-          radius="xl"
-          variant="filled"
-          {...buttonProps}
+        <ActionIconDotsVertical
           onClick={(e) => {
             e.preventDefault();
             e.stopPropagation();
           }}
-        >
-          <IconDotsVertical size={iconSize} />
-        </ActionIcon>
+          {...buttonProps}
+        />
       </Menu.Target>
       <Menu.Dropdown>{menuItems}</Menu.Dropdown>
     </Menu>
@@ -138,5 +130,5 @@ type Props = MenuProps & {
     complete: boolean;
     expiresAt: Date;
   };
-  buttonProps?: ActionIconProps & { iconSize?: number };
+  buttonProps?: ActionIconProps;
 };

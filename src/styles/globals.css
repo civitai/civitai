@@ -35,6 +35,11 @@ body {
   flex-direction: column;
 }
 
+button,
+a {
+  pointer-events: auto;
+}
+
 /* Don't zoom text input on iOS */
 @media only screen and (hover: none) and (pointer: coarse) {
   input:focus,
@@ -458,4 +463,3 @@ div[id*='google_ads_iframe'][id$='outstream_0__container__'] {
   height: 0;
   width: 0;
 }
- 

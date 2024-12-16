@@ -1,10 +1,8 @@
-import { Card, CardProps, createPolymorphicComponent } from '@mantine/core';
-import { forwardRef, useMemo } from 'react';
+import { CardProps, createPolymorphicComponent } from '@mantine/core';
+import { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { useFrameStyles } from '~/components/Cards/Cards.styles';
-import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
-import { TwCard, TwCardAnchor } from '~/components/TwCard/TwCard';
+import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
 
 type MasonryCardProps = CardProps & {

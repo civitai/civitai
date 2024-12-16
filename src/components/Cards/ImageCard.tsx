@@ -1,141 +1,42 @@
-import { ActionIcon, Group, Stack, UnstyledButton } from '@mantine/core';
-import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
+import { ActionIcon } from '@mantine/core';
+import { IconInfoCircle } from '@tabler/icons-react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { FeedCard } from '~/components/Cards/FeedCard';
-import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import HoverActionButton from './components/HoverActionButton';
-import { generationPanel } from '~/store/generation.store';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { useImagesContext } from '~/components/Image/Providers/ImagesProvider';
-import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
-import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
+import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { RemixButton } from '~/components/Cards/components/RemixButton';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
-function UnroutedImageCard({ data }: Props) {
-  const { classes: sharedClasses, cx } = useCardStyles({
+export function ImageCard({ data }: Props) {
+  const { classes: sharedClasses } = useCardStyles({
     aspectRatio: data.width && data.height ? data.width / data.height : 1,
   });
-  const router = useRouter();
-  const features = useFeatureFlags();
-  // const currentUser = useCurrentUser();
-
-  // const cardDecoration = data.user.cosmetics?.find(
-  //   ({ cosmetic }) => cosmetic.type === CosmeticType.ContentDecoration
-  // ) as (typeof data.user.cosmetics)[number] & {
-  //   data?: { lights?: number; upgradedLights?: number };
-  // };
-
-  const originalAspectRatio = data.width && data.height ? data.width / data.height : 1;
-  const onSite = data.onSite;
-  const imageWidth =
-    originalAspectRatio > 1
-      ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
-      : DEFAULT_EDGE_IMAGE_WIDTH;
+  const context = useImagesContext();
 
   return (
-    <FeedCard className={sharedClasses.link} frameDecoration={data.cosmetic}>
-      <div className={sharedClasses.root}>
-        <ImageGuard2 image={data}>
-          {(safe) => (
-            <>
-              {onSite && <OnsiteIndicator />}
-              <Group
-                position="apart"
-                align="start"
-                spacing={4}
-                className="absolute inset-x-2 top-2 z-10"
-                style={{ pointerEvents: 'none' }}
-              >
-                <div className="flex gap-1">
-                  <ImageGuard2.BlurToggle radius="xl" h={26} sx={{ pointerEvents: 'auto' }} />
-                  {safe &&
-                    data.type === 'video' &&
-                    data.metadata &&
-                    'duration' in data.metadata && (
-                      <DurationBadge duration={data.metadata.duration ?? 0} />
-                    )}
-                </div>
-                {safe && (
-                  <Stack spacing="xs" ml="auto" style={{ pointerEvents: 'auto' }}>
-                    <ImageContextMenu image={data} />
-                    {features.imageGeneration && data.hasMeta && (
-                      <HoverActionButton
-                        label="Remix"
-                        size={30}
-                        color="white"
-                        variant="filled"
-                        data-activity="remix:image-card"
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          generationPanel.open({
-                            type: data.type,
-                            id: data.id,
-                          });
-                        }}
-                      >
-                        <IconBrush stroke={2.5} size={16} />
-                      </HoverActionButton>
-                    )}
-                  </Stack>
-                )}
-              </Group>
-              {safe ? (
-                <div style={{ height: '100%' }}>
-                  <EdgeMedia2
-                    metadata={data.metadata}
-                    src={data.url}
-                    name={data.name ?? data.id.toString()}
-                    alt={data.name ?? undefined}
-                    type={data.type}
-                    width={imageWidth}
-                    className={sharedClasses.image}
-                    wrapperProps={{ style: { height: '100%', width: '100%' } }}
-                    skip={getSkipValue(data)}
-                    loading="lazy"
-                    contain
-                  />
-                </div>
-              ) : (
-                <MediaHash {...data} />
-              )}
-            </>
+    <AspectRatioImageCard
+      image={data}
+      cosmetic={data.cosmetic?.data}
+      routedDialog={{ name: 'imageDetail', state: { imageId: data.id, ...context } }}
+      header={
+        <div className="flex w-full items-start justify-between">
+          {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
+            <DurationBadge duration={data.metadata.duration ?? 0} className={sharedClasses.chip} />
           )}
-        </ImageGuard2>
-
-        <Stack
-          className={cx('footer', sharedClasses.contentOverlay, sharedClasses.bottom)}
-          spacing="sm"
-        >
-          {data.user.id !== -1 && (
-            <UnstyledButton
-              sx={{ color: 'white', alignSelf: 'flex-start' }}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                router.push(`/user/${data.user.username}`);
-              }}
-            >
-              <UserAvatar
-                // Explicit casting to comply with ts
-                user={data.user as ImagesInfiniteModel['user']}
-                avatarProps={{ radius: 'xl', size: 32 }}
-                withUsername
-              />
-            </UnstyledButton>
-          )}
-          <Group spacing={4} position="apart">
+          <div className="ml-auto flex flex-col gap-2">
+            <ImageContextMenu image={data} />
+            <RemixButton type={data.type} id={data.id} canGenerate={data.hasMeta} />
+          </div>
+        </div>
+      }
+      footer={
+        <div className="flex w-full flex-col gap-2">
+          <UserAvatarSimple {...data.user} />
+          <div className="flex flex-wrap justify-between gap-1">
             <Reactions
               className={sharedClasses.reactions}
               entityId={data.id}
@@ -158,19 +59,10 @@ function UnroutedImageCard({ data }: Props) {
                 </ActionIcon>
               </ImageMetaPopover2>
             )}
-          </Group>
-        </Stack>
-      </div>
-    </FeedCard>
-  );
-}
-export function ImageCard({ data }: Props) {
-  const context = useImagesContext();
-
-  return (
-    <RoutedDialogLink name="imageDetail" state={{ imageId: data.id, ...context }}>
-      <UnroutedImageCard data={data} />
-    </RoutedDialogLink>
+          </div>
+        </div>
+      }
+    />
   );
 }
 
