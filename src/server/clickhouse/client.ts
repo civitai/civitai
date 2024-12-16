@@ -80,12 +80,20 @@ if (shouldConnect) {
 }
 
 function formatSqlType(value: any): string {
+  // Catch any dates being passed in as a string
+  if (
+    typeof value === 'string' &&
+    (value.endsWith('(Coordinated Universal Time)') || /\.\d{3}Z$/.test(value))
+  ) {
+    value = new Date(value);
+  }
   if (value instanceof Date) return "parseDateTimeBestEffort('" + dayjs(value).toISOString() + "')";
   if (typeof value === 'object') {
     if (Array.isArray(value)) return value.map(formatSqlType).join(',');
     if (value === null) return 'null';
     return JSON.stringify(value);
   }
+
   return value;
 }
 

@@ -51,7 +51,8 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
             lastRun
           );
           let query = prepareQuery?.({
-            lastSent,
+            lastSent: lastSent.toISOString(),
+            lastSentDate: lastSent,
             clickhouse,
           });
           if (query) {

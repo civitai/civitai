@@ -16,12 +16,12 @@ export const modelNotifications = createNotificationProcessor({
       } model has received ${details.downloadCount.toLocaleString()} downloads`,
       url: `/models/${details.modelId}`,
     }),
-    prepareQuery: async ({ lastSent, clickhouse }) => {
+    prepareQuery: async ({ lastSentDate, clickhouse }) => {
       if (!clickhouse) return;
       const affected = await clickhouse.$query<{ modelId: number }>`
         SELECT DISTINCT modelId
         FROM modelVersionEvents
-        WHERE time > ${lastSent}
+        WHERE time > ${lastSentDate}
         AND type = 'Download'
       `;
 

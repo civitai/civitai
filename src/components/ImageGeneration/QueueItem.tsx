@@ -55,6 +55,7 @@ import { trpc } from '~/utils/trpc';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { TwCard } from '~/components/TwCard/TwCard';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -103,11 +104,8 @@ export function QueueItem({
   }
 
   const cost = request.totalCost;
-  const [processing, setProcessing] = useState(status === 'processing');
-  useEffect(() => {
-    if (!processing && status === 'processing') setProcessing(true);
-    else if (!PENDING_PROCESSING_STATUSES.includes(status)) setProcessing(false);
-  }, [status]);
+  const processing = status === 'processing';
+  const pending = orchestratorPendingStatuses.includes(status);
 
   const cancellable = PENDING_PROCESSING_STATUSES.includes(status);
 
@@ -152,6 +150,8 @@ export function QueueItem({
       remixOfId: step.metadata?.remixOfId,
       type: images[0].type, // TODO - type based off type of media
       workflow: step.params.workflow,
+      sourceImageUrl: (step.params as any).sourceImageUrl,
+      engine: (step.params as any).engine,
     });
   };
 
@@ -179,6 +179,8 @@ export function QueueItem({
     step.metadata.params && 'engine' in step.metadata.params
       ? (step.metadata.params.engine as string)
       : undefined;
+
+  const queuePosition = images[0]?.queuePosition;
 
   return (
     <Card ref={ref} withBorder px="xs" id={id}>
@@ -289,20 +291,55 @@ export function QueueItem({
                   step={step}
                 />
               ))}
-              {processing && (
-                <div
-                  className="flex flex-col items-center justify-center border card"
-                  style={{ aspectRatio: images[0].width / images[0].height }}
+
+              {(pending || processing) && (
+                <TwCard
+                  className="items-center justify-center border"
+                  style={{
+                    aspectRatio: images[0].aspectRatio ?? images[0].width / images[0].height,
+                  }}
                 >
-                  {images[0].type === 'video' && images[0].progress && images[0].progress < 1 ? (
-                    <ProgressIndicator progress={images[0].progress} />
-                  ) : (
-                    <Loader size={24} />
+                  {processing && (
+                    <>
+                      {images[0].type === 'video' &&
+                      images[0].progress &&
+                      images[0].progress < 1 ? (
+                        <ProgressIndicator progress={images[0].progress} />
+                      ) : (
+                        <>
+                          <Loader size={24} />
+                          <Text color="dimmed" size="xs" align="center">
+                            Generating
+                          </Text>
+                        </>
+                      )}
+                    </>
                   )}
-                  <Text color="dimmed" size="xs" align="center">
-                    Generating
-                  </Text>
-                </div>
+                  {pending &&
+                    (queuePosition ? (
+                      <>
+                        {queuePosition.support === 'unavailable' && (
+                          <Text color="dimmed" size="xs" align="center">
+                            Currently unavailable
+                          </Text>
+                        )}
+                        {!!queuePosition.precedingJobs && (
+                          <Text color="dimmed" size="xs" align="center">
+                            Your position in queue: {queuePosition.precedingJobs}
+                          </Text>
+                        )}
+                        {queuePosition.startAt && (
+                          <Text size="xs" color="dimmed">
+                            Estimated start time: {formatDateMin(new Date(queuePosition.startAt))}
+                          </Text>
+                        )}
+                      </>
+                    ) : (
+                      <Text color="dimmed" size="xs" align="center">
+                        Pending
+                      </Text>
+                    ))}
+                </TwCard>
               )}
             </div>
           </div>

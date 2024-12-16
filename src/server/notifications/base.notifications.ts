@@ -26,7 +26,8 @@ type NotificationMessage = {
   target?: '_blank' | '_self';
 };
 export type NotificationProcessorRunInput = {
-  lastSent: Date;
+  lastSent: string;
+  lastSentDate: Date;
   clickhouse: CustomClickHouseClient | undefined;
 };
 

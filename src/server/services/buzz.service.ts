@@ -818,8 +818,8 @@ export const getDailyCompensationRewardByUser = async ({
 
   if (!clickhouse || !modelVersions.length) return [];
 
-  const minDate = dayjs.utc(date).startOf('day').startOf('month').toISOString();
-  const maxDate = dayjs.utc(date).endOf('day').endOf('month').toISOString();
+  const minDate = dayjs.utc(date).startOf('day').startOf('month');
+  const maxDate = dayjs.utc(date).endOf('day').endOf('month');
 
   const generationData = await clickhouse.$query<Row>`
     WITH user_resources AS (
