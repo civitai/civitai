@@ -23,10 +23,8 @@ export const useQueryEvent = ({ event }: EventInput) => {
       { event, window, start },
       { enabled: !!eventData, trpc: { context: { skipBatch: true } } }
     );
-  const { data: eventCosmetic, isLoading: loadingCosmetic } = trpc.event.getCosmetic.useQuery(
-    { event },
-    { enabled: !!currentUser && !!event }
-  );
+  const { data: eventCosmetic, isInitialLoading: loadingCosmetic } =
+    trpc.event.getCosmetic.useQuery({ event }, { enabled: !!currentUser && !!event });
   const { data: rewards = [], isLoading: loadingRewards } = trpc.event.getRewards.useQuery(
     { event },
     { enabled: !!event, trpc: { context: { skipBatch: true } } }
