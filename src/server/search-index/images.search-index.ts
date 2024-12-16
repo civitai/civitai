@@ -148,6 +148,7 @@ const imageWhere = [
   Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
   Prisma.sql`i."tosViolation" = false`,
   Prisma.sql`i."needsReview" IS NULL`,
+  Prisma.sql`i."minor" = false`,
   Prisma.sql`p."publishedAt" IS NOT NULL`,
   Prisma.sql`p."availability" != 'Private'::"Availability"`,
   Prisma.sql`p."availability" != 'Unsearchable'::"Availability"`,
