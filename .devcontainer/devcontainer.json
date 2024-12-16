@@ -15,12 +15,15 @@
 	"customizations": {
 		"vscode": {
 			"extensions": [
-				"ms-vscode.makefile-tools",
-				"ms-azuretools.vscode-docker"
+				"ms-azuretools.vscode-docker",
+				"mtxr.sqltools",
+				"mtxr.sqltools-driver-pg",
+				"ultram4rine.sqltools-clickhouse-driver",
+				"redis.redis-for-vscode"
 			]
 		}
 	},
 	"remoteUser": "root",
 	"postCreateCommand": "make init-devcontainer",
-	"postStartCommand": "make run"
+	"postStartCommand": "nohup bash -c make run &"
 }

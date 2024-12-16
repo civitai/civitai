@@ -12,4 +12,29 @@
   "[typescriptreact]": {
     "editor.defaultFormatter": "dbaeumer.vscode-eslint"
   },
+  "makefile.configureOnOpen": false,
+  "sqltools.connections": [
+    {
+      "previewLimit": 50,
+      "server": "db",
+      "port": 5432,
+      "driver": "PostgreSQL",
+      "name": "db",
+      "database": "civitai",
+      "username": "postgres",
+      "password": "postgres"
+    },
+    {
+      "server": "http://clickhouse",
+      "port": 8123,
+      "database": "default",
+      "username": "default",
+      "requestTimeout": 30000,
+      "enableTls": false,
+      "previewLimit": 50,
+      "driver": "ClickHouse",
+      "name": "clickhouse",
+      "password": ""
+    }
+  ],
 }
