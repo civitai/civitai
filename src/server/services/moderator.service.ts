@@ -19,7 +19,7 @@ type ImageTagModActivity = {
 
 type ImageModActivity = {
   entityType: 'image';
-  activity: TagActivities | 'review' | 'setNsfwLevel';
+  activity: TagActivities | 'review' | 'setNsfwLevel' | 'resolveAppeal';
 };
 
 type ArticleModActivity = {
