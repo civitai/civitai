@@ -15,12 +15,12 @@ export const articleNotifications = createNotificationProcessor({
       url: `/articles/${details.articleId}`,
     }),
     category: NotificationCategory.Milestone,
-    prepareQuery: async ({ lastSent, clickhouse }) => {
+    prepareQuery: async ({ lastSentDate, clickhouse }) => {
       if (!clickhouse) return;
       const affected = await clickhouse.$query<{ entityId: number }>`
         SELECT DISTINCT entityId
         FROM views
-        WHERE time > ${lastSent}
+        WHERE time > ${lastSentDate}
         AND entityType = 'Article'
       `;
 
