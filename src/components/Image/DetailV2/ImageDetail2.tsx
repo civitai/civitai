@@ -127,16 +127,18 @@ export function ImageDetail2() {
 
   const image = images[carouselNavigation.index];
 
-  const { collectionItems, post } = useImageContestCollectionDetails(
-    { id: image?.id as number },
-    { enabled: !!image?.id }
-  );
+  const {
+    collectionItems,
+    post,
+    isLoading: loadingContestCollectionItems,
+  } = useImageContestCollectionDetails({ id: image?.id as number }, { enabled: !!image?.id });
 
   const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel;
 
   if (!image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
+  const hasContestCollectionItems = collectionItems.length > 0 && !loadingContestCollectionItems;
 
   const handleSaveClick = () =>
     openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
@@ -410,7 +412,7 @@ export function ImageDetail2() {
                         {`This image won't be visible to other users until it's reviewed by our moderators.`}
                       </AlertWithIcon>
                     )}
-                    <AdUnitSide_2 />
+                    {!hasContestCollectionItems && <AdUnitSide_2 />}
                     <VotableTags
                       entityType="image"
                       entityId={image.id}
@@ -451,7 +453,7 @@ export function ImageDetail2() {
                 </ScrollArea>
               </div>
             </div>
-            <AdhesiveAd closeable={false} preserveLayout />
+            {!hasContestCollectionItems && <AdhesiveAd closeable={false} preserveLayout />}
           </div>
         </BrowsingLevelProvider>
       </SensitiveShield>

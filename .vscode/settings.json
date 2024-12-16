@@ -12,4 +12,7 @@
   "[typescriptreact]": {
     "editor.defaultFormatter": "dbaeumer.vscode-eslint"
   },
+  "typescript.preferences.autoImportFileExcludePatterns": [
+    "@prisma/client"
+  ],
 }
