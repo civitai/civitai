@@ -64,7 +64,7 @@ export type ImageIngestionStatus = "Pending" | "Scanned" | "Error" | "Blocked" |
 
 export type MediaType = "image" | "video" | "audio";
 
-export type BlockImageReason = "Ownership" | "CSAM" | "TOS" | "Appeal";
+export type BlockImageReason = "Ownership" | "CSAM" | "TOS";
 
 export type ImageEngagementType = "Favorite" | "Hide";
 

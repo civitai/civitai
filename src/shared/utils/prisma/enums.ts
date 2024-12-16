@@ -300,7 +300,6 @@ export const BlockImageReason = {
   Ownership: 'Ownership',
   CSAM: 'CSAM',
   TOS: 'TOS',
-  Appeal: 'Appeal',
 } as const;
 
 export type BlockImageReason = (typeof BlockImageReason)[keyof typeof BlockImageReason];

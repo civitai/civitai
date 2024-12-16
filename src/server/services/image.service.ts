@@ -123,19 +123,6 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { Flags } from '~/shared/utils';
-import {
-  Availability,
-  BlockImageReason,
-  CollectionMode,
-  EntityMetric_EntityType_Type,
-  EntityMetric_MetricType_Type,
-  ImageIngestionStatus,
-  MediaType,
-  ModelType,
-  ReportReason,
-  ReportStatus,
-  ReviewReactions,
-} from '~/shared/utils/prisma/enums';
 import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
