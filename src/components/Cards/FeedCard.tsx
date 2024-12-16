@@ -38,12 +38,14 @@ const aspectRatioValues: Record<
 export const FeedCard = forwardRef<HTMLElement, Props>(
   ({ href, children, aspectRatio = 'portrait', className, frameDecoration, onClick }, ref) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
+    const wrapperStyle = { aspectRatio: stringRatio };
 
     return (
       <CosmeticCard
         cosmetic={frameDecoration?.data}
+        cosmeticStyle={frameDecoration?.data ? wrapperStyle : undefined}
         ref={ref}
-        style={{ aspectRatio: stringRatio }}
+        style={!frameDecoration?.data ? { aspectRatio: stringRatio } : undefined}
         onClick={onClick}
         href={href}
         className={className}
