@@ -1,22 +1,31 @@
 version: '3'
 services:
+  # A helper service that can consistently serve images for testing
+  image-stub:
+    build: ./containers/image-stub
+    ports:
+      - "5001:3000"
+    environment:
+      NODE_ENV: development
+
   civitai:
     image: mcr.microsoft.com/devcontainers/typescript-node:1-20
     volumes:
-      # Mounts the project folder to '/workspace'. While this file is in .devcontainer,
-      # mounts are relative to the first file in the list, which is a level up.
-      - .:/workspace:cached
+      - ../..:/workspaces
 
     # Overrides default command so things don't shut down after the process ends.
-    command: /bin/sh -c "while sleep 1000; do :; done"
-
+    command: sleep infinity
+    depends_on:
+      - db
+      - notification-db
+      - redis
     environment:
       DATABASE_URL: 'postgresql://postgres:postgres@db:5432/civitai'
       DATABASE_REPLICA_URL: 'postgresql://postgres:postgres@db:5432/civitai'
       DARKPIT_URL: 'postgresql://modelshare:postgres@db:5432/postgres'
       DARKPIT_SHADOW_URL: 'postgresql://modelshare:postgres@db:5432/postgres'
-      NOTIFICATION_DB_URL: 'postgresql://postgres:postgres@notif:5432/postgres'
-      NOTIFICATION_DB_REPLICA_URL: 'postgresql://postgres:postgres@notif:5432/postgres'
+      NOTIFICATION_DB_URL: 'postgresql://postgres:postgres@notification-db:5432/postgres'
+      NOTIFICATION_DB_REPLICA_URL: 'postgresql://postgres:postgres@notification-db:5432/postgres'
       REDIS_URL: 'redis://:redis@redis:6379'
       CLICKHOUSE_HOST: 'http://clickhouse:8123'
       # CLICKHOUSE_TRACKER_URL: 'https://clickhouse-tracker-dev.civitai.com'

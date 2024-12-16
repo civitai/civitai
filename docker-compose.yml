@@ -1,6 +1,6 @@
 services:
   prisma-pit:
-    image: postgres:alpine
+    image: postgres:15-bookworm
     ports:
       - "15433:5432"
     environment:
@@ -8,39 +8,41 @@ services:
       - POSTGRES_USER=modelshare
       - POSTGRES_DB=postgres
     volumes:
-      - prisma_pit:/var/lib/postgresql/data
+      - prisma-pit:/var/lib/postgresql/data
     restart: unless-stopped
 
   db:
-    image: postgres:alpine
+    build:
+      context: containers/db
+      dockerfile: Dockerfile
     ports:
       - "15432:5432"
     environment:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=civitai
     volumes:
-      - ./docker-init/postgres:/docker-entrypoint-initdb.d
-      - postgres:/var/lib/postgresql/data
+      - db:/var/lib/postgresql/data
 
-  notif:
-    image: postgres:alpine
+  notification-db:
+    build:
+      context: containers/notification-db
+      dockerfile: Dockerfile
     ports:
       - "15434:5432"
     environment:
       - POSTGRES_PASSWORD=postgres
       - POSTGRES_DB=postgres
     volumes:
-      - ./docker-init/notification:/docker-entrypoint-initdb.d
-      - postgres_notif:/var/lib/postgresql/data
+      - notification-db:/var/lib/postgresql/data
 
   redis:
-    image: redis:alpine
+    image: redis:7-bookworm
     command: redis-server --requirepass "redis"
     restart: unless-stopped
     ports:
       - "6379:6379"
     volumes:
-      - redis:/data
+      - redis:/data/redis
 
   minio:
     image: minio/minio
@@ -51,18 +53,18 @@ services:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
     volumes:
-      - minio:/data
-    command: minio server /data --console-address ":9001"
+      - minio:/data/minio
+    command: minio server /data/minio --console-address ":9001"
     restart: unless-stopped
 
   meilisearch:
     image: getmeili/meilisearch:v1.11
     ports:
       - "7700:7700"
-    volumes:
-      - meilisearch:/meili_data
     environment:
       - MEILI_MASTER_KEY=meilisearch
+    volumes:
+      - meilisearch:/meili_data/meilisearch
 
   createbuckets:
     image: minio/mc
@@ -82,7 +84,9 @@ services:
     restart: unless-stopped
 
   clickhouse:
-    image: clickhouse/clickhouse-server:24.8.4
+    build:
+      context: containers/clickhouse
+      dockerfile: Dockerfile
     ulimits:
       nofile:
         soft: 262144
@@ -91,9 +95,8 @@ services:
       - "18123:8123"
       - "19000:9000"
     volumes:
-      - ./docker-init/clickhouse:/docker-entrypoint-initdb.d
       - clickhouse:/var/lib/clickhouse
-      - clickhouse_server:/var/log/clickhouse-server
+      - clickhouse:/var/log/clickhouse-server
 
 #  ngrok:
 #    image: ngrok/ngrok:latest
@@ -111,19 +114,11 @@ services:
 #    environment:
 #      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
 
-  image-stub:
-    build: dev-tools/image-stub
-    ports:
-      - "5001:3000"
-    environment:
-      NODE_ENV: development
-
 volumes:
-  prisma_pit:
-  postgres:
-  postgres_notif:
+  prisma-pit:
+  db:
+  notification-db:
   redis:
   minio:
   meilisearch:
   clickhouse:
-  clickhouse_server:
