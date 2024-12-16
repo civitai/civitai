@@ -165,7 +165,6 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   return (
     <MasonryCard
       shadow="sm"
-      p={0}
       withBorder
       ref={mergedRef as any}
       style={{

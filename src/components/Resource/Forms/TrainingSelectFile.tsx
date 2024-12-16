@@ -12,7 +12,6 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
-import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconFileDownload, IconSend } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
@@ -22,6 +21,7 @@ import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton'
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { ModelVersionById } from '~/types/router';
 import { getModelFileFormat } from '~/utils/file-helpers';
@@ -318,7 +318,7 @@ export default function TrainingSelectFile({
       })) ?? [];
     samplePrompts = trainingResults.epochs?.[0]?.sample_images?.map((s) => s.prompt) ?? [];
   }
-  epochs = epochs.toSorted((a, b) => b.epochNumber - a.epochNumber);
+  epochs = [...epochs].sort((a, b) => b.epochNumber - a.epochNumber);
 
   const errorMessage =
     modelVersion.trainingStatus === TrainingStatus.Paused

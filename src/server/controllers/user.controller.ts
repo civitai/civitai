@@ -1011,7 +1011,19 @@ export const getUserCosmeticsHandler = async ({
     const coverImages = await getEntityCoverImage({ entities: inUseCosmeticEntities });
 
     const cosmetics = user.cosmetics.reduce(
-      (acc, { obtainedAt, equippedToId, equippedToType, claimKey, cosmetic, forId, forType }) => {
+      (
+        acc,
+        {
+          obtainedAt,
+          equippedToId,
+          equippedToType,
+          claimKey,
+          cosmetic,
+          data: userData,
+          forId,
+          forType,
+        }
+      ) => {
         const { type, data, ...rest } = cosmetic;
         const sharedData = {
           ...rest,
@@ -1035,12 +1047,17 @@ export const getUserCosmeticsHandler = async ({
             ...sharedData,
             data: data as ContentDecorationCosmetic['data'],
           });
-        else if (type === CosmeticType.ContentDecoration)
+        else if (type === CosmeticType.ContentDecoration) {
+          const contentDecorationData = data as ContentDecorationCosmetic['data'];
+          const uData = userData as ContentDecorationCosmetic['data'];
+          if (uData) {
+            contentDecorationData.lights = uData.lights;
+          }
           acc.contentDecorations.push({
             ...sharedData,
-            data: data as ContentDecorationCosmetic['data'],
+            data: contentDecorationData,
           });
-        else if (type === CosmeticType.ProfileBackground)
+        } else if (type === CosmeticType.ProfileBackground)
           acc.profileBackground.push({
             ...sharedData,
             data: data as ProfileBackgroundCosmetic['data'],
@@ -1124,19 +1141,19 @@ export const reportProhibitedRequestHandler = async ({
     source: input.source,
   });
   if (ctx.user.isModerator) return false;
+  if (!clickhouse) return false;
 
   try {
     const userId = ctx.user.id;
-    const countRes = await clickhouse?.query({
-      query: `
-        SELECT
-          COUNT(*) as count
-        FROM prohibitedRequests
-        WHERE userId = ${userId} AND time > subtractHours(now(), 24);
-      `,
-      format: 'JSONEachRow',
-    });
-    const count = ((await countRes?.json()) as [{ count: number }])?.[0]?.count ?? 0;
+    const count =
+      (
+        await clickhouse.$query<{ count: number }>`
+      SELECT
+        COUNT(*) as count
+      FROM prohibitedRequests
+      WHERE userId = ${userId} AND time > subtractHours(now(), 24);
+    `
+      )[0]?.count ?? 0;
     const limit =
       constants.imageGeneration.requestBlocking.muted -
       constants.imageGeneration.requestBlocking.notified;

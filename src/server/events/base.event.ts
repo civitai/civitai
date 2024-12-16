@@ -46,7 +46,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
   }
   async function clearKeys() {
     await redis.del(name);
-    await redis.del(`event:${name}:cosmetic`);
+    await redis.del(`packed:event:${name}:cosmetic`);
   }
   async function getUserTeam(userId: number) {
     const manualAssignment = await getManualAssignments(name);
@@ -64,7 +64,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     return getTeamCosmetic(await getUserTeam(userId));
   }
   async function clearUserCosmeticCache(userId: number) {
-    await redis.hDel(`event:${name}:cosmetic`, userId.toString());
+    await redis.hDel(`packed:event:${name}:cosmetic`, userId.toString());
   }
   async function getRewards() {
     const rewards = await dbWrite.cosmetic.findMany({

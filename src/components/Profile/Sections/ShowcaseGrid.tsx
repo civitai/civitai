@@ -48,35 +48,15 @@ export function ShowcaseGrid({
 
 export const useStyles = createStyles<string, Props>(
   (theme, { itemCount, rows, minWidth = 280, defaultWidth = 280 }, getRef) => {
-    const carousel = {
-      gridAutoRows: undefined,
-      gridAutoFlow: 'column',
-      gridTemplateColumns: `repeat(${itemCount}, ${defaultWidth}px)`,
-      gridTemplateRows: 'auto',
-      scrollSnapType: 'x mandatory',
-      overflow: 'auto',
-      overflowY: 'hidden',
-      overflowX: 'visible',
-      marginRight: -theme.spacing.md,
-      marginLeft: -theme.spacing.md,
-      paddingLeft: theme.spacing.md,
-      paddingRight: theme.spacing.md,
-
-      '& > *': {
-        scrollSnapAlign: 'center',
-      },
-    };
-
     return {
       grid: {
         display: 'grid',
         gridTemplateColumns: `repeat(auto-fill, minmax(${minWidth}px, 1fr))`,
-        columnGap: theme.spacing.md,
         gridTemplateRows: `repeat(${rows ?? '2'}, auto)`,
         gridAutoRows: 0,
         overflow: 'hidden',
-        marginTop: -theme.spacing.md,
-        paddingBottom: theme.spacing.md,
+        marginTop: -8,
+        // paddingBottom: theme.spacing.md,
 
         '&::-webkit-scrollbar': {
           background: 'transparent',
@@ -88,7 +68,7 @@ export const useStyles = createStyles<string, Props>(
         },
 
         '& > *': {
-          marginTop: theme.spacing.md,
+          margin: 8,
         },
 
         [containerQuery.smallerThan('sm')]: {

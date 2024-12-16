@@ -128,10 +128,8 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
     <MasonryCard
       withBorder
       shadow="sm"
-      p={0}
       height={height}
       ref={ref}
-      sx={{ position: 'relative' }}
       style={{
         outline: checked
           ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`

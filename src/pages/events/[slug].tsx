@@ -15,6 +15,7 @@ import {
   ThemeIcon,
   Title,
   Popover,
+  Anchor,
 } from '@mantine/core';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import {
@@ -48,7 +49,7 @@ import { SectionCard } from '~/components/Events/SectionCard';
 import { WelcomeCard } from '~/components/Events/WelcomeCard';
 import { HeroCard } from '~/components/HeroCard/HeroCard';
 import { Meta } from '~/components/Meta/Meta';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { env } from '~/env/client.mjs';
 import { constants } from '~/server/common/constants';
@@ -98,6 +99,8 @@ const resetTime = dayjs().utc().endOf('day').toDate();
 
 const aboutText =
   "Your challenge is to participate in daily holiday challenges throughout the rest of December. Once CivBot has approved your entry, you'll receive a new lightbulb on your garland in the team color randomly assigned to you when you join the challenge. The more bulbs you collect, the more badges you can win! The more Buzz donated to your team bank, the brighter your lights shine. The brighter your lights shine, the bigger your bragging rights. The team with the brightest lights and highest Spirit Bank score wins a shiny new animated badge!";
+
+const learnMore: string | undefined = 'https://civitai.com/articles/9731';
 
 export default function EventPageDetails({
   event,
@@ -224,7 +227,9 @@ export default function EventPageDetails({
               {formatDate(eventData.endDate, 'MMMM D, YYYY')}
             </Text>
           </Stack>
-          {!equipped && !ended && <WelcomeCard event={event} about={aboutText} />}
+          {!equipped && !ended && (
+            <WelcomeCard event={event} about={aboutText} learnMore={learnMore} />
+          )}
           <CharitySection visible={!equipped && !ended} partners={partners} />
           <Grid gutter={48}>
             {eventCosmetic?.cosmetic && equipped && (
@@ -260,10 +265,16 @@ export default function EventPageDetails({
                       </Text>
                       <Popover withinPortal shadow="md">
                         <Popover.Target>
-                          <Text size="xs" color="dimmed" td="underline" className='cursor-pointer'>Missing a Bulb?</Text>
+                          <Text size="xs" color="dimmed" td="underline" className="cursor-pointer">
+                            Missing a Bulb?
+                          </Text>
                         </Popover.Target>
                         <Popover.Dropdown maw={300} p="sm">
-                          <Text size="xs" color="dimmed">CivBot reviews challenge entries every 10 minutes and will give you your bulb for the day after approving your entry. If you haven't received it, wait, then make sure your entry was approved and refresh this page.</Text>
+                          <Text size="xs" color="dimmed">
+                            {`CivBot reviews challenge entries every 10 minutes and will give you your
+                            bulb for the day after approving your entry. If you haven't received it,
+                            wait, then make sure your entry was approved and refresh this page.`}
+                          </Text>
                         </Popover.Dropdown>
                       </Popover>
                     </Stack>
@@ -523,6 +534,20 @@ export default function EventPageDetails({
                 >
                   {aboutText}
                 </Text>
+                {learnMore && (
+                  <Anchor
+                    component={NextLink}
+                    href={learnMore}
+                    sx={(theme) => ({
+                      fontSize: '24px',
+                      [theme.fn.smallerThan('sm')]: {
+                        fontSize: '18px',
+                      },
+                    })}
+                  >
+                    Learn more
+                  </Anchor>
+                )}
               </Stack>
               <CharitySection visible partners={partners} />
             </>
@@ -611,7 +636,13 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
   return (
     <>
       <HeroCard
-        title={<img src="/images/event/holiday2024/ahh_logo.png" alt="All Hands and Hearts" style={{height: 50}}  />}
+        title={
+          <img
+            src="/images/event/holiday2024/ahh_logo.png"
+            alt="All Hands and Hearts"
+            style={{ height: 50 }}
+          />
+        }
         description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, All Hands and Hearts. Want to contribute to the cause without competing? [Donate here!](https://give.allhandsandhearts.org/campaign/635787/donate)"
         imageUrl="https://www.allhandsandhearts.org/wp-content/uploads/2019/12/400_1147_PR_Construction_Volunteer_5416_18.02.15-460x295.jpg"
         externalLink="https://www.allhandsandhearts.org/"

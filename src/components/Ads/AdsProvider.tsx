@@ -37,7 +37,7 @@ const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean }>(() =>
   adsBlocked: true,
 }));
 
-const blockedUrls: string[] = ['/collections/6503138'];
+const blockedUrls: string[] = ['/collections/6503138', '/moderator'];
 
 export function AdsProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();

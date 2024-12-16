@@ -46,7 +46,7 @@ export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpd
         distinct entityId as "id"
       FROM entityMetricEvents
       WHERE entityType = 'Image'
-      AND createdAt > parseDateTimeBestEffortOrNull('${lastUpdatedAt.toISOString()}')
+      AND createdAt > ${lastUpdatedAt}
     `;
     const updateIds = ids?.map((x) => x.id) ?? [];
 

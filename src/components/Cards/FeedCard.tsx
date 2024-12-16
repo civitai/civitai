@@ -3,6 +3,10 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { useFrameStyles } from '~/components/Cards/Cards.styles';
+import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
+import { TwCard, TwCardAnchor } from '~/components/TwCard/TwCard';
+import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import clsx from 'clsx';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -36,52 +40,29 @@ const aspectRatioValues: Record<
   },
 };
 
-export const FeedCard = forwardRef<HTMLAnchorElement, Props>(
-  (
-    {
-      href,
-      children,
-      aspectRatio = 'portrait',
-      className,
-      useCSSAspectRatio,
-      frameDecoration,
-      ...props
-    },
-    ref
-  ) => {
+export const FeedCard = forwardRef<HTMLElement, Props>(
+  ({ href, children, aspectRatio = 'portrait', className, frameDecoration, onClick }, ref) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
-    const { classes, cx } = useFrameStyles({
-      frame: frameDecoration?.data.cssFrame,
-      texture: frameDecoration?.data.texture,
-    });
-
-    let card = (
-      <Card<'a'>
-        className={cx(classes.root, className)}
-        {...props}
-        component={href ? 'a' : undefined}
-        ref={ref}
-        style={{ aspectRatio: stringRatio }}
-      >
-        {children}
-      </Card>
-    );
-
-    if (href)
-      card = (
-        <Link legacyBehavior href={href} passHref>
-          {card}
-        </Link>
-      );
 
     return (
-      <div className={frameDecoration ? classes.glow : undefined}>
-        <div
-          className={cx(frameDecoration && 'frame-decoration', frameDecoration && classes.frame)}
-        >
-          {card}
-        </div>
-      </div>
+      <TwCosmeticWrapper cosmetic={frameDecoration?.data}>
+        {/* <CosmeticLights frameDecoration={frameDecoration} /> */}
+        {href ? (
+          <TwCardAnchor
+            ref={ref as any}
+            style={{ aspectRatio: stringRatio }}
+            href={href}
+            className={className}
+            onClick={onClick}
+          >
+            {children}
+          </TwCardAnchor>
+        ) : (
+          <TwCard ref={ref as any} style={{ aspectRatio: stringRatio }} onClick={onClick}>
+            {children}
+          </TwCard>
+        )}
+      </TwCosmeticWrapper>
     );
   }
 );
@@ -92,7 +73,7 @@ type Props = CardProps & {
   children: React.ReactNode;
   href?: string;
   aspectRatio?: AspectRatio;
-  onClick?: React.MouseEventHandler<HTMLAnchorElement>;
+  onClick?: React.MouseEventHandler;
   useCSSAspectRatio?: boolean;
   frameDecoration?: ContentDecorationCosmetic | null;
 };

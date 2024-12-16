@@ -226,13 +226,12 @@ type ArticleViews = {
   all_time: number;
 };
 async function getViewTasks(ctx: MetricProcessorRunContext) {
-  const clickhouseSince = dayjs(ctx.lastUpdate).toISOString();
   const viewed = await ctx.ch.$query<ArticleViews>`
     WITH targets AS (
       SELECT DISTINCT entityId AS entityId
       FROM views
       WHERE type = 'ArticleView'
-        AND time >= parseDateTimeBestEffortOrNull('${clickhouseSince}')
+        AND time >= ${ctx.lastUpdate}
     )
     SELECT
       entityId,

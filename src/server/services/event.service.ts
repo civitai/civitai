@@ -1,12 +1,11 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
+import { profilePictureCache, userBasicCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
-import { TransactionType } from '~/server/schema/buzz.schema';
 import { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
-import { cosmeticStatus } from '~/server/services/user.service';
+import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
 
 export async function getEventData({ event }: EventInput) {
   try {
@@ -38,19 +37,23 @@ type EventCosmetic = Awaited<ReturnType<typeof cosmeticStatus>> & {
 export async function getEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
     // TODO optimize, let's cache this to avoid multiple queries
-    const cacheJson = await redis.hGet(`event:${event}:cosmetic`, userId.toString());
-    if (cacheJson) return JSON.parse(cacheJson) as EventCosmetic;
+    const cacheJson = await redis.packed.hGet<EventCosmetic>(
+      `packed:event:${event}:cosmetic`,
+      userId.toString()
+    );
+    if (cacheJson) return cacheJson;
 
     const { cosmeticId } = await eventEngine.getUserData({ event, userId });
     if (!cosmeticId)
       return { available: false, obtained: false, equipped: false, data: {}, cosmetic: null };
 
+    // TODO.holiday optimization - We should probably store the cosmetic separately so we don't repeat it over and over in the cache
     const cosmetic = await getCosmeticDetail({ id: cosmeticId });
     const status = await cosmeticStatus({ id: cosmeticId, userId });
     // Get the userCosmetic record so we can display the data
 
     const result: EventCosmetic = { ...status, cosmetic };
-    await redis.hSet(`event:${event}:cosmetic`, userId.toString(), JSON.stringify(result));
+    await redis.packed.hSet(`packed:event:${event}:cosmetic`, userId.toString(), result);
 
     return result;
   } catch (error) {
@@ -87,11 +90,13 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
     })) ?? { data: {} };
 
     // Update cache
-    await redis.hSet(
-      `event:${event}:cosmetic`,
-      userId.toString(),
-      JSON.stringify({ equipped: true, available: true, obtained: true, data, cosmetic })
-    );
+    await redis.packed.hSet(`packed:event:${event}:cosmetic`, userId.toString(), {
+      equipped: true,
+      available: true,
+      obtained: true,
+      data,
+      cosmetic,
+    });
 
     // Queue adding to role
     await eventEngine.queueAddRole({ event, team, userId });
@@ -126,18 +131,28 @@ export async function getEventRewards({ event }: EventInput) {
 export async function getEventContributors({ event }: EventInput) {
   try {
     const contributors = await eventEngine.getTopContributors(event);
-    const userIds = new Set<number>();
+    const userIdSet = new Set<number>();
     for (const team of Object.values(contributors.teams)) {
-      for (const user of team) userIds.add(user.userId);
+      for (const user of team) userIdSet.add(user.userId);
     }
-    for (const user of contributors.allTime) userIds.add(user.userId);
-    for (const user of contributors.day) userIds.add(user.userId);
+    for (const user of contributors.allTime) userIdSet.add(user.userId);
+    for (const user of contributors.day) userIdSet.add(user.userId);
 
-    const users = await dbRead.user.findMany({
-      where: { id: { in: [...userIds] } },
-      select: { id: true, username: true, image: true },
-    });
-    const userMap = new Map(users.map((user) => [user.id, user]));
+    const userIds = Array.from(userIdSet);
+    const users = await userBasicCache.fetch(userIds);
+    const profilePictures = await profilePictureCache.fetch(userIds);
+    const userCosmetics = await getCosmeticsForUsers(userIds);
+
+    const userMap = new Map(
+      Object.values(users).map((user) => [
+        user.id,
+        {
+          ...user,
+          profilePicture: profilePictures[user.id],
+          cosmetics: userCosmetics[user.id] ?? [],
+        },
+      ])
+    );
 
     return {
       allTime: contributors.allTime.map((user) => ({

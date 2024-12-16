@@ -1,15 +1,19 @@
 .border {
   border: var(--borderWidth) solid var(--border);
 }
-.cssFrame, .texture {
+.cssFrame,
+.texture {
   padding: 6px;
-  background-size: var(--bgSize);
 }
 .cssFrame {
-    background-image: var(--bgGradient);
+  background-image: var(--bgGradient);
 }
 .texture {
-    background-image: var(--bgImage);
+  background-image: var(--bgImage);
+  background-size: var(--bgSize);
+}
+.cssFrame.texture {
+  background-image: var(--bgImage), var(--bgGradient);
 }
 .glow {
   &:before {
@@ -17,5 +21,7 @@
     position: absolute;
     inset: 0;
     background-image: var(--bgGradient);
+    filter: blur(5px);
+    border-radius: theme('borderRadius.md');
   }
 }

@@ -259,6 +259,7 @@ async function reviewEntries() {
 
   // Update pending entries
   // ----------------------------------------------
+  const reviewing = Date.now();
   // Set their status to 'REJECTED' if they are not safe or don't have a required resource
   const reviewedCount = await dbWrite.$executeRaw`
     WITH source AS (
@@ -344,7 +345,6 @@ async function reviewEntries() {
   log('Last reviewed at:', lastReviewedAt);
 
   // Get entries approved since last reviewed
-  const reviewing = Date.now();
   const recentEntries = await dbWrite.$queryRaw<RecentEntry[]>`
     SELECT
       ci."imageId",
