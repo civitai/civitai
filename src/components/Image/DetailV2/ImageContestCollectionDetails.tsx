@@ -378,7 +378,7 @@ function ReviewActions({
       </div>
       <div className="flex items-center justify-center gap-4">
         <PopConfirm
-          message={`Are you sure you want to reject this entry?`}
+          message="Are you sure you want to reject this entry?"
           onConfirm={handleSubmit(CollectionItemStatus.REJECTED)}
           withArrow
           withinPortal
@@ -394,7 +394,7 @@ function ReviewActions({
           </Button>
         </PopConfirm>
         <PopConfirm
-          message={`Are you sure you want to approve this entry?`}
+          message="Are you sure you want to approve this entry?"
           onConfirm={handleSubmit(CollectionItemStatus.ACCEPTED)}
           withArrow
           withinPortal
