@@ -3,7 +3,6 @@ import {
   IconArchiveFilled,
   IconBolt,
   IconBookmark,
-  IconBrush,
   IconDownload,
   IconMessageCircle2,
 } from '@tabler/icons-react';
@@ -21,16 +20,15 @@ import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ModelModifier } from '~/shared/utils/prisma/enums';
-import { generationPanel } from '~/store/generation.store';
 import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { ContentCard } from '~/components/ContentCard/ContentCard';
+import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
+import { RemixButton } from '~/components/Cards/components/RemixButton';
 
 export function ModelCard({ data }: Props) {
   const image = data.images[0];
@@ -40,7 +38,6 @@ export function ModelCard({ data }: Props) {
   });
 
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: data.id });
 
   const { data: { Recommended: reviewedModels = [] } = { Recommended: [] } } =
@@ -74,7 +71,7 @@ export function ModelCard({ data }: Props) {
   if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
 
   return (
-    <ContentCard
+    <AspectRatioImageCard
       href={href}
       cosmetic={data.cosmetic?.data}
       contentType="model"
@@ -149,26 +146,8 @@ export function ModelCard({ data }: Props) {
           </div>
           <div className="flex flex-col gap-2">
             <ModelCardContextMenu data={data} />
+            <RemixButton type="modelVersion" id={data.version.id} canGenerate={data.canGenerate} />
 
-            {features.imageGeneration && data.canGenerate && (
-              <HoverActionButton
-                label="Create"
-                size={30}
-                color="white"
-                variant="filled"
-                data-activity="create:model-card"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  generationPanel.open({
-                    type: 'modelVersion',
-                    id: data.version.id,
-                  });
-                }}
-              >
-                <IconBrush stroke={2.5} size={16} />
-              </HoverActionButton>
-            )}
             <CivitaiLinkManageButton
               modelId={data.id}
               modelName={data.name}
@@ -194,8 +173,8 @@ export function ModelCard({ data }: Props) {
         </div>
       }
       footer={
-        <div className="flex w-full flex-col gap-1">
-          {data.user.id !== -1 && <UserAvatarSimple {...data.user} />}
+        <div className="flex w-full flex-col items-start gap-1">
+          <UserAvatarSimple {...data.user} />
           <Text className={classes.dropShadow} size="xl" weight={700} lineClamp={3} lh={1.2}>
             {data.name}
           </Text>

@@ -1,5 +1,6 @@
 import { ActionIcon, Menu } from '@mantine/core';
 import { IconDotsVertical, IconInfoCircle, IconTagOff } from '@tabler/icons-react';
+import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
@@ -168,20 +169,7 @@ export function ModelCardContextMenu({ data }: { data: UseQueryModelReturn[numbe
   return contextMenuItems.length ? (
     <Menu position="left-start" withArrow offset={-5} withinPortal>
       <Menu.Target>
-        <ActionIcon
-          variant="transparent"
-          p={0}
-          onClick={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-          }}
-        >
-          <IconDotsVertical
-            size={24}
-            color="#fff"
-            style={{ filter: `drop-shadow(0 0 2px #000)` }}
-          />
-        </ActionIcon>
+        <ActionIconDotsVertical />
       </Menu.Target>
       <Menu.Dropdown>{contextMenuItems.map((el) => el.component)}</Menu.Dropdown>
     </Menu>

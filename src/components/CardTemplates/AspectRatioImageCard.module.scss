@@ -3,6 +3,8 @@
   color: theme('colors.white');
   opacity: 0;
   transition: opacity 200ms ease;
+  display: flex;
+  // overflow: hidden;
 
   &:hover {
     .image {
@@ -15,7 +17,14 @@
   }
 }
 
+.linkOrClick {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
 .image {
+  flex: 1;
   height: 100%;
   min-width: 100%;
   object-fit: cover;
@@ -33,8 +42,8 @@
   width: 100%;
   padding: theme('padding.2');
   display: flex;
-  justify-content: space-between;
   gap: theme('gap.1');
+  pointer-events: none;
 }
 
 .header {
@@ -43,9 +52,14 @@
 
 .footer {
   bottom: 0;
+
+  &.gradient {
+    background: linear-gradient(transparent, rgba(0,0,0,.6));
+  }
 }
 
 .chip {
   border-radius: theme('borderRadius.xl');
   height: 26px;
+  overflow: unset;
 }
