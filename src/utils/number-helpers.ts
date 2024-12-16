@@ -1,5 +1,5 @@
-import { Currency } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 /**
  * @see https://gist.github.com/zentala/1e6f72438796d74531803cc3833c039c
@@ -84,7 +84,8 @@ export function abbreviateNumber(
     value = Math.floor(value);
   }
 
-  const formattedValue = value.toFixed(value < 99 && index > 0 ? decimals : 0);
+  const formattedValue =
+    Math.round(value * Math.pow(10, decimals ?? 0)) / Math.pow(10, decimals ?? 0);
 
   return `${formattedValue}${suffixes[index]}`;
 }

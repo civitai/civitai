@@ -26,18 +26,15 @@ const downloadLimiter = createLimiter({
   limitKey: REDIS_KEYS.DOWNLOAD.LIMITS,
   fetchCount: async (userKey) => {
     const isIP = userKey.includes(':') || userKey.includes('.');
-    const res = await clickhouse?.query({
-      query: `
-        SELECT
-          COUNT(*) as count
-        FROM modelVersionEvents
-        WHERE type = 'Download' AND time > subtractHours(now(), 24)
-        ${isIP ? `AND ip = '${userKey}'` : `AND userId = ${userKey}`}
-      `,
-      format: 'JSONEachRow',
-    });
+    if (!clickhouse) return 0;
 
-    const data = (await res?.json<{ count: number }[]>()) ?? [];
+    const data = await clickhouse.$query<{ count: number }>`
+      SELECT
+        COUNT(*) as count
+      FROM modelVersionEvents
+      WHERE type = 'Download' AND time > subtractHours(now(), 24)
+      ${isIP ? `AND ip = '${userKey}'` : `AND userId = ${userKey}`}
+    `;
     const count = data[0]?.count ?? 0;
     return count;
   },

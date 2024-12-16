@@ -15,18 +15,14 @@ export const articleNotifications = createNotificationProcessor({
       url: `/articles/${details.articleId}`,
     }),
     category: NotificationCategory.Milestone,
-    prepareQuery: async ({ lastSent, clickhouse }) => {
-      const affected = (await clickhouse
-        ?.query({
-          query: `
-            SELECT DISTINCT entityId
-            FROM views
-            WHERE time > parseDateTimeBestEffortOrNull('${lastSent}')
-            AND entityType = 'Article'
-        `,
-          format: 'JSONEachRow',
-        })
-        .then((x) => x.json())) as [{ entityId: number }];
+    prepareQuery: async ({ lastSentDate, clickhouse }) => {
+      if (!clickhouse) return;
+      const affected = await clickhouse.$query<{ entityId: number }>`
+        SELECT DISTINCT entityId
+        FROM views
+        WHERE time > ${lastSentDate}
+        AND entityType = 'Article'
+      `;
 
       const affectedJson = JSON.stringify(affected.map((x) => x.entityId));
 

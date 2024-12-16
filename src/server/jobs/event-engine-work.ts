@@ -17,10 +17,10 @@ export const eventEngineLeaderboardUpdate = createJob(
   }
 );
 
-export const eventEngineApplyDiscordRoles = createJob(
-  'event-engine-apply-discord-roles',
-  '*/5 * * * *',
-  async () => {
-    await eventEngine.processAddRoleQueue();
-  }
-);
+// export const eventEngineApplyDiscordRoles = createJob(
+//   'event-engine-apply-discord-roles',
+//   '*/5 * * * *',
+//   async () => {
+//     await eventEngine.processAddRoleQueue();
+//   }
+// );

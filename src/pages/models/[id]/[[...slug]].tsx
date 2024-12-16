@@ -53,6 +53,7 @@ import { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
@@ -553,6 +554,7 @@ export default function ModelDetailsV2({
       />
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
+        {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
         <Container size="xl">
           <Stack spacing="xl">
             <Stack spacing="xs">
@@ -1047,25 +1049,23 @@ export default function ModelDetailsV2({
           ) : null}
         </Container>
         {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
-          <Stack>
-            <AssociatedModels
-              fromId={model.id}
-              type="Suggested"
-              versionId={selectedVersion?.id}
-              label={
-                <Group spacing={8} noWrap>
-                  Suggested Resources{' '}
-                  <InfoPopover>
-                    <Text size="sm" weight={400}>
-                      These are resources suggested by the creator of this model. They may be
-                      related to this model or created by the same user.
-                    </Text>
-                  </InfoPopover>
-                </Group>
-              }
-              ownerId={model.user.id}
-            />
-          </Stack>
+          <AssociatedModels
+            fromId={model.id}
+            type="Suggested"
+            versionId={selectedVersion?.id}
+            label={
+              <Group spacing={8} noWrap>
+                Suggested Resources{' '}
+                <InfoPopover>
+                  <Text size="sm" weight={400}>
+                    These are resources suggested by the creator of this model. They may be related
+                    to this model or created by the same user.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
+            ownerId={model.user.id}
+          />
         )}
         {canLoadBelowTheFold &&
           (!model.locked ? (

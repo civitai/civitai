@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -67,7 +67,7 @@ function ToolFeedPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tools/${slug}`, rel: 'canonical' }]}
       />
       <ToolBanner slug={slug as string} />
-      <BrowsingModeOverrideProvider browsingLevel={publicBrowsingLevelsFlag}>
+      <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
         <MasonryContainer>
           <Stack spacing="xs">
             <IsClient>
@@ -95,7 +95,7 @@ function ToolFeedPage() {
             </IsClient>
           </Stack>
         </MasonryContainer>
-      </BrowsingModeOverrideProvider>
+      </BrowsingLevelProvider>
     </>
   );
 }

@@ -19,13 +19,18 @@ import { env } from '~/env/client.mjs';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  publicBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { isProd } from '~/env/other';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
 import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
+import { Page } from '~/components/AppLayout/Page';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 
-export default function Home() {
+export function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
@@ -46,66 +51,56 @@ export default function Home() {
         description="Explore thousands of high-quality Stable Diffusion & Flux models, share your AI-generated art, and engage with a vibrant community of creators"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/`, rel: 'canonical' }]}
       />
-      <MasonryProvider
-        columnWidth={constants.cardSizes.model}
-        maxColumnCount={7}
-        maxSingleColumnWidth={450}
+
+      {isLoading && (
+        <Center sx={{ height: 36 }} mt="md">
+          <Loader />
+        </Center>
+      )}
+
+      <Box
+        className="-mt-3"
+        sx={(theme) => ({
+          '& > *:nth-of-type(even)': {
+            background:
+              theme.colorScheme === 'dark'
+                ? theme.colors.dark[8]
+                : theme.fn.darken(theme.colors.gray[0], 0.01),
+          },
+        })}
       >
-        {/* <MasonryContainer px={0} sx={{ overflow: 'hidden' }}>
-          <Adunit mt="md" mb="xs" {...adsRegistry.homePageHeader} />
-        </MasonryContainer> */}
-
-        {isLoading && (
-          <Center sx={{ height: 36 }} mt="md">
-            <Loader />
-          </Center>
-        )}
-
-        <Box
-          className="-mt-3"
-          sx={(theme) => ({
-            '& > *:nth-of-type(even)': {
-              background:
-                theme.colorScheme === 'dark'
-                  ? theme.colors.dark[8]
-                  : theme.fn.darken(theme.colors.gray[0], 0.01),
-            },
-          })}
-        >
-          <BrowsingModeOverrideProvider browsingLevel={sfwBrowsingLevelsFlag}>
-            {homeBlocks.map((homeBlock, i) => {
-              const showAds = i % 2 === 1 && i > 0;
-              return (
-                <React.Fragment key={homeBlock.id}>
-                  {homeBlock.type === HomeBlockType.Collection && (
-                    <CollectionHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
-                  )}
-                  {/* {homeBlock.type === HomeBlockType.Announcement && (
+        <BrowsingLevelProvider browsingLevel={sfwBrowsingLevelsFlag}>
+          {homeBlocks.map((homeBlock, i) => {
+            const showAds = i % 2 === 1 && i > 0;
+            return (
+              <React.Fragment key={homeBlock.id}>
+                {homeBlock.type === HomeBlockType.Collection && (
+                  <CollectionHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
+                )}
+                {/* {homeBlock.type === HomeBlockType.Announcement && (
                     <AnnouncementHomeBlock homeBlockId={homeBlock.id} />
                   )} */}
-                  {homeBlock.type === HomeBlockType.Leaderboard && (
-                    <LeaderboardsHomeBlock
-                      homeBlockId={homeBlock.id}
-                      metadata={homeBlock.metadata}
-                    />
-                  )}
-                  {homeBlock.type === HomeBlockType.Social && (
-                    <SocialHomeBlock metadata={homeBlock.metadata} />
-                  )}
-                  {homeBlock.type === HomeBlockType.Event && (
-                    <EventHomeBlock metadata={homeBlock.metadata} />
-                  )}
-                  {homeBlock.type === HomeBlockType.CosmeticShop && (
-                    <CosmeticShopSectionHomeBlock
-                      metadata={homeBlock.metadata}
-                      homeBlockId={homeBlock.id}
-                    />
-                  )}
-                  {showAds && <AdUnitTop className="py-3" />}
-                </React.Fragment>
-              );
-            })}
-          </BrowsingModeOverrideProvider>
+                {homeBlock.type === HomeBlockType.Leaderboard && (
+                  <LeaderboardsHomeBlock homeBlockId={homeBlock.id} metadata={homeBlock.metadata} />
+                )}
+                {homeBlock.type === HomeBlockType.Social && (
+                  <SocialHomeBlock metadata={homeBlock.metadata} />
+                )}
+                {homeBlock.type === HomeBlockType.Event && (
+                  <EventHomeBlock metadata={homeBlock.metadata} />
+                )}
+                {homeBlock.type === HomeBlockType.CosmeticShop && (
+                  <CosmeticShopSectionHomeBlock
+                    metadata={homeBlock.metadata}
+                    homeBlockId={homeBlock.id}
+                  />
+                )}
+                {showAds && <AdUnitTop className="py-3" />}
+              </React.Fragment>
+            );
+          })}
+        </BrowsingLevelProvider>
+        <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
           {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
             <Box ref={ref}>
               <MasonryContainer py={32}>
@@ -243,8 +238,14 @@ export default function Home() {
               </MasonryContainer>
             </Box>
           )}
-        </Box>
-      </MasonryProvider>
+        </BrowsingLevelProvider>
+      </Box>
     </>
   );
 }
+
+export default Page(Home, {
+  announcements: true,
+  InnerLayout: FeedLayout,
+  browsingLevel: publicBrowsingLevelsFlag,
+});

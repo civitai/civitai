@@ -10,39 +10,35 @@ export const resourceGenerationAvailability = createJob(
     if (!clickhouse) return;
 
     try {
-      const affectedResources = await clickhouse
-        .query({
-          format: 'JSONEachRow',
-          query: `
-            SELECT modelVersionId
-            FROM (
-              SELECT
-                modelVersionId,
-                COUNT() AS requested,
-                SUM(failed) AS failed
-              FROM (
-                SELECT
-                  arrayJoin(resourcesUsed) as modelVersionId,
-                  1 AS failed
-                FROM orchestration.failedTextToImageJobs
-                WHERE createdAt > current_date() - interval '24 hours'
+      const affectedResources = (
+        await clickhouse.$query<{ modelVersionId: number }>`
+        SELECT modelVersionId
+        FROM (
+          SELECT
+            modelVersionId,
+            COUNT() AS requested,
+            SUM(failed) AS failed
+          FROM (
+            SELECT
+              arrayJoin(resourcesUsed) as modelVersionId,
+              1 AS failed
+            FROM orchestration.failedTextToImageJobs
+            WHERE createdAt > current_date() - interval '24 hours'
 
-                UNION ALL
+            UNION ALL
 
-                SELECT
-                  arrayJoin(resourcesUsed) as modelVersionId,
-                  0 AS failed
-                FROM orchestration.textToImageJobs
-                WHERE createdAt > current_date() - interval '24 hours'
-              )
-              GROUP BY modelVersionId
-            ) s
-            WHERE failed > CAST(requested AS FLOAT) / 2
-            AND requested > 10;
-          `,
-        })
-        .then((res) => res.json<Array<{ modelVersionId: number }>>())
-        .then((data) => data.map(({ modelVersionId }) => modelVersionId));
+            SELECT
+              arrayJoin(resourcesUsed) as modelVersionId,
+              0 AS failed
+            FROM orchestration.textToImageJobs
+            WHERE createdAt > current_date() - interval '24 hours'
+          )
+          GROUP BY modelVersionId
+        ) s
+        WHERE failed > CAST(requested AS FLOAT) / 2
+        AND requested > 10;
+      `
+      ).map(({ modelVersionId }) => modelVersionId);
 
       // Store new data
       await redis.hSet(

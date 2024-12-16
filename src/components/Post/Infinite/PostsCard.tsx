@@ -15,6 +15,7 @@ import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 export function PostsCard({
   data: { images, id, stats, imageCount, cosmetic, user },
@@ -32,7 +33,7 @@ export function PostsCard({
   const isOwner = currentUser?.id === user.id;
 
   return (
-    <MasonryCard withBorder shadow="sm" p={0} height={height} ref={ref} frameDecoration={cosmetic}>
+    <MasonryCard withBorder shadow="sm" height={height} ref={ref} frameDecoration={cosmetic}>
       {inView && (
         <>
           <ImageGuard2 image={image} connectType="post" connectId={id}>
@@ -59,11 +60,7 @@ export function PostsCard({
                   />
                 )}
 
-                <RoutedDialogLink
-                  name="postDetail"
-                  state={{ postId: id }}
-                  className={cosmetic && safe ? sharedClasses.frameAdjustment : undefined}
-                >
+                <NextLink href={`/posts/${id}`}>
                   {!safe ? (
                     <AspectRatio ratio={(image?.width ?? 1) / (image?.height ?? 1)}>
                       <MediaHash {...image} />
@@ -81,7 +78,7 @@ export function PostsCard({
                       placeholder="empty"
                     />
                   )}
-                </RoutedDialogLink>
+                </NextLink>
                 <PostReactions
                   className={classes.reactions}
                   imageCount={imageCount}

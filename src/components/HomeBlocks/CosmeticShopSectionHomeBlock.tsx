@@ -58,7 +58,7 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
         {items.map((item) => {
           const { shopItem } = item;
           return (
-            <div key={shopItem.id}>
+            <div key={shopItem.id} className="p-2">
               <ShopItem item={shopItem} sectionItemCreatedAt={item.createdAt} />
             </div>
           );

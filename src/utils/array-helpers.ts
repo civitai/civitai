@@ -22,6 +22,7 @@ export function sortAlphabetically<T>(array: T[]) {
     return 0;
   });
 }
+
 export function sortAlphabeticallyBy<T>(array: T[], fn: (item: T) => string) {
   return array.sort((...args) => {
     const a = fn(args[0]);
@@ -54,8 +55,9 @@ const modelTypeOrder: { [k in ModelType]: number } = {
   [ModelType.Hypernetwork]: 13,
   [ModelType.Other]: 14,
 };
-export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[]) {
-  return data.toSorted((a, b) => {
+
+export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[] = []) {
+  return [...data].sort((a, b) => {
     const mA = a.modelType;
     const mB = b.modelType;
 

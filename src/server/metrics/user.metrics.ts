@@ -202,7 +202,7 @@ async function getReactionTasks(ctx: MetricProcessorRunContext) {
       SELECT
         ownerId
       FROM reactions
-      WHERE time > parseDateTimeBestEffort('${ctx.lastUpdate}')
+      WHERE time > ${ctx.lastUpdate}
     )
     SELECT
       ownerId as userId,

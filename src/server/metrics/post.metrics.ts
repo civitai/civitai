@@ -127,12 +127,12 @@ export const postMetrics = createMetricProcessor({
 
 async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
-  const affectedImages = await ctx.ch.$query<{ imageId: number }>(`
+  const affectedImages = await ctx.ch.$query<{ imageId: number }>`
       SELECT DISTINCT entityId as imageId
       FROM entityMetricEvents
       WHERE entityType = 'Image'
-      AND createdAt > parseDateTimeBestEffortOrNull('${ctx.lastUpdate}');
-  `);
+      AND createdAt > ${ctx.lastUpdate};
+  `;
 
   const affected = new Set<number>();
   const postFetchTasks = chunk(

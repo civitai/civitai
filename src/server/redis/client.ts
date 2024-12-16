@@ -4,6 +4,7 @@ import { commandOptions, createClient } from 'redis';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
+import { slugit } from '~/utils/string-helpers';
 
 export interface CustomRedisClient extends RedisClientType {
   packed: {
@@ -128,7 +129,7 @@ function getCache(legacyMode = false) {
   client.purgeTags = async (tag: string | string[]) => {
     const tags = Array.isArray(tag) ? tag : [tag];
     for (const tag of tags) {
-      const cacheKey = REDIS_KEYS.CACHES.TAGGED_CACHE + ':' + tag;
+      const cacheKey = REDIS_KEYS.CACHES.TAGGED_CACHE + ':' + slugit(tag);
       const count = await client.sCard(cacheKey);
       let processed = 0;
       while (true) {

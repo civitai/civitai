@@ -22,6 +22,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     videoRef?: React.ForwardedRef<EdgeVideoRef>;
     metadata?: ImageMetadata | VideoMetadata | null;
     youtubeVideoId?: string;
+    vimeoVideoId?: string;
   };
 
 export function EdgeMedia({
@@ -51,6 +52,7 @@ export function EdgeMedia({
   onMutedChange,
   videoRef,
   youtubeVideoId,
+  vimeoVideoId,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -128,6 +130,7 @@ export function EdgeMedia({
           ref={videoRef}
           onMouseOut={handleMouseOut}
           youtubeVideoId={youtubeVideoId}
+          vimeoVideoId={vimeoVideoId}
         />
       );
     case 'audio':

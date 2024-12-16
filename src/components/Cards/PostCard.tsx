@@ -62,10 +62,7 @@ export function PostCard({ data }: Props) {
               {!safe ? (
                 <MediaHash {...image} />
               ) : (
-                <div
-                  className={data.cosmetic ? classes.frameAdjustment : undefined}
-                  style={{ height: '100%' }}
-                >
+                <div style={{ height: '100%' }}>
                   <EdgeMedia2
                     metadata={image.metadata}
                     src={image.url}

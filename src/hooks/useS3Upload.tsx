@@ -1,6 +1,6 @@
 import React, { ChangeEvent, forwardRef, ReactElement, useRef, useState } from 'react';
+import { TrackedFile, useFileUploadContext } from '~/components/FileUpload/FileUploadProvider';
 import { UploadType, UploadTypeUnion } from '~/server/common/enums';
-import { useFileUploadContext, TrackedFile } from '~/components/FileUpload/FileUploadProvider';
 import { withRetries } from '~/utils/errorHandling';
 
 const FILE_CHUNK_SIZE = 100 * 1024 * 1024; // 100 MB
@@ -115,11 +115,12 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
       body: {},
     };
 
-    const { size } = file;
+    const { size, type: mimeType } = file;
     const body = {
       filename,
       type,
       size,
+      mimeType,
       ...requestExtras.body,
     };
 
