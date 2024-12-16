@@ -1426,8 +1426,6 @@ export const getAllImagesIndex = async (
   const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
 
-  // console.log({ cursor, sort, offset, entry });
-
   const currentUserId = user?.id;
 
   const { data: searchResultsTmp, nextCursor: searchNextCursor } = await getImagesFromSearch({
@@ -1839,8 +1837,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     const filteredHits = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
+      // filter out items flagged with minor unless it's the owner or moderator
+      if (hit.minor) return hit.userId === currentUserId || isModerator;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
+
       return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
 
