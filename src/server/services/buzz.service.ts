@@ -442,10 +442,11 @@ export async function completeStripeBuzzTransaction({
       },
     });
 
-    await eventEngine.processPurchase({
-      userId,
-      amount,
-    });
+    // 2024-12-12: Deprecated
+    // await eventEngine.processPurchase({
+    //   userId,
+    //   amount,
+    // });
 
     return data;
   } catch (error) {
@@ -800,6 +801,8 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
   return potential;
 }
 
+type Row = { modelVersionId: number; date: Date; comp: number; tip: number; total: number };
+
 export const getDailyCompensationRewardByUser = async ({
   userId,
   date = new Date(),
@@ -815,35 +818,28 @@ export const getDailyCompensationRewardByUser = async ({
 
   if (!clickhouse || !modelVersions.length) return [];
 
-  const minDate = dayjs.utc(date).startOf('day').startOf('month').toISOString();
-  const maxDate = dayjs.utc(date).endOf('day').endOf('month').toISOString();
+  const minDate = dayjs.utc(date).startOf('day').startOf('month');
+  const maxDate = dayjs.utc(date).endOf('day').endOf('month');
 
-  const generationData = await clickhouse
-    .query({
-      query: `
-        WITH user_resources AS (
-          SELECT
-            mv.id as id
-          FROM civitai_pg.Model m
-          JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
-          WHERE m.userId = ${userId}
-        )
-        SELECT
-          date,
-          modelVersionId,
-          comp,
-          tip,
-          total
-        FROM buzz_resource_compensation
-        WHERE modelVersionId IN (SELECT id FROM user_resources)
-        AND date BETWEEN parseDateTimeBestEffort('${minDate}') AND parseDateTimeBestEffort('${maxDate}')
-        ORDER BY date DESC, total DESC;
-      `,
-      format: 'JSONEachRow',
-    })
-    .then((x) =>
-      x.json<{ modelVersionId: number; date: Date; comp: number; tip: number; total: number }[]>()
-    );
+  const generationData = await clickhouse.$query<Row>`
+    WITH user_resources AS (
+      SELECT
+        mv.id as id
+      FROM civitai_pg.Model m
+      JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
+      WHERE m.userId = ${userId}
+    )
+    SELECT
+      date,
+      modelVersionId,
+      comp,
+      tip,
+      total
+    FROM buzz_resource_compensation
+    WHERE modelVersionId IN (SELECT id FROM user_resources)
+    AND date BETWEEN ${minDate} AND ${maxDate}
+    ORDER BY date DESC, total DESC;
+  `;
 
   if (!generationData.length) return [];
 

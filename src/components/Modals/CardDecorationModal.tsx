@@ -246,11 +246,7 @@ export const PreviewCard = ({
   const cardHeight = heightRatio * constants.cardSizes.image;
 
   return (
-    <MasonryCard
-      height={cardHeight}
-      frameDecoration={decoration}
-      className={decoration && classes.frameAdjustment}
-    >
+    <MasonryCard height={cardHeight} frameDecoration={decoration}>
       <EdgeMedia src={image.url} className={classes.image} width={imageWidth} anim={true} />
     </MasonryCard>
   );

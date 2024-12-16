@@ -48,11 +48,7 @@ import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
-import {
-  PostEditImageDetail,
-  usePostEditStore,
-  usePostPreviewContext,
-} from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
 import {
@@ -66,6 +62,7 @@ import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { Generation } from '~/server/services/generation/generation.types';
+import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
 import {
   getBaseModelResourceTypes,
   getBaseModelSetType,
@@ -91,7 +88,6 @@ const simpleMetaProps = {
   clipSkip: 'Clip skip',
 } as const;
 type AllowedResource = { type: ModelType; baseModels: string[] };
-type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
 // #endregion
 
 // #region [AddedImage context]
@@ -397,6 +393,7 @@ const ResourceHeader = () => {
 
 const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) => {
   const { image, isOnSite, otherImages } = useAddedImageContext();
+  const status = useGenerationStatus();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
   const {
@@ -413,6 +410,9 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
     return otherImages
       .map((oi) => {
         if (!oi.resourceHelper.length) return oi.id;
+        if (oi.resourceHelper.length >= status.limits.resources) return null;
+        if (oi.resourceHelper.some((rh) => rh.modelVersionId === modelVersionId)) return null;
+
         const otherAllowed = getAllowedResources(oi.resourceHelper);
         const resourceMatch = otherAllowed.find((oa) => oa.type === modelType);
         if (
@@ -424,7 +424,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
         }
       })
       .filter(isDefined);
-  }, [modelType, modelVersionBaseModel, otherImages]);
+  }, [modelType, modelVersionBaseModel, modelVersionId, otherImages, status.limits.resources]);
 
   const copyResourceMutation = trpc.post.addResourceToImage.useMutation({
     onSuccess: (resp) => {

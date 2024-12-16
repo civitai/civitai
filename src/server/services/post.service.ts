@@ -25,6 +25,7 @@ import {
   getUserCollectionPermissionsById,
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {
   createImage,
   deleteImageById,
@@ -544,6 +545,9 @@ export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: Sessio
 };
 
 export type PostDetailEditable = AsyncReturnType<typeof getPostEditDetail>;
+export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
+export type ResourceHelper = PostEditImageDetail['resourceHelper'][number];
+
 export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: SessionUser }) => {
   const post = await getPostDetail({ id, user });
   if (post.user.id !== user.id && !user.isModerator) throw throwAuthorizationError();
@@ -1002,7 +1006,7 @@ export const addResourceToPostImage = async ({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
-    select: { postId: true, meta: true },
+    select: { postId: true, meta: true, resourceHelper: true },
   });
 
   if (images.length !== imageIds.length) {
@@ -1012,6 +1016,49 @@ export const addResourceToPostImage = async ({
   if (images.some((i) => isMadeOnSite(i.meta as ImageMetaProps))) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
+
+  const simpleResourceLimit = 8;
+  const baseAxiom = {
+    type: 'warning',
+    name: 'fetch-generation-status',
+    path: 'post.addResourceToImage',
+  };
+
+  let resourceLimit = simpleResourceLimit;
+  try {
+    const genStatus = await getGenerationStatus();
+    if (genStatus) {
+      const tier = user?.tier ?? 'free';
+      if (isDefined(genStatus.limits?.[tier]?.resources)) {
+        resourceLimit = genStatus.limits[tier].resources ?? simpleResourceLimit;
+      } else {
+        logToAxiom({
+          ...baseAxiom,
+          message: 'no resource limit found',
+        }).catch();
+      }
+    } else {
+      logToAxiom({
+        ...baseAxiom,
+        message: 'no gen status',
+      }).catch();
+    }
+  } catch (e: unknown) {
+    const error = e as Error;
+    logToAxiom({
+      ...baseAxiom,
+      message: error?.message,
+    }).catch();
+  }
+
+  images.forEach((img) => {
+    const numExistingResources = img.resourceHelper.length;
+    if (numExistingResources >= resourceLimit) {
+      throw throwBadRequestError(`Maximum resources reached (${resourceLimit})`);
+    }
+  });
+
+  // TODO restrictions on allowedTypes
 
   // noinspection JSPotentiallyInvalidTargetOfIndexedPropertyAccess
   const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();

@@ -14,7 +14,6 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -34,12 +33,15 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useRef } from 'react';
+import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { InteractiveTipBuzzButton } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { CarouselIndicators } from '~/components/Carousel/CarouselIndicators';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
@@ -59,8 +61,10 @@ import { useImageContestCollectionDetails } from '~/components/Image/image.utils
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Meta } from '~/components/Meta/Meta';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
+import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { TrackView } from '~/components/TrackView/TrackView';
@@ -71,11 +75,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
-import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -126,16 +127,18 @@ export function ImageDetail2() {
 
   const image = images[carouselNavigation.index];
 
-  const { collectionItems, post } = useImageContestCollectionDetails(
-    { id: image?.id as number },
-    { enabled: !!image?.id }
-  );
+  const {
+    collectionItems,
+    post,
+    isLoading: loadingContestCollectionItems,
+  } = useImageContestCollectionDetails({ id: image?.id as number }, { enabled: !!image?.id });
 
   const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel;
 
   if (!image) return <NotFound />;
 
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
+  const hasContestCollectionItems = collectionItems.length > 0 && !loadingContestCollectionItems;
 
   const handleSaveClick = () =>
     openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
@@ -178,9 +181,8 @@ export function ImageDetail2() {
         </Text>
       </Button>
       {image.postId && (
-        <RoutedDialogLink
-          name="postDetail"
-          state={{ postId: image.postId }}
+        <NextLink
+          href={`/posts/${image.postId}`}
           className="hidden @md:block"
           onClick={() => {
             if (videoRef.current) videoRef.current.stop();
@@ -192,7 +194,7 @@ export function ImageDetail2() {
               View Post
             </Text>
           </Button>
-        </RoutedDialogLink>
+        </NextLink>
       )}
       <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
         <Badge
@@ -217,7 +219,7 @@ export function ImageDetail2() {
       />
       <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
         <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
-        <BrowsingModeOverrideProvider browsingLevel={image.nsfwLevel}>
+        <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
               <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
@@ -394,6 +396,7 @@ export function ImageDetail2() {
                         entityType={EntityType.Post}
                         creatorCardProps={{
                           className: 'rounded-xl',
+                          withActions: true,
                         }}
                       />
                     )}
@@ -409,7 +412,7 @@ export function ImageDetail2() {
                         {`This image won't be visible to other users until it's reviewed by our moderators.`}
                       </AlertWithIcon>
                     )}
-                    <AdUnitSide_2 />
+                    {!hasContestCollectionItems && <AdUnitSide_2 />}
                     <VotableTags
                       entityType="image"
                       entityId={image.id}
@@ -417,15 +420,17 @@ export function ImageDetail2() {
                       collapsible
                       nsfwLevel={image.nsfwLevel}
                     />
-                    {post && post.detail && (
+                    {post && (post.title || post.detail) && (
                       <Card className="flex flex-col gap-3 rounded-xl">
                         <Text className="flex items-center gap-2 text-xl font-semibold">
                           <IconLayoutList />
                           <span>{post.title}</span>
                         </Text>
-                        <ContentClamp maxHeight={75}>
-                          <RenderHtml html={post.detail} />
-                        </ContentClamp>
+                        {post.detail && (
+                          <ContentClamp maxHeight={75}>
+                            <RenderHtml html={post.detail} />
+                          </ContentClamp>
+                        )}
                       </Card>
                     )}
                     <ImageProcess imageId={image.id} />
@@ -448,9 +453,9 @@ export function ImageDetail2() {
                 </ScrollArea>
               </div>
             </div>
-            <AdhesiveAd closeable={false} preserveLayout />
+            {!hasContestCollectionItems && <AdhesiveAd closeable={false} preserveLayout />}
           </div>
-        </BrowsingModeOverrideProvider>
+        </BrowsingLevelProvider>
       </SensitiveShield>
     </>
   );

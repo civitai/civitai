@@ -27,7 +27,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { NavigateBack } from '~/components/BackButton/BackButton';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { TipBuzzButton } from '~/components/Buzz/TipBuzzButton';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
 import { Collection } from '~/components/Collection/Collection';
@@ -67,14 +67,16 @@ import { AdUnitSide_1, AdUnitSide_2 } from '~/components/Ads/AdUnit';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { Flags } from '~/shared/utils';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 type Props = { postId: number };
 
 export function PostDetail(props: Props) {
   return (
-    <BrowsingModeOverrideProvider>
+    <BrowsingLevelProvider>
       <PostDetailContent {...props} />
-    </BrowsingModeOverrideProvider>
+    </BrowsingLevelProvider>
   );
 }
 
@@ -130,6 +132,7 @@ export function PostDetailContent({ postId }: Props) {
   const hiddenExplained = useExplainHiddenImages(unfilteredImages);
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
+  const sidebarEnabled = useContainerSmallerThan(1500);
 
   if (postLoading) return <PageLoader />;
   if (!post || isBlocked) return <NotFound />;
@@ -163,7 +166,8 @@ export function PostDetailContent({ postId }: Props) {
         isLoading={!!(post?.collectionId && isLoadingPostCollection)}
       >
         <TrackView entityId={post.id} entityType="Post" type="PostView" />
-        <BrowsingModeOverrideProvider browsingLevel={forcedBrowsingLevel || aggregateBrowsingLevel}>
+        <RenderAdUnitOutstream minContainerWidth={1600} />
+        <BrowsingLevelProvider browsingLevel={forcedBrowsingLevel || aggregateBrowsingLevel}>
           <ReactionSettingsProvider
             settings={{
               hideReactions: collectionItems.some((ci) =>
@@ -401,19 +405,23 @@ export function PostDetailContent({ postId }: Props) {
                 </Stack>
               </div>
               <div
-                className="relative flex w-[336px] flex-col gap-3 @lg:my-3 @max-lg:hidden"
-                style={scrollHeight < 600 ? { display: 'none' } : undefined}
+                className="relative hidden w-[336px] flex-col gap-3 @lg:my-3 @lg:flex @[1500px]:hidden "
+                // style={scrollHeight < 600 ? { display: 'none' } : undefined}
               >
                 <div className="sticky left-0 top-0 ">
                   <div className="flex w-full flex-col gap-3 py-3">
-                    {scrollHeight >= 600 && <AdUnitSide_1 browsingLevel={aggregateBrowsingLevel} />}
-                    {scrollHeight > 900 && <AdUnitSide_2 browsingLevel={aggregateBrowsingLevel} />}
+                    {sidebarEnabled && scrollHeight >= 600 && (
+                      <AdUnitSide_1 browsingLevel={aggregateBrowsingLevel} />
+                    )}
+                    {sidebarEnabled && scrollHeight > 900 && (
+                      <AdUnitSide_2 browsingLevel={aggregateBrowsingLevel} />
+                    )}
                   </div>
                 </div>
               </div>
             </div>
           </ReactionSettingsProvider>
-        </BrowsingModeOverrideProvider>
+        </BrowsingLevelProvider>
       </SensitiveShield>
     </>
   );

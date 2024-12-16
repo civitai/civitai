@@ -35,10 +35,9 @@ export const uploadVimeoVideo = async ({
         allowedTags: [],
         allowedAttributes: {},
       }),
-      // TODO: Add privacy settings. This requires a Plus/Pro account.
-      // privacy: {
-      //   view: 'unlisted',
-      // },
+      privacy: {
+        view: 'unlisted',
+      },
     }),
   });
 
@@ -57,7 +56,7 @@ export const checkVideoAvailable = async ({
   accessToken: string;
 }) => {
   const res = await fetch(
-    `https://api.vimeo.com/videos/${id}?fields=uri,upload.status,transcode.status`,
+    `https://api.vimeo.com/videos/${id}?fields=player_embed_url,upload.status,transcode.status`,
     {
       method: 'GET',
       headers: {
@@ -69,15 +68,60 @@ export const checkVideoAvailable = async ({
   );
 
   if (!res.ok) {
-    return false;
+    return null;
   }
 
-  const data: { uri: string; upload: { status: string }; transcode: { status: string } } =
-    await res.json();
+  const data: {
+    player_embed_url: string;
+    upload: { status: string };
+    transcode: { status: string };
+  } = await res.json();
 
   if (data.upload?.status !== 'complete' || data.transcode?.status !== 'complete') {
-    return false;
+    return null;
   }
 
-  return true;
+  return data.player_embed_url;
+};
+
+type UpdateVimeoVideoInput = {
+  title?: string;
+  description?: string | null;
+  accessToken: string;
+  videoId: string | number;
+};
+
+export const updateVimeoVideo = async ({
+  videoId,
+  accessToken,
+  title,
+  description,
+}: UpdateVimeoVideoInput) => {
+  if (!title && !description) {
+    return;
+  }
+
+  const res = await fetch(`https://api.vimeo.com/videos/${videoId}`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/vnd.vimeo.*+json;version=3.4',
+    },
+    body: JSON.stringify({
+      name: title,
+      description: description
+        ? sanitize(description, {
+            allowedTags: [],
+            allowedAttributes: {},
+          })
+        : '',
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(await res.text());
+  }
+
+  return await res.json();
 };

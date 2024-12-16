@@ -42,9 +42,14 @@ export type NamePlateCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'> & {
     };
   };
 };
+
 export type ContentDecorationCosmetic = Omit<SimpleCosmetic, 'data' | 'videoUrl'> & {
   entityImage?: ImageProps & { entityId: number; entityType: string };
   data: {
+    type?: 'holiday-frame';
+    lights?: number;
+    brightness?: number;
+    color?: string;
     url?: string;
     offset?: string;
     crop?: string;

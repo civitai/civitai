@@ -1,6 +1,7 @@
 import React, { useRef } from 'react';
 import clsx from 'clsx';
 import styles from './CosmeticWrapper.module.scss';
+import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
 
 type Cosmetic = {
   url?: string;
@@ -11,12 +12,17 @@ type Cosmetic = {
   texture?: { url: string; size: { width: number; height: number } };
   border?: string;
   borderWidth?: number;
+  color?: string;
+  lights?: number;
+  brightness?: number;
+  type?: string;
 };
 
 export function TwCosmeticWrapper({
   children,
   className,
   cosmetic,
+  style,
   ...props
 }: Omit<React.HTMLProps<HTMLDivElement>, 'children'> & {
   cosmetic?: Cosmetic;
@@ -25,7 +31,7 @@ export function TwCosmeticWrapper({
   const styleRef = useRef<Record<string, unknown> | undefined>();
   if (!cosmetic) return children;
 
-  const { cssFrame, texture, border, borderWidth, glow } = cosmetic;
+  const { cssFrame, texture, border, borderWidth, glow, type } = cosmetic;
 
   if (true) {
     styleRef.current = {};
@@ -41,18 +47,20 @@ export function TwCosmeticWrapper({
 
   return (
     <div
-      style={styleRef.current}
+      style={{ ...styleRef.current, ...style }}
       className={clsx(
-        'relative rounded-md ',
+        styles.wrapper,
         {
           [styles.border]: border,
           [styles.cssFrame]: cssFrame,
-          [clsx(styles.glow, 'before:rounded-md before:blur-[6px]')]: glow && !border,
+          [styles.texture]: texture,
+          [styles.glow]: glow && !border,
         },
         className
       )}
       {...props}
     >
+      <CosmeticLights cosmetic={cosmetic as any} />
       {children}
     </div>
   );

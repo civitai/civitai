@@ -22,17 +22,13 @@ const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
   limitKey: REDIS_KEYS.GENERATION.LIMITS,
   fetchCount: async (userKey) => {
-    const res = await clickhouse?.query({
-      query: `
-        SELECT
-          COUNT(*) as count
-        FROM prohibitedRequests
-        WHERE time > subtractHours(now(), 24) AND userId = ${userKey}
-      `,
-      format: 'JSONEachRow',
-    });
-
-    const data = (await res?.json<{ count: number }[]>()) ?? [];
+    if (!clickhouse) return 0;
+    const data = await clickhouse.$query<{ count: number }>`
+      SELECT
+        COUNT(*) as count
+      FROM prohibitedRequests
+      WHERE time > subtractHours(now(), 24) AND userId = ${userKey}
+    `;
     const count = data[0]?.count ?? 0;
     return count;
   },
@@ -41,8 +37,8 @@ const blockedPromptLimiter = createLimiter({
 export async function generate({
   token,
   userId,
-  civitaiTip,
-  creatorTip,
+  civitaiTip = 0,
+  creatorTip = 0,
   tags = [],
   ...args
 }: GenerationSchema & Ctx) {

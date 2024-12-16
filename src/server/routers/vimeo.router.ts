@@ -8,9 +8,7 @@ export const vimeoRouter = router({
     .input(getByIdStringSchema)
     .query(async ({ input }: { input: GetByIdStringInput }) => {
       if (!env.VIMEO_ACCESS_TOKEN) {
-        return {
-          available: false,
-        };
+        return null;
       }
 
       return checkVideoAvailable({

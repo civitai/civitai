@@ -9,10 +9,12 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useRouter } from 'next/router';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
 type AdSizeLUT = [containerSize: ContainerSize, adSizes: AdSize[]];
+type OnDismount = (adUnitId: string) => void;
 
 const adUnitDictionary: Record<string, string> = {};
 
@@ -20,10 +22,12 @@ function AdUnitContent({
   adUnit,
   sizes,
   id: initialId,
+  onDismount,
 }: {
   adUnit: string;
   sizes?: AdSize[];
   id?: string;
+  onDismount?: OnDismount;
 }) {
   // const loadedRef = useRef(false);
   const [id, setId] = useState<string | null>(initialId ?? null);
@@ -44,7 +48,6 @@ function AdUnitContent({
           gpIdUniquifier: adUnitDictionary[adUnit],
           sizes,
         };
-        if (adUnit === 'outstream') console.log(payload);
         window.adngin.cmd.startAuction([payload]);
       });
     }
@@ -57,6 +60,7 @@ function AdUnitContent({
           .find((x: any) => x.getSlotElementId() === id);
         if (slot) window.googletag.destroySlots([slot]);
       });
+      onDismount?.(id);
     };
   }, []);
 
@@ -93,6 +97,7 @@ function AdWrapper({
   maxHeight,
   maxWidth,
   preserveLayout,
+  onDismount,
 }: {
   adUnit: string;
   sizes?: AdSize[] | null;
@@ -103,7 +108,10 @@ function AdWrapper({
   maxHeight?: number;
   maxWidth?: number;
   preserveLayout?: boolean;
+  onDismount?: OnDismount;
 }) {
+  const router = useRouter();
+  const key = router.asPath.split('?')[0];
   const { adsBlocked, ready, isMember } = useAdsContext();
 
   const { classes } = useAdWrapperStyles({ sizes, lutSizes, maxHeight, maxWidth });
@@ -126,7 +134,13 @@ function AdWrapper({
           {adsBlocked ? (
             <SupportUsImage sizes={adSizes ?? undefined} />
           ) : ready && adSizes !== undefined ? (
-            <AdUnitContent adUnit={adUnit} sizes={adSizes ?? undefined} id={id} />
+            <AdUnitContent
+              key={key}
+              adUnit={adUnit}
+              sizes={adSizes ?? undefined}
+              id={id}
+              onDismount={onDismount}
+            />
           ) : null}
           {withFeedback && !isMember && (
             <>
@@ -155,6 +169,7 @@ export function adUnitFactory(factoryArgs: {
   sizes?: AdSize[] | null;
   lutSizes?: AdSizeLUT[];
   id?: string;
+  onDismount?: OnDismount;
 }) {
   return function AdUnit({
     withFeedback,

@@ -1,45 +1,28 @@
 import { Box, BoxProps, Loader } from '@mantine/core';
-import Player from '@vimeo/player';
-import { useEffect, useRef, useState } from 'react';
+import clsx from 'clsx';
+import { useEffect, useState } from 'react';
 import { trpc } from '~/utils/trpc';
+import styles from './VimeoEmbed.module.scss';
 
 export const VimeoEmbed = ({
   videoId,
   autoplay,
   fallbackContent,
   sx,
+  className,
   ...props
 }: { videoId: string; autoplay?: boolean; fallbackContent?: React.ReactNode } & BoxProps) => {
-  const ref = useRef<Player | null>(null);
   const { data, isLoading } = trpc.vimeo.checkVideoAvailable.useQuery({
     id: videoId,
   });
   const [useFallbackContent, setUseFallbackContent] = useState(false);
 
   useEffect(() => {
-    if (!data) {
+    if (!data && !isLoading) {
+      setUseFallbackContent(true);
       return;
     }
-
-    try {
-      ref.current = new Player(videoId, {
-        id: Number(videoId),
-        autoplay,
-      });
-
-      ref.current.on('error', (...args) => {
-        console.log(...args, 'THEREW WAS AN ERRORITO');
-        setUseFallbackContent(true);
-      });
-    } catch (error) {
-      console.log('error', error);
-      setUseFallbackContent(true);
-    }
-
-    return () => {
-      ref.current?.destroy();
-    };
-  }, [data, videoId, autoplay]);
+  }, [data, isLoading]);
 
   if (useFallbackContent && fallbackContent) {
     return <>{fallbackContent}</>;
@@ -48,9 +31,7 @@ export const VimeoEmbed = ({
   if (isLoading) {
     return (
       <Box {...props}>
-        {/* <Center> */}
         <Loader m="auto" />
-        {/* </Center> */}
       </Box>
     );
   }
@@ -69,10 +50,23 @@ export const VimeoEmbed = ({
           left: 0,
           width: '100%',
           height: '100%',
+
+          body: {
+            background: '#000',
+          },
         },
       }}
       id={videoId}
       data-vimeo-id={videoId}
-    ></Box>
+      className={clsx(className, styles.vimeoWrapper)}
+    >
+      {data && (
+        <iframe
+          src={`${data}&autoplay=1&transparent=0`}
+          allowFullScreen
+          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+        />
+      )}
+    </Box>
   );
 };

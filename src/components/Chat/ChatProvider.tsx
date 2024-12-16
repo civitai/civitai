@@ -7,10 +7,11 @@ import {
   useContext,
   useState,
 } from 'react';
-import { AdUnitOutstream } from '~/components/Ads/AdUnit';
+import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+// TODO - check for any selector type imports in client files
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 const ChatWindow = dynamic(() => import('~/components/Chat/ChatWindow').then((m) => m.ChatWindow));
 
 type ChatState = {
@@ -56,7 +57,7 @@ export function ChatPortal({ showFooter }: { showFooter: boolean }) {
   // if (!state.open) return null;
 
   if (!state.open)
-    return isClient && !isMobile && location.host === 'stage.civitai.com' ? (
+    return isClient && !isMobile ? (
       <div className="absolute bottom-[var(--footer-height)] left-2 mb-2">
         <AdUnitOutstream />
       </div>

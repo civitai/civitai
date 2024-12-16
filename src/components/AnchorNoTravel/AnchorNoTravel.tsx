@@ -1,6 +1,5 @@
 import { Anchor, AnchorProps } from '@mantine/core';
-import { NextLinkProps } from '@mantine/next/lib/NextLink';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { type NextLinkProps, NextLink as Link } from '~/components/NextLink/NextLink';
 
 export const AnchorNoTravel = (props: NextLinkProps & AnchorProps) => {
   return (

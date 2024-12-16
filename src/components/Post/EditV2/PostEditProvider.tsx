@@ -9,7 +9,7 @@ import { shallow } from 'zustand/shallow';
 import { FileUploadProvider } from '~/components/FileUpload/FileUploadProvider';
 import { MediaUploadOnCompleteProps } from '~/hooks/useMediaUpload';
 import { PostEditQuerySchema } from '~/server/schema/post.schema';
-import { PostDetailEditable } from '~/server/services/post.service';
+import type { PostDetailEditable, PostEditImageDetail } from '~/server/services/post.service';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -41,7 +41,6 @@ type Props = {
   children: React.ReactNode;
 } & ExtendedParams;
 
-export type PostEditImageDetail = PostDetailEditable['images'][number] & { index: number };
 export type PostEditMediaDetail = MediaUploadOnCompleteProps;
 export type ControlledImage =
   | {

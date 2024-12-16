@@ -215,15 +215,26 @@ export const cosmeticEntityCaches = Object.fromEntries(
         // TODO: This might be a gamble since dbWrite could be heavily hit, however, considering we have
         // 1 day TTL, it might be worth it to keep the cache fresh. With dbRead, lag can cause cosmetics to linger
         // for 1 day.
-        const entityCosmetics = await dbWrite.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
-          SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
+        const entityCosmetics = await dbWrite.$queryRaw<
+          WithClaimKey<
+            ContentDecorationCosmetic & { userData: ContentDecorationCosmetic['data'] }
+          >[]
+        >`
+          SELECT c.id, c.data, uc."equippedToId", uc."claimKey", uc."data" as "userData"
           FROM "UserCosmetic" uc
           JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
             AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
             AND c.type = 'ContentDecoration';
         `;
-        return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
+        return Object.fromEntries(
+          entityCosmetics.map((x) => {
+            if (x.userData) {
+              x.data.lights = x.userData.lights;
+            }
+            return [x.equippedToId, x];
+          })
+        );
       },
       ttl: CacheTTL.day,
     }),

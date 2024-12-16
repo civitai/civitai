@@ -417,3 +417,10 @@ export const setVideoThumbnailSchema = z.object({
   frame: z.number().nullable(),
   customThumbnail: imageSchema.nullish(),
 });
+
+export type UpdateImageMinorInput = z.infer<typeof updateImageMinorSchema>;
+export const updateImageMinorSchema = z.object({
+  id: z.number(),
+  collectionId: z.number(),
+  minor: z.boolean(),
+});

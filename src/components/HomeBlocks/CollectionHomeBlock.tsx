@@ -220,7 +220,7 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
         <div className={classes.grid}>
           {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
           {Array.from({ length: ITEMS_PER_ROW * rows }).map((_, index) => (
-            <AspectRatio ratio={7 / 9} key={index}>
+            <AspectRatio ratio={7 / 9} key={index} className="m-2">
               <Skeleton width="100%" />
             </AspectRatio>
           ))}
@@ -239,12 +239,12 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
             >
               {useGrid && <div className={classes.gridMeta}>{MetaDataGrid}</div>}
               {items.map((item) => (
-                <Fragment key={item.id}>
+                <div key={item.id} className="p-2">
                   {type === 'model' && <ModelCard data={item as any} forceInView />}
                   {type === 'image' && <ImageCard data={item as any} />}
                   {type === 'post' && <PostCard data={item as any} />}
                   {type === 'article' && <ArticleCard data={item as any} />}
-                </Fragment>
+                </div>
               ))}
             </ReactionSettingsProvider>
           </ImagesProvider>
