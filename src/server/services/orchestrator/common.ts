@@ -364,7 +364,8 @@ export async function formatGenerationResponse(workflows: Workflow[]) {
       steps: (workflow.steps ?? [])?.map((step) =>
         formatWorkflowStep({
           workflowId: workflow.id as string,
-          step,
+          // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
+          step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
           resources: [...resources, ...injectable],
         })
       ),
@@ -409,6 +410,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
 
   let width = videoMetadata.params?.width;
   let height = videoMetadata.params?.height;
+  let aspectRatio = width && height ? width / height : 16 / 9;
 
   // if ((workflowId = '0-20241108234000287')) console.log(input);
 
@@ -416,14 +418,24 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   if (params) {
     switch (params.engine) {
       case 'haiper': {
-        const { aspectRatio, resolution } = params;
-        if (aspectRatio && resolution && (!width || !height)) {
-          const [rw, rh] = aspectRatio.split(':').map(Number);
-          width = resolution;
-          const ratio = width / rw;
-          height = ratio * rh;
+        if (params.aspectRatio) {
+          const [rw, rh] = params.aspectRatio.split(':').map(Number);
+          aspectRatio = rw / rh;
         }
+        break;
       }
+      case 'kling': {
+        if (params.aspectRatio) {
+          const [rw, rh] = params.aspectRatio.split(':').map(Number);
+          aspectRatio = rw / rh;
+        }
+        break;
+      }
+      case 'mochi':
+        width = 848;
+        height = 480;
+        aspectRatio = width / height;
+        break;
     }
   }
 
@@ -450,12 +462,19 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             url: image.url + '.mp4',
             width: width ?? 1080,
             height: height ?? 1080,
+            queuePosition: job.queuePosition,
+            aspectRatio,
           })) ?? [],
     }),
     {}
   );
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+
+  // TODO - this should be temporary until Koen updates the orchestrator - 12/11/2024
+  if (input.engine === 'kling' && (input as any).sourceImageUrl) {
+    if ('aspectRatio' in input) delete input.aspectRatio;
+  }
 
   return {
     $type: 'videoGen' as const,

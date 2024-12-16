@@ -10,7 +10,8 @@ import {
 import { AdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';
-import { UserWithCosmetics } from '~/server/selectors/user.selector';
+// TODO - check for any selector type imports in client files
+import type { UserWithCosmetics } from '~/server/selectors/user.selector';
 const ChatWindow = dynamic(() => import('~/components/Chat/ChatWindow').then((m) => m.ChatWindow));
 
 type ChatState = {
