@@ -1,4 +1,3 @@
-version: '3'
 services:
   # A helper service that can consistently serve images for testing
   image-stub:
