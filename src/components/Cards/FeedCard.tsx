@@ -4,7 +4,7 @@ import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
 import { useFrameStyles } from '~/components/Cards/Cards.styles';
 import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
-import { TwCard, TwCardAnchor } from '~/components/TwCard/TwCard';
+import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import clsx from 'clsx';
 
@@ -46,22 +46,15 @@ export const FeedCard = forwardRef<HTMLElement, Props>(
 
     return (
       <TwCosmeticWrapper cosmetic={frameDecoration?.data}>
-        {/* <CosmeticLights frameDecoration={frameDecoration} /> */}
-        {href ? (
-          <TwCardAnchor
-            ref={ref as any}
-            style={{ aspectRatio: stringRatio }}
-            href={href}
-            className={className}
-            onClick={onClick}
-          >
-            {children}
-          </TwCardAnchor>
-        ) : (
-          <TwCard ref={ref as any} style={{ aspectRatio: stringRatio }} onClick={onClick}>
-            {children}
-          </TwCard>
-        )}
+        <TwCard
+          ref={ref as any}
+          style={{ aspectRatio: stringRatio }}
+          onClick={onClick}
+          href={href}
+          className={className}
+        >
+          {children}
+        </TwCard>
       </TwCosmeticWrapper>
     );
   }

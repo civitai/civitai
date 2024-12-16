@@ -1,0 +1,51 @@
+.content {
+  flex: 1;
+  color: theme('colors.white');
+  opacity: 0;
+  transition: opacity 200ms ease;
+
+  &:hover {
+    .image {
+      transform: scale(1.05);
+    }
+  }
+
+  &.inView {
+    opacity: 1;
+  }
+}
+
+.image {
+  height: 100%;
+  min-width: 100%;
+  object-fit: cover;
+  object-position: center;
+  transition: transform 400ms ease;
+
+  .top {
+    object-position: top center;
+  }
+}
+
+.header, .footer {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  padding: theme('padding.2');
+  display: flex;
+  justify-content: space-between;
+  gap: theme('gap.1');
+}
+
+.header {
+  top: 0;
+}
+
+.footer {
+  bottom: 0;
+}
+
+.chip {
+  border-radius: theme('borderRadius.xl');
+  height: 26px;
+}

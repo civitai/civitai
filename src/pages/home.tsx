@@ -8,8 +8,6 @@ import React, { useEffect, useState } from 'react';
 import { useInView } from '~/hooks/useInView';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { constants } from '~/server/common/constants';
-import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { ImageSort, ModelSort } from '~/server/common/enums';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -51,12 +49,6 @@ export function Home() {
         description="Explore thousands of high-quality Stable Diffusion & Flux models, share your AI-generated art, and engage with a vibrant community of creators"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/`, rel: 'canonical' }]}
       />
-
-      {isLoading && (
-        <Center sx={{ height: 36 }} mt="md">
-          <Loader />
-        </Center>
-      )}
 
       <Box
         className="-mt-3"

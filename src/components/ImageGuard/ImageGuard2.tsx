@@ -29,7 +29,7 @@ type ImageProps = {
 };
 
 type ConnectId = string | number;
-type ConnectType =
+export type ConnectType =
   | 'model'
   | 'modelVersion'
   | 'review'
