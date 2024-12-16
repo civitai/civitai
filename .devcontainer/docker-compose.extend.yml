@@ -28,7 +28,7 @@ services:
       REDIS_URL: 'redis://:redis@redis:6379'
       CLICKHOUSE_HOST: 'http://clickhouse:8123'
       # CLICKHOUSE_TRACKER_URL: 'https://clickhouse-tracker-dev.civitai.com'
-      SEARCH_HOS: 'http://meilisearch:7700'
+      SEARCH_HOST: 'http://meilisearch:7700'
       NEXT_PUBLIC_SEARCH_HOST: 'http://meilisearch:7700'
       METRICS_SEARCH_HOST: 'http://meilisearch:7700'
       S3_UPLOAD_ENDPOINT: 'http://minio:9000'
