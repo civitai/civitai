@@ -32,17 +32,17 @@ burn:
 # Initialize the database and seed it with data
 .PHONY: bootstrap-db
 bootstrap-db:
-	node_modules/.bin/cross-env NODE_ENV=development npx tsx ./scripts/local-dev/gen_seed.ts
+	npx cross-env NODE_ENV=development tsx ./scripts/local-dev/gen_seed.ts
 
 # Run new migrations
 .PHONY: run-migrations
 run-migrations:
-	node_modules/.bin/cross-env NODE_ENV=development npx tsx ./scripts/local-dev/run_migrations.ts
+	npx cross-env NODE_ENV=development tsx ./scripts/local-dev/run_migrations.ts
 
 # Trigger metrics and search data jobs
 .PHONY: bootstrap-metrics
 bootstrap-metrics:
-	node_modules/.bin/cross-env NODE_ENV=development npx tsx ./scripts/local-dev/bootstrap-metrics-search.ts
+	npx cross-env NODE_ENV=development tsx ./scripts/local-dev/bootstrap-metrics-search.ts
 
 .PHONY: copy-env
 copy-env:

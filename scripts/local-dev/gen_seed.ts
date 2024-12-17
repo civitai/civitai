@@ -1,7 +1,18 @@
 import { faker } from '@faker-js/faker';
+import { capitalize, pull, range, without } from 'lodash-es';
+import format from 'pg-format';
+import { clickhouse } from '~/server/clickhouse/client';
+import { constants } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
+import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { notifDbWrite } from '~/server/db/notifDb';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { notificationProcessors } from '~/server/notifications/utils.notifications';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import {
   ArticleEngagementType,
   Availability,
+  CheckpointType,
   CollectionType,
   EntityMetric_MetricType_Type,
   ImageEngagementType,
@@ -10,6 +21,7 @@ import {
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
+  ModelType,
   ModelUploadType,
   ModelVersionEngagementType,
   NsfwLevel,
@@ -21,18 +33,7 @@ import {
   ToolType,
   TrainingStatus,
   UserEngagementType,
-} from '@prisma/client';
-import { capitalize, pull, range, without } from 'lodash-es';
-import format from 'pg-format';
-import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
-import { NotificationCategory } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
-import { notifDbWrite } from '~/server/db/notifDb';
-import { pgDbWrite } from '~/server/db/pgDb';
-import { notificationProcessors } from '~/server/notifications/utils.notifications';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { CheckpointType, ModelType } from '~/shared/utils/prisma/enums';
+} from '~/shared/utils/prisma/enums';
 import { checkLocalDb, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
