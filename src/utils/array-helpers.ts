@@ -1,3 +1,4 @@
+import { uniq } from 'instantsearch.js/es/lib/utils';
 import { uniqBy } from 'lodash-es';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
@@ -11,8 +12,8 @@ export function toStringList(array: string[]) {
   return formatter.format(array);
 }
 
-export function removeDuplicates<T extends object>(array: T[], property: keyof T) {
-  return uniqBy<T>(array, property);
+export function removeDuplicates<T>(array: T[], property?: keyof T) {
+  return property ? uniqBy<T>(array, property) : uniq<T>(array);
 }
 
 export function sortAlphabetically<T>(array: T[]) {

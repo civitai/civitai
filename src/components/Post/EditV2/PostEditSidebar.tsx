@@ -10,6 +10,7 @@ import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
+import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { PostDetailEditable } from '~/server/services/post.service';
@@ -38,6 +39,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
+  const { collection } = usePostContestCollectionDetails(
+    { id: post.id },
+    { enabled: !!collectionId }
+  );
   // #endregion
 
   // #region [mutations]
@@ -118,7 +123,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   return (
     <>
       <div className="flex flex-col gap-0">
-        {collectionId && (
+        {collection?.metadata?.includeContestCallouts && (
           <Alert mb="xs">
             <div className="flex">
               <Text size="xs">
