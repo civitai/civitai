@@ -16,6 +16,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { MIME_TYPES } from '~/server/common/mime-types';
 import { SetVideoThumbnailInput } from '~/server/schema/image.schema';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
@@ -90,7 +91,11 @@ export function PostImageThumbnailSelect({
           ]}
         >
           <SimpleImageUpload
-            dropzoneProps={{ className: 'flex h-full items-center justify-center', mt: 0 }}
+            dropzoneProps={{
+              className: 'flex h-full items-center justify-center',
+              mt: 0,
+              accept: [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.jpg],
+            }}
             value={state.customThumbnail ?? undefined}
             aspectRatio={9 / 16}
             mt={-5} // Offset the dropzone margin

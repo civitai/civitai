@@ -197,9 +197,9 @@ export function SimpleImageUpload({
                   }
                 : undefined,
           })}
+          accept={IMAGE_MIME_TYPE}
           {...dropzoneProps}
           onDrop={handleDrop}
-          accept={IMAGE_MIME_TYPE}
           maxFiles={1}
           // maxSize={maxSize}
         >

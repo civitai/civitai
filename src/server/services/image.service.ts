@@ -4496,7 +4496,7 @@ export async function setVideoThumbnail({
   }
 
   const videoMetadata = image.metadata as VideoMetadata;
-  const updated = await db.image.update({
+  const updated = await dbWrite.image.update({
     where: { id: imageId },
     data: { metadata: { ...videoMetadata, thumbnailFrame: frame, thumbnailId } },
   });
