@@ -240,12 +240,17 @@ const useSetThumbnailMutation = ({ postId, imageId }: { imageId: number; postId?
             if (!old) return;
 
             const affectedImage = old.images.find((image) => image.id === imageId);
-            if (affectedImage && frame) {
-              affectedImage.metadata = { ...affectedImage.metadata, thumbnailFrame: frame };
-              affectedImage.thumbnailUrl = null;
-            }
+            if (affectedImage) {
+              if (frame) {
+                affectedImage.metadata = { ...affectedImage.metadata, thumbnailFrame: frame };
+                affectedImage.thumbnailUrl = null;
+              } else {
+                affectedImage.metadata = { ...affectedImage.metadata, thumbnailFrame: null };
+              }
 
-            if (affectedImage && customThumbnail) affectedImage.thumbnailUrl = customThumbnail.url;
+              if (customThumbnail) affectedImage.thumbnailUrl = customThumbnail.url;
+              else affectedImage.thumbnailUrl = null;
+            }
           })
         );
       }
