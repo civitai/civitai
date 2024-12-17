@@ -61,8 +61,11 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
   return (
-    <TwCosmeticWrapper cosmetic={image.cosmetic?.data}>
-      <TwCard style={{ height }} ref={ref} className="border">
+    <TwCosmeticWrapper
+      cosmetic={image.cosmetic?.data}
+      style={image.cosmetic?.data ? { height } : undefined}
+    >
+      <TwCard style={!image.cosmetic?.data ? { height } : undefined} ref={ref} className="border">
         {inView && (
           <ImageGuard2 image={image} inView={inView}>
             {(safe) => (

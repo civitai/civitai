@@ -34,7 +34,6 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
@@ -156,21 +155,19 @@ function MyApp(props: CustomAppProps) {
                                             zIndex={9999}
                                           >
                                             <BrowserRouterProvider>
-                                              <GenerationProvider>
-                                                <IntersectionObserverProvider>
-                                                  <BaseLayout>
-                                                    {isProd && <TrackPageView />}
-                                                    <ChatContextProvider>
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </ChatContextProvider>
-                                                  </BaseLayout>
-                                                </IntersectionObserverProvider>
-                                              </GenerationProvider>
+                                              <IntersectionObserverProvider>
+                                                <BaseLayout>
+                                                  {isProd && <TrackPageView />}
+                                                  <ChatContextProvider>
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      {/* <StripeSetupSuccessProvider /> */}
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
+                                              </IntersectionObserverProvider>
                                             </BrowserRouterProvider>
                                           </NotificationsProvider>
                                         </CivitaiLinkProvider>
