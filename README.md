@@ -72,7 +72,9 @@ First, make sure that you have the following installed on your machine:
     - a) Use devcontainers
         - Open the directory up in your IDE of choice
             - VS Code should prompt you to "Open in container"
+                - If not, you may need to manually run `Dev Containers: Open Folder in Container`
             - For other IDEs, you may need to open the `.devcontainer/devcontainer.json` file, and click "Create devcontainer and mount sources"
+            - _Note: this may take some time to run initially_
         - Run `make run` or `npm run dev`
     - b) Run `make init`
         - This command will do a few things:

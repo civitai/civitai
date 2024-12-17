@@ -423,6 +423,7 @@ const initialMigrations = [
   '20240930191432_add_cosmetic_shop_home_block_type',
   '20240930192521_model_flag_details_column',
   '20241003192438_model_flag_poi_name_column',
+  '20241119210536_tool_company_column',
 ];
 
 async function main() {
