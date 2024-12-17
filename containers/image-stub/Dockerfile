@@ -1,4 +1,4 @@
-FROM node:20-alpine3.19
+FROM node:20-bookworm
 
 # Set working directory
 WORKDIR /usr/src/app
