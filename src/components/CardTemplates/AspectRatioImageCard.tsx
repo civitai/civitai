@@ -44,6 +44,7 @@ type ImageProps = {
   user?: { id: number };
   width?: number | null;
   height?: number | null;
+  thumbnailUrl?: string | null;
 };
 
 type RoutedDialogProps<T extends DialogKey> = { name: T; state: DialogState<T> };
@@ -120,6 +121,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                             name={image.name ?? image.id.toString()}
                             alt={image.name ?? undefined}
                             type={image.type}
+                            thumbnailUrl={image.thumbnailUrl}
                             placeholder="empty"
                             className={clsx(styles.image, {
                               [styles.top]: originalAspectRatio < 1,
