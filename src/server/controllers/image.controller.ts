@@ -20,6 +20,8 @@ import {
   deleteImageById,
   getAllImagesIndex,
   getPostDetailByImageId,
+  setVideoThumbnail,
+  updateImageMinor,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -40,6 +42,8 @@ import {
   GetInfiniteImagesOutput,
   ImageModerationSchema,
   ImageReviewQueueInput,
+  SetVideoThumbnailInput,
+  UpdateImageMinorInput,
 } from './../schema/image.schema';
 import {
   getAllImages,
@@ -52,6 +56,7 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 
 const reviewTypeToBlockedReason = {
   csam: BlockImageReason.CSAM,
@@ -558,12 +563,15 @@ export const getModeratorReviewQueueHandler = async ({
 
 export const getImageContestCollectionDetailsHandler = async ({
   input,
+  ctx,
 }: {
   input: GetByIdInput;
+  ctx: Context;
 }) => {
   try {
     const collectionItems = await getImageContestCollectionDetails({
       ...input,
+      userId: ctx.user?.id,
     });
     const imageId = collectionItems?.[0]?.imageId;
     if (!imageId) return { collectionItems, post: null };
@@ -575,3 +583,46 @@ export const getImageContestCollectionDetailsHandler = async ({
     else throw throwDbError(error);
   }
 };
+
+export function setVideoThumbnailController({
+  input,
+  ctx,
+}: {
+  input: SetVideoThumbnailInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId, isModerator } = ctx.user;
+    return setVideoThumbnail({ ...input, userId, isModerator });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+}
+
+// This is only available for collections
+export async function updateImageMinorHandler({
+  input,
+  ctx,
+}: {
+  input: UpdateImageMinorInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { collectionId } = input;
+    const { id: userId, isModerator } = ctx.user;
+
+    const permissions = await getUserCollectionPermissionsById({
+      id: collectionId,
+      userId,
+      isModerator,
+    });
+    if (!permissions.manage) throw throwAuthorizationError();
+
+    const image = await updateImageMinor(input);
+    return image;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+}

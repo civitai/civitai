@@ -1,5 +1,3 @@
-import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
-
 import { dbWrite } from '~/server/db/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import {
@@ -9,6 +7,7 @@ import {
 } from '~/server/schema/redeemableCode.schema';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { throwDbCustomError, withRetries } from '~/server/utils/errorHandling';
+import { RedeemableCodeType } from '~/shared/utils/prisma/enums';
 import { generateToken } from '~/utils/string-helpers';
 
 export async function createRedeemableCodes({
@@ -30,7 +29,7 @@ export function deleteRedeemableCode({ code }: DeleteRedeemableCodeInput) {
     .delete({
       where: { code, redeemedAt: null },
     })
-    .catch(throwDbCustomError('Code does not exists or has been redeemed'));
+    .catch(throwDbCustomError('Code does not exist or has been redeemed'));
 }
 
 export async function consumeRedeemableCode({
@@ -47,7 +46,7 @@ export async function consumeRedeemableCode({
       data: { redeemedAt: new Date(), userId },
       select: { code: true, unitValue: true, type: true, userId: true },
     })
-    .catch(throwDbCustomError('Code does not exists, has been redeemed, or has expired'));
+    .catch(throwDbCustomError('Code does not exist, has been redeemed, or has expired'));
 
   if (consumedCode.type === RedeemableCodeType.Buzz) {
     const transactionId = `redeemable-code-${consumedCode.code}`;

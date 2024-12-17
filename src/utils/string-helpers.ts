@@ -62,6 +62,7 @@ const nameOverrides: Record<string, string> = {
   'PixArt E': 'PixArt Σ',
   'PixArt a': 'PixArt α',
   ProfileDecoration: 'Avatar Decoration',
+  CogVideoX: 'CogVideoX',
 };
 
 export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
@@ -140,6 +141,10 @@ export function removeTags(str: string) {
 
   // Trim the resulting string to remove leading/trailing spaces
   return stringWithoutExtraSpaces.trim();
+}
+
+export function stripLeadingWhitespace(str: string) {
+  return str.replace(/^[ \t]+/gm, '');
 }
 
 export function postgresSlugify(str?: string) {

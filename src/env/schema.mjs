@@ -124,6 +124,10 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_TOKEN: z.string().optional(),
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
   EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
+
+  EXTERNAL_IMAGE_SCANNER: z.enum(['hive', 'rekognition']).optional().default('hive').catch('hive'),
+  HIVE_VISUAL_TOKEN: z.string().optional(),
+
   ALT_ORCHESTRATION_ENDPOINT: z.string().url().optional(),
   ALT_ORCHESTRATION_TOKEN: z.string().optional(),
   ALT_ORCHESTRATION_TIMEFRAME: z
@@ -185,6 +189,20 @@ export const serverSchema = z.object({
   TIPALTI_API_CODE_VERIFIER: z.string().optional(),
   TIPALTI_API_REFRESH_TOKEN: z.string().optional(),
   TIPALTI_API_TOKEN_URL: z.string().optional(),
+
+  // OpenAI
+  OPENAI_API_KEY: z.string().optional(),
+
+  // Youtube related:
+  YOUTUBE_APP_CLIENT_ID: z.string().optional(),
+  YOUTUBE_APP_CLIENT_SECRET: z.string().optional(),
+  YOUTUBE_VIDEO_UPLOAD_URL: z.string().optional(),
+
+  // Vimeo related:
+  VIMEO_ACCESS_TOKEN: z.string().optional(),
+  VIMEO_SECRET: z.string().optional(),
+  VIMEO_CLIENT_ID: z.string().optional(),
+  VIMEO_VIDEO_UPLOAD_URL: z.string().optional(),
 });
 
 /**

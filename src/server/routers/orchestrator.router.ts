@@ -1,6 +1,7 @@
 import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
+import { z } from 'zod';
 import { env } from '~/env/server.mjs';
 import { CacheTTL } from '~/server/common/constants';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
@@ -50,8 +51,9 @@ import { generationServiceCookie } from '~/shared/constants/generation.constants
 
 const TOKEN_STORE: 'redis' | 'cookie' = 'redis';
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
-  if (!ctx.user) throw throwAuthorizationError();
-  const redisKey = ctx.user.id.toString();
+  const user = ctx.user;
+  if (!user) throw throwAuthorizationError();
+  const redisKey = user.id.toString();
   let token: string | null =
     TOKEN_STORE === 'redis'
       ? await redis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
@@ -64,7 +66,7 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
       maxAge: generationServiceCookie.maxAge + 5,
       scope: ['Generate'],
       type: 'System',
-      userId: ctx.user.id,
+      userId: user.id,
     });
     if (TOKEN_STORE === 'redis') {
       await Promise.all([
@@ -78,7 +80,7 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
         value: token,
       });
   }
-  return next({ ctx: { token } });
+  return next({ ctx: { ...ctx, user, token } });
 });
 
 const orchestratorProcedure = protectedProcedure.use(orchestratorMiddleware);
@@ -235,11 +237,11 @@ export const orchestratorRouter = router({
       }
     }),
   whatIf: orchestratorGuardedProcedure
-    .input(generationSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    .input(z.any())
+    .use(edgeCacheIt({ ttl: 60 }))
     .query(({ ctx, input }) => whatIf({ ...input, userId: ctx.user.id, token: ctx.token })),
   generate: orchestratorGuardedProcedure
-    .input(generationSchema)
+    .input(z.any())
     .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
   // #endregion
 

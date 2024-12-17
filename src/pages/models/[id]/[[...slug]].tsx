@@ -21,13 +21,6 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { closeAllModals, openConfirmModal } from '@mantine/modals';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import {
-  Availability,
-  CollectionType,
-  ModelModifier,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
 import {
   IconArchive,
   IconArrowsLeftRight,
@@ -60,6 +53,7 @@ import { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
@@ -94,6 +88,7 @@ import { ModelDiscussionV2 } from '~/components/Model/ModelDiscussion/ModelDiscu
 import { ModelVersionList } from '~/components/Model/ModelVersionList/ModelVersionList';
 import { useModelVersionPermission } from '~/components/Model/ModelVersions/model-version.utils';
 import { ModelVersionDetails } from '~/components/Model/ModelVersions/ModelVersionDetails';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
 import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
@@ -108,13 +103,20 @@ import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
-import { ImageSort, ModelType } from '~/server/common/enums';
+import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import {
+  Availability,
+  CollectionType,
+  ModelModifier,
+  ModelStatus,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -552,6 +554,7 @@ export default function ModelDetailsV2({
       />
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
+        {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
         <Container size="xl">
           <Stack spacing="xl">
             <Stack spacing="xs">
@@ -1046,25 +1049,23 @@ export default function ModelDetailsV2({
           ) : null}
         </Container>
         {canLoadBelowTheFold && (isOwner || model.hasSuggestedResources) && (
-          <Stack>
-            <AssociatedModels
-              fromId={model.id}
-              type="Suggested"
-              versionId={selectedVersion?.id}
-              label={
-                <Group spacing={8} noWrap>
-                  Suggested Resources{' '}
-                  <InfoPopover>
-                    <Text size="sm" weight={400}>
-                      These are resources suggested by the creator of this model. They may be
-                      related to this model or created by the same user.
-                    </Text>
-                  </InfoPopover>
-                </Group>
-              }
-              ownerId={model.user.id}
-            />
-          </Stack>
+          <AssociatedModels
+            fromId={model.id}
+            type="Suggested"
+            versionId={selectedVersion?.id}
+            label={
+              <Group spacing={8} noWrap>
+                Suggested Resources{' '}
+                <InfoPopover>
+                  <Text size="sm" weight={400}>
+                    These are resources suggested by the creator of this model. They may be related
+                    to this model or created by the same user.
+                  </Text>
+                </InfoPopover>
+              </Group>
+            }
+            ownerId={model.user.id}
+          />
         )}
         {canLoadBelowTheFold &&
           (!model.locked ? (

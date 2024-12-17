@@ -13,7 +13,7 @@ import {
   useQueryImages,
 } from '~/components/Image/image.utils';
 import { ImagesCard } from '~/components/Image/Infinite/ImagesCard';
-import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
+import { ImagesContextState, ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
@@ -32,7 +32,7 @@ type ImagesInfiniteProps = {
   showEmptyCta?: boolean;
   useIndex?: boolean;
   disableStoreFilters?: boolean;
-};
+} & Pick<ImagesContextState, 'collectionId'>;
 
 export default function ImagesInfinite(props: ImagesInfiniteProps) {
   return (
@@ -52,6 +52,7 @@ export function ImagesInfiniteContent({
   showEmptyCta,
   useIndex,
   disableStoreFilters = false,
+  ...imageProviderProps
 }: ImagesInfiniteProps) {
   const imageFilters = useImageFilters(filterType);
   const filters = removeEmpty({
@@ -85,13 +86,17 @@ export function ImagesInfiniteContent({
         <div style={{ position: 'relative' }}>
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
 
-          <ImagesProvider images={images}>
+          <ImagesProvider images={images} {...imageProviderProps}>
             <MasonryColumns
               data={images}
               imageDimensions={(data) => {
                 const width = data?.width ?? 450;
                 const height = data?.height ?? 450;
                 return { width, height };
+              }}
+              adjustHeight={({ height }) => {
+                const imageHeight = Math.max(Math.min(height, 600), 150);
+                return imageHeight + 38;
               }}
               maxItemHeight={600}
               render={MasonryItem ?? ImagesCard}

@@ -1,6 +1,8 @@
 import { ActionIcon, createStyles } from '@mantine/core';
 import { IconVolume, IconVolumeOff } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
+import { VimeoEmbed } from '../VimeoEmbed/VimeoEmbed';
 
 type VideoProps = React.DetailedHTMLProps<
   React.VideoHTMLAttributes<HTMLVideoElement>,
@@ -11,6 +13,8 @@ type VideoProps = React.DetailedHTMLProps<
   fadeIn?: boolean;
   html5Controls?: boolean;
   onMutedChange?: (muted: boolean) => void;
+  youtubeVideoId?: string;
+  vimeoVideoId?: string;
 };
 
 export type EdgeVideoRef = {
@@ -29,6 +33,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       fadeIn,
       html5Controls = false,
       onMutedChange,
+      youtubeVideoId,
+      vimeoVideoId,
       ...props
     },
     forwardedRef
@@ -58,7 +64,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       },
     }));
 
-    return (
+    const defaultPlayer = (
       // extra div wrapper to prevent positioning errors of parent components that make their child absolute
       <div {...wrapperProps} className={cx(classes.iosScroll, wrapperProps?.className)}>
         <div
@@ -118,6 +124,29 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         </div>
       </div>
     );
+
+    if (youtubeVideoId) {
+      return (
+        <YoutubeEmbed
+          style={{ display: 'block', width: '100%', height: 'auto', ...style }}
+          videoId={youtubeVideoId}
+          autoPlay
+        />
+      );
+    }
+
+    if (vimeoVideoId) {
+      return (
+        <VimeoEmbed
+          style={{ display: 'block', width: '100%', height: 'auto', ...style }}
+          videoId={vimeoVideoId}
+          autoplay
+          fallbackContent={defaultPlayer}
+        />
+      );
+    }
+
+    return defaultPlayer;
   }
 );
 

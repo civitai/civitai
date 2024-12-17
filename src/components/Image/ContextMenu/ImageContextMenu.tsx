@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   ActionIconProps,
   Box,
   Group,
@@ -9,13 +8,11 @@ import {
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconBan,
   IconBookmark,
   IconCheck,
-  IconDotsVertical,
   IconEye,
   IconFlag,
   IconPencil,
@@ -29,6 +26,7 @@ import {
 } from '@tabler/icons-react';
 import Router, { useRouter } from 'next/router';
 import React, { createContext, useContext } from 'react';
+import { ActionIconDotsVertical } from '~/components/Cards/components/ActionIconDotsVertical';
 import { AddArtFrameMenuItem } from '~/components/Decorations/AddArtFrameMenuItem';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
@@ -46,17 +44,9 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { imageStore, useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
-
-// type ImageProps = Pick<ImagesInfiniteModel, 'id' | 'url' | 'width' | 'height' | 'nsfwLevel'> & {
-//   id: number;
-//   postId?: number | null;
-//   userId?: number;
-//   user?: { id: number };
-//   needsReview?: string | null;
-//   ingestion?: ImageIngestionStatus;
-// };
 
 type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -67,7 +57,6 @@ type ImageContextMenuProps = {
 };
 
 export function ImageContextMenu({
-  iconSize = 26,
   context,
   additionalMenuItems,
   noDelete = false,
@@ -75,7 +64,7 @@ export function ImageContextMenu({
   className,
   children,
   ...actionIconProps
-}: ImageContextMenuProps & ActionIconProps & { iconSize?: number }) {
+}: ImageContextMenuProps & ActionIconProps) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const props = {
@@ -91,21 +80,14 @@ export function ImageContextMenu({
     <Menu withinPortal withArrow zIndex={1000}>
       <Menu.Target>
         {children ?? (
-          <ActionIcon
+          <ActionIconDotsVertical
             className={!image.needsReview ? className : undefined}
-            variant="transparent"
-            onClick={(e: React.MouseEvent) => {
+            onClick={(e) => {
               e.preventDefault();
               e.stopPropagation();
             }}
             {...actionIconProps}
-          >
-            <IconDotsVertical
-              size={iconSize}
-              color="#fff"
-              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-            />
-          </ActionIcon>
+          />
         )}
       </Menu.Target>
       <Menu.Dropdown
@@ -217,7 +199,7 @@ function ImageMenuItems(
         </>
       )}
       {/* OWNER */}
-      {!disableDelete && (isOwner || isModerator) && (
+      {(isOwner || isModerator) && (
         <>
           {postId && (
             <Menu.Item
@@ -227,13 +209,16 @@ function ImageMenuItems(
               Edit Post
             </Menu.Item>
           )}
-          <Menu.Item
-            color="red"
-            icon={<IconTrash size={14} stroke={1.5} />}
-            onClick={() => deleteImage({ imageId })}
-          >
-            Delete
-          </Menu.Item>
+
+          {!disableDelete && (
+            <Menu.Item
+              color="red"
+              icon={<IconTrash size={14} stroke={1.5} />}
+              onClick={() => deleteImage({ imageId })}
+            >
+              Delete
+            </Menu.Item>
+          )}
         </>
       )}
       {additionalMenuItemsAfter?.(image)}

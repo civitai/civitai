@@ -2,11 +2,12 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { AdFeedItem, useCreateAdFeed } from '~/components/Ads/ads.utils';
 import { useAdsContext } from '~/components/Ads/AdsProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { AdUnitIncontent_1 } from '~/components/Ads/AdUnit';
 
 export function useMasonryColumns<TData>(
   data: TData[],
@@ -28,7 +29,15 @@ export function useMasonryColumns<TData>(
     const feed = createAdFeed({
       data,
       columnCount,
-      keys: adsReallyAreEnabled ? ['300x250:Dynamic_Feeds', '300x600:Dynamic_Feeds'] : undefined,
+      options: adsReallyAreEnabled
+        ? [
+            {
+              width: 300,
+              height: 250,
+              AdUnit: AdUnitIncontent_1,
+            },
+          ]
+        : undefined,
     });
 
     const columnHeights: number[] = Array(columnCount).fill(0);
@@ -37,7 +46,7 @@ export function useMasonryColumns<TData>(
     for (const item of feed) {
       let height = 0;
       if (item.type === 'ad') {
-        height = item.data.height + 20;
+        height = item.data.height;
       } else {
         const { width: originalWidth, height: originalHeight } = imageDimensions(item.data);
 
@@ -51,7 +60,9 @@ export function useMasonryColumns<TData>(
             },
             item.data
           ) ?? ratioHeight;
-        height = maxItemHeight ? Math.min(adjustedHeight, maxItemHeight) : adjustedHeight;
+        height = Math.floor(
+          maxItemHeight ? Math.min(adjustedHeight, maxItemHeight) : adjustedHeight
+        );
       }
 
       // look for the shortest column on each iteration

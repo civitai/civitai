@@ -32,6 +32,7 @@ import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { generationPanel } from '~/store/generation.store';
+import { AdUnitTop } from '~/components/Ads/AdUnit';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -70,7 +71,7 @@ export function PostImages({
 
   return (
     <Stack>
-      {_images.map((image) => {
+      {_images.map((image, i) => {
         const width = image.width ?? maxWidth;
         const imageCollectionItem = collectionItems?.find((item) => item.imageId === image.id);
         const showImageCollectionBadge =
@@ -133,7 +134,11 @@ export function PostImages({
                     </div>
                     <RoutedDialogLink
                       name="imageDetail"
-                      state={{ imageId: image.id, images }}
+                      state={{
+                        imageId: image.id,
+                        images,
+                        collectionId: imageCollectionItem?.collection?.id,
+                      }}
                       onClick={() => {
                         if (videoRef.current) videoRef.current.stop();
                       }}
@@ -199,6 +204,7 @@ export function PostImages({
                 )}
               </ImageGuard2>
             </Paper>
+            {i > 0 && (i - 1) % 3 === 0 && <AdUnitTop maxWidth={728} />}
           </Fragment>
         );
       })}

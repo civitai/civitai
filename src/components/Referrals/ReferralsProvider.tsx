@@ -3,7 +3,6 @@ import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { setCookie } from '~/utils/cookies-helpers';
 import dayjs from 'dayjs';
-import { useCookies } from '~/providers/CookiesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type ReferralsState = {
@@ -27,10 +26,18 @@ const schema = z.object({
   ref_source: z.string().optional(),
 });
 
-export const ReferralsProvider = ({ children }: { children: React.ReactNode }) => {
+export const ReferralsProvider = ({
+  children,
+  ...referrals
+}: {
+  children: React.ReactNode;
+  code?: string;
+  source?: string;
+  landingPage?: string;
+  loginRedirectReason?: string;
+}) => {
   const user = useCurrentUser();
   const router = useRouter();
-  const { referrals } = useCookies();
   const result = schema.safeParse(router.query);
   const [code, setCode] = useState<string | undefined>(referrals.code);
   const [source, setSource] = useState<string | undefined>(referrals.source);

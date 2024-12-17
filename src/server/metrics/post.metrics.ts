@@ -114,28 +114,47 @@ export const postMetrics = createMetricProcessor({
     }
   },
   async clearDay(ctx) {
-    log('clearDay');
-    await executeRefresh(ctx)`
-      UPDATE "PostMetric"
-        SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0
-      WHERE timeframe = 'Day'
-        AND "updatedAt" > date_trunc('day', now() - interval '1 day');
-    `;
+    // No longer needed based on what Justin said
+    // log('clearDay');
+    // await executeRefresh(ctx)`
+    //   UPDATE "PostMetric"
+    //     SET "heartCount" = 0, "likeCount" = 0, "dislikeCount" = 0, "laughCount" = 0, "cryCount" = 0, "commentCount" = 0, "collectedCount" = 0
+    //   WHERE timeframe = 'Day'
+    //     AND "updatedAt" > date_trunc('day', now() - interval '1 day');
+    // `;
   },
 });
 
 async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
-  const affected = await getAffected(ctx)`
-    -- get recent post image reactions
-    SELECT DISTINCT
-      i."postId" AS id
-    FROM "ImageReaction" ir
-    JOIN "Image" i ON i.id = ir."imageId"
-    WHERE ir."createdAt" > '${ctx.lastUpdate}'
+  const affectedImages = await ctx.ch.$query<{ imageId: number }>`
+      SELECT DISTINCT entityId as imageId
+      FROM entityMetricEvents
+      WHERE entityType = 'Image'
+      AND createdAt > ${ctx.lastUpdate};
   `;
 
-  const tasks = chunk(affected, 100).map((ids, i) => async () => {
+  const affected = new Set<number>();
+  const postFetchTasks = chunk(
+    affectedImages.map((x) => x.imageId),
+    30000
+  ).map((ids, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getReactionPosts', i + 1, 'of', postFetchTasks.length);
+
+    const postIds = await getAffected(ctx)`
+      -- get recent post image reactions
+      SELECT DISTINCT
+        i."postId" AS id
+      FROM "Image" i
+      WHERE i.id IN (${ids})
+    `;
+    postIds.forEach((x) => affected.add(x));
+    log('getReactionPosts', i + 1, 'of', postFetchTasks.length, 'done');
+  });
+  await limitConcurrency(postFetchTasks, 3);
+
+  const tasks = chunk([...affected], 100).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
 

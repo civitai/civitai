@@ -1,49 +1,39 @@
-import {
-  dismissAnnouncements,
-  useAnnouncementsStore,
-} from '~/components/Announcements/announcements.utils';
-import React, { useEffect, useMemo } from 'react';
+import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
+import React, { useRef } from 'react';
 import { Announcement } from '~/components/Announcements/Announcement';
-import { trpc } from '~/utils/trpc';
+import { Carousel } from '@mantine/carousel';
+import autoplay from 'embla-carousel-autoplay';
+import { useContainerWidth } from '~/components/ContainerProvider/ContainerProvider';
+import { useDebouncedValue } from '@mantine/hooks';
 
 export function Announcements() {
-  const { data } = trpc.announcement.getAnnouncements.useQuery();
-  const dismissed = useAnnouncementsStore((state) => state.dismissed);
+  const autoplayRef = useRef(autoplay({ delay: 10000 }));
+  const { data } = useGetAnnouncements();
+  const width = useContainerWidth();
+  const widthDebounced = useDebouncedValue(width, 50);
 
-  useEffect(() => {
-    if (!data?.length) return;
-    const legacyKeys = Object.keys(localStorage).filter((key) => key.startsWith('announcement-'));
-    const legacyIds = legacyKeys.map((key) => Number(key.replace('announcement-', '')));
-    const announcementIds = data.map(({ id }) => id);
-
-    // remove legacy announcment id storage
-    if (legacyIds) {
-      dismissAnnouncements(legacyIds.filter((id) => announcementIds.includes(id)));
-      for (const key of legacyKeys) {
-        localStorage.removeItem(key);
-      }
-    }
-
-    // remove old announcementIds from storage
-    if (dismissed.some((id) => !announcementIds.includes(id))) {
-      dismissAnnouncements(dismissed.filter((id) => announcementIds.includes(id)));
-    }
-  }, [data]); // eslint-disable-line
-
-  const announcements = useMemo(
-    () => data?.filter((announcement) => !dismissed.includes(announcement.id)) ?? [],
-    [data, dismissed]
-  );
+  const announcements = data.filter((x) => !x.dismissed);
 
   if (!announcements.length) return null;
 
   return (
     // Required custom class to apply certain styles based on peer elements
     // eslint-disable-next-line tailwindcss/no-custom-classname
-    <div className="announcements peer mb-3">
-      <div className="container">
-        <Announcement announcement={announcements[0]} />
-      </div>
+    <div className="announcements peer container mb-3">
+      <Carousel
+        key={`${widthDebounced}`}
+        withIndicators={announcements.length > 1}
+        withControls={false}
+        slideGap="md"
+        plugins={[autoplayRef.current]}
+        loop
+      >
+        {announcements.map((announcement) => (
+          <Carousel.Slide key={announcement.id}>
+            <Announcement announcement={announcement} className="h-full" />
+          </Carousel.Slide>
+        ))}
+      </Carousel>
     </div>
   );
 }

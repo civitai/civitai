@@ -1,11 +1,3 @@
-import {
-  CheckpointType,
-  ImageGenerationProcess,
-  MediaType,
-  MetricTimeframe,
-  ModelStatus,
-  ModelType,
-} from '~/shared/utils/prisma/enums';
 import { createContext, useCallback, useContext, useRef } from 'react';
 import { z } from 'zod';
 import { createStore, useStore } from 'zustand';
@@ -25,10 +17,20 @@ import {
   QuestionSort,
   QuestionStatus,
   ThreadSort,
+  ToolSort,
 } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { getInfiniteClubSchema } from '~/server/schema/club.schema';
+import {
+  CheckpointType,
+  ImageGenerationProcess,
+  MediaType,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+  ToolType,
+} from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
@@ -63,10 +65,11 @@ const imageFilterSchema = z.object({
   periodMode: periodModeSchema.optional(),
   sort: z.nativeEnum(ImageSort).default(ImageSort.MostReactions),
   generation: z.nativeEnum(ImageGenerationProcess).array().optional(),
-  excludeCrossPosts: z.boolean().optional(),
   types: z.array(z.nativeEnum(MediaType)).default([MediaType.image]),
   withMeta: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
+  hideAutoResources: z.boolean().optional(),
+  hideManualResources: z.boolean().optional(),
   notPublished: z.boolean().optional(),
   scheduled: z.boolean().optional(),
   hidden: z.boolean().optional(),
@@ -76,6 +79,7 @@ const imageFilterSchema = z.object({
   baseModels: z.enum(constants.baseModels).array().optional(),
 });
 
+type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
 const modelImageFilterSchema = imageFilterSchema.extend({
   sort: z.nativeEnum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
   period: z.nativeEnum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
@@ -131,8 +135,6 @@ const clubFilterSchema = z
   })
   .merge(
     getInfiniteClubSchema.omit({
-      query: true,
-      period: true,
       sort: true,
       limit: true,
       cursor: true,
@@ -141,9 +143,7 @@ const clubFilterSchema = z
   );
 
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
-const videoFilterSchema = imageFilterSchema.omit({
-  excludeCrossPosts: true,
-});
+const videoFilterSchema = imageFilterSchema;
 
 type ThreadFilterSchema = z.infer<typeof threadFilterSchema>;
 const threadFilterSchema = z.object({
@@ -157,11 +157,17 @@ const markerFilterSchema = z.object({
   tags: z.string().array().optional(),
 });
 
+type ToolFilterSchema = z.infer<typeof toolFilterSchema>;
+const toolFilterSchema = z.object({
+  sort: z.nativeEnum(ToolSort).default(ToolSort.Newest),
+  type: z.nativeEnum(ToolType).optional(),
+});
+
 type StorageState = {
   models: ModelFilterSchema;
   questions: QuestionFilterSchema;
   images: ImageFilterSchema;
-  modelImages: ImageFilterSchema;
+  modelImages: ModelImageFilterSchema;
   posts: PostFilterSchema;
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
@@ -170,6 +176,7 @@ type StorageState = {
   videos: VideoFilterSchema;
   threads: ThreadFilterSchema;
   markers: MarkerFilterSchema;
+  tools: ToolFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 
@@ -184,7 +191,7 @@ type StoreState = FilterState & {
   setModelFilters: (filters: Partial<ModelFilterSchema>) => void;
   setQuestionFilters: (filters: Partial<QuestionFilterSchema>) => void;
   setImageFilters: (filters: Partial<ImageFilterSchema>) => void;
-  setModelImageFilters: (filters: Partial<ImageFilterSchema>) => void;
+  setModelImageFilters: (filters: Partial<ModelImageFilterSchema>) => void;
   setPostFilters: (filters: Partial<PostFilterSchema>) => void;
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
@@ -193,6 +200,7 @@ type StoreState = FilterState & {
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
   setMarkerFilters: (filters: Partial<MarkerFilterSchema>) => void;
+  setToolFilters: (filters: Partial<ToolFilterSchema>) => void;
 };
 
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
@@ -209,6 +217,7 @@ const localStorageSchemas: LocalStorageSchema = {
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
   markers: { key: 'marker-filters', schema: markerFilterSchema },
+  tools: { key: 'tool-filters', schema: toolFilterSchema },
 };
 
 const getInitialValues = <TSchema extends z.AnyZodObject>({
@@ -283,6 +292,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'threads', data, state })),
       setMarkerFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'markers', data, state })),
+      setToolFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'tools', data, state })),
     }))
   );
 
@@ -334,6 +345,7 @@ export function useSetFilters(type: FilterSubTypes) {
           videos: state.setVideoFilters,
           threads: state.setThreadFilters,
           markers: state.setMarkerFilters,
+          tools: state.setToolFilters,
         }[type]),
       [type]
     )

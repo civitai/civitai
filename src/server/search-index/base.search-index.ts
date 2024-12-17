@@ -198,7 +198,8 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         logger,
       };
       // Check if update is needed
-      const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
+      const shouldUpdate = true;
+      // const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 
       if (!shouldUpdate) {
         console.log(
@@ -366,6 +367,9 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       if (!items.length) {
         return;
       }
+
+      // TODO index.update shouldnt run
+      // await setup({ indexName });
 
       console.log(
         `createSearchIndexUpdateProcessor :: updateSync :: ${indexName} :: Called with ${items.length} items`

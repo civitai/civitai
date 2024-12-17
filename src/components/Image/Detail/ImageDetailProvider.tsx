@@ -1,9 +1,11 @@
 import { useHotkeys } from '@mantine/hooks';
+import produce from 'immer';
 import { useRouter } from 'next/router';
 import { createContext, useContext, useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useCollection } from '~/components/Collections/collection.utils';
 import { ImagesQueryParamSchema, useQueryImages } from '~/components/Image/image.utils';
 import { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
@@ -11,7 +13,7 @@ import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
-import { ImageGetInfinite } from '~/types/router';
+import { CollectionByIdModel, ImageGetInfinite } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 
@@ -27,6 +29,8 @@ type ImageDetailState = {
   toggleInfo: () => void;
   close: () => void;
   navigate: (id: number) => void;
+  updateImage: (id: number, data: Partial<ImagesInfiniteModel>) => void;
+  collection?: CollectionByIdModel;
 };
 
 const ImageDetailContext = createContext<ImageDetailState | null>(null);
@@ -42,17 +46,26 @@ export function ImageDetailProvider({
   images: initialImages = [],
   hideReactionCount,
   filters,
+  collectionId,
 }: {
   children: React.ReactElement;
   imageId: number;
   images?: ImagesInfiniteModel[];
   hideReactionCount?: boolean;
   filters: ImagesQueryParamSchema;
+  collectionId?: number;
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
   const hasHistory = useHasClientHistory();
   const currentUser = useCurrentUser();
+  const queryUtils = trpc.useUtils();
+
+  // Only do this so that we have it pre-fetched
+  const { collection } = useCollection(collectionId as number, {
+    enabled: !!collectionId,
+  });
+
   const { postId: queryPostId, active = false } = browserRouter.query as {
     postId?: number;
     active?: boolean;
@@ -67,6 +80,7 @@ export function ImageDetailProvider({
     { ...filters, userId: !!reactions?.length ? undefined : userId, postId, browsingLevel },
     { enabled: shouldFetchMany }
   );
+
   const images = initialImages.length > 0 ? initialImages : queryImages;
 
   const shouldFetchImage =
@@ -88,6 +102,36 @@ export function ImageDetailProvider({
   }
 
   const index = findCurrentImageIndex();
+
+  const updateImage = (id: number, data: Partial<ImagesInfiniteModel>) => {
+    queryUtils.image.getInfinite.setInfiniteData(
+      { ...filters, userId: !!reactions?.length ? undefined : userId, postId, browsingLevel },
+      produce((queryData) => {
+        if (!queryData?.pages?.length) return;
+
+        for (const page of queryData.pages)
+          for (const item of page.items) {
+            if (item.id === id) {
+              Object.assign(item, data);
+              break;
+            }
+          }
+      })
+    );
+
+    queryUtils.image.get.setData(
+      { id },
+      produce((old) => {
+        if (!old) {
+          return old;
+        }
+
+        Object.assign(old, data);
+        const index = images.findIndex((x) => x.id === id);
+        if (index !== -1) Object.assign(images[index], data);
+      })
+    );
+  };
   // #endregion
 
   // #region [back button functionality]
@@ -126,6 +170,7 @@ export function ImageDetailProvider({
       }
     );
   };
+
   // #endregion
 
   const shareUrl = useMemo(() => {
@@ -166,6 +211,8 @@ export function ImageDetailProvider({
         shareUrl,
         navigate,
         index,
+        updateImage,
+        collection,
       }}
     >
       {children}

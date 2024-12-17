@@ -1,11 +1,16 @@
-import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
+import { env } from '~/env/server.mjs';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
-import { PostCreateInput } from '~/server/schema/post.schema';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import {
+  AddResourceToPostImageInput,
+  PostCreateInput,
+  RemoveResourceFromPostImageInput,
+} from '~/server/schema/post.schema';
 import {
   bulkSaveItems,
   getCollectionById,
@@ -21,7 +26,10 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import { updateVimeoVideo } from '~/server/vimeo/client';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { CollectionMode, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
+import { isDefined } from '~/utils/type-guards';
 import { dbRead, dbWrite } from '../db/client';
 import { GetByIdInput } from './../schema/base.schema';
 import {
@@ -36,6 +44,7 @@ import {
 } from './../schema/post.schema';
 import {
   addPostTag,
+  addResourceToPostImage,
   createPost,
   deletePost,
   getPostContestCollectionDetails,
@@ -44,6 +53,7 @@ import {
   getPostsInfinite,
   getPostTags,
   removePostTag,
+  removeResourceFromPostImage,
   reorderPostImages,
   updatePost,
   updatePostCollectionTagId,
@@ -131,6 +141,8 @@ export const updatePostHandler = async ({
         collectionId: true,
         id: true,
         nsfwLevel: true,
+        title: true,
+        detail: true,
       },
     });
 
@@ -171,8 +183,32 @@ export const updatePostHandler = async ({
         );
       }
 
-      if (collection.tags.length > 0 && !collectionTagId) {
-        throw throwBadRequestError('You must select a tag for this collection');
+      if (
+        collection.tags.length > 0 &&
+        !collectionTagId &&
+        !collection.metadata?.disableTagRequired
+      ) {
+        throw throwBadRequestError('You must select an entry category for this collection');
+      }
+
+      if (collection.metadata.entriesRequireTitle && !post.title) {
+        throw throwBadRequestError('Your entry must have a title to be submitted');
+      }
+
+      if (collection.metadata.entriesRequireTools) {
+        // Check all images within this post has tools:
+        const exists = await dbRead.image.findFirst({
+          where: {
+            postId: input.id,
+            tools: {
+              none: {},
+            },
+          },
+        });
+
+        if (exists) {
+          throw throwBadRequestError('All images must have tools to be submitted');
+        }
       }
 
       if (collection.mode === CollectionMode.Contest) {
@@ -201,6 +237,14 @@ export const updatePostHandler = async ({
       user: ctx.user,
     });
 
+    const collection = updatedPost.collectionId
+      ? await getCollectionById({
+          input: {
+            id: updatedPost.collectionId,
+          },
+        })
+      : undefined;
+
     const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
     if (wasPublished) {
       const postTags = await dbRead.postTag.findMany({
@@ -224,14 +268,8 @@ export const updatePostHandler = async ({
       }
 
       // Technically, collectionPosts cannot be scheduled.
-      if (!!updatedPost?.collectionId) {
+      if (!!updatedPost?.collectionId && collection) {
         // Create the relevant collectionItem:
-        const collection = await getCollectionById({
-          input: {
-            id: updatedPost.collectionId,
-          },
-        });
-
         const permissions = await getUserCollectionPermissionsById({
           id: updatedPost.collectionId,
           userId: ctx.user.id,
@@ -329,6 +367,48 @@ export const updatePostHandler = async ({
         });
       }
     }
+
+    if (
+      post?.collectionId &&
+      collection?.metadata?.vimeoSupportEnabled &&
+      (post.title !== updatedPost.title || post.detail !== updatedPost.detail) &&
+      // We need title for Vimeo. This is required.
+      !!updatedPost.title &&
+      // We need the access token to update the video.
+      env.VIMEO_ACCESS_TOKEN
+    ) {
+      // UPDATE VIMEO ITEMS IF EXISTS:
+      const images = await dbWrite.image.findMany({
+        where: {
+          postId: updatedPost.id,
+        },
+        select: {
+          id: true,
+          metadata: true,
+        },
+      });
+
+      const vimeoVideoIds = images
+        .map((i) => (i.metadata as VideoMetadata).vimeoVideoId)
+        .filter(isDefined);
+
+      if (vimeoVideoIds.length) {
+        await Promise.all(
+          vimeoVideoIds.map(async (vimeoVideoId) => {
+            try {
+              await updateVimeoVideo({
+                videoId: vimeoVideoId,
+                title: updatedPost.title as string,
+                description: updatedPost.detail,
+                accessToken: env.VIMEO_ACCESS_TOKEN as string,
+              });
+            } catch (error) {
+              // Do nothing atm. We just ignore the error.
+            }
+          })
+        );
+      }
+    }
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
@@ -407,6 +487,36 @@ export const updatePostImageHandler = async ({
   }
 };
 
+export const addResourceToPostImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: AddResourceToPostImageInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await addResourceToPostImage({ ...input, user: ctx.user });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const removeResourceFromPostImageHandler = async ({
+  input,
+  ctx,
+}: {
+  input: RemoveResourceFromPostImageInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    return await removeResourceFromPostImage({ ...input, user: ctx.user });
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
 export const reorderPostImagesHandler = async ({
   input,
 }: {
@@ -473,7 +583,6 @@ export const addPostTagHandler = async ({
 
 export const removePostTagHandler = async ({
   input,
-  ctx,
 }: {
   input: RemovePostTagInput;
   ctx: DeepNonNullable<Context>;
@@ -503,7 +612,6 @@ export const getPostResourcesHandler = async ({ input }: { input: GetByIdInput }
 // #region [post for collections]
 export const getPostContestCollectionDetailsHandler = async ({
   input,
-  ctx,
 }: {
   input: GetByIdInput;
   ctx: Context;

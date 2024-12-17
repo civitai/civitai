@@ -899,7 +899,7 @@ function DisplayMessages({
                   border: '1px solid gray',
                 }}
               >
-                <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+                <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
                   {c.content.replace(currentUser?.username ?? '', 'You')}
                 </CustomMarkdown>
               </Text>

@@ -126,7 +126,8 @@ export type ModelVersionDonationGoal = Exclude<
   RouterOutput['modelVersion']['donationGoals'],
   undefined
 >[number];
-export type PostContestCollectionItem = RouterOutput['post']['getContestCollectionDetails'][number];
+export type PostContestCollectionItem =
+  RouterOutput['post']['getContestCollectionDetails']['items'][number];
 
 type BuzzRouter = RouterOutput['buzz'];
 export type GetDailyBuzzCompensation = BuzzRouter['getDailyBuzzCompensation'];
@@ -137,3 +138,6 @@ export type BuzzWithdrawalRequestHistoryRecord =
   | BuzzWithdrawalRequestRouter['getPaginated']['items'][number]['history'];
 export type BuzzWithdrawalGetPaginatedItem =
   BuzzWithdrawalRequestRouter['getPaginated']['items'][number];
+
+type ToolRouter = RouterOutput['tool'];
+export type ToolGetAllModel = ToolRouter['getAll']['items'][number];

@@ -283,6 +283,7 @@ export const ImageIngestionStatus = {
   Error: 'Error',
   Blocked: 'Blocked',
   NotFound: 'NotFound',
+  PendingManualAssignment: 'PendingManualAssignment',
 } as const;
 
 export type ImageIngestionStatus = (typeof ImageIngestionStatus)[keyof typeof ImageIngestionStatus];
@@ -353,6 +354,7 @@ export const TagSource = {
   WD14: 'WD14',
   Computed: 'Computed',
   ImageHash: 'ImageHash',
+  Hive: 'Hive',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];

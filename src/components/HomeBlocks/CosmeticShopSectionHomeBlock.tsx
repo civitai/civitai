@@ -54,11 +54,11 @@ function CosmeticShopSectionHomeBlockContent({ metadata, homeBlockId }: Props) {
         }}
         htmlMode
       />
-      <div className={cx(classes.grid, `mt-2 py-2`)}>
+      <div className={cx(classes.grid, classes.gridRow, `mt-2 py-2`)}>
         {items.map((item) => {
           const { shopItem } = item;
           return (
-            <div key={shopItem.id}>
+            <div key={shopItem.id} className="p-2">
               <ShopItem item={shopItem} sectionItemCreatedAt={item.createdAt} />
             </div>
           );

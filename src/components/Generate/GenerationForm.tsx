@@ -4,6 +4,7 @@ import { GenerationFormContent } from '~/components/ImageGeneration/GenerationFo
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { TextToImageWhatIfProvider } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { VideoGenerationForm } from '~/components/ImageGeneration/GenerationForm/VideoGenerationForm';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 
 import { useIsClient } from '~/providers/IsClientProvider';
@@ -29,30 +30,32 @@ export function GenerationForm() {
   if (!isClient) return null;
 
   return (
-    <ScrollArea scrollRestore={{ key: 'generation-form' }} pt={0} className="flex flex-col gap-2">
-      {/* TODO - image remix component */}
-      <div className="flex flex-col gap-2 px-3">
-        {/* <RemixOfControl /> */}
-        <SegmentedControl
-          value={type}
-          onChange={generationFormStore.setType}
-          className="overflow-visible"
-          color="blue"
-          data={[
-            { label: 'Image', value: 'image' },
-            { label: 'Video', value: 'video' },
-          ]}
-        />
-      </div>
-      {type === 'image' && (
-        <GenerationFormProvider>
-          <TextToImageWhatIfProvider>
-            <GenerationFormContent />
-          </TextToImageWhatIfProvider>
-        </GenerationFormProvider>
-      )}
-      {type === 'video' && <VideoGenerationForm />}
-    </ScrollArea>
+    <GenerationProvider>
+      <ScrollArea scrollRestore={{ key: 'generation-form' }} pt={0} className="flex flex-col gap-2">
+        {/* TODO - image remix component */}
+        <div className="flex flex-col gap-2 px-3">
+          {/* <RemixOfControl /> */}
+          <SegmentedControl
+            value={type}
+            onChange={generationFormStore.setType}
+            className="overflow-visible"
+            color="blue"
+            data={[
+              { label: 'Image', value: 'image' },
+              { label: 'Video', value: 'video' },
+            ]}
+          />
+        </div>
+        {type === 'image' && (
+          <GenerationFormProvider>
+            <TextToImageWhatIfProvider>
+              <GenerationFormContent />
+            </TextToImageWhatIfProvider>
+          </GenerationFormProvider>
+        )}
+        {type === 'video' && <VideoGenerationForm />}
+      </ScrollArea>
+    </GenerationProvider>
   );
 }
 

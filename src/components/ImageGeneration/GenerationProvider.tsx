@@ -146,7 +146,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
         queueStatus,
         latestImage: latestImage ?? state.latestImage,
         requestsRemaining: requestsRemaining > 0 ? requestsRemaining : 0,
-        canGenerate: requestsRemaining > 0 && available && !isLoading,
+        canGenerate: requestsRemaining > 0 && available,
       };
     });
   }, [queued, steps, generationStatus, isLoading]);
@@ -156,7 +156,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     if (!store) return;
     const { limits, tier } = generationStatus;
     store.setState({
-      requestLimit: limits.quantity,
+      requestLimit: limits.queue,
       userLimits: limits,
       userTier: tier,
     });
@@ -167,50 +167,6 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     if (!store) return;
     store.setState({ requestsLoading: isLoading });
   }, [isLoading]);
-  // #endregion
-
-  // #region [polling]
-  // const pollableIdsRef = useRef<number[]>([]);
-  // pollableIdsRef.current = pendingProcessingQueued.map((x) => x.id);
-  // const hasPollableIds = pollableIdsRef.current.length > 0;
-  // const debouncer = useDebouncer(1000 * 5);
-  // const pollable = useGetGenerationRequests(
-  //   {
-  //     requestId: pollableIdsRef.current,
-  //     take: 100,
-  //     detailed: true,
-  //   },
-  //   {
-  //     enabled: false,
-  //   }
-  // );
-
-  // useEffect(() => {
-  //   if (!connected)
-  //     debouncer(() => {
-  //       pollableIdsRef.current.length ? pollable.refetch() : undefined;
-  //     });
-  // }, [connected, hasPollableIds]); // eslint-disable-line
-
-  // useEffect(() => {
-  //   updateGenerationRequest((old) => {
-  //     for (const request of requests) {
-  //       for (const page of old.pages) {
-  //         const index = page.items.findIndex((x) => x.id === request.id);
-  //         if (index > -1) {
-  //           const item = page.items[index];
-  //           item.status = request.status;
-  //           item.images = item.images?.map((image) => {
-  //             const match = request.images?.find((x) => x.hash === image.hash);
-  //             if (!match) return image;
-  //             const available = image.available ? image.available : match.available;
-  //             return { ...image, ...match, available };
-  //           });
-  //         }
-  //       }
-  //     }
-  //   });
-  // }, [pollable.requests]);
   // #endregion
 
   if (!storeRef.current) storeRef.current = createGenerationStore();

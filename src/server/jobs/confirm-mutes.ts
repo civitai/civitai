@@ -16,8 +16,8 @@ export const confirmMutes = createJob('confirm-mutes', '0 1 * * *', async () => 
   // For each confirmed mute, cancel any subscriptions and refresh the session
   for (const { id } of confirmedMutes) {
     try {
-      await cancelSubscription({ userId: id });
       await cancelSubscriptionPlan({ userId: id });
+      await cancelSubscription({ userId: id });
       await invalidateSession(id);
     } catch (e) {
       console.error(`Error cancelling subscription for user ${id}:`, e);

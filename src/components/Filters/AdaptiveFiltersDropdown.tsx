@@ -47,7 +47,13 @@ const useStyles = createStyles((theme) => ({
   indicatorIndicator: { lineHeight: 1.6 },
 }));
 
-export function AdaptiveFiltersDropdown({ children, count, className, ...buttonProps }: Props) {
+export function AdaptiveFiltersDropdown({
+  children,
+  count,
+  className,
+  dropdownProps,
+  ...buttonProps
+}: Props) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -93,10 +99,11 @@ export function AdaptiveFiltersDropdown({ children, count, className, ...buttonP
           onClose={() => setOpened(false)}
           size="90%"
           position="bottom"
+          classNames={{ drawer: dropdownProps?.className }}
           styles={{
             drawer: {
               height: 'auto',
-              maxHeight: 'calc(100dvh - var(--mantine-header-height))',
+              maxHeight: 'calc(100dvh - var(--header-height))',
               overflowY: 'auto',
             },
             body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
@@ -117,13 +124,15 @@ export function AdaptiveFiltersDropdown({ children, count, className, ...buttonP
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
+      classNames={{ dropdown: '!w-full' }}
       withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown maw={468} w="100%">
+      <Popover.Dropdown maw={468}>
         <ScrollArea.Autosize
+          classNames={{ root: dropdownProps?.className }}
           type="hover"
-          maxHeight={'calc(90vh - var(--mantine-header-height) - 56px)'}
+          maxHeight={'calc(90vh - var(--header-height) - 56px)'}
         >
           {dropdown}
         </ScrollArea.Autosize>
@@ -135,4 +144,5 @@ export function AdaptiveFiltersDropdown({ children, count, className, ...buttonP
 type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   children: React.ReactElement;
   count?: number;
+  dropdownProps?: { className?: string };
 };

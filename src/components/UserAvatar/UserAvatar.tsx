@@ -15,10 +15,9 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { IconUser } from '@tabler/icons-react';
-import { getEdgeUrl, useGetEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import { Username } from '~/components/User/Username';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UserWithCosmetics } from '~/server/selectors/user.selector';
 import { getInitials } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -27,6 +26,8 @@ import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector'
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { Flags } from '~/shared/utils';
+import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
   {
@@ -93,6 +94,7 @@ export function UserAvatar({
 }: Props) {
   const theme = useMantineTheme();
   const { canViewNsfw } = useFeatureFlags();
+  const browsingLevel = useBrowsingLevelDebounced();
 
   const { data: fallbackUser, isInitialLoading } = trpc.user.getById.useQuery(
     { id: userId as number },
@@ -121,9 +123,10 @@ export function UserAvatar({
 
   const imageSize = getRawAvatarSize(avatarProps?.size ?? avatarSize ?? size);
   const imageRadius = getRawAvatarRadius(avatarProps?.radius ?? radius, theme);
+  const nsfwLevel = avatarUser.profilePicture?.nsfwLevel ?? 0;
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
-    (!canViewNsfw ? !hasPublicBrowsingLevel(avatarUser.profilePicture?.nsfwLevel ?? 0) : false);
+    (!canViewNsfw ? !hasPublicBrowsingLevel(nsfwLevel) : !Flags.hasFlag(browsingLevel, nsfwLevel));
   const avatarBgColor =
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 

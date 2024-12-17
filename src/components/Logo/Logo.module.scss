@@ -1,0 +1,269 @@
+.logo {
+  position: relative;
+  height: 30px;
+
+  @container (max-width: theme('screens.sm')) {
+    width: 45px;
+    height: 45px;
+  }
+}
+
+.svg {
+  position: relative;
+  height: 100%;
+}
+
+.c,
+.ivit {
+  fill: #222;
+}
+
+.ai,
+.accent {
+  fill: theme('colors.blue.8');
+}
+
+.flyOver {
+  position: absolute;
+  height: 45px;
+  @container (max-width: theme('screens.sm')) {
+    height: 40px;
+  }
+}
+
+.liveNow {
+  position: absolute;
+  bottom: -13px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 3;
+  background: theme('colors.gray.1');
+
+  @container (max-width: theme('screens.sm')) {
+    bottom: -7px;
+  }
+}
+
+:global(.dark) {
+  .c,
+  .ivit {
+    fill: theme('colors.dark.0');
+  }
+  .liveNow {
+    background: theme('colors.dark.8');
+  }
+}
+
+:global(.green) {
+  .ai,
+  .accent {
+    fill: theme('colors.green.8');
+  }
+}
+
+// CHRISTMAS
+@keyframes prance {
+  0% {
+    top: 0;
+    left: -20%;
+    opacity: 0;
+    transform: scale(0.5) rotate(-15deg);
+  }
+  15% {
+    top: -25px;
+    left: 0%;
+    opacity: 1;
+    transform: scale(1) rotate(-15deg);
+  }
+  50% {
+    top: -40px;
+    left: 30%;
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+  85% {
+    top: -25px;
+    left: 70%;
+    opacity: 0.8;
+    transform: scale(1) rotate(15deg);
+  }
+  100% {
+    top: 0px;
+    left: 80%;
+    opacity: 0;
+    transform: scale(0.5) rotate(15deg);
+  }
+}
+
+@keyframes peekOutDeer {
+  0% {
+    top: 0;
+    right: 0;
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  60% {
+    top: -10px;
+    right: -12px;
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    top: 0;
+    right: 0;
+    opacity: 0;
+    transform: scale(0.5);
+  }
+}
+
+@keyframes twinkle {
+  0% {
+    opacity: 0;
+  }
+  50% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+.christmas {
+  .ai,
+  .accent {
+    fill: theme('colors.red.8');
+  }
+  .svg {
+    z-index: 2;
+  }
+  .hat {
+    position: absolute;
+    height: 25px;
+    left: 0;
+    top: 0;
+    transform: rotate(-20deg) translate(-14%, -75%);
+    z-index: 3;
+
+    @container (max-width: theme('screens.sm')) {
+      display: none;
+    }
+  }
+  .deer {
+    z-index: 3;
+    animation: prance 3s 4s linear;
+    position: absolute;
+    height: 60px;
+    width: 60px;
+    opacity: 0;
+
+    @container (max-width: theme('screens.sm')) {
+      transform: rotate(-20deg);
+      animation: peekOutDeer 5s ease infinite alternate;
+      z-index: 1;
+    }
+
+    img {
+      position: absolute;
+      height: 100%;
+    }
+  }
+  .nose {
+    z-index: 2;
+  }
+  .glow {
+    z-index: 1;
+    opacity: 0;
+    animation: twinkle 1s ease infinite;
+  }
+}
+
+// HALLOWEEN
+@keyframes flyOver {
+  0% {
+    top: 5px;
+    left: -10%;
+    opacity: 0;
+    transform: scale(0.5) rotate(0deg);
+  }
+  15% {
+    top: -10px;
+    left: 5%;
+    opacity: 1;
+    transform: scale(1) rotate(2deg);
+  }
+  30% {
+    top: 0;
+    left: 70%;
+    opacity: 0.8;
+    transform: scale(1) rotate(15deg);
+  }
+  40%,
+  100% {
+    top: -5px;
+    left: 70%;
+    opacity: 0;
+    transform: scale(0.5) rotate(-10deg);
+  }
+}
+
+@keyframes peekOut {
+  0% {
+    top: 5px;
+    right: 10px;
+    opacity: 0;
+    transform: scale(0.5) rotate(0deg);
+  }
+  30% {
+    top: -12px;
+    right: -12px;
+    opacity: 1;
+    transform: scale(1) rotate(40deg);
+  }
+  60% {
+    top: -12px;
+    right: -12px;
+    opacity: 1;
+    transform: scale(1) rotate(40deg);
+  }
+  100% {
+    top: 5px;
+    right: 10px;
+    opacity: 0;
+    transform: scale(0.5) rotate(0deg);
+  }
+}
+
+.halloween {
+  .flyOver {
+    z-index: 3;
+    animation: flyOver 8s 4s ease;
+    opacity: 0;
+
+    @container (max-width: theme('screens.sm')) {
+      transform: rotate(20deg);
+      z-index: 1;
+      animation: peekOut 5s ease infinite alternate;
+    }
+  }
+  .ai,
+  .accent {
+    fill: theme('colors.orange.6');
+  }
+  .svg {
+    z-index: 2;
+  }
+}
+.newyear {
+}
+.stpatty {
+  .ai,
+  .accent {
+    fill: theme('colors.green.8');
+  }
+}
+.pride {
+  .ai,
+  .accent {
+    fill: url('#prideGradient');
+  }
+}

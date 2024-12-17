@@ -35,8 +35,12 @@ type ReactionsProps = Omit<ToggleReactionInput, 'reaction'> & {
 
 const availableReactions: Partial<Record<ToggleReactionInput['entityType'], ReviewReactions[]>> = {
   image: ['Like', 'Heart', 'Laugh', 'Cry'],
+  post: ['Like', 'Heart', 'Laugh', 'Cry'],
   bountyEntry: ['Like', 'Heart', 'Laugh', 'Cry'],
   clubPost: ['Like', 'Heart', 'Laugh', 'Cry'],
+  commentOld: ['Like', 'Heart', 'Laugh', 'Cry'],
+  comment: ['Like', 'Heart', 'Laugh', 'Cry'],
+  article: ['Like', 'Heart', 'Laugh', 'Cry']
 };
 
 export function PostReactions({
@@ -80,7 +84,14 @@ export function Reactions({
   readonly,
   targetUserId,
   className,
-}: ReactionsProps & { className?: string; targetUserId?: number }) {
+  showAll: initialShowAll,
+  invisibleEmpty,
+}: ReactionsProps & {
+  className?: string;
+  targetUserId?: number;
+  showAll?: boolean;
+  invisibleEmpty?: boolean;
+}) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
     key: 'showAllReactions',
@@ -133,7 +144,7 @@ export function Reactions({
           }
         }}
       >
-        {!hasAllReactions && !readonly && (
+        {!initialShowAll && !hasAllReactions && !readonly && (
           <Button
             variant="subtle"
             size="xs"
@@ -155,17 +166,19 @@ export function Reactions({
           metrics={metrics}
           entityType={entityType}
           entityId={entityId}
-          noEmpty={!showAll}
+          noEmpty={!(initialShowAll ?? showAll)}
           readonly={readonly}
           available={available}
+          invisibleEmpty={invisibleEmpty}
         />
-        {supportsBuzzTipping && targetUserId && !readonly && (
+        {supportsBuzzTipping && targetUserId && (
           <BuzzTippingBadge
             toUserId={targetUserId}
             tippedAmountCount={metrics?.tippedAmountCount ?? 0}
             entityType={entityType}
             entityId={entityId}
             hideLoginPopover
+            readonly={readonly}
           />
         )}
       </div>
@@ -174,6 +187,16 @@ export function Reactions({
 }
 
 const keys = Object.keys(constants.availableReactions) as ReviewReactions[];
+const keyMap = keys.reduce<Record<string, keyof ReactionMetrics>>(
+  (acc, key) => ({ ...acc, [key]: `${key.toLowerCase()}Count` as keyof ReactionMetrics }),
+  {}
+);
+
+function getReactionCount(key: ReviewReactions, metrics: ReactionMetrics) {
+  const reactionMetricType = keyMap[key];
+  return metrics[reactionMetricType] ?? 0;
+}
+
 function ReactionsList({
   reactions,
   metrics = {},
@@ -182,21 +205,29 @@ function ReactionsList({
   available = availableReactions[entityType],
   noEmpty,
   readonly,
+  invisibleEmpty,
 }: Omit<ReactionsProps, 'popoverPosition'> & {
   noEmpty?: boolean;
   available?: ReviewReactions[];
 
   readonly?: boolean;
+  invisibleEmpty?: boolean;
 }) {
   const currentUser = useCurrentUser();
-
   return (
     <>
       {keys
         .filter((reaction) => (available ? available.includes(reaction) : true))
+        .sort((a, b) => {
+          if (!invisibleEmpty || !noEmpty) return 0;
+          const countA = getReactionCount(a, metrics);
+          const countB = getReactionCount(b, metrics);
+          if (countA === 0 && countB > 0) return 1;
+          else if (countB === 0 && countA > 0) return -1;
+          return 0;
+        })
         .map((reaction) => {
-          const reactionMetricType = `${reaction.toLowerCase()}Count` as keyof ReactionMetrics;
-          const count = metrics[reactionMetricType] ?? 0;
+          const count = getReactionCount(reaction, metrics);
           const userReaction = reactions.find(
             (x) => x.userId === currentUser?.id && x.reaction === reaction
           );
@@ -211,6 +242,7 @@ function ReactionsList({
               entityId={entityId}
               readonly={!currentUser || currentUser.muted || readonly}
               noEmpty={noEmpty}
+              invisibleEmpty={invisibleEmpty}
             >
               {ReactionBadge}
             </ReactionButton>
@@ -255,12 +287,12 @@ function ReactionBadge({
       color={color}
       compact
       classNames={{ label: 'flex gap-1' }}
-      {...(buttonStyling ? buttonStyling(reaction, hasReacted) : {})}
+      {...buttonStyling?.(reaction, hasReacted)}
     >
       <Text sx={{ fontSize: '1.2em', lineHeight: 1.1 }}>
         {constants.availableReactions[reaction]}
-      </Text>
-      {!hideReactionCount && <Text inherit>{count}</Text>}
+      </Text>{' '}
+      {!hideReactionCount && count}
       {/* {constants.availableReactions[reaction]} {!hideReactionCount && count} */}
     </Button>
   );
@@ -271,6 +303,7 @@ function BuzzTippingBadge({
   entityId,
   entityType,
   toUserId,
+  readonly,
   ...props
 }: {
   tippedAmountCount: number;
@@ -278,6 +311,7 @@ function BuzzTippingBadge({
   entityType: string;
   entityId: number;
   hideLoginPopover?: boolean;
+  readonly?: boolean;
 }) {
   const { buttonStyling } = useReactionSettingsContext();
   const theme = useMantineTheme();
@@ -291,26 +325,32 @@ function BuzzTippingBadge({
     return null;
   }
 
-  return (
+  const badge = (
+    <Badge
+      size="md"
+      radius="xs"
+      py={10}
+      px={3}
+      color="yellow.7"
+      variant="light"
+      {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
+      classNames={{ inner: 'flex gap-0.5 items-center' }}
+    >
+      <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
+      <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
+    </Badge>
+  );
+
+  return readonly ? (
+    badge
+  ) : (
     <InteractiveTipBuzzButton
       toUserId={toUserId}
       entityType={buzzTipEntryType}
       entityId={entityId}
       {...props}
     >
-      <Badge
-        size="md"
-        radius="xs"
-        py={10}
-        px={3}
-        color="yellow.7"
-        variant="light"
-        {...(buttonStyling ? buttonStyling('BuzzTip') : {})}
-        classNames={{ inner: 'flex gap-0.5 items-center' }}
-      >
-        <IconBolt color="yellow.7" style={{ fill: theme.colors.yellow[7] }} size={16} />
-        <Text inherit>{abbreviateNumber(tippedAmountCount + tippedAmount)}</Text>
-      </Badge>
+      {badge}
     </InteractiveTipBuzzButton>
   );
 }

@@ -124,7 +124,7 @@ async function migrateImages(req: NextApiRequest, res: NextApiResponse) {
           FROM "TagsOnImage" toi
           JOIN "Tag" t ON t.id = toi."tagId"
           WHERE toi."imageId" = i.id
-            AND NOT toi.disabled
+            AND toi."disabledAt" IS NULL
         )
         WHERE i.id BETWEEN ${start} AND ${end} AND i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus" AND NOT i."nsfwLevelLocked";
       `);

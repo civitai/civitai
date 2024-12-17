@@ -8,8 +8,10 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { CollectionSort } from '~/server/common/enums';
 import {
+  EnableCollectionYoutubeSupportInput,
   GetAllCollectionsInfiniteSchema,
   RemoveCollectionItemInput,
+  SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
 } from '~/server/schema/collection.schema';
 import { CollectionItemExpanded } from '~/server/services/collection.service';
@@ -22,8 +24,10 @@ import {
 import { CollectionByIdModel } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { MutateOptions } from '@tanstack/react-query';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { GetByIdInput } from '~/server/schema/base.schema';
 
 const collectionQueryParamSchema = z
   .object({
@@ -259,10 +263,21 @@ export const useCollectionsForPostCreation = ({
   };
 };
 
-export const useCollection = (collectionId: number) => {
-  const { data: { collection, permissions } = {}, ...rest } = trpc.collection.getById.useQuery({
-    id: collectionId,
-  });
+export const useCollection = (
+  collectionId: number,
+  opts?: {
+    enabled?: boolean;
+  }
+) => {
+  const { data: { collection, permissions } = {}, ...rest } = trpc.collection.getById.useQuery(
+    {
+      id: collectionId,
+    },
+    {
+      enabled: true,
+      ...opts,
+    }
+  );
 
   return {
     collection,
@@ -310,39 +325,60 @@ export const useMutateCollection = () => {
     },
   });
 
+  const updateCollectionItemNsfwLevelMutation =
+    trpc.collection.updateCollectionItemNSFWLevel.useMutation({
+      onSuccess: async (res, req) => {
+        showSuccessNotification({
+          autoClose: 5000, // 10s
+          title: 'NSFW level has been updated.',
+          message: 'NSFW level has been updated for the item.',
+        });
+      },
+      onError(error) {
+        showErrorNotification({
+          title: 'Unable to update NSFW level',
+          error: new Error(error.message),
+        });
+      },
+    });
+
+  const getYoutubeAuthUrlMutation = trpc.collection.getYoutubeAuthUrl.useMutation();
+  const enableYoutubeSupportMutation = trpc.collection.enableYoutubeSupport.useMutation();
+
   const removeCollectionItemHandler = async (data: RemoveCollectionItemInput) => {
     await removeCollectionItemMutation.mutateAsync(data);
+  };
+
+  const updateCollectionItemNsfwLevelHandler = async (
+    data: SetCollectionItemNsfwLevelInput,
+    opts: Parameters<typeof updateCollectionItemNsfwLevelMutation.mutateAsync>[1]
+  ) => {
+    await updateCollectionItemNsfwLevelMutation.mutateAsync(data, opts);
+  };
+
+  const getYoutubeAuthUrlHandler = async (data: { id: number }) => {
+    return getYoutubeAuthUrlMutation.mutateAsync(data);
+  };
+  const enableYoutubeSupportHandler = async (data: EnableCollectionYoutubeSupportInput) => {
+    return enableYoutubeSupportMutation.mutateAsync(data);
   };
 
   return {
     removeCollectionItem: removeCollectionItemHandler,
     removingCollectionItem: removeCollectionItemMutation.isLoading,
+    updateCollectionItemNsfwLevel: updateCollectionItemNsfwLevelHandler,
+    updatingCollectionItemNsfwLevel: updateCollectionItemNsfwLevelMutation.isLoading,
+    updateCollectionItemNsfwLevelPayload: updateCollectionItemNsfwLevelMutation.variables,
+    getYoutubeAuthUrl: getYoutubeAuthUrlHandler,
+    getYoutubeAuthUrlLoading: getYoutubeAuthUrlMutation.isLoading,
+    enableYoutubeSupport: enableYoutubeSupportHandler,
+    enableYoutubeSupportLoading: enableYoutubeSupportMutation.isLoading,
   };
 };
 
-export const useSetCollectionItemScore = ({ imageId }: { imageId: number }) => {
+export const useSetCollectionItemScore = () => {
   const queryUtils = trpc.useUtils();
   const setItemScoreMutation = trpc.collection.setItemScore.useMutation({
-    onSuccess: (result) => {
-      const { collectionItemId, userId, score } = result;
-      queryUtils.image.getContestCollectionDetails.setData(
-        { id: imageId },
-        produce((old) => {
-          if (!old) return;
-
-          const item = old.collectionItems.find((item) => item.id === collectionItemId);
-          if (!item) return;
-
-          const existingScore = item.scores.find((itemScore) => itemScore.userId === userId);
-          if (!existingScore) {
-            item.scores.push({ userId, score });
-            return;
-          }
-
-          existingScore.score = score;
-        })
-      );
-    },
     onError: (error) => {
       showErrorNotification({
         title: 'Failed to set item score',
@@ -351,12 +387,37 @@ export const useSetCollectionItemScore = ({ imageId }: { imageId: number }) => {
     },
   });
 
-  const setItemScoreHandler = (data: SetItemScoreInput) => {
-    return setItemScoreMutation.mutateAsync(data);
+  const setItemScoreHandler = (
+    data: SetItemScoreInput,
+    opts: Parameters<typeof setItemScoreMutation.mutateAsync>[1]
+  ) => {
+    return setItemScoreMutation.mutateAsync(data, opts);
   };
 
   return {
     setItemScore: setItemScoreHandler,
     loading: setItemScoreMutation.isLoading,
+  };
+};
+
+export const useCollectionEntryCount = (
+  collectionId: number,
+  opts?: {
+    enabled?: boolean;
+  }
+) => {
+  const { data, ...rest } = trpc.collection.getEntryCount.useQuery(
+    {
+      id: collectionId,
+    },
+    {
+      enabled: true,
+      ...opts,
+    }
+  );
+
+  return {
+    data,
+    ...rest,
   };
 };

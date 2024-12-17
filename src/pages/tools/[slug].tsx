@@ -4,7 +4,7 @@ import { useRouter } from 'next/router';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ImageCategories } from '~/components/Image/Filters/ImageCategories';
 import { useImageQueryParams } from '~/components/Image/image.utils';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -13,13 +13,13 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ToolBanner } from '~/components/Tool/ToolBanner';
+import { useQueryTools } from '~/components/Tool/tools.utils';
 import { env } from '~/env/client.mjs';
 import { ImageSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { slugit } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -27,7 +27,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ features, ssg }) => {
     if (!features?.toolSearch) return { notFound: true };
 
-    await ssg?.tool.getAll.prefetch();
+    await ssg?.tool.getAll.prefetchInfinite();
 
     return { props: {} };
   },
@@ -51,11 +51,11 @@ function ToolFeedPage() {
     withMeta,
   } = query;
 
-  const { data = [], isLoading } = trpc.tool.getAll.useQuery();
-  const toolId = data.find((tool) => slugit(tool.name) === slug)?.id;
+  const { tools, loading } = useQueryTools({ filters: { include: ['unlisted'] } });
+  const toolId = tools.find((tool) => slugit(tool.name) === slug)?.id;
 
-  if (isLoading) return <PageLoader />;
-  if (!isLoading && !toolId) return <NotFound />;
+  if (loading) return <PageLoader />;
+  if (!loading && !toolId) return <NotFound />;
 
   return (
     <>
@@ -67,7 +67,7 @@ function ToolFeedPage() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/tools/${slug}`, rel: 'canonical' }]}
       />
       <ToolBanner slug={slug as string} />
-      <BrowsingModeOverrideProvider browsingLevel={publicBrowsingLevelsFlag}>
+      <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
         <MasonryContainer>
           <Stack spacing="xs">
             <IsClient>
@@ -95,7 +95,7 @@ function ToolFeedPage() {
             </IsClient>
           </Stack>
         </MasonryContainer>
-      </BrowsingModeOverrideProvider>
+      </BrowsingLevelProvider>
     </>
   );
 }

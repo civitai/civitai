@@ -60,7 +60,7 @@ async function applyUpvotes() {
       FROM "TagsOnImageVote" vote
       JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
       WHERE vote."createdAt" > ${lastApplied}
-        AND applied.disabled
+        AND applied."disabledAt" IS NOT NULL
         AND vote.vote > 5
     )
     UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null, "createdAt" = ${now}
@@ -115,7 +115,7 @@ async function applyUpvotes() {
         SELECT 1 FROM "TagsOnImage" toi
         JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
         WHERE
-          NOT toi.disabled
+          toi."disabledAt" IS NULL
           AND toi."imageId" = i.id
           AND toi."createdAt" > ${lastApplied} - INTERVAL '1 minute'
       )
@@ -160,7 +160,7 @@ async function applyDownvotes() {
       WHERE
           vote.vote < 0
         AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
-        AND applied."disabled" = FALSE
+        AND applied."disabledAt" IS NULL
         AND applied."needsReview" = FALSE
         AND applied."automated" = TRUE
     ), under_threshold AS (
@@ -194,7 +194,7 @@ async function applyDownvotes() {
       WHERE
           vote.vote < 0
         AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
-        AND applied."disabled" = FALSE
+        AND applied."disabledAt" IS NULL
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -229,7 +229,7 @@ async function applyDownvotes() {
       WHERE
           vote.vote < 0
         AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
-        AND applied."disabled" = FALSE
+        AND applied."disabledAt" IS NULL
         AND applied."needsReview" = FALSE
     ), under_threshold AS (
       SELECT
@@ -293,7 +293,7 @@ async function applyDownvotes() {
         SELECT 1 FROM "TagsOnImage" toi
         JOIN "Tag" t ON t.id = toi."tagId"
         WHERE
-          toi.disabled AND t.type = 'Moderation' AND toi."imageId" = i.id
+          toi."disabledAt" IS NOT NULL AND t.type = 'Moderation' AND toi."imageId" = i.id
           AND toi."disabledAt" > ${lastApplied} - INTERVAL '1 minute'
       )
     `

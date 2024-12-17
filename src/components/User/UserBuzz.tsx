@@ -7,10 +7,9 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { IconBolt } from '@tabler/icons-react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { BuzzAccountType } from '~/server/schema/buzz.schema';
+import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { CurrencyConfig } from '~/server/common/constants';
 
 type Props = TextProps & {

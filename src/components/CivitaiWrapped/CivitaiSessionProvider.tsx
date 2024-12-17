@@ -1,32 +1,27 @@
 import type { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
-import dynamic from 'next/dynamic';
 import { createContext, useContext, useEffect, useMemo } from 'react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { onboardingSteps } from '~/components/Onboarding/onboarding.utils';
+
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserMeta } from '~/server/schema/user.schema';
-import {
-  browsingModeDefaults,
-  nsfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
-import { useCookies } from '~/providers/CookiesProvider';
-import { deleteCookie } from 'cookies-next';
+import { browsingModeDefaults } from '~/shared/constants/browsingLevel.constants';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,
 // });
 
-export function CivitaiSessionProvider({ children }: { children: React.ReactNode }) {
+export function CivitaiSessionProvider({
+  children,
+  disableHidden,
+}: {
+  children: React.ReactNode;
+  disableHidden?: boolean;
+}) {
   const { data, update, status } = useSession();
   const user = data?.user;
   const { canViewNsfw } = useFeatureFlags();
-  const cookies = useCookies();
   useDomainSync(data?.user as SessionUser, status);
-
-  const { disableHidden } = cookies;
 
   const sessionUser = useMemo(() => {
     if (!user)
@@ -36,10 +31,12 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
       } as UnauthedUser;
 
     const isMember = user.tier != null;
+    const isPaidMember = user.tier != null && user.tier !== 'free';
     const currentUser: AuthedUser = {
       type: 'authed',
       ...user,
       isMember,
+      isPaidMember,
       memberInBadState: user.memberInBadState,
       refresh: update,
       settings: {
@@ -48,9 +45,7 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
         disableHidden: disableHidden ?? true,
         allowAds: user.allowAds ?? !isMember ? true : false,
         autoplayGifs: user.autoplayGifs ?? true,
-        blurNsfw: !Flags.intersection(user.browsingLevel, nsfwBrowsingLevelsFlag)
-          ? true
-          : user.blurNsfw,
+        blurNsfw: user.blurNsfw,
       },
     };
     if (!canViewNsfw) currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
@@ -61,27 +56,9 @@ export function CivitaiSessionProvider({ children }: { children: React.ReactNode
     if (data?.error === 'RefreshAccessTokenError') signIn();
   }, [data?.error]);
 
-  useEffect(() => {
-    deleteCookie('level');
-    deleteCookie('blur');
-    deleteCookie('nsfw');
-  }, []);
-
-  // useEffect(() => {
-  //   const onboarding = data?.user?.onboarding;
-  //   if (onboarding !== undefined) {
-  //     const shouldOnboard = !onboardingSteps.every((step) => Flags.hasFlag(onboarding, step));
-  //     if (shouldOnboard) {
-  //       dialogStore.trigger({
-  //         component: OnboardingModal,
-  //         id: 'onboarding',
-  //         props: { onComplete: () => dialogStore.closeById('onboarding') },
-  //       });
-  //     }
-  //   }
-  // }, [data?.user?.onboarding]);
-
-  // const isBanned = sessionUser.type === 'authed' ? !!sessionUser.bannedAt : false;
+  if (typeof window !== 'undefined') {
+    window.isAuthed = sessionUser.type === 'authed';
+  }
 
   return (
     <CivitaiSessionContext.Provider value={sessionUser}>{children}</CivitaiSessionContext.Provider>
@@ -96,6 +73,7 @@ export type CivitaiSessionUser = SessionUser & {
   disableHidden?: boolean;
   browsingLevel: number;
   meta?: UserMeta;
+  isPaidMember: boolean;
 };
 
 type SharedUser = { settings: BrowsingSettings };

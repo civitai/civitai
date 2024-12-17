@@ -1,11 +1,10 @@
-import { Anchor, Button, Card, Divider, SegmentedControl, Text } from '@mantine/core';
+import { Anchor, Button, Card, Checkbox, Divider, Text } from '@mantine/core';
 import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
 import { IconBan, IconCheck, IconTournament } from '@tabler/icons-react';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import React, { useState } from 'react';
-import { useSetCollectionItemScore } from '~/components/Collections/collection.utils';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -13,31 +12,44 @@ import { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
 import { trpc, queryClient } from '~/utils/trpc';
+import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
+import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
 export const ImageContestCollectionDetails = ({
-  imageId,
+  image,
   isOwner,
   isModerator,
   shareUrl,
   userId,
 }: {
-  imageId: number;
+  image: {
+    id: number;
+    nsfwLevel?: number;
+    postId?: number | null;
+  };
   isOwner: boolean;
   isModerator?: boolean;
   shareUrl?: string;
   userId?: number;
 }) => {
   const isOwnerOrMod = isOwner || isModerator;
-  const { collectionItems } = useImageContestCollectionDetails(
-    { id: imageId },
-    { enabled: !!imageId }
-  );
 
-  if ((collectionItems?.length ?? 0) === 0) return null;
+  const { updateImage, collection } = useImageDetailContext();
+  const { collectionItems } = useImageContestCollectionDetails(
+    { id: image.id },
+    { enabled: !!image.id }
+  );
+  const queryUtils = trpc.useUtils();
+
+  const includeCallouts = collection?.metadata?.includeContestCallouts ?? false;
+  if ((collectionItems?.length ?? 0) === 0 || !includeCallouts) return null;
 
   const displayedItems =
-    collectionItems?.filter((ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod) ??
-    [];
+    collectionItems?.filter(
+      (ci) => ci.status === CollectionItemStatus.ACCEPTED || isOwnerOrMod || ci.permissions?.manage
+    ) ?? [];
 
   if (displayedItems.length === 0) return null;
 
@@ -62,9 +74,37 @@ export const ImageContestCollectionDetails = ({
             </>
           ) : null;
           const inReview = item.status === CollectionItemStatus.REVIEW;
-          const userScore = item?.scores?.find((s) => s.userId === userId)?.score;
+          const collectionSupportsScoring = item?.collection?.metadata?.judgesCanScoreEntries;
+          const isCollectionJudge = item?.permissions?.manage || isModerator;
+          const handleScoreUpdated = ({
+            collectionItemId,
+            score,
+            userId,
+          }: {
+            collectionItemId: number;
+            score: number;
+            userId: number;
+          }) => {
+            queryUtils.image.getContestCollectionDetails.setData(
+              { id: image.id },
+              produce((old) => {
+                if (!old) return;
 
-          if (isModerator && inReview) {
+                const item = old.collectionItems.find((item) => item.id === collectionItemId);
+                if (!item) return;
+
+                const existingScore = item.scores.find((itemScore) => itemScore.userId === userId);
+                if (!existingScore) {
+                  item.scores.push({ userId, score });
+                  return;
+                }
+
+                existingScore.score = score;
+              })
+            );
+          };
+
+          if (isCollectionJudge && inReview) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
                 <Divider />
@@ -75,17 +115,69 @@ export const ImageContestCollectionDetails = ({
                   </Text>{' '}
                   contest{tagDisplay}.{' '}
                 </Text>
-                <ReviewActions itemId={item.id} collectionId={item.collection.id} />
+                {isCollectionJudge && (
+                  <CollectionItemNSFWLevelSelector
+                    collectionId={item.collection.id}
+                    collectionItemId={item.id}
+                    nsfwLevel={image?.nsfwLevel}
+                    onNsfwLevelUpdated={(value) => {
+                      queryUtils.image.get.setData(
+                        { id: image.id },
+                        produce((old) => {
+                          if (!old) return;
+
+                          old.nsfwLevel = parseInt(value, 10);
+                          return old;
+                        })
+                      );
+
+                      updateImage(image.id, { nsfwLevel: parseInt(value, 10) });
+                    }}
+                  />
+                )}
+                <ReviewActions
+                  itemId={item.id}
+                  collectionId={item.collection.id}
+                  imageId={image.id}
+                />
+                {isCollectionJudge && collectionSupportsScoring && (
+                  <ContestCollectionItemScorer
+                    collectionItemId={item.id}
+                    onScoreChanged={handleScoreUpdated}
+                    currentScore={item.scores.find((s) => s.userId === userId)?.score}
+                    layout="minimal"
+                  />
+                )}
               </div>
             );
           }
 
-          if (isOwnerOrMod) {
+          if (isOwnerOrMod || isCollectionJudge) {
             return (
               <div key={item.collection.id} className="flex flex-col gap-3">
+                {isCollectionJudge && (
+                  <CollectionItemNSFWLevelSelector
+                    collectionId={item.collection.id}
+                    collectionItemId={item.id}
+                    nsfwLevel={image?.nsfwLevel}
+                    onNsfwLevelUpdated={(value) => {
+                      queryUtils.image.get.setData(
+                        { id: image.id },
+                        produce((old) => {
+                          if (!old) return;
+
+                          old.nsfwLevel = parseInt(value, 10);
+                          return old;
+                        })
+                      );
+
+                      updateImage(image.id, { nsfwLevel: parseInt(value, 10) });
+                    }}
+                  />
+                )}
                 <Divider />
                 <Text>
-                  You have submitted this image to the{' '}
+                  {isOwner ? 'You have' : 'This user has'} submitted this image to the{' '}
                   <Text weight="bold" component="span">
                     {item.collection.name}
                   </Text>{' '}
@@ -110,39 +202,32 @@ export const ImageContestCollectionDetails = ({
                 )}
                 {item.status === CollectionItemStatus.ACCEPTED && (
                   <div className="flex flex-col gap-3">
-                    {isModerator && !userScore ? (
-                      <ContestItemScore
-                        itemId={item.id}
-                        collectionId={item.collection.id}
-                        imageId={imageId}
+                    {isCollectionJudge && collectionSupportsScoring && (
+                      <ContestCollectionItemScorer
+                        collectionItemId={item.id}
+                        onScoreChanged={handleScoreUpdated}
+                        currentScore={item.scores.find((s) => s.userId === userId)?.score}
+                        layout="minimal"
                       />
-                    ) : (
-                      <>
-                        <Text>
-                          Share the link to your submission in the and have your friends react on
-                          it. This could help you win the contest and the Community Choice award.
-                        </Text>
-                        <Text>
-                          Please note than an account is required to react and reaction votes are
-                          limited to one per account.
-                        </Text>
-                        <ShareButton
-                          url={shareUrl}
-                          title="Share now"
-                          collect={{ type: CollectionType.Image, imageId }}
-                        >
-                          <Button
-                            radius="xl"
-                            color="gray"
-                            size="sm"
-                            compact
-                            className="text-center"
-                          >
-                            <Text size="xs">Share Now</Text>
-                          </Button>
-                        </ShareButton>
-                      </>
                     )}
+
+                    <Text>
+                      Share the link to your submission in the contest and have your friends react
+                      on it.
+                    </Text>
+                    <Text>
+                      Please note than an account is required to react and reaction votes are
+                      limited to one per account.
+                    </Text>
+                    <ShareButton
+                      url={shareUrl}
+                      title="Share now"
+                      collect={{ type: CollectionType.Image, imageId: image.id }}
+                    >
+                      <Button radius="xl" color="gray" size="sm" compact className="text-center">
+                        <Text size="xs">Share Now</Text>
+                      </Button>
+                    </ShareButton>
                   </div>
                 )}
                 {item.status === CollectionItemStatus.REJECTED && (
@@ -193,8 +278,47 @@ export const ImageContestCollectionDetails = ({
   );
 };
 
-function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId: number }) {
+function ReviewActions({
+  itemId,
+  collectionId,
+  imageId,
+}: {
+  itemId: number;
+  collectionId: number;
+  imageId: number;
+}) {
   const queryUtils = trpc.useUtils();
+
+  const [minor, setMinor] = useState(false);
+
+  const updateImageMinorMutation = trpc.image.updateMinor.useMutation({
+    onMutate: ({ minor }) => {
+      setMinor(minor);
+      const prevData = queryUtils.image.get.getData({ id: imageId });
+
+      queryUtils.image.get.setData(
+        { id: imageId },
+        produce((old) => {
+          if (!old) return;
+          old.minor = minor;
+          return old;
+        })
+      );
+
+      return { prevData };
+    },
+    onError: (error, _, context) => {
+      showErrorNotification({
+        title: 'Failed to update image minor status',
+        error: new Error(error.message),
+      });
+      setMinor((curr) => !curr);
+      if (context?.prevData) queryUtils.image.get.setData({ id: imageId }, context.prevData);
+    },
+  });
+  const handleMinorChange = (minor: boolean) => {
+    updateImageMinorMutation.mutate({ minor, id: imageId, collectionId });
+  };
 
   const updateCollectionItemsStatusMutation =
     trpc.collection.updateCollectionItemsStatus.useMutation({
@@ -226,18 +350,10 @@ function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId:
       },
     });
 
-  const handleApproveSelected = () => {
+  const handleSubmit = (status: CollectionItemStatus) => () => {
     updateCollectionItemsStatusMutation.mutate({
       collectionItemIds: [itemId],
-      status: CollectionItemStatus.ACCEPTED,
-      collectionId,
-    });
-  };
-
-  const handleRejectSelected = () => {
-    updateCollectionItemsStatusMutation.mutate({
-      collectionItemIds: [itemId],
-      status: CollectionItemStatus.REJECTED,
+      status,
       collectionId,
     });
   };
@@ -246,76 +362,54 @@ function ReviewActions({ itemId, collectionId }: { itemId: number; collectionId:
   const loading = updateCollectionItemsStatusMutation.isLoading;
 
   return (
-    <div className="flex items-center justify-center gap-4">
-      <PopConfirm
-        message={`Are you sure you want to reject this entry?`}
-        onConfirm={handleRejectSelected}
-        withArrow
-        withinPortal
-      >
-        <Button
-          className="flex-1"
-          leftIcon={<IconBan size="1.25rem" />}
-          color="red"
-          disabled={loading}
-          loading={loading && status === CollectionItemStatus.REJECTED}
+    <div className="flex flex-col gap-4">
+      <div className="flex items-center gap-2">
+        <Checkbox
+          label="Realistic depiction of a minor"
+          checked={minor}
+          disabled={updateImageMinorMutation.isLoading}
+          onChange={(e) => handleMinorChange(e.currentTarget.checked)}
+        />
+        <InfoPopover>
+          <Text size="xs">
+            Check this box if the image depicts an acceptable realistic depiction of a minor. This
+            will help ensure that the image is not displayed in public feeds.
+          </Text>
+        </InfoPopover>
+      </div>
+      <div className="flex items-center justify-center gap-4">
+        <PopConfirm
+          message="Are you sure you want to reject this entry?"
+          onConfirm={handleSubmit(CollectionItemStatus.REJECTED)}
+          withArrow
+          withinPortal
         >
-          Reject
-        </Button>
-      </PopConfirm>
-      <PopConfirm
-        message={`Are you sure you want to approve this entry?`}
-        onConfirm={handleApproveSelected}
-        withArrow
-        withinPortal
-      >
-        <Button
-          className="flex-1"
-          leftIcon={<IconCheck size="1.25rem" />}
-          disabled={loading}
-          loading={loading && status === CollectionItemStatus.ACCEPTED}
+          <Button
+            className="flex-1"
+            leftIcon={<IconBan size="1.25rem" />}
+            color="red"
+            disabled={loading}
+            loading={loading && status === CollectionItemStatus.REJECTED}
+          >
+            Reject
+          </Button>
+        </PopConfirm>
+        <PopConfirm
+          message="Are you sure you want to approve this entry?"
+          onConfirm={handleSubmit(CollectionItemStatus.ACCEPTED)}
+          withArrow
+          withinPortal
         >
-          Approve
-        </Button>
-      </PopConfirm>
-    </div>
-  );
-}
-
-function ContestItemScore({
-  itemId,
-  collectionId,
-  imageId,
-}: {
-  itemId: number;
-  collectionId: number;
-  imageId: number;
-}) {
-  const [selectedScore, setSelectedScore] = useState(1);
-
-  const { setItemScore, loading } = useSetCollectionItemScore({ imageId });
-  const handleSetItemScore = async () => {
-    await setItemScore({
-      itemId,
-      collectionId,
-      score: selectedScore,
-    });
-  };
-
-  return (
-    <div className="flex flex-col gap-2">
-      <Text>
-        Rate this submission on a scale of 1 to 10, with 1 being the lowest and 10 being the
-        highest.
-      </Text>
-      <SegmentedControl
-        data={['1', '2', '3', '4', '5', '6', '7', '8', '9', '10']}
-        value={selectedScore.toString()}
-        onChange={(value) => setSelectedScore(Number(value))}
-      />
-      <Button onClick={handleSetItemScore} loading={loading}>
-        Submit
-      </Button>
+          <Button
+            className="flex-1"
+            leftIcon={<IconCheck size="1.25rem" />}
+            disabled={loading}
+            loading={loading && status === CollectionItemStatus.ACCEPTED}
+          >
+            Approve
+          </Button>
+        </PopConfirm>
+      </div>
     </div>
   );
 }

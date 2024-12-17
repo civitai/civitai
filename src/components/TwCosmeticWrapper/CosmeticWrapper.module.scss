@@ -1,0 +1,38 @@
+.wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: theme('borderRadius.md');
+
+  & > * {
+    flex: 1;
+  }
+}
+
+.border {
+  border: var(--borderWidth) solid var(--border);
+}
+.cssFrame,
+.texture {
+  padding: 6px;
+}
+.cssFrame {
+  background-image: var(--bgGradient);
+}
+.texture {
+  background-image: var(--bgImage);
+  background-size: var(--bgSize);
+}
+.cssFrame.texture {
+  background-image: var(--bgImage), var(--bgGradient);
+}
+.glow {
+  &:before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background-image: var(--bgGradient);
+    filter: blur(5px);
+    border-radius: theme('borderRadius.md');
+  }
+}

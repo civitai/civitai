@@ -18,6 +18,8 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import {
   IconCalendarDue,
+  IconChristmasBall,
+  IconChristmasTree,
   IconExclamationMark,
   IconHeart,
   IconHeartHandshake,
@@ -41,12 +43,13 @@ import {
   appliesForFounderDiscount,
   useActiveSubscription,
 } from '~/components/Stripe/memberships.util';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { Meta } from '~/components/Meta/Meta';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { env } from '~/env/client.mjs';
+import Image from 'next/image';
 
 export default function Pricing() {
   const router = useRouter();
@@ -82,6 +85,10 @@ export default function Pricing() {
   const activeSubscriptionIsNotDefaultProvider =
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
+  const today = new Date();
+  const month = today.getMonth();
+  const isHolidays = isHolidaysTime();
+
   return (
     <>
       <Meta
@@ -98,6 +105,32 @@ export default function Pricing() {
                 </ThemeIcon>
                 <Text size="md">{redirectReason}</Text>
               </Group>
+            </Alert>
+          )}
+          {isHolidays && !redirectReason && (
+            <Alert color="blue">
+              <div className="flex flex-col items-center gap-4 md:flex-row">
+                <Image
+                  src="/images/holiday/happy-holidays-robot.png"
+                  alt="happy-holidays"
+                  width={150}
+                  height={150}
+                  className="hidden rounded-md md:block"
+                />
+
+                <Stack spacing="xs">
+                  <Text size="md">
+                    To celebrate the holidays and our amazing community, new subscribers and current
+                    members alike will receive 20% additional Blue Buzz along with their standard
+                    Buzz disbursement!
+                  </Text>
+                  <Text size="md">
+                    This bonus applies when a new membership is purchased or an active membership
+                    renews.
+                  </Text>
+                  <Text size="md">Happy Holidays from Civitai!</Text>
+                </Stack>
+              </div>
             </Alert>
           )}
           <Title align="center" className={classes.title}>

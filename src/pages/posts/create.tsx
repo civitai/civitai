@@ -17,7 +17,6 @@ import { useRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Page } from '~/components/AppLayout/Page';
 import { BackButton } from '~/components/BackButton/BackButton';
-import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
@@ -29,12 +28,12 @@ import {
 } from '~/components/ResourceReview/EditUserResourceReview';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { postEditQuerySchema } from '~/server/schema/post.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { removeDuplicates } from '~/utils/array-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -90,7 +89,9 @@ export default Page(
         { enabled: !!currentUser && displayReview }
       );
 
-    const collectionIdsAggregate = [collectionId, ...(collectionIds ?? [])].filter(isDefined);
+    const collectionIdsAggregate = removeDuplicates(
+      [collectionId, ...(collectionIds ?? [])].filter(isDefined)
+    );
 
     let backButtonUrl = modelId ? `/models/${modelId}` : '/';
 
@@ -128,6 +129,8 @@ export default Page(
               <Title>
                 {displayReview
                   ? 'Create a Review'
+                  : (collectionIdsAggregate?.length ?? 0) > 0
+                  ? 'Submit Entry'
                   : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
               </Title>
             </div>

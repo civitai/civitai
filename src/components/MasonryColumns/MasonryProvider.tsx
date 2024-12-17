@@ -22,8 +22,8 @@ export const useMasonryContext = () => {
 };
 
 type Props = {
-  columnWidth: number;
-  maxColumnCount: number;
+  columnWidth?: number;
+  maxColumnCount?: number;
   gap?: number;
   columnGap?: number;
   rowGap?: number;
@@ -33,12 +33,12 @@ type Props = {
 
 export function MasonryProvider({
   children,
-  columnWidth,
-  maxColumnCount,
+  columnWidth = 320,
+  maxColumnCount = 7,
   gap = 16,
   columnGap = gap,
   rowGap = gap,
-  maxSingleColumnWidth = columnWidth,
+  maxSingleColumnWidth = 450,
   ...boxProps
 }: Props) {
   // width will be set to the inner width of the element. (clientWidth - paddingX)
@@ -60,7 +60,7 @@ export function MasonryProvider({
   const [columnCount, combinedWidth] = useMemo(() => {
     if (width === 0) return [0, 0];
     const gap = 16;
-    const count = Math.min(Math.floor((width + gap) / (columnWidth + gap)), maxColumnCount) ?? 1;
+    const count = Math.min(Math.floor((width + gap) / (columnWidth + gap)), maxColumnCount) || 1;
     const combinedWidth = count * columnWidth + (count - 1) * gap;
     return [count, combinedWidth];
   }, [width, columnWidth, maxColumnCount]);

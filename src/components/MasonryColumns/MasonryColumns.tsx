@@ -1,6 +1,5 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { createStyles } from '@mantine/core';
 import React from 'react';
 import { useMasonryColumns } from '~/components/MasonryColumns/masonry.utils';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
@@ -9,7 +8,7 @@ import {
   MasonryAdjustHeightFn,
   MasonryImageDimensionsFn,
 } from '~/components/MasonryColumns/masonry.types';
-import { AdUnit } from '~/components/Ads/AdUnit';
+import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { TwCard } from '~/components/TwCard/TwCard';
 import clsx from 'clsx';
 
@@ -52,7 +51,10 @@ export function MasonryColumns<TData>({
       {columns.map((items, colIndex) => (
         <div
           key={colIndex}
-          className={clsx('flex max-w-[450px] flex-col gap-4', { ['w-full']: columnCount === 1 })}
+          className={clsx(
+            'flex max-w-[450px] flex-col gap-4',
+            columnCount === 1 ? 'w-full' : 'w-[320px]'
+          )}
           style={columnCount > 1 ? { width: columnWidth } : undefined}
         >
           {items.map(({ height, data }, index) => {
@@ -62,14 +64,22 @@ export function MasonryColumns<TData>({
             return (
               <React.Fragment key={key}>
                 {showStaticItem && staticItem({ columnWidth, height: 450 })}
-                {data.type === 'data' &&
-                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)}
+                {/* {data.type === 'data' &&
+                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)} */}
+                {data.type === 'data' && (
+                  <RenderComponent
+                    index={index}
+                    data={data.data}
+                    width={columnWidth}
+                    height={height}
+                  />
+                )}
                 {data.type === 'ad' && (
-                  <AdUnit className="justify-center" keys={[data.data.key]} withFeedback>
-                    <TwCard className="border p-2 shadow">
-                      <AdUnit.Content />
+                  <AdUnitRenderable>
+                    <TwCard className="w-full items-center justify-center shadow">
+                      <data.data.AdUnit />
                     </TwCard>
-                  </AdUnit>
+                  </AdUnitRenderable>
                 )}
               </React.Fragment>
             );

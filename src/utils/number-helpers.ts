@@ -1,5 +1,5 @@
-import { Currency } from '~/shared/utils/prisma/enums';
 import { constants } from '~/server/common/constants';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 /**
  * @see https://gist.github.com/zentala/1e6f72438796d74531803cc3833c039c
@@ -23,6 +23,20 @@ export function formatBytes(bytes: number, decimals = 2) {
 
 export function formatToLeastDecimals(value: number, decimals = 2) {
   return parseFloat(value.toFixed(decimals));
+}
+
+export function asOrdinal(n: number) {
+  const suffixes = ['th', 'st', 'nd', 'rd'];
+  const value = n % 100;
+
+  // Handle special cases like 11th, 12th, 13th
+  if (value >= 11 && value <= 13) {
+    return n + 'th';
+  }
+
+  // Use the last digit to determine the suffix
+  const lastDigit = n % 10;
+  return n + (suffixes[lastDigit] || 'th');
 }
 
 export function formatSeconds(seconds: number) {
@@ -70,7 +84,8 @@ export function abbreviateNumber(
     value = Math.floor(value);
   }
 
-  const formattedValue = value.toFixed(value < 99 && index > 0 ? decimals : 0);
+  const formattedValue =
+    Math.round(value * Math.pow(10, decimals ?? 0)) / Math.pow(10, decimals ?? 0);
 
   return `${formattedValue}${suffixes[index]}`;
 }
@@ -155,3 +170,36 @@ export const getBuzzWithdrawalDetails = (buzzAmount: number, platformFeeRate?: n
     payoutAmount,
   };
 };
+
+const ONE_MINUTE = 60;
+const ONE_HOUR = 60 * ONE_MINUTE;
+export const formatDuration = (seconds: number) => {
+  if (seconds === 0) return '0:00';
+
+  const hours = Math.floor(seconds / ONE_HOUR);
+  const minutes = Math.floor((seconds % ONE_HOUR) / ONE_MINUTE);
+  const remainingSeconds = Math.round(seconds % ONE_MINUTE);
+
+  const hourString = hours > 0 ? String(hours).padStart(2, '0') : '';
+  const minuteString =
+    hourString || minutes === 0 ? String(minutes).padStart(2, '0') : String(minutes);
+  const secondString = String(remainingSeconds).padStart(2, '0');
+
+  return [hourString, minuteString, secondString].filter(Boolean).join(':');
+};
+
+// Help from ChatGPT :^) -Manuel
+export function roundDownToPowerOfTwo(value: number) {
+  if (value < 1) return 0; // Powers of 2 start from 1 in practical use cases
+
+  // Check if the value is already a power of 2
+  if ((value & (value - 1)) === 0) return value;
+
+  // Round down to the nearest power of 2 using bit shifting
+  let result = 1;
+  while (result <= value) {
+    result <<= 1; // Double the result (equivalent to result *= 2)
+  }
+
+  return result >> 1; // Divide by 2 to get the largest power of 2 less than or equal to the value
+}

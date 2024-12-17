@@ -9,6 +9,21 @@ import { userProfileRouter } from '~/server/routers/user-profile.router';
 import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 import { router } from '~/server/trpc';
 
+import { blocklistRouter } from '~/server/routers/blocklist.router';
+import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
+import { dailyChallengeRouter } from '~/server/routers/daily-challenge.router';
+import { donationGoalRouter } from '~/server/routers/donation-goal.router';
+import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.router';
+import { gamesRouter } from '~/server/routers/games.router';
+import { modRouter } from '~/server/routers/moderator';
+import { orchestratorRouter } from '~/server/routers/orchestrator.router';
+import { paddleRouter } from '~/server/routers/paddle.router';
+import { redeemableCodeRouter } from '~/server/routers/redeemableCode.router';
+import { researchRouter } from '~/server/routers/research.router';
+import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
+import { techniqueRouter } from '~/server/routers/technique.router';
+import { toolRouter } from '~/server/routers/tool.router';
+import { vimeoRouter } from '~/server/routers/vimeo.router';
 import { accountRouter } from './account.router';
 import { announcementRouter } from './announcement.router';
 import { answerRouter } from './answer.router';
@@ -17,6 +32,8 @@ import { articleRouter } from './article.router';
 import { authRouter } from './auth.router';
 import { bountyRouter } from './bounty.router';
 import { bountyEntryRouter } from './bountyEntry.router';
+import { buildGuideRouter } from './build-guide.router';
+import { buzzWithdrawalRequestRouter } from './buzz-withdrawal-request.router';
 import { buzzRouter } from './buzz.router';
 import { chatRouter } from './chat.router';
 import { clubAdminRouter } from './clubAdmin.router';
@@ -29,6 +46,7 @@ import { generationRouter } from './generation.router';
 import { hiddenPreferencesRouter } from './hidden-preferences.router';
 import { homeBlockRouter } from './home-block.router';
 import { imageRouter } from './image.router';
+import { integrationRouter } from './integration.router';
 import { leaderboardRouter } from './leaderboard.router';
 import { modelFileRouter } from './model-file.router';
 import { modelVersionRouter } from './model-version.router';
@@ -36,9 +54,12 @@ import { modelRouter } from './model.router';
 import { newsletterRouter } from './newsletter.router';
 import { notificationRouter } from './notification.router';
 import { partnerRouter } from './partner.router';
+import { paypalRouter } from './paypal.router';
 import { postRouter } from './post.router';
+import { purchasableRewardRouter } from './purchasable-reward.router';
 import { questionRouter } from './question.router';
 import { reactionRouter } from './reaction.router';
+import { recommendersRouter } from './recommenders.router';
 import { reportRouter } from './report.router';
 import { resourceReviewRouter } from './resourceReview.router';
 import { signalsRouter } from './signals.router';
@@ -48,28 +69,9 @@ import { tagRouter } from './tag.router';
 import { trackRouter } from './track.router';
 import { trainingRouter } from './training.router';
 import { userLinkRouter } from './user-link.router';
-import { userRouter } from './user.router';
 import { userPaymentConfigurationRouter } from './user-payment-configuration.router';
-import { buzzWithdrawalRequestRouter } from './buzz-withdrawal-request.router';
-import { integrationRouter } from './integration.router';
-import { paypalRouter } from './paypal.router';
-import { buildGuideRouter } from './build-guide.router';
-import { purchasableRewardRouter } from './purchasable-reward.router';
+import { userRouter } from './user.router';
 import { vaultRouter } from './vault.router';
-import { researchRouter } from '~/server/routers/research.router';
-import { redeemableCodeRouter } from '~/server/routers/redeemableCode.router';
-import { toolRouter } from '~/server/routers/tool.router';
-import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
-import { techniqueRouter } from '~/server/routers/technique.router';
-import { donationGoalRouter } from '~/server/routers/donation-goal.router';
-import { orchestratorRouter } from '~/server/routers/orchestrator.router';
-import { modRouter } from '~/server/routers/moderator';
-import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.router';
-import { gamesRouter } from '~/server/routers/games.router';
-import { recommendersRouter } from './recommenders.router';
-import { paddleRouter } from '~/server/routers/paddle.router';
-import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
-import { blocklistRouter } from '~/server/routers/blocklist.router';
 
 export const appRouter = router({
   account: accountRouter,
@@ -142,6 +144,8 @@ export const appRouter = router({
   games: gamesRouter,
   paddle: paddleRouter,
   blocklist: blocklistRouter,
+  dailyChallenge: dailyChallengeRouter,
+  vimeo: vimeoRouter,
 });
 
 // export type definition of API

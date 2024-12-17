@@ -45,7 +45,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
   }
   async function clearKeys() {
     await redis.del(name);
-    await redis.del(`event:${name}:cosmetic`);
+    await redis.del(`packed:event:${name}:cosmetics`);
   }
   async function getUserTeam(userId: number) {
     const manualAssignment = await getManualAssignments(name);
@@ -63,13 +63,13 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     return getTeamCosmetic(await getUserTeam(userId));
   }
   async function clearUserCosmeticCache(userId: number) {
-    await clearUserCosmeticCache(userId);
-    await redis.hDel(`event:${name}:cosmetic`, userId.toString());
+    await redis.hDel(`packed:event:${name}:cosmetics`, userId.toString());
   }
   async function getRewards() {
     const rewards = await dbWrite.cosmetic.findMany({
       where: { name: { startsWith: definition.badgePrefix }, source: 'Claim', type: 'Badge' },
       select: { id: true, name: true, data: true, description: true },
+      orderBy: { id: 'asc' },
     });
 
     return rewards.map(({ name, ...reward }) => ({
@@ -114,8 +114,8 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
 
 export type EngagementEvent = {
   userId: number;
-  type: 'published';
-  entityType: 'post' | 'model' | 'modelVersion' | 'article';
+  type: 'published' | 'entered';
+  entityType: 'post' | 'model' | 'modelVersion' | 'article' | 'challenge';
   entityId: number;
 };
 

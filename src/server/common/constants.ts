@@ -80,10 +80,13 @@ export const constants = {
     'PixArt a',
     'PixArt E',
     'Hunyuan 1',
+    'Hunyuan Video',
     'Lumina',
     'Kolors',
     'Illustrious',
     'Mochi',
+    'LTXV',
+    'CogVideoX',
     'Other',
   ],
   hiddenBaseModels: [
@@ -93,6 +96,11 @@ export const constants = {
     'SDXL Distilled',
     'SDXL 0.9',
     'SD 2.0 768',
+    'SDXL Turbo',
+    'SVD XT',
+    'Playground v2',
+    'Stable Cascade',
+    'SDXL 1.0 LCM',
   ] as string[],
   modelFileTypes: [
     'Model',
@@ -404,7 +412,7 @@ export const POST_TAG_LIMIT = 5;
 export const CAROUSEL_LIMIT = 20;
 export const DEFAULT_EDGE_IMAGE_WIDTH = 450;
 export const MAX_ANIMATION_DURATION_SECONDS = 30;
-export const MAX_POST_IMAGES_WIDTH = 700;
+export const MAX_POST_IMAGES_WIDTH = 800;
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
@@ -430,6 +438,8 @@ export const baseModelSetTypes = [
   'Illustrious',
   'Other',
   'Mochi',
+  'LTXV',
+  'CogVideoX',
 ] as const;
 
 const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
@@ -446,12 +456,15 @@ export const baseModelSets = defineBaseModelSets({
   Lumina: ['Lumina'],
   Kolors: ['Kolors'],
   HyDit1: ['Hunyuan 1'],
+  HyV1: ['Hunyuan Video'],
   SCascade: ['Stable Cascade'],
   Pony: ['Pony'],
   ODOR: ['ODOR'],
   Illustrious: ['Illustrious'],
   Other: ['Other'],
   Mochi: ['Mochi'],
+  LTXV: ['LTXV'],
+  CogVideoX: ['CogVideoX'],
 });
 
 const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
@@ -468,12 +481,15 @@ export const baseModelSetNames = defineBaseModelSetNames({
   Lumina: 'Lumina',
   Kolors: 'Kolors',
   HyDit1: 'Hunyuan DiT',
+  HyV1: 'Hunyuan Video',
   SCascade: 'Stable Cascade',
   Pony: 'Stable Diffusion',
   ODOR: 'ODOR',
   Illustrious: 'Illustrious',
   Other: 'Other',
   Mochi: 'Mochi',
+  LTXV: 'LTXV',
+  CogVideoX: 'CogVideoX',
 });
 
 type LicenseDetails = {
@@ -532,6 +548,13 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://github.com/Tencent/HunyuanDiT/blob/main/LICENSE.txt',
     name: 'Tencent Hunyuan Community License Agreement',
   },
+  'hunyuan video': {
+    url: 'https://huggingface.co/tencent/HunyuanVideo/blob/main/LICENSE',
+    name: 'Tencent Hunyuan Community License Agreement',
+    notice:
+      'Tencent Hunyuan is licensed under the Tencent Hunyuan Community License Agreement, Copyright © 2024 Tencent. All Rights Reserved. The trademark rights of “Tencent Hunyuan” are owned by Tencent or its affiliate.',
+    poweredBy: 'Powered by Tencent Hunyuan',
+  },
   'kolors license': {
     url: 'https://raw.githubusercontent.com/Kwai-Kolors/Kolors/master/MODEL_LICENSE',
     name: 'Kolors License',
@@ -551,6 +574,14 @@ export const baseLicenses: Record<string, LicenseDetails> = {
   'illustrious license': {
     url: 'https://freedevproject.org/faipl-1.0-sd/',
     name: 'Illustrious License',
+  },
+  'ltxv license': {
+    url: 'https://huggingface.co/Lightricks/LTX-Video/blob/main/License.txt',
+    name: 'LTX Video License',
+  },
+  'cogvideox license': {
+    url: 'https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE',
+    name: 'CogVideoX License',
   },
 };
 
@@ -582,6 +613,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   'PixArt a': baseLicenses['openrail++'],
   'PixArt E': baseLicenses['openrail++'],
   'Hunyuan 1': baseLicenses['hunyuan community'],
+  'Hunyuan Video': baseLicenses['hunyuan video'],
   Lumina: baseLicenses['apache 2.0'],
   Kolors: baseLicenses['kolors license'],
   'Stable Cascade': baseLicenses['SAI NC RC'],
@@ -593,6 +625,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Other: undefined,
   Illustrious: baseLicenses['illustrious license'],
   Mochi: baseLicenses['apache 2.0'],
+  LTXV: baseLicenses['ltxv license'],
+  CogVideoX: baseLicenses['cogvideox license'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -1041,3 +1075,5 @@ export const banReasonDetails: Record<
     privateBanReasonLabel: 'Other',
   },
 };
+
+export const HOLIDAY_PROMO_VALUE = 0.2;

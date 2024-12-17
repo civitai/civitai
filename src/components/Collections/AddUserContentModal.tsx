@@ -7,18 +7,17 @@ import {
   Divider,
   Group,
   Modal,
-  ModalProps,
   ScrollArea,
   Select,
   Stack,
   Text,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
@@ -27,6 +26,8 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
 import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
@@ -39,8 +40,7 @@ import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';
-import { ScrollArea as ScrollAreaProvider } from '~/components/ScrollArea/ScrollArea';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import clsx from 'clsx';
 
 export function AddUserContentModal({ collectionId }: Props) {
   const dialog = useDialogContext();
@@ -139,6 +139,7 @@ export function AddUserContentModal({ collectionId }: Props) {
 
   const uploading = files.some((file) => file.status === 'uploading');
   const loading = uploading || addSimpleImagePostCollectionMutation.isLoading;
+  const availableTags = (collection?.tags ?? []).filter((t) => !t.filterableOnly);
 
   return (
     <Modal {...dialog} title="Add images to collection" size="80%" onClose={handleClose} centered>
@@ -149,7 +150,11 @@ export function AddUserContentModal({ collectionId }: Props) {
           </AlertWithIcon>
         )}
 
-        <Button component={Link} href={`/posts/create?collectionId=${collectionId}`}>
+        <Button
+          component={Link}
+          href={`/posts/create?collectionId=${collectionId}`}
+          onClick={() => dialog.onClose()}
+        >
           Create a new image post
         </Button>
 
@@ -173,6 +178,8 @@ export function AddUserContentModal({ collectionId }: Props) {
                     withMeta: undefined,
                     followed: undefined,
                     fromPlatform: undefined,
+                    hideAutoResources: undefined,
+                    hideManualResources: undefined,
                   }}
                   renderItem={SelectableImageCard}
                 />
@@ -180,12 +187,12 @@ export function AddUserContentModal({ collectionId }: Props) {
             </MasonryProvider>
           </ScrollArea.Autosize>
         </ScrollAreaProvider>
-        {(collection?.tags?.length ?? 0) > 0 && (
+        {(availableTags?.length ?? 0) > 0 && (
           <Select
             label="Please select what category of the contest you are participating in."
-            withAsterisk
+            withAsterisk={!collection?.metadata?.disableTagRequired}
             placeholder="Select a category for your submission"
-            data={(collection?.tags ?? []).map((tag) => ({
+            data={(availableTags ?? []).map((tag) => ({
               value: tag.id.toString(),
               label: tag.name,
             }))}
@@ -230,9 +237,8 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
   return (
     <MasonryCard
       shadow="sm"
-      p={0}
       onClick={() => toggleSelected(image.id)}
-      sx={{ opacity: selected ? 0.6 : 1, cursor: 'pointer' }}
+      className={clsx('cursor-pointer', { ['opacity-60']: selected })}
       withBorder
     >
       <div style={{ position: 'relative' }}>

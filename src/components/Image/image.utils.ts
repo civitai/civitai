@@ -1,6 +1,5 @@
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
 import { z } from 'zod';
@@ -11,6 +10,7 @@ import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
+import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -30,7 +30,8 @@ export const imagesQueryParamSchema = z
       .optional(),
     collectionId: numericString(),
     collectionTagId: numericString(),
-    excludeCrossPosts: z.boolean(),
+    hideAutoResources: booleanString(),
+    hideManualResources: booleanString(),
     followed: booleanString(),
     fromPlatform: booleanString(),
     hidden: booleanString(),

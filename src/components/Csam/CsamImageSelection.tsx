@@ -58,7 +58,6 @@ export function CsamImageSelection({
   return (
     <div className="relative">
       <MasonryProvider
-        columnWidth={300}
         maxColumnCount={7}
         maxSingleColumnWidth={450}
         style={{ height: '100%', width: '100%', display: 'flex', flexDirection: 'column' }}
@@ -129,10 +128,8 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
     <MasonryCard
       withBorder
       shadow="sm"
-      p={0}
       height={height}
       ref={ref}
-      sx={{ position: 'relative' }}
       style={{
         outline: checked
           ? `3px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`

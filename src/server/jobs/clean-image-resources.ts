@@ -3,12 +3,11 @@ import { dbWrite } from '~/server/db/client';
 
 export const cleanImageResources = createJob('clean-image-resources', '8 */1 * * *', async () => {
   const [lastRun, setLastRun] = await getJobDate('clean-image-resources');
+  console.log('Running clean-image-resources job', lastRun);
 
-  await dbWrite.$transaction([
-    applyMissingModelVersions(lastRun),
-    applyMissingHashes(lastRun),
-    removeRepeats(lastRun),
-  ]);
+  await applyMissingModelVersions(lastRun);
+  // await applyMissingHashes(lastRun); // No reason to do this...
+  await removeRepeats(lastRun);
 
   await setLastRun();
 });
@@ -30,7 +29,8 @@ const applyMissingModelVersions = (since: Date) => dbWrite.$executeRaw`
   )
   UPDATE "ImageResource" ir SET "modelVersionId" = fh."modelVersionId"
   FROM found_hashes fh
-  WHERE fh.row_num = 1 AND fh.id = ir.id;
+  WHERE fh.row_num = 1 AND fh.id = ir.id
+  AND NOT EXISTS (SELECT 1 FROM "ImageResource" ir2 WHERE ir2."imageId" = ir."imageId" AND ir2."modelVersionId" = fh."modelVersionId");
 `;
 
 const applyMissingHashes = (since: Date) => dbWrite.$executeRaw`

@@ -4,6 +4,7 @@ import { commandOptions, createClient } from 'redis';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server.mjs';
 import { createLogger } from '~/utils/logging';
+import { slugit } from '~/utils/string-helpers';
 
 export interface CustomRedisClient extends RedisClientType {
   packed: {
@@ -17,6 +18,7 @@ export interface CustomRedisClient extends RedisClientType {
     sPop<T>(key: string, count: number): Promise<T[]>;
     sMembers<T>(key: string): Promise<T[]>;
     hGet<T>(key: string, hashKey: string): Promise<T | null>;
+    hGetAll<T>(key: string): Promise<{ [x: string]: T }>;
     hSet<T>(key: string, hashKey: string, value: T): Promise<void>;
     hmSet<T>(key: string, records: Record<string, T>): Promise<void>;
     hmGet<T>(key: string, hashKeys: string[]): Promise<(T | null)[]>;
@@ -102,6 +104,11 @@ function getCache(legacyMode = false) {
       return result ? unpack(result) : null;
     },
 
+    async hGetAll<T>(key: string): Promise<{ [x: string]: T }> {
+      const results = await client.hGetAll(commandOptions({ returnBuffers: true }), key);
+      return Object.fromEntries(Object.entries(results).map(([k, v]) => [k, v ? unpack(v) : null]));
+    },
+
     async hSet<T>(key: string, hashKey: string, value: T): Promise<void> {
       await client.hSet(key, hashKey, pack(value));
     },
@@ -122,7 +129,7 @@ function getCache(legacyMode = false) {
   client.purgeTags = async (tag: string | string[]) => {
     const tags = Array.isArray(tag) ? tag : [tag];
     for (const tag of tags) {
-      const cacheKey = REDIS_KEYS.CACHES.TAGGED_CACHE + ':' + tag;
+      const cacheKey = REDIS_KEYS.CACHES.TAGGED_CACHE + ':' + slugit(tag);
       const count = await client.sCard(cacheKey);
       let processed = 0;
       while (true) {
@@ -150,6 +157,9 @@ export const REDIS_KEYS = {
   DOWNLOAD: {
     COUNT: 'download:count',
     LIMITS: 'download:limits',
+  },
+  USER: {
+    SESSION: 'session:data2',
   },
   BUZZ_EVENTS: 'buzz-events',
   GENERATION: {
@@ -184,7 +194,9 @@ export const REDIS_KEYS = {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
     MULTIPLIERS_FOR_USER: 'packed:caches:multipliers-for-user',
     TAG_IDS_FOR_IMAGES: 'packed:caches:tag-ids-for-images',
-    COSMETICS: 'packed:caches:cosmetics',
+    USER_COSMETICS: 'packed:caches:user-cosmetics',
+    COSMETICS_OLD: 'packed:caches:cosmetics',
+    COSMETICS: 'packed:caches:cosmetics2',
     PROFILE_PICTURES: 'packed:caches:profile-pictures',
     IMAGES_FOR_MODEL_VERSION: 'packed:caches:images-for-model-version-2',
     EDGE_CACHED: 'packed:caches:edge-cache',
@@ -199,7 +211,8 @@ export const REDIS_KEYS = {
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
     IMAGE_META: 'packed:caches:image-meta',
-    ANNOUNCEMENTS: 'packed:caches:image-meta',
+    IMAGE_METADATA: 'packed:caches:image-metadata',
+    ANNOUNCEMENTS: 'packed:caches:announcement',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',
@@ -226,5 +239,9 @@ export const REDIS_KEYS = {
   LIVE_NOW: 'live-now',
   INDEXES: {
     IMAGE_DELETED: 'indexes:image-deleted',
+  },
+  DAILY_CHALLENGE: {
+    CONFIG: 'daily-challenge:config',
+    DETAILS: 'daily-challenge:details',
   },
 } as const;

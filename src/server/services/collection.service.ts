@@ -1,17 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  CollectionContributorPermission,
-  CollectionItemStatus,
-  CollectionMode,
-  CollectionReadConfiguration,
-  CollectionType,
-  CollectionWriteConfiguration,
-  HomeBlockType,
-  ImageIngestionStatus,
-  MediaType,
-  MetricTimeframe,
-  TagTarget,
-} from '~/shared/utils/prisma/enums';
 import { uniq, uniqBy } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
@@ -37,11 +24,13 @@ import {
   AddCollectionItemInput,
   BulkSaveCollectionItemsInput,
   CollectionMetadataSchema,
+  EnableCollectionYoutubeSupportInput,
   GetAllCollectionItemsSchema,
   GetAllCollectionsInfiniteSchema,
   GetAllUserCollectionsInputSchema,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
@@ -49,7 +38,7 @@ import {
 } from '~/server/schema/collection.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import { collectionsSearchIndex } from '~/server/search-index';
+import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import type { ArticleGetAll } from '~/server/services/article.service';
@@ -67,6 +56,20 @@ import {
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getYoutubeRefreshToken } from '~/server/youtube/client';
+import {
+  CollectionContributorPermission,
+  CollectionItemStatus,
+  CollectionMode,
+  CollectionReadConfiguration,
+  CollectionType,
+  CollectionWriteConfiguration,
+  HomeBlockType,
+  ImageIngestionStatus,
+  MediaType,
+  MetricTimeframe,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 export type CollectionContributorPermissionFlags = {
@@ -358,7 +361,12 @@ export const getUserCollectionsWithPermissions = async <
       ...collection,
       isOwner: collection.userId === userId,
       image: images.find((i) => i.id === collection.imageId),
-      tags: collectionTags.filter((t) => t.collectionId === collection.id).map((t) => t.tag),
+      tags: collectionTags
+        .filter((t) => t.collectionId === collection.id)
+        .map((t) => ({
+          ...t.tag,
+          filterableOnly: t.filterableOnly,
+        })),
     }))
     .sort(({ userId: collectionUserId }) => (userId === collectionUserId ? -1 : 1));
 };
@@ -387,6 +395,7 @@ export const getCollectionById = async ({ input }: { input: GetByIdInput }) => {
     metadata: (collection.metadata ?? {}) as CollectionMetadataSchema,
     tags: collection.tags.map((t) => ({
       ...t.tag,
+      filterableOnly: t.filterableOnly,
     })),
   };
 };
@@ -445,7 +454,13 @@ export const saveItemInCollections = async ({
           return null;
         }
 
-        if (collection.tags.length > 0 && !tagId) {
+        const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
+
+        if (
+          inputTags.length > 0 &&
+          !tagId &&
+          !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
+        ) {
           throw throwBadRequestError('Collection requires a tag');
         }
 
@@ -468,7 +483,11 @@ export const saveItemInCollections = async ({
           id: collectionId,
         });
 
-        if (!permission.isContributor && !permission.isOwner) {
+        if (
+          !permission.isContributor &&
+          !permission.isOwner &&
+          !metadata?.disableFollowOnSubmission
+        ) {
           // Make sure to follow the collection
           await addContributorToCollection({
             targetUserId: userId,
@@ -939,6 +958,7 @@ export type CollectionItemExpanded = {
   id: number;
   status?: CollectionItemStatus;
   createdAt: Date | null;
+  scores?: { userId: number; score: number }[] | null;
 } & (ModelCollectionItem | PostCollectionItem | ImageCollectionItem | ArticleCollectionItem);
 
 export const getCollectionItemsByCollectionId = async ({
@@ -1018,6 +1038,17 @@ export const getCollectionItemsByCollectionId = async ({
       status: input.forReview,
       createdAt: true,
       randomId: true,
+      scores: input.forReview
+        ? {
+            select: {
+              userId: true,
+              score: true,
+            },
+            where: {
+              userId: user?.id,
+            },
+          }
+        : undefined,
     },
     where,
     orderBy,
@@ -1384,7 +1415,7 @@ export const updateCollectionItemsStatus = async ({
   // Check if collection actually exists before anything
   const collection = await dbWrite.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, type: true, mode: true, name: true },
+    select: { id: true, type: true, mode: true, name: true, metadata: true },
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
@@ -1398,10 +1429,53 @@ export const updateCollectionItemsStatus = async ({
   if (!manage && !isOwner)
     throw throwAuthorizationError('You do not have permissions to manage contributor item status.');
 
+  const collectionMetadata = collection.metadata as CollectionMetadataSchema;
+
+  if (status === CollectionItemStatus.ACCEPTED) {
+    if (collectionMetadata?.judgesCanScoreEntries) {
+      const exists = await dbRead.collectionItem.findFirst({
+        where: {
+          id: { in: collectionItemIds },
+          scores: {
+            none: {},
+          },
+        },
+      });
+
+      if (exists) {
+        throw throwBadRequestError(
+          'Some of the items selected do not have scores. Please ensure all items have scores before approving them.'
+        );
+      }
+    }
+
+    if (collectionMetadata?.judgesApplyBrowsingLevel && collection.type === CollectionType.Image) {
+      const exists = await dbRead.collectionItem.findFirst({
+        where: {
+          id: { in: collectionItemIds },
+          image: {
+            nsfwLevel: {
+              in: [0, -1],
+            },
+          },
+        },
+      });
+
+      if (exists) {
+        throw throwBadRequestError(
+          'Some of the items selected have not been given a NSFW rating. Please ensure all items have a NSFW rating before approving them.'
+        );
+      }
+    }
+  }
+
   if (collectionItemIds.length > 0) {
     await dbWrite.$executeRaw`
       UPDATE "CollectionItem"
-      SET "reviewedById" = ${userId}, "reviewedAt" = ${new Date()}, "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
+      SET "reviewedById" = ${userId}, 
+      "reviewedAt" = ${new Date()},
+      "updatedAt" = ${new Date()},
+      "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
       collection.mode === CollectionMode.Contest
         ? ', "randomId" = FLOOR(RANDOM() * 1000000000)'
         : ''
@@ -1512,6 +1586,9 @@ export const validateContestCollectionEntry = async ({
       where: {
         collectionId,
         addedById: userId,
+        status: {
+          in: [CollectionItemStatus.ACCEPTED, CollectionItemStatus.REVIEW],
+        },
       },
     });
 
@@ -1691,8 +1768,13 @@ export const bulkSaveItems = async ({
   });
 
   if (!collection) throw throwNotFoundError('No collection with id ' + collectionId);
+  const inputTags = collection.tags?.filter((t) => !t.filterableOnly);
 
-  if (collection.tags.length > 0 && !tagId) {
+  if (
+    inputTags.length > 0 &&
+    !tagId &&
+    !(collection.metadata as CollectionMetadataSchema)?.disableTagRequired
+  ) {
     throw throwBadRequestError(
       'It is required to tag your entry in order for it to be added to this collection'
     );
@@ -1706,7 +1788,11 @@ export const bulkSaveItems = async ({
     throw throwBadRequestError('The tag provided is not allowed in this collection');
   }
 
-  if (!permissions.isContributor && !permissions.isOwner) {
+  if (
+    !permissions.isContributor &&
+    !permissions.isOwner &&
+    !(collection.metadata as CollectionMetadataSchema)?.disableFollowOnSubmission
+  ) {
     // Make sure to follow the collection
     await addContributorToCollection({
       targetUserId: userId,
@@ -1961,7 +2047,7 @@ export const getCollectionCoverImages = async ({
   const tags = await dbRead.tagsOnImage.findMany({
     where: {
       imageId: { in: [...new Set(itemImages.map(({ image }) => image?.id).filter(isDefined))] },
-      disabled: false,
+      disabledAt: null,
     },
     select: { imageId: true, tagId: true },
   });
@@ -2115,24 +2201,195 @@ export async function checkUserOwnsCollectionAndItem({
 }
 
 export const setItemScore = async ({
-  itemId,
-  collectionId,
+  collectionItemId,
   userId,
   score,
 }: SetItemScoreInput & { userId: number }) => {
-  const collection = await dbRead.collection.findUnique({
-    where: { id: collectionId },
-    select: { id: true, mode: true },
+  const collectionItem = await dbRead.collectionItem.findUnique({
+    where: { id: collectionItemId },
+    select: {
+      id: true,
+      collection: {
+        select: { id: true, mode: true },
+      },
+    },
   });
-  if (!collection) throw throwNotFoundError('Collection not found');
-  if (collection.mode !== CollectionMode.Contest)
+  if (!collectionItem) throw throwNotFoundError('Collection item not found');
+  if (!collectionItem.collection) throw throwNotFoundError('Collection not found');
+  if (collectionItem.collection.mode !== CollectionMode.Contest)
     throw throwBadRequestError('This collection is not a contest collection');
 
   const itemScore = await dbWrite.collectionItemScore.upsert({
-    where: { userId_collectionItemId: { userId, collectionItemId: itemId } },
-    create: { userId, collectionItemId: itemId, score },
+    where: { userId_collectionItemId: { userId, collectionItemId: collectionItem.id } },
+    create: { userId, collectionItemId: collectionItem.id, score },
     update: { score },
   });
 
   return itemScore;
+};
+
+export const getCollectionItemById = ({ id }: GetByIdInput) => {
+  return dbRead.collectionItem.findUniqueOrThrow({
+    where: { id },
+    include: {
+      collection: true,
+    },
+  });
+};
+
+export async function getCollectionEntryCount({
+  collectionId,
+  userId,
+}: {
+  collectionId: number;
+  userId: number;
+}) {
+  const [collection] = await dbRead.$queryRaw<{ total: number }[]>`
+    SELECT
+      CAST(c.metadata->'maxItemsPerUser' as int) as total
+    FROM "Collection" c
+    WHERE c.id = ${collectionId}
+  `;
+  if (!collection) throw throwNotFoundError('Collection not found');
+
+  const statuses = await dbRead.$queryRaw<{ status: CollectionItemStatus; count: number }[]>`
+    SELECT
+      "status",
+      CAST(COUNT(*) as int) as "count"
+    FROM "CollectionItem"
+    WHERE "collectionId" = ${collectionId}
+    AND "addedById" = ${userId}
+    GROUP BY "status"
+  `;
+  console.log(collection);
+  const result: { [key in CollectionItemStatus]?: number } & { max: number } = {
+    max: collection.total,
+  };
+  for (const { status, count } of statuses) result[status] = count;
+  return result;
+}
+
+export const setCollectionItemNsfwLevel = async ({
+  collectionItemId,
+  nsfwLevel,
+}: SetCollectionItemNsfwLevelInput) => {
+  const collectionItem = await getCollectionItemById({ id: collectionItemId });
+
+  if (!collectionItem) {
+    throw throwNotFoundError('Collection item not found');
+  }
+
+  if (collectionItem.collection.type !== CollectionType.Image || !collectionItem.imageId) {
+    throw throwBadRequestError(
+      'NSFW Level assignment support is only available on image collections.'
+    );
+  }
+
+  const metadata = (collectionItem.collection.metadata ?? {}) as CollectionMetadataSchema;
+
+  if (!metadata?.judgesApplyBrowsingLevel) {
+    throw throwBadRequestError('This collection does not support NSFW level assignment.');
+  }
+
+  const image = await dbRead.image.findUnique({
+    where: { id: collectionItem.imageId as number },
+    select: {
+      post: {
+        select: {
+          collectionId: true,
+        },
+      },
+    },
+  });
+
+  if (!image) {
+    throw throwNotFoundError('Image not found');
+  }
+
+  if (image.post?.collectionId !== collectionItem.collectionId) {
+    throw throwBadRequestError(
+      'The image you are trying to apply an NSFW level to was not created for this collection. NSFW level assignment is only available for images created for this collection.'
+    );
+  }
+
+  if (!nsfwLevel) throw throwBadRequestError();
+
+  await dbWrite.image.update({
+    where: { id: collectionItem.imageId as number },
+    data: { nsfwLevel, scannedAt: new Date(), ingestion: ImageIngestionStatus.Scanned },
+  });
+
+  await imagesSearchIndex.queueUpdate([
+    { id: collectionItem.imageId, action: SearchIndexUpdateQueueAction.Update },
+  ]);
+};
+
+export const enableCollectionYoutubeSupport = async ({
+  collectionId,
+  userId,
+  authenticationCode,
+}: EnableCollectionYoutubeSupportInput & { userId: number }) => {
+  const user = await dbRead.user.findUnique({ where: { id: userId } });
+  if (!user?.isModerator) {
+    throw throwAuthorizationError('You do not have permission to enable youtube support');
+  }
+
+  const collection = await getCollectionById({ input: { id: collectionId } });
+
+  if (collection.mode !== CollectionMode.Contest) {
+    throw throwBadRequestError('Only contest collections can have youtube support enabled');
+  }
+
+  if (collection.type !== CollectionType.Image) {
+    throw throwBadRequestError('Only image collections can have youtube support enabled');
+  }
+
+  const metadata = collection.metadata as CollectionMetadataSchema;
+
+  if (metadata.youtubeSupportEnabled) {
+    throw throwBadRequestError('Youtube support is already enabled for this collection');
+  }
+
+  // Attempt to save the auth code on the key-value store.
+  try {
+    const { tokens } = await getYoutubeRefreshToken(
+      authenticationCode,
+      '/collections/youtube/auth'
+    );
+    const collectionKey = `collection:${collectionId}:youtube-authentication-code`;
+
+    if (!tokens.refresh_token) {
+      throw throwBadRequestError('Failed to get youtube refresh token');
+    }
+    await dbWrite.$transaction(async (tx) => {
+      await tx.keyValue.upsert({
+        where: {
+          key: collectionKey,
+        },
+        update: {
+          value: tokens.refresh_token as string,
+        },
+        create: {
+          key: collectionKey,
+          value: tokens.refresh_token as string,
+        },
+      });
+
+      await tx.collection.update({
+        where: {
+          id: collection.id,
+        },
+        data: {
+          metadata: {
+            ...metadata,
+            youtubeSupportEnabled: true,
+          },
+        },
+      });
+    });
+
+    return { collectionId, youtubeSupportEnabled: true };
+  } catch (error) {
+    throw throwBadRequestError('Failed to save youtube authentication code');
+  }
 };

@@ -8,45 +8,66 @@ import { generationServiceCookie } from '~/shared/constants/generation.constants
 import { env } from '~/env/server.mjs';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { addGenerationEngine } from '~/server/services/generation/engines';
+import { dbWrite } from '~/server/db/client';
+import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+
+type Row = {
+  userId: number;
+  cosmeticId: number;
+  claimKey: string;
+  data: any[];
+  fixedData?: Record<string, any>;
+};
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  console.log('hit me');
-  // const session = await getServerAuthSession({ req, res });
-  // const user = session?.user;
-  // if (!user) return;
+  const records = await dbWrite.$queryRaw<Row[]>`
+    SELECT
+      uc."userId",
+      uc."cosmeticId",
+      uc."claimKey",
+      uc.data
+    FROM "UserCosmetic" uc
+    JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
+    WHERE c.name LIKE 'Holiday Garland 2024%'
+    AND jsonb_typeof(uc.data) = 'array';
+  `;
 
-  // let token = getEncryptedCookie({ req, res }, generationServiceCookie.name);
-  // if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
-  // if (!token) {
-  //   token = await getTemporaryUserApiKey({
-  //     name: generationServiceCookie.name,
-  //     // make the db token live just slightly longer than the cookie token
-  //     maxAge: generationServiceCookie.maxAge + 5,
-  //     scope: ['Generate'],
-  //     type: 'System',
-  //     userId: user.id,
-  //   });
-  //   setEncryptedCookie(
-  //     { req, res },
-  //     {
-  //       name: generationServiceCookie.name,
-  //       maxAge: generationServiceCookie.maxAge,
-  //       value: token,
-  //     }
-  //   );
-  // }
+  const updateTasks: Task[] = [];
+  for (const record of records) {
+    record.fixedData = {};
+    for (let item of record.data) {
+      if (!item || (typeof item === 'object' && !Object.keys(item).length)) continue;
+      if (typeof item === 'string' && item.startsWith('{')) {
+        item = JSON.parse(item);
+        record.data.push(item);
+        continue;
+      }
 
-  // const { nextCursor, items } = await queryWorkflows({
-  //   token,
-  //   take: 10,
-  //   tags: ['civitai', 'img'],
-  // });
-  const data = await getSystemPermissions();
+      if (typeof item === 'object') {
+        for (const key in item) {
+          if (record.fixedData[key] && typeof item[key] === 'number') {
+            record.fixedData[key] += item[key];
+          } else {
+            record.fixedData[key] = item[key];
+          }
+        }
+      }
+    }
 
-  await addGenerationEngine({ engine: 'civitai', disabled: true, message: undefined });
-  await addGenerationEngine({ engine: 'haiper', disabled: false, message: undefined });
-  await addGenerationEngine({ engine: 'mochi', disabled: false, message: undefined });
+    if (record.fixedData !== record.data) {
+      updateTasks.push(async () => {
+        await dbWrite.$executeRawUnsafe(`
+          UPDATE "UserCosmetic"
+          SET data = to_jsonb('${JSON.stringify(record.fixedData)}'::jsonb)
+          WHERE "userId" = ${record.userId}
+          AND "cosmeticId" = ${record.cosmeticId}
+          AND "claimKey" = '${record.claimKey}';
+        `);
+      });
+    }
+  }
 
-  return res.status(200).json({ data });
-  // return res.status(200).json(await formatTextToImageResponses(items as TextToImageResponse[]));
+  await limitConcurrency(updateTasks, 10);
+
+  res.status(200).send(records);
 });

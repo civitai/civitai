@@ -9,6 +9,7 @@ import {
   AddSimpleImagePostInput,
   BulkSaveCollectionItemsInput,
   CollectionMetadataSchema,
+  EnableCollectionYoutubeSupportInput,
   FollowCollectionInputSchema,
   GetAllCollectionItemsSchema,
   GetAllCollectionsInfiniteSchema,
@@ -16,6 +17,7 @@ import {
   GetCollectionPermissionDetails,
   GetUserCollectionItemsByItemSchema,
   RemoveCollectionItemInput,
+  SetCollectionItemNsfwLevelInput,
   SetItemScoreInput,
   UpdateCollectionCoverImageInput,
   UpdateCollectionItemsStatusInput,
@@ -28,9 +30,11 @@ import {
   bulkSaveItems,
   checkUserOwnsCollectionAndItem,
   deleteCollectionById,
+  enableCollectionYoutubeSupport,
   getAllCollections,
   getCollectionById,
   getCollectionCoverImages,
+  getCollectionItemById,
   getCollectionItemCount,
   getCollectionItemsByCollectionId,
   getContributorCount,
@@ -40,6 +44,7 @@ import {
   removeCollectionItem,
   removeContributorFromCollection,
   saveItemInCollections,
+  setCollectionItemNsfwLevel,
   setItemScore,
   updateCollectionCoverImage,
   updateCollectionItemsStatus,
@@ -551,6 +556,7 @@ export const getPermissionDetailsHandler = async ({
       mode: true,
       tags: {
         select: {
+          filterableOnly: true,
           tag: {
             select: {
               id: true,
@@ -575,7 +581,10 @@ export const getPermissionDetailsHandler = async ({
 
   return collections.map((c) => ({
     ...c,
-    tags: c.tags.map((t) => t.tag),
+    tags: c.tags.map((t) => ({
+      ...t.tag,
+      filterableOnly: t.filterableOnly,
+    })),
     metadata: (c.metadata ?? {}) as CollectionMetadataSchema,
     permissions: permissions.find((p) => p.collectionId === c.id),
   }));
@@ -609,15 +618,61 @@ export const setItemScoreHandler = async ({
 }) => {
   const { user } = ctx;
   try {
+    const collectionItem = await getCollectionItemById({
+      id: input.collectionItemId,
+    });
     const permissions = await getUserCollectionPermissionsById({
-      id: input.collectionId,
+      id: collectionItem.collectionId,
       userId: user.id,
       isModerator: user.isModerator,
     });
+
     if (!permissions.manage)
       throw throwAuthorizationError('You do not have permission to manage this collection.');
 
     return await setItemScore({ ...input, userId: user.id });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+
+export const setCollectionItemNsfwLevelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: SetCollectionItemNsfwLevelInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  try {
+    const collectionItem = await getCollectionItemById({
+      id: input.collectionItemId,
+    });
+
+    const permissions = await getUserCollectionPermissionsById({
+      id: collectionItem.collectionId,
+      userId: user.id,
+      isModerator: user.isModerator,
+    });
+
+    if (!permissions.manage)
+      throw throwAuthorizationError('You do not have permission to manage this collection.');
+
+    return await setCollectionItemNsfwLevel({ ...input });
+  } catch (error) {
+    throw throwDbError(error);
+  }
+};
+export const enableCollectionYoutubeSupportHandler = async ({
+  input,
+  ctx,
+}: {
+  input: EnableCollectionYoutubeSupportInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const { user } = ctx;
+  try {
+    return await enableCollectionYoutubeSupport({ ...input, userId: user.id });
   } catch (error) {
     throw throwDbError(error);
   }

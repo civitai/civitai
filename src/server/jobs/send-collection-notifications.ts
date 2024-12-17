@@ -19,11 +19,12 @@ export const sendCollectionNotifications = createJob(
     const updatedCollections = await dbRead.$queryRaw<
       { id: number; name: string; users: number[] }[]
     >`
-      SELECT DISTINCT(ci."collectionId") "id", c.name, array_agg(cc."userId") "users" FROM "CollectionItem" ci 
-      JOIN "Collection" c ON ci."collectionId" = c.id 
+      SELECT DISTINCT(ci."collectionId") "id", c.name, array_agg(cc."userId") "users" FROM "CollectionItem" ci
+      JOIN "Collection" c ON ci."collectionId" = c.id
       JOIN "CollectionContributor" cc ON c.id = cc."collectionId" AND cc."userId" != c."userId"
-      WHERE ci."createdAt" >= ${lastRun} 
+      WHERE ci."createdAt" >= ${lastRun}
         AND ci."status" = 'ACCEPTED'
+        AND c.mode != 'Contest'
       GROUP BY ci."collectionId", c.name
     `;
 

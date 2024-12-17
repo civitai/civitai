@@ -1,10 +1,10 @@
-import { Divider, Group, Select, Stack, Text, Alert, Anchor } from '@mantine/core';
-import { CollectionMode } from '~/shared/utils/prisma/enums';
-import { useEffect, useMemo, useState } from 'react';
+import { Alert, Anchor, Divider, Group, Select, Stack, Text } from '@mantine/core';
+import { useEffect, useMemo } from 'react';
 import { useCollectionsForPostCreation } from '~/components/Collections/collection.utils';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { useMutatePost } from '~/components/Post/post.utils';
-import { getDisplayName, toPascalCase } from '~/utils/string-helpers';
+import { CollectionMode } from '~/shared/utils/prisma/enums';
+import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export const useCollectionsForPostEditor = () => {
@@ -87,9 +87,26 @@ export const CollectionSelectDropdown = () => {
     return null;
   }
 
+  const availableTags = (selectedCollection?.tags ?? []).filter(
+    (t) => !t.filterableOnly || t.id === collectionTagId
+  );
+
   return (
     <Stack spacing="xs">
       <Divider label="Collection details for this post" />
+      {!post?.publishedAt && collectionId && selectedCollection?.metadata.termsOfServicesUrl && (
+        <Alert color="blue">
+          By submitting an entry to {selectedCollection.name}, you agree to the competition&rsquo;s{' '}
+          <Anchor
+            href={selectedCollection.metadata.termsOfServicesUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Terms of Service
+          </Anchor>
+          .
+        </Alert>
+      )}
       {!post?.publishedAt ? (
         <Group>
           <Select
@@ -111,12 +128,12 @@ export const CollectionSelectDropdown = () => {
             }}
             tt="capitalize"
           />
-          {selectedCollection && selectedCollection.tags.length > 0 && !post?.publishedAt && (
+          {selectedCollection && availableTags.length > 0 && !post?.publishedAt && (
             <Select
               label="Select Entry Category"
-              data={selectedCollection.tags.map((tag) => ({
+              data={availableTags.map((tag) => ({
                 value: tag.id.toString(),
-                label: toPascalCase(tag.name),
+                label: tag.name.toUpperCase(),
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
               onChange={(value: string) =>
@@ -163,7 +180,7 @@ export const CollectionSelectDropdown = () => {
               label="Update Entry Category"
               data={selectedCollection.tags.map((tag) => ({
                 value: tag.id.toString(),
-                label: toPascalCase(tag.name),
+                label: tag.name.toUpperCase(),
               }))}
               value={collectionTagId ? collectionTagId.toString() : null}
               onChange={(value: string) => {

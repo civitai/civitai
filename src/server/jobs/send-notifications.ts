@@ -52,11 +52,13 @@ export const sendNotificationsJob = createJob('send-notifications', '*/1 * * * *
           );
           let query = prepareQuery?.({
             lastSent: lastSent.toISOString(),
+            lastSentDate: lastSent,
             clickhouse,
           });
           if (query) {
             const start = Date.now();
             if (isPromise(query)) query = await query;
+            if (!query) return;
 
             const request = await pgDbRead.cancellableQuery<NotificationSingleRow>(query);
             e.on('cancel', request.cancel);

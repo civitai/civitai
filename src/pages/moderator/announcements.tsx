@@ -75,7 +75,7 @@ export function AnnouncementsPage() {
                   </ActionIcon>
                   <PopConfirm
                     onConfirm={() => deleteMutation.mutate({ id: announcement.id })}
-                    withinPortal={false}
+                    withinPortal
                   >
                     <ActionIcon loading={deleteMutation.isLoading} color="red">
                       <IconTrash />

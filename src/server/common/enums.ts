@@ -90,6 +90,7 @@ export enum ImageScanType {
   FaceDetection,
   WD14,
   Hash,
+  Hive,
 }
 
 export enum CommentV2Sort {
@@ -104,22 +105,6 @@ export enum ArticleSort {
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
-}
-
-export enum ModelType {
-  Checkpoint = 'Checkpoint',
-  TextualInversion = 'TextualInversion',
-  MotionModule = 'MotionModule',
-  Hypernetwork = 'Hypernetwork',
-  AestheticGradient = 'AestheticGradient',
-  LORA = 'LORA',
-  LoCon = 'LoCon',
-  Controlnet = 'Controlnet',
-  Upscaler = 'Upscaler',
-  VAE = 'VAE',
-  Poses = 'Poses',
-  Wildcards = 'Wildcards',
-  Other = 'Other',
 }
 
 export enum CheckpointType {
@@ -326,4 +311,9 @@ export enum OrchEngineTypes {
 export enum BlocklistType {
   EmailDomain = 'EmailDomain',
   LinkDomain = 'LinkDomain',
+}
+
+export enum ToolSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
 }

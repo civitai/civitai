@@ -108,7 +108,7 @@ model UserPaymentConfiguration {
   stripeAccountId        String? @unique
   stripeAccountStatus    String  @default("PendingOnboarding")
   stripePaymentsEnabled  Boolean @default(false)
-  // 
+  //
   meta                   Json    @default("{}")
 }
 
@@ -1234,6 +1234,7 @@ enum ImageIngestionStatus {
   Error
   Blocked
   NotFound
+  PendingManualAssignment
 }
 
 enum MediaType {
@@ -1278,6 +1279,7 @@ model Image {
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(now())
+  minor             Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -1543,6 +1545,7 @@ enum TagSource {
   WD14
   Computed
   ImageHash
+  Hive
 }
 
 model TagsOnImage {
@@ -1696,6 +1699,7 @@ model Partner {
   token              String?             @unique
   tier               Int                 @default(0)
   logo               String?
+  disabled           Boolean             @default(false)
   runStrategies      RunStrategy[]
 }
 
@@ -2469,11 +2473,12 @@ model CollectionContributor {
 }
 
 model TagsOnCollection {
-  collectionId Int
-  tagId        Int
-  createdAt    DateTime?  @default(now())
-  collection   Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
-  tag          Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  collectionId   Int
+  tagId          Int
+  createdAt      DateTime?  @default(now())
+  collection     Collection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  tag            Tag        @relation(fields: [tagId], references: [id], onDelete: Cascade)
+  filterableOnly Boolean    @default(false)
 
   @@id([tagId, collectionId])
   @@index([collectionId], type: Hash)
@@ -3168,12 +3173,14 @@ model Tool {
   icon        String?
   createdAt   DateTime    @default(now())
   enabled     Boolean     @default(true)
+  unlisted    Boolean     @default(false)
   type        ToolType
   domain      String?
   imageTools  ImageTool[]
   priority    Int?
   description String?
   supported   Boolean     @default(false)
+  company     String?
   metadata    Json        @default("{}")
 }
 
@@ -3931,6 +3938,8 @@ model ImageResourceHelper {
   modelThumbsUpCount    Int?
   modelThumbsDownCount  Int?
   modelType             ModelType?
+  modelVersionBaseModel String?
+  detected              Boolean?
 
   @@unique([imageId, name, modelVersionId])
 }

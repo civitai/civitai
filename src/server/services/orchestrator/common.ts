@@ -4,6 +4,7 @@ import {
   HaiperVideoGenInput,
   HaiperVideoGenOutput,
   ImageJobNetworkParams,
+  Priority,
   TextToImageInput,
   TextToImageStep,
   VideoBlob,
@@ -61,6 +62,7 @@ import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import { removeEmpty } from '~/utils/object-helpers';
+import { UserTier } from '~/server/schema/user.schema';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -313,6 +315,7 @@ export async function parseGenerateImageInput({
       upscaleWidth: upscale?.width,
       upscaleHeight: upscale?.height,
     }),
+    priority: getUserPriority(status, user),
   };
 }
 
@@ -361,7 +364,8 @@ export async function formatGenerationResponse(workflows: Workflow[]) {
       steps: (workflow.steps ?? [])?.map((step) =>
         formatWorkflowStep({
           workflowId: workflow.id as string,
-          step,
+          // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
+          step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
           resources: [...resources, ...injectable],
         })
       ),
@@ -406,6 +410,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
 
   let width = videoMetadata.params?.width;
   let height = videoMetadata.params?.height;
+  let aspectRatio = width && height ? width / height : 16 / 9;
 
   // if ((workflowId = '0-20241108234000287')) console.log(input);
 
@@ -413,14 +418,24 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   if (params) {
     switch (params.engine) {
       case 'haiper': {
-        const { aspectRatio, resolution } = params;
-        if (aspectRatio && resolution && (!width || !height)) {
-          const [rw, rh] = aspectRatio.split(':').map(Number);
-          width = resolution;
-          const ratio = width / rw;
-          height = ratio * rh;
+        if (params.aspectRatio) {
+          const [rw, rh] = params.aspectRatio.split(':').map(Number);
+          aspectRatio = rw / rh;
         }
+        break;
       }
+      case 'kling': {
+        if (params.aspectRatio) {
+          const [rw, rh] = params.aspectRatio.split(':').map(Number);
+          aspectRatio = rw / rh;
+        }
+        break;
+      }
+      case 'mochi':
+        width = 848;
+        height = 480;
+        aspectRatio = width / height;
+        break;
     }
   }
 
@@ -439,17 +454,27 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
+            reason: (output as HaiperVideoGenOutput).externalTOSViolation
+              ? `The content may violate our usage policy`
+              : undefined,
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
             width: width ?? 1080,
             height: height ?? 1080,
+            queuePosition: job.queuePosition,
+            aspectRatio,
           })) ?? [],
     }),
     {}
   );
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+
+  // TODO - this should be temporary until Koen updates the orchestrator - 12/11/2024
+  if (input.engine === 'kling' && (input as any).sourceImageUrl) {
+    if ('aspectRatio' in input) delete input.aspectRatio;
+  }
 
   return {
     $type: 'videoGen' as const,
@@ -580,8 +605,8 @@ function formatTextToImageStep({
     sampler: metadata?.params?.sampler ?? sampler,
     ...upscale,
 
-    fluxMode: metadata?.params?.fluxMode,
-    fluxUltraRaw: input.engine === 'flux-pro-raw',
+    fluxMode: metadata?.params?.fluxMode ?? undefined,
+    fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
   } as TextToImageParams;
 
   if (resources.some((x) => x.air === fluxUltraAir)) {
@@ -692,4 +717,16 @@ export async function queryGeneratedImageWorkflows(
     items: await formatGenerationResponse(items as GeneratedImageWorkflow[]),
     nextCursor,
   };
+}
+
+const MEMBERSHIP_PRIORITY: Record<UserTier, Priority> = {
+  free: Priority.LOW,
+  founder: Priority.NORMAL,
+  bronze: Priority.NORMAL,
+  silver: Priority.NORMAL,
+  gold: Priority.HIGH,
+};
+export function getUserPriority(status: GenerationStatus, user: { tier?: UserTier }) {
+  if (!status.membershipPriority) return Priority.NORMAL;
+  return MEMBERSHIP_PRIORITY[user.tier ?? 'free'];
 }

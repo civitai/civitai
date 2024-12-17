@@ -3,6 +3,7 @@ import {
   bulkSaveItemsHandler,
   collectionItemsInfiniteHandler,
   deleteUserCollectionHandler,
+  enableCollectionYoutubeSupportHandler,
   followHandler,
   getAllCollectionsInfiniteHandler,
   getAllUserCollectionsHandler,
@@ -11,6 +12,7 @@ import {
   getUserCollectionItemsByItemHandler,
   removeCollectionItemHandler,
   saveItemHandler,
+  setCollectionItemNsfwLevelHandler,
   setItemScoreHandler,
   unfollowHandler,
   updateCollectionCoverImageHandler,
@@ -18,10 +20,11 @@ import {
   upsertCollectionHandler,
 } from '~/server/controllers/collection.controller';
 import { dbRead } from '~/server/db/client';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { GetByIdInput, getByIdSchema } from '~/server/schema/base.schema';
 import {
   addSimpleImagePostInput,
   bulkSaveCollectionItemsInput,
+  enableCollectionYoutubeSupportInput,
   followCollectionInputSchema,
   getAllCollectionItemsSchema,
   getAllCollectionsInfiniteSchema,
@@ -30,20 +33,24 @@ import {
   getUserCollectionItemsByItemSchema,
   removeCollectionItemInput,
   saveCollectionItemInputSchema,
+  setCollectionItemNsfwLevelInput,
   setItemScoreInput,
   updateCollectionCoverImageInput,
   updateCollectionItemsStatusInput,
   upsertCollectionInput,
 } from '~/server/schema/collection.schema';
+import { getCollectionEntryCount } from '~/server/services/collection.service';
 import {
   guardedProcedure,
   isFlagProtected,
   middleware,
+  moderatorProcedure,
   protectedProcedure,
   publicProcedure,
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { getYoutubeAuthUrl } from '~/server/youtube/client';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -138,4 +145,24 @@ export const collectionRouter = router({
     .input(setItemScoreInput)
     .use(isFlagProtected('collections'))
     .mutation(setItemScoreHandler),
+  updateCollectionItemNSFWLevel: guardedProcedure
+    .input(setCollectionItemNsfwLevelInput)
+    .use(isFlagProtected('collections'))
+    .mutation(setCollectionItemNsfwLevelHandler),
+  getYoutubeAuthUrl: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input }: { input: GetByIdInput }) => {
+      return getYoutubeAuthUrl({
+        redirectUri: `/collections/youtube/auth`,
+        collectionId: input.id,
+      });
+    }),
+  enableYoutubeSupport: moderatorProcedure
+    .input(enableCollectionYoutubeSupportInput)
+    .mutation(enableCollectionYoutubeSupportHandler),
+  getEntryCount: protectedProcedure
+    .input(getByIdSchema)
+    .query(({ input, ctx }: { input: GetByIdInput; ctx: { user: { id: number } } }) => {
+      return getCollectionEntryCount({ collectionId: input.id, userId: ctx.user.id });
+    }),
 });

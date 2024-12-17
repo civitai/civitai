@@ -15,7 +15,7 @@ import { forwardRef } from 'react';
 //   );
 // }
 
-type NextLinkProps = LinkProps & { children?: React.ReactNode } & Omit<
+export type NextLinkProps = LinkProps & { children?: React.ReactNode } & Omit<
     React.AnchorHTMLAttributes<HTMLAnchorElement>,
     keyof LinkProps
   >;

@@ -117,3 +117,8 @@ export function getThanksgivingDate(year: number) {
 
   return thanksgiving.toDate();
 }
+
+export function isHolidaysTime() {
+  const today = dayjs();
+  return today.month() === 11;
+}

@@ -1,5 +1,13 @@
 import { z } from 'zod';
-import { isDefined } from '~/utils/type-guards';
+import { constants } from '~/server/common/constants';
+import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
+import {
+  baseQuerySchema,
+  infiniteQuerySchema,
+  userPreferencesSchema,
+} from '~/server/schema/base.schema';
+import { imageSchema } from '~/server/schema/image.schema';
+import { tagSchema } from '~/server/schema/tag.schema';
 import {
   CollectionContributorPermission,
   CollectionItemStatus,
@@ -8,16 +16,9 @@ import {
   CollectionType,
   CollectionWriteConfiguration,
 } from '~/shared/utils/prisma/enums';
-import { imageSchema } from '~/server/schema/image.schema';
-import {
-  baseQuerySchema,
-  infiniteQuerySchema,
-  userPreferencesSchema,
-} from '~/server/schema/base.schema';
-import { CollectionReviewSort, CollectionSort } from '~/server/common/enums';
-import { constants } from '~/server/common/constants';
+import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
-import { tagSchema } from '~/server/schema/tag.schema';
+import { NsfwLevel } from './../common/enums';
 
 // TODO.Fix: Type-safety. This isn't actually typesafe. You can choose a type and a id that don't match.
 const collectionItemSchema = z.object({
@@ -105,6 +106,7 @@ export const collectionMetadataSchema = z
     maxItemsPerUser: z.coerce.number().optional(),
     submissionStartDate: z.coerce.date().nullish(),
     submissionEndDate: z.coerce.date().nullish(),
+    submissionsHiddenUntilEndDate: z.boolean().optional(),
     existingEntriesDisabled: z.coerce.boolean().optional(),
     votingPeriodStart: z.coerce.date().nullish(),
     uploadSettings: z
@@ -116,6 +118,18 @@ export const collectionMetadataSchema = z
       })
       .optional(),
     bannerPosition: z.string().optional(),
+    judgesApplyBrowsingLevel: z.boolean().optional(),
+    judgesCanScoreEntries: z.boolean().optional(),
+    disableFollowOnSubmission: z.boolean().optional(),
+    disableTagRequired: z.boolean().optional(),
+    youtubeSupportEnabled: z.boolean().optional(),
+    vimeoSupportEnabled: z.boolean().optional(),
+    forcedBrowsingLevel: z.number().optional(),
+    entriesRequireTitle: z.boolean().optional(),
+    entriesRequireTools: z.boolean().optional(),
+    termsOfServicesUrl: z.string().optional(),
+    hideAds: z.boolean().optional(),
+    includeContestCallouts: z.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {
@@ -236,7 +250,20 @@ export const removeCollectionItemInput = z.object({
 
 export type SetItemScoreInput = z.infer<typeof setItemScoreInput>;
 export const setItemScoreInput = z.object({
-  collectionId: z.coerce.number(),
-  itemId: z.coerce.number(),
+  collectionItemId: z.coerce.number(),
   score: z.coerce.number().min(1).max(10),
+});
+
+export type SetCollectionItemNsfwLevelInput = z.infer<typeof setCollectionItemNsfwLevelInput>;
+export const setCollectionItemNsfwLevelInput = z.object({
+  collectionItemId: z.number(),
+  nsfwLevel: z.nativeEnum(NsfwLevel),
+});
+
+export type EnableCollectionYoutubeSupportInput = z.infer<
+  typeof enableCollectionYoutubeSupportInput
+>;
+export const enableCollectionYoutubeSupportInput = z.object({
+  collectionId: z.number(),
+  authenticationCode: z.string(),
 });

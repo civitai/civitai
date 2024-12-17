@@ -1,13 +1,12 @@
-import { ActionIcon, Text, Collapse, Textarea } from '@mantine/core';
-import { IconTrash } from '@tabler/icons-react';
-import { IconMessagePlus } from '@tabler/icons-react';
+import { ActionIcon, Collapse, Text, Textarea } from '@mantine/core';
+import { IconMessagePlus, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
-import ConfirmDialog  from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { PostEditImageDetail, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import type { PostEditImageDetail } from '~/server/services/post.service';
 import { useDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
-import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function PostImageTechnique({
@@ -76,7 +75,7 @@ export function PostImageTechnique({
 
   return (
     <div className="flex flex-col py-1">
-      <div className="flex justify-between items-center gap-3">
+      <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-1">
           <span>{technique.name}</span>
           {!technique.notes && (

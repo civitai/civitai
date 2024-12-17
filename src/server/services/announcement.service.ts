@@ -1,9 +1,8 @@
 import { CacheTTL } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import {
   AnnouncementMetaSchema,
-  GetAnnouncementsInput,
   GetAnnouncementsPagedSchema,
   UpsertAnnouncementSchema,
 } from '~/server/schema/announcement.schema';
@@ -27,7 +26,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
   const { limit = DEFAULT_PAGE_SIZE, page } = data ?? {};
   const { take, skip } = getPagination(limit, page);
 
-  const items = await dbRead.announcement.findMany({
+  const items = await dbWrite.announcement.findMany({
     skip,
     take,
     select: {
@@ -42,10 +41,10 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
       metadata: true,
       emoji: true,
     },
-    orderBy: { id: 'desc' },
+    orderBy: { startsAt: { sort: 'desc', nulls: 'last' } },
   });
 
-  const count = await dbRead.announcement.count();
+  const count = await dbWrite.announcement.count();
   return getPagingData(
     {
       items: items.map((item) => ({
@@ -60,17 +59,11 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
   );
 }
 
-export async function getCurrentAnnouncements({
-  dismissed,
-  limit,
-  ids,
-  userId,
-}: GetAnnouncementsInput & { userId?: number }) {
+export async function getCurrentAnnouncements({ userId }: { userId?: number }) {
   const announcements = await getAnnouncementsCached();
   const now = Date.now();
 
   return announcements.filter((announcement) => {
-    if (ids && !ids.includes(announcement.id)) return false;
     if (!userId && announcement.metadata.targetAudience === 'authenticated') return false;
     if (!!userId && announcement.metadata.targetAudience === 'unauthenticated') return false;
     const startsAt = new Date(announcement.startsAt ?? now).getTime();
@@ -96,7 +89,7 @@ async function getAnnouncementsCached() {
 export type AnnouncementDTO = Awaited<ReturnType<typeof getAnnouncements>>[number];
 async function getAnnouncements() {
   const now = new Date();
-  const announcements = await dbRead.announcement.findMany({
+  const announcements = await dbWrite.announcement.findMany({
     where: {
       disabled: false,
       AND: [
@@ -119,7 +112,7 @@ async function getAnnouncements() {
       emoji: true,
       metadata: true,
     },
-    orderBy: { endsAt: 'asc' },
+    orderBy: { startsAt: { sort: 'desc', nulls: 'last' } },
   });
 
   return announcements.map(({ createdAt, metadata, startsAt, ...x }) => ({
@@ -129,45 +122,3 @@ async function getAnnouncements() {
     metadata: (metadata ?? {}) as AnnouncementMetaSchema,
   }));
 }
-// export const announcementsCache = createCachedArray({
-//   key: REDIS_KEYS.CACHES.ANNOUNCEMENTS,
-//   idKey: 'id',
-//   lookupFn: async () => {
-//     const now = new Date();
-//     const announcements = await dbRead.announcement.findMany({
-//       where: {
-//         AND: [
-//           {
-//             OR: [{ startsAt: { lte: now } }, { startsAt: { equals: null } }],
-//           },
-//           {
-//             OR: [{ endsAt: { gte: now } }, { endsAt: { equals: null } }],
-//           },
-//         ],
-//       },
-//       select: {
-//         createdAt: true,
-//         startsAt: true,
-//         endsAt: true,
-//         id: true,
-//         title: true,
-//         content: true,
-//         color: true,
-//         emoji: true,
-//         metadata: true,
-//       },
-//     });
-
-//     return Object.fromEntries(
-//       announcements.map(({ createdAt, metadata, startsAt, ...x }) => [
-//         x.id,
-//         {
-//           ...x,
-//           startsAt: startsAt ?? createdAt,
-//           metadata: (metadata ?? {}) as AnnouncementMetaSchema,
-//         },
-//       ])
-//     );
-//   },
-//   ttl: CacheTTL.day,
-// });

@@ -60,7 +60,7 @@ export type ImageGenerationProcess = "txt2img" | "txt2imgHiRes" | "img2img" | "i
 
 export type NsfwLevel = "None" | "Soft" | "Mature" | "X" | "Blocked";
 
-export type ImageIngestionStatus = "Pending" | "Scanned" | "Error" | "Blocked" | "NotFound";
+export type ImageIngestionStatus = "Pending" | "Scanned" | "Error" | "Blocked" | "NotFound" | "PendingManualAssignment";
 
 export type MediaType = "image" | "video" | "audio";
 
@@ -76,7 +76,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -1033,6 +1033,7 @@ export interface Image {
   scanJobs: JsonValue | null;
   assignedUser?: User | null;
   sortAt: Date;
+  minor: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   thread?: Thread | null;
@@ -1331,6 +1332,7 @@ export interface Partner {
   token: string | null;
   tier: number;
   logo: string | null;
+  disabled: boolean;
   runStrategies?: RunStrategy[];
 }
 
@@ -1913,6 +1915,7 @@ export interface TagsOnCollection {
   createdAt: Date | null;
   collection?: Collection;
   tag?: Tag;
+  filterableOnly: boolean;
 }
 
 export interface HomeBlock {
@@ -2404,12 +2407,14 @@ export interface Tool {
   icon: string | null;
   createdAt: Date;
   enabled: boolean;
+  unlisted: boolean;
   type: ToolType;
   domain: string | null;
   imageTools?: ImageTool[];
   priority: number | null;
   description: string | null;
   supported: boolean;
+  company: string | null;
   metadata: JsonValue;
 }
 
@@ -3132,6 +3137,8 @@ export interface ImageResourceHelper {
   modelThumbsUpCount: number | null;
   modelThumbsDownCount: number | null;
   modelType: ModelType | null;
+  modelVersionBaseModel: string | null;
+  detected: boolean | null;
 }
 
 export interface PostResourceHelper {

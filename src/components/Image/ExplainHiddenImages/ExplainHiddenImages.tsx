@@ -2,7 +2,7 @@ import { Badge, Button, Group, Stack, Text, createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
 import {
   useBrowsingLevelDebounced,
-  useBrowsingModeOverrideContext,
+  useBrowsingLevelContext,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
@@ -26,7 +26,7 @@ export function ExplainHiddenImages({
   const currentUser = useCurrentUser();
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const browsingLevel = useBrowsingLevelDebounced();
-  const { setBrowsingLevelOverride } = useBrowsingModeOverrideContext();
+  const { setBrowsingLevelOverride } = useBrowsingLevelContext();
   if (!hasHidden) return null;
 
   const totalHiddenByBrowsingLevel = hiddenByBrowsingLevel.length;

@@ -4,7 +4,7 @@ import { useS3Upload } from '~/hooks/useS3Upload';
 import { UploadType } from '~/server/common/enums';
 import { MEDIA_TYPE } from '~/server/common/mime-types';
 import { calculateSizeInMegabytes } from '~/utils/json-helpers';
-import { PreprocessFileReturnType, preprocessFile } from '~/utils/media-preprocessors';
+import { preprocessFile, PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { auditMetaData } from '~/utils/metadata/audit';
 import { formatBytes } from '~/utils/number-helpers';
 

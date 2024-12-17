@@ -1,4 +1,6 @@
+import { uniq } from 'instantsearch.js/es/lib/utils';
 import { uniqBy } from 'lodash-es';
+import { ModelType } from '~/shared/utils/prisma/enums';
 
 export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 
@@ -10,8 +12,8 @@ export function toStringList(array: string[]) {
   return formatter.format(array);
 }
 
-export function removeDuplicates<T extends object>(array: T[], property: keyof T) {
-  return uniqBy<T>(array, property);
+export function removeDuplicates<T>(array: T[], property?: keyof T) {
+  return property ? uniqBy<T>(array, property) : uniq<T>(array);
 }
 
 export function sortAlphabetically<T>(array: T[]) {
@@ -21,6 +23,7 @@ export function sortAlphabetically<T>(array: T[]) {
     return 0;
   });
 }
+
 export function sortAlphabeticallyBy<T>(array: T[], fn: (item: T) => string) {
   return array.sort((...args) => {
     const a = fn(args[0]);
@@ -28,6 +31,41 @@ export function sortAlphabeticallyBy<T>(array: T[], fn: (item: T) => string) {
     if (a < b) return -1;
     if (a > b) return 1;
     return 0;
+  });
+}
+
+// this should really be a special type that ensures all values are present
+const modelTypeOrder: { [k in ModelType]: number } = {
+  [ModelType.Checkpoint]: 0,
+
+  [ModelType.LORA]: 1,
+  [ModelType.DoRA]: 2,
+  [ModelType.LoCon]: 3,
+
+  [ModelType.TextualInversion]: 4,
+  [ModelType.VAE]: 5,
+
+  [ModelType.Upscaler]: 6,
+  [ModelType.Controlnet]: 7,
+  [ModelType.Workflows]: 8,
+  [ModelType.Wildcards]: 9,
+  [ModelType.Poses]: 10,
+  [ModelType.MotionModule]: 11,
+
+  [ModelType.AestheticGradient]: 12,
+  [ModelType.Hypernetwork]: 13,
+  [ModelType.Other]: 14,
+};
+
+export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[] = []) {
+  return [...data].sort((a, b) => {
+    const mA = a.modelType;
+    const mB = b.modelType;
+
+    return (
+      (!!mA && mA in modelTypeOrder ? modelTypeOrder[mA] : Number.MAX_VALUE) -
+      (!!mB && mB in modelTypeOrder ? modelTypeOrder[mB] : Number.MAX_VALUE)
+    );
   });
 }
 
