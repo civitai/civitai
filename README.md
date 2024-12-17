@@ -70,6 +70,8 @@ First, make sure that you have the following installed on your machine:
 2. Clone the repository to your local machine
 3. Choose one method:
     - a) Use devcontainers
+      > ⚠️ Important Warning for Windows Users: Either clone this repo onto a WSL volume, or use the "clone repository in named container volume"
+      command. Otherwise, you will see performance issues.
         - Open the directory up in your IDE of choice
             - VS Code should prompt you to "Open in container"
                 - If not, you may need to manually run `Dev Containers: Open Folder in Container`
@@ -86,7 +88,7 @@ First, make sure that you have the following installed on your machine:
             - Populates metrics and meilisearch
             - Initializes prisma
             - Runs the server
-        - If you see an error about `cross-env` not being found, make sure `node_modules/.bin` is added to your path:
+        - If you see an error about an app not being found, make sure `node_modules/.bin` is added to your path:
             - `export PATH="$PATH:$(realpath node_modules/.bin)"`
     - Please report any issues with these commands to us on [discord][discord-url]
 4. Edit the `.env.development` file
