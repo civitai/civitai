@@ -222,19 +222,24 @@ export function ImagesAsPostsCard({
   const carouselHeight = height - 58 - 8 - (pinned ? 0 : 0);
 
   const cosmetic = data.images.find((i) => isDefined(i.cosmetic))?.cosmetic;
+  const cosmeticData =
+    cosmetic?.data || pinned
+      ? {
+          ...cosmetic?.data,
+          ...(pinned
+            ? {
+                border: theme.colors.orange[theme.fn.primaryShade()],
+                borderWidth: 2,
+              }
+            : undefined),
+        }
+      : undefined;
 
   return (
     <TwCosmeticWrapper
       className="w-full"
-      cosmetic={{
-        ...cosmetic?.data,
-        ...(pinned
-          ? {
-              border: theme.colors.orange[theme.fn.primaryShade()],
-              borderWidth: 2,
-            }
-          : undefined),
-      }}
+      cosmetic={cosmeticData}
+      style={cosmeticData ? { height } : undefined}
     >
       <>
         {pinned && (
@@ -245,7 +250,11 @@ export function ImagesAsPostsCard({
             iconProps={{ size: 16, stroke: 1.5 }}
           />
         )}
-        <TwCard style={{ height }} className={cx({ ['border']: !pinned })} ref={ref}>
+        <TwCard
+          style={!cosmeticData ? { height } : undefined}
+          className={cx({ ['border']: !pinned })}
+          ref={ref}
+        >
           <MediaHash {...image} className={cx('opacity-70', cosmetic && 'rounded-b-lg')} />
           {data.user.id !== -1 && (
             <Paper p="xs" radius={0} className={cx('h-[58px] z-[2]', cosmetic && 'rounded-t-lg ')}>
