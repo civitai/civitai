@@ -255,17 +255,23 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
     const { startId, endId } = newItems[0];
 
     let updateIds: number[] = [];
-    // TODO remove createdAt clause below?
     if (lastUpdatedAt) {
-      const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
-        SELECT id
-        FROM "Image"
-        WHERE "updatedAt" > '${lastUpdateIso}'
-          AND "postId" IS NOT NULL
-        ORDER BY id;
+      const updateStartIso = new Date().toISOString();
+      const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number; postId?: number }>(`
+        WITH updated as (
+          SELECT id
+          FROM "Image"
+          WHERE "updatedAt" >= '${lastUpdateIso}'
+          AND "updatedAt" < '${updateStartIso}'
+          AND id < ${startId} -- Since we're already pulling these..
+        )
+        SELECT
+          id,
+          (SELECT "postId" FROM "Image" i WHERE i.id = u.id) as "postId"
+        FROM updated u;
       `);
       const results = await updatedIdItemsQuery.result();
-      updateIds = results.map((x) => x.id);
+      updateIds = results.filter((x) => x.postId).map((x) => x.id);
     }
 
     return {
@@ -316,7 +322,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         ) AS "hasMeta",
         (
           CASE
-            WHEN i.meta->>'civitaiResources' IS NOT NULL 
+            WHEN i.meta->>'civitaiResources' IS NOT NULL
               OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
                 ${Prisma.join(workflows)}
               ]::text[])
