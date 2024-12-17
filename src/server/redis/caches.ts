@@ -84,34 +84,48 @@ export const tagIdsForImagesCache = createCachedObject<{
 type UserCosmeticLookup = {
   userId: number;
   cosmetics: {
-    cosmetic: {
-      id: number;
-      name: string;
-      type: CosmeticType;
-      data: Prisma.JsonValue;
-      source: CosmeticSource;
-    };
+    cosmeticId: number;
     data: Prisma.JsonValue;
   }[];
 };
 export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
-  key: REDIS_KEYS.CACHES.COSMETICS,
+  key: REDIS_KEYS.CACHES.USER_COSMETICS,
   idKey: 'userId',
   lookupFn: async (ids) => {
     const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
       where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
       select: {
         userId: true,
+        cosmeticId: true,
         data: true,
-        cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
       },
     });
-    const results = userCosmeticsRaw.reduce((acc, { userId, ...cosmetic }) => {
+    const results = userCosmeticsRaw.reduce((acc, { userId, cosmeticId, data }) => {
       acc[userId] ??= { userId, cosmetics: [] };
-      acc[userId].cosmetics.push(cosmetic);
+      acc[userId].cosmetics.push({ cosmeticId, data });
       return acc;
     }, {} as Record<number, UserCosmeticLookup>);
     return results;
+  },
+  ttl: CacheTTL.day,
+});
+
+type CosmeticLookup = {
+  id: number;
+  name: string;
+  type: CosmeticType;
+  data: Prisma.JsonValue;
+  source: CosmeticSource;
+};
+export const cosmeticCache = createCachedObject<CosmeticLookup>({
+  key: REDIS_KEYS.CACHES.COSMETICS,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    const cosmetics = await dbRead.cosmetic.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, type: true, data: true, source: true },
+    });
+    return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
 });
@@ -208,7 +222,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
     entity as CosmeticEntity,
     createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
-      key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
+      key: `${REDIS_KEYS.CACHES.COSMETICS_OLD}:${entity}`,
       idKey: 'equippedToId',
       cacheNotFound: false,
       lookupFn: async (ids) => {
