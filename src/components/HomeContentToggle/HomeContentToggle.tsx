@@ -19,69 +19,95 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 type HomeOption = {
+  key: string;
   url: string;
   icon: (props: IconProps) => JSX.Element;
   highlight?: boolean;
   grouped?: boolean;
   classes?: string[];
 };
-const homeOptions: Record<string, HomeOption> = {
-  home: {
+export const homeOptions: HomeOption[] = [
+  {
+    key: 'home',
     url: '/',
     icon: (props: IconProps) => <IconHome {...props} />,
   },
-  models: {
+  {
+    key: 'models',
     url: '/models',
     icon: (props: IconProps) => <IconCategory {...props} />,
   },
-  images: {
+  {
+    key: 'images',
     url: '/images',
     icon: (props: IconProps) => <IconPhoto {...props} />,
   },
-  videos: {
+  {
+    key: 'videos',
     url: '/videos',
     icon: (props: IconProps) => <IconVideo {...props} />,
   },
-  posts: {
+  {
+    key: 'posts',
     url: '/posts',
     icon: (props: IconProps) => <IconLayoutList {...props} />,
     grouped: true,
   },
-  articles: {
+  {
+    key: 'articles',
     url: '/articles',
     icon: (props: IconProps) => <IconFileText {...props} />,
   },
-  bounties: {
+  {
+    key: 'bounties',
     url: '/bounties',
     icon: (props: IconProps) => <IconMoneybag {...props} />,
     grouped: true,
   },
-  tools: {
+  {
+    key: 'tools',
     url: '/tools',
     icon: (props: IconProps) => <IconTools {...props} />,
     grouped: true,
   },
-  challenges: {
+  {
+    key: 'challenges',
     url: '/challenges',
     icon: (props: IconProps) => <IconTrophy {...props} />,
     grouped: true,
   },
-  events: {
+  {
+    key: 'events',
     url: '/events',
     icon: (props: IconProps) => <IconCalendar {...props} />,
     grouped: true,
   },
-  shop: {
+  {
+    key: 'shop',
     url: '/shop',
     // icon: (props: IconProps) => <IconShoppingBag {...props} />,
     icon: (props: IconProps) => <IconChristmasTree {...props} />,
     classes: ['tabHighlight'],
   },
-};
+];
+
+export function filterHomeOptions(features: FeatureAccess) {
+  return homeOptions.filter(
+    ({ key }) =>
+      ![
+        key === 'bounties' && !features.bounties,
+        key === 'clubs' && !features.clubs,
+        key === 'shop' && !features.cosmeticShop,
+        key === 'articles' && !features.articles,
+        key === 'tools' && !features.toolSearch,
+      ].some((b) => b)
+  );
+}
 
 const useTabsStyles = createStyles((theme) => ({
   tabHighlight: {
@@ -183,38 +209,29 @@ export function HomeTabs() {
 
   const [moreOpened, setMoreOpened] = useState(false);
 
+  const options = filterHomeOptions(features);
+
   return (
     <div className="flex items-center gap-1 overflow-x-auto overflow-y-hidden">
-      {Object.entries(homeOptions)
-        .filter(
-          ([key]) =>
-            ![
-              key === 'bounties' && !features.bounties,
-              key === 'clubs' && !features.clubs,
-              key === 'shop' && !features.cosmeticShop,
-              key === 'articles' && !features.articles,
-              key === 'tools' && !features.toolSearch,
-            ].some((b) => b)
-        )
-        .map(([key, value]) => {
-          return (
-            <Button
-              variant="default"
-              key={key}
-              component={Link}
-              href={value.url}
-              className={clsx('h-8 rounded-full border-none py-2 pl-3 pr-4', {
-                ['bg-gray-4 dark:bg-dark-4']: activePath === key,
-                [classes.groupedOptions]: value.grouped,
-                [classes.tabHighlight]: key === 'shop',
-              })}
-              classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
-            >
-              {value.icon({ size: 16 })}
-              <span className="text-base font-medium capitalize">{getDisplayName(key)}</span>
-            </Button>
-          );
-        })}
+      {options.map(({ key, ...value }) => {
+        return (
+          <Button
+            variant="default"
+            key={key}
+            component={Link}
+            href={value.url}
+            className={clsx('h-8 rounded-full border-none py-2 pl-3 pr-4', {
+              ['bg-gray-4 dark:bg-dark-4']: activePath === key,
+              [classes.groupedOptions]: value.grouped,
+              [classes.tabHighlight]: key === 'shop',
+            })}
+            classNames={{ label: 'flex gap-2 items-center capitalize overflow-visible' }}
+          >
+            {value.icon({ size: 16 })}
+            <span className="text-base font-medium capitalize">{getDisplayName(key)}</span>
+          </Button>
+        );
+      })}
       <Menu position="bottom-end" onChange={setMoreOpened}>
         <Menu.Target>
           <Button
@@ -232,10 +249,10 @@ export function HomeTabs() {
           </Button>
         </Menu.Target>
         <Menu.Dropdown>
-          {Object.entries(homeOptions)
-            .filter(([, value]) => value.grouped)
-            .map(([key, value]) => (
-              <Link legacyBehavior key={key} href={value.url} passHref>
+          {options
+            .filter((value) => value.grouped)
+            .map((value) => (
+              <Link legacyBehavior key={value.key} href={value.url} passHref>
                 <Menu.Item
                   component="a"
                   icon={value.icon({ size: 16 })}
@@ -249,7 +266,7 @@ export function HomeTabs() {
                   )}
                 >
                   <Group spacing={8} noWrap>
-                    <Text tt="capitalize">{getDisplayName(key)}</Text>
+                    <Text tt="capitalize">{getDisplayName(value.key)}</Text>
                   </Group>
                 </Menu.Item>
               </Link>

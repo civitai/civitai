@@ -62,7 +62,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { ModErrorBoundary } from '~/components/ErrorBoundary/ModErrorBoundary';
+import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -139,7 +139,7 @@ function MyApp(props: CustomAppProps) {
                 <GoogleAnalytics />
                 <AccountProvider>
                   <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                    <ModErrorBoundary>
+                    <ErrorBoundary>
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>
                           <SignalProvider>
@@ -180,7 +180,7 @@ function MyApp(props: CustomAppProps) {
                           </SignalProvider>
                         </BrowsingLevelProvider>
                       </BrowserSettingsProvider>
-                    </ModErrorBoundary>
+                    </ErrorBoundary>
                   </CivitaiSessionProvider>
                 </AccountProvider>
               </FeatureFlagsProvider>
