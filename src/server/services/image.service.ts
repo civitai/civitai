@@ -1684,12 +1684,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     if (!hideAutoResources) {
       versionFilters.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
     }
-    // TODO re-enable after backfilling
-    // if (!hideManualResources) {
-    //   versionFilters.push(
-    //     makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
-    //   );
-    // }
+    if (!hideManualResources) {
+      versionFilters.push(
+        makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
+      );
+    }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
   }
