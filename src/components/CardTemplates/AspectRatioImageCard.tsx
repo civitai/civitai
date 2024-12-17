@@ -44,6 +44,7 @@ type ImageProps = {
   user?: { id: number };
   width?: number | null;
   height?: number | null;
+  thumbnailUrl?: string | null;
 };
 
 type RoutedDialogProps<T extends DialogKey> = { name: T; state: DialogState<T> };
