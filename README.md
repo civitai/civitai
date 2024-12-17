@@ -68,12 +68,13 @@ First, make sure that you have the following installed on your machine:
 
 1. Follow the [Prerequisites](#prerequisites) steps above
 2. Clone the repository to your local machine
-3. Choose one:
-    - Use devcontainers
+3. Choose one method:
+    - a) Use devcontainers
         - Open the directory up in your IDE of choice
             - VS Code should prompt you to "Open in container"
             - For other IDEs, you may need to open the `.devcontainer/devcontainer.json` file, and click "Create devcontainer and mount sources"
-    - Run `make init`
+        - Run `make run` or `npm run dev`
+    - b) Run `make init`
         - This command will do a few things:
             - Creates a starter `env` file
             - Installs npm packages
