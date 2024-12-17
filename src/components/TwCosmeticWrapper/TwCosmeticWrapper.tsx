@@ -29,7 +29,7 @@ export function TwCosmeticWrapper({
   children: React.ReactElement;
 }) {
   const styleRef = useRef<Record<string, unknown> | undefined>();
-  if (!cosmetic) return children;
+  if (!cosmetic || !Object.keys(cosmetic).length) return children;
 
   const { cssFrame, texture, border, borderWidth, glow, type } = cosmetic;
 
