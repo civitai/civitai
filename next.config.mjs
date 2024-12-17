@@ -252,6 +252,11 @@ export default defineNextConfig(withAxiom({
         source: '/shop/cosmetic-shop',
         destination: '/shop',
         permanent: true,
+      },
+      {
+        source: '/projectodyssey_season2',
+        destination: '/collections/6503138',
+        permanent: true,
       }
     ];
   },

@@ -1,3 +1,14 @@
+.wrapper {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: theme('borderRadius.md');
+
+  & > * {
+    flex: 1;
+  }
+}
+
 .border {
   border: var(--borderWidth) solid var(--border);
 }

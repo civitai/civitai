@@ -1,12 +1,7 @@
-import { AspectRatio, Card, CardProps } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { AspectRatio, CardProps } from '@mantine/core';
 import React, { forwardRef } from 'react';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { useFrameStyles } from '~/components/Cards/Cards.styles';
-import { CosmeticLights } from '~/components/Cards/components/CosmeticLights';
-import { TwCard, TwCardAnchor } from '~/components/TwCard/TwCard';
-import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
-import clsx from 'clsx';
+import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 
 type AspectRatio = 'portrait' | 'landscape' | 'square' | 'flat';
 const aspectRatioValues: Record<
@@ -43,26 +38,20 @@ const aspectRatioValues: Record<
 export const FeedCard = forwardRef<HTMLElement, Props>(
   ({ href, children, aspectRatio = 'portrait', className, frameDecoration, onClick }, ref) => {
     const { stringRatio } = aspectRatioValues[aspectRatio];
+    const wrapperStyle = { aspectRatio: stringRatio };
 
     return (
-      <TwCosmeticWrapper cosmetic={frameDecoration?.data}>
-        {/* <CosmeticLights frameDecoration={frameDecoration} /> */}
-        {href ? (
-          <TwCardAnchor
-            ref={ref as any}
-            style={{ aspectRatio: stringRatio }}
-            href={href}
-            className={className}
-            onClick={onClick}
-          >
-            {children}
-          </TwCardAnchor>
-        ) : (
-          <TwCard ref={ref as any} style={{ aspectRatio: stringRatio }} onClick={onClick}>
-            {children}
-          </TwCard>
-        )}
-      </TwCosmeticWrapper>
+      <CosmeticCard
+        cosmetic={frameDecoration?.data}
+        cosmeticStyle={frameDecoration?.data ? wrapperStyle : undefined}
+        ref={ref}
+        style={!frameDecoration?.data ? { aspectRatio: stringRatio } : undefined}
+        onClick={onClick}
+        href={href}
+        className={className}
+      >
+        {children}
+      </CosmeticCard>
     );
   }
 );

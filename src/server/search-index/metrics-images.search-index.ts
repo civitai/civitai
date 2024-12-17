@@ -135,6 +135,7 @@ export type SearchBaseImage = {
   onSite: boolean;
   postedToId?: number;
   needsReview: string | null;
+  minor?: boolean;
   promptNsfw?: boolean;
 };
 
@@ -312,6 +313,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."type",
         i."userId",
         i."needsReview",
+        i.minor,
         p."publishedAt",
         (
           CASE

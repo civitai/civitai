@@ -51,6 +51,7 @@ import {
   ImageUploadProps,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
+  UpdateImageMinorInput,
   UpdateImageNsfwLevelOutput,
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
@@ -691,6 +692,7 @@ type GetAllImagesRaw = {
   metadata: ImageMetadata | VideoMetadata | null;
   baseModel?: string;
   availability: Availability;
+  minor: boolean;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1104,6 +1106,8 @@ export const getAllImages = async (
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
+    // Acceptable in collections, need to check for contest collection only
+    if (!collectionId) AND.push(Prisma.sql`i.minor = FALSE`);
     AND.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
@@ -1173,6 +1177,7 @@ export const getAllImages = async (
       u.image "userImage",
       u."deletedAt",
       p."availability",
+      i.minor,
       ${Prisma.raw(
         include.includes('metaSelect')
           ? '(CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta",'
@@ -1420,8 +1425,6 @@ export const getAllImagesIndex = async (
   const cursorParsed = input.cursor?.toString().split('|');
   const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
-
-  // console.log({ cursor, sort, offset, entry });
 
   const currentUserId = user?.id;
 
@@ -1834,8 +1837,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     const filteredHits = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
+      // filter out items flagged with minor unless it's the owner or moderator
+      if (hit.minor) return hit.userId === currentUserId || isModerator;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
+
       return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
 
@@ -2152,6 +2158,7 @@ export const getImage = async ({
       i.type,
       i.metadata,
       i."nsfwLevel",
+      i.minor,
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -2394,7 +2401,7 @@ export const getImagesForModelVersion = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -2578,7 +2585,7 @@ export const getImagesForPosts = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -3364,6 +3371,7 @@ type GetImageModerationReviewQueueRaw = {
   reportUsername?: string;
   reportUserId?: number;
   reportCount?: number;
+  minor: boolean;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3456,6 +3464,7 @@ export const getImageModerationReviewQueue = async ({
       i."postId",
       p."title" "postTitle",
       i."index",
+      i.minor,
       p."publishedAt",
       p."modelVersionId",
       u.username,
@@ -3550,6 +3559,7 @@ export const getImageModerationReviewQueue = async ({
       entityType?: string | null;
       entityId?: number | null;
       metadata?: MixedObject | null;
+      minor: boolean;
     }
   > = rawImages.map(
     ({
@@ -4460,4 +4470,19 @@ export async function setVideoThumbnail({
   });
 
   return updated;
+}
+
+export async function updateImageMinor({ id, minor }: UpdateImageMinorInput) {
+  const image = await dbWrite.image.update({
+    where: { id },
+    data: { minor },
+  });
+
+  // Remove it from search index if minor is true
+  await queueImageSearchIndexUpdate({
+    ids: [id],
+    action: minor ? SearchIndexUpdateQueueAction.Delete : SearchIndexUpdateQueueAction.Update,
+  });
+
+  return image;
 }

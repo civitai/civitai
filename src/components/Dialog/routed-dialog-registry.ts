@@ -36,6 +36,8 @@ function createDialogDictionary<T extends Record<string, unknown>>(
   return dictionary;
 }
 
+export type DialogKey = keyof typeof dialogs;
+export type DialogState<T extends DialogKey> = ComponentProps<(typeof dialogs)[T]['component']>;
 export const dialogs = createDialogDictionary({
   imageDetail: {
     component: ImageDetailModal,
