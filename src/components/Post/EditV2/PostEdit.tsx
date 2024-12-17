@@ -7,6 +7,7 @@ import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
 import { PostImageCards } from '~/components/Post/EditV2/PostImageCards/PostImageCards';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import { PostReorderImages } from '~/components/Post/EditV2/PostReorderImages';
+import { removeDuplicates } from '~/utils/array-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function PostEdit() {
@@ -21,7 +22,7 @@ export function PostEdit() {
 
   return (
     <CollectionUploadSettingsWrapper
-      collectionIds={[collectionId, post.collectionId].filter(isDefined)}
+      collectionIds={removeDuplicates([collectionId, post.collectionId].filter(isDefined))}
     >
       <div className="@container">
         <div className="flex flex-col gap-3 @sm:flex-row @sm:justify-center @sm:gap-6">

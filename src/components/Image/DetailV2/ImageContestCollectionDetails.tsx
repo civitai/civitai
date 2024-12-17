@@ -36,14 +36,15 @@ export const ImageContestCollectionDetails = ({
 }) => {
   const isOwnerOrMod = isOwner || isModerator;
 
-  const { updateImage } = useImageDetailContext();
+  const { updateImage, collection } = useImageDetailContext();
   const { collectionItems } = useImageContestCollectionDetails(
     { id: image.id },
     { enabled: !!image.id }
   );
   const queryUtils = trpc.useUtils();
 
-  if ((collectionItems?.length ?? 0) === 0) return null;
+  const includeCallouts = collection?.metadata?.includeContestCallouts ?? false;
+  if ((collectionItems?.length ?? 0) === 0 || !includeCallouts) return null;
 
   const displayedItems =
     collectionItems?.filter(
