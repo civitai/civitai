@@ -135,6 +135,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -4473,8 +4474,10 @@ export async function setVideoThumbnail({
   customThumbnail,
   userId,
   isModerator,
+  postId,
 }: SetVideoThumbnailInput & { userId: number; isModerator?: boolean }) {
-  const image = await dbRead.image.findUnique({
+  const db = await getDbWithoutLag('postImages', postId);
+  const image = await db.image.findUnique({
     where: { id: imageId, userId: !isModerator ? userId : undefined },
     select: { id: true, type: true, metadata: true, userId: true },
   });
@@ -4493,18 +4496,20 @@ export async function setVideoThumbnail({
   }
 
   const videoMetadata = image.metadata as VideoMetadata;
-  const updated = await dbWrite.image.update({
+  const updated = await db.image.update({
     where: { id: imageId },
     data: { metadata: { ...videoMetadata, thumbnailFrame: frame, thumbnailId } },
   });
 
   // Clear up the thumbnail cache
-  await thumbnailCache.bust(imageId);
-
-  await queueImageSearchIndexUpdate({
-    ids: [imageId],
-    action: SearchIndexUpdateQueueAction.Update,
-  });
+  await Promise.all([
+    preventReplicationLag('postImages', postId),
+    thumbnailCache.bust(imageId),
+    queueImageSearchIndexUpdate({
+      ids: [imageId],
+      action: SearchIndexUpdateQueueAction.Update,
+    }),
+  ]);
 
   return updated;
 }

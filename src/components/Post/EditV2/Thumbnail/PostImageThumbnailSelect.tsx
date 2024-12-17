@@ -228,19 +228,19 @@ const useSetThumbnailMutation = ({ postId, imageId }: { imageId: number; postId?
   const setThumbnailMutation = trpc.image.setThumbnail.useMutation({
     onSuccess: (_, payload) => {
       if (postId) {
-        const { frame } = payload;
+        const { frame, customThumbnail } = payload;
         queryUtils.post.getEdit.setData(
           { id: postId },
           produce((old) => {
             if (!old) return;
+
             const affectedImage = old.images.find((image) => image.id === imageId);
-            if (affectedImage && 'thumbnailFrame' in affectedImage.metadata) {
-              affectedImage.metadata.thumbnailFrame = frame;
+            if (affectedImage && frame) {
+              affectedImage.metadata = { ...affectedImage.metadata, thumbnailFrame: frame };
               affectedImage.thumbnailUrl = null;
             }
 
-            if (affectedImage && payload.customThumbnail)
-              affectedImage.thumbnailUrl = payload.customThumbnail.url;
+            if (affectedImage && customThumbnail) affectedImage.thumbnailUrl = customThumbnail.url;
           })
         );
       }
@@ -257,7 +257,7 @@ const useSetThumbnailMutation = ({ postId, imageId }: { imageId: number; postId?
     frame,
     customThumbnail,
   }: Omit<SetVideoThumbnailInput, 'imageId'>) => {
-    return setThumbnailMutation.mutateAsync({ imageId, frame, customThumbnail });
+    return setThumbnailMutation.mutateAsync({ imageId, frame, customThumbnail, postId });
   };
 
   return { setThumbnail: handleSetThumbnail, loading: setThumbnailMutation.isLoading };
