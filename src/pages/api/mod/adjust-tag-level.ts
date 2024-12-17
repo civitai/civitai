@@ -1,4 +1,4 @@
-import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { ImageIngestionStatus, TagType } from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { NsfwLevel } from '~/server/common/enums';
@@ -17,9 +17,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (!tags.length) return res.status(400).json({ error: 'No tags provided' });
   if (!nsfwLevel) return res.status(400).json({ error: 'No nsfwLevel provided' });
 
+  const tagType = nsfwLevel === NsfwLevel.PG ? TagType.Label : TagType.Moderation;
   const updateResult = await pgDbWrite.query<{ id: number }>(`
     UPDATE "Tag"
-    SET "nsfwLevel" = ${nsfwLevel}
+    SET "nsfwLevel" = ${nsfwLevel}, type = '${tagType}'::"TagType"
     WHERE name IN (${tags.map((tag) => `'${tag}'`)})
       AND "nsfwLevel" != ${nsfwLevel}
     RETURNING id;
