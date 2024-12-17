@@ -301,7 +301,8 @@ const CollectionItemGridItem = ({
       />
       <FeedCard
         className={cx({
-          ['opacity-60']: selected || !statuses.includes(collectionItem.status),
+          ['opacity-60']:
+            selected || (collectionItem.status && !statuses.includes(collectionItem.status)),
         })}
       >
         <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
