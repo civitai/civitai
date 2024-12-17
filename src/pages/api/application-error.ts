@@ -4,7 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
-const schema = z.object({ message: z.string(), errorInfo: z.string() });
+const schema = z.object({ message: z.string(), stack: z.string() });
 
 export default PublicEndpoint(
   async function handler(req, res) {
@@ -12,13 +12,15 @@ export default PublicEndpoint(
       const session = await getServerAuthSession({ req, res });
       const queryInput = schema.parse(JSON.parse(req.body));
       if (isProd) {
-        await logToAxiom({
+        const payload = {
           name: 'application-error',
           type: 'error',
           url: req.headers.referer,
           userId: session?.user?.id,
+          browser: req.headers['user-agent'],
           ...queryInput,
-        });
+        };
+        await logToAxiom(payload);
       }
       return res.status(200).end();
     } catch (e: any) {

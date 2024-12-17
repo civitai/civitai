@@ -12,7 +12,7 @@ interface Props {
 interface State {
   hasError: boolean;
   error?: Error;
-  errorInfo?: ErrorInfo;
+  stack?: string;
 }
 
 class UserErrorBoundary extends Component<Props, State> {
@@ -29,10 +29,10 @@ class UserErrorBoundary extends Component<Props, State> {
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     // You can use your own error logging service here
     console.log('Error Boundary:', { error, errorInfo });
-    this.setState({ error, errorInfo });
+    this.setState({ error, stack: errorInfo.componentStack });
     fetch('/api/application-error', {
       method: 'POST',
-      body: JSON.stringify({ message: error.message, errorInfo: errorInfo.componentStack }),
+      body: JSON.stringify({ message: error.message, stack: errorInfo.componentStack }),
     });
   }
   render() {
