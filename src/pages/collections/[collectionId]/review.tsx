@@ -294,7 +294,11 @@ const CollectionItemGridItem = ({
           }
         }}
       />
-      <FeedCard className={cx({ ['opacity-60']: selected || collectionItem.status !== undefined })}>
+      <FeedCard
+        className={cx({
+          ['opacity-60']: selected || collectionItem.status !== CollectionItemStatus.REVIEW,
+        })}
+      >
         <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
           <Stack
             sx={{
