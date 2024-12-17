@@ -263,6 +263,13 @@ export function RichTextEditor({
             addPasteHandler: false,
             modestBranding: false,
           }).extend({
+            renderHTML(input) {
+              const { HTMLAttributes } = input;
+              if (!HTMLAttributes.src || !this.parent)
+                return ['div', { 'data-youtube-video': '' }];
+
+              return this.parent(input);
+            },
             addPasteRules() {
               return [
                 nodePasteRule({
