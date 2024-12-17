@@ -546,7 +546,7 @@ export const engineDefinitions: EnginesDictionary = {
     whatIf: ['mode', 'duration'],
   },
   minimax: {
-    label: 'Minimax',
+    label: 'Hailou by MiniMax',
     description: '',
     whatIf: [],
   },
