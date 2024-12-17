@@ -18,12 +18,10 @@
 				"ms-azuretools.vscode-docker",
 				"mtxr.sqltools",
 				"mtxr.sqltools-driver-pg",
-				"ultram4rine.sqltools-clickhouse-driver",
-				"redis.redis-for-vscode"
+				"ultram4rine.sqltools-clickhouse-driver"
 			]
 		}
 	},
 	"remoteUser": "root",
-	"postCreateCommand": "make init-devcontainer",
-	"postStartCommand": "nohup bash -c make run &"
+	"postCreateCommand": "make init-devcontainer"
 }

@@ -10,7 +10,7 @@ services:
   civitai:
     image: mcr.microsoft.com/devcontainers/typescript-node:1-20
     volumes:
-      - ../..:/workspaces
+      - ..:/workspaces:cached
 
     # Overrides default command so things don't shut down after the process ends.
     command: sleep infinity
