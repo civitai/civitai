@@ -218,37 +218,49 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   },
 });
 
+type EntityCosmeticLookupRaw = {
+  equippedToId: number;
+  cosmeticId: number;
+  claimKey: string;
+  userData: Prisma.JsonValue;
+};
 export const cosmeticEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
     entity as CosmeticEntity,
     createCachedObject<WithClaimKey<ContentDecorationCosmetic>>({
-      key: `${REDIS_KEYS.CACHES.COSMETICS_OLD}:${entity}`,
+      key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
       cacheNotFound: false,
       lookupFn: async (ids) => {
-        // TODO: This might be a gamble since dbWrite could be heavily hit, however, considering we have
-        // 1 day TTL, it might be worth it to keep the cache fresh. With dbRead, lag can cause cosmetics to linger
-        // for 1 day.
-        const entityCosmetics = await dbWrite.$queryRaw<
-          WithClaimKey<
-            ContentDecorationCosmetic & { userData: ContentDecorationCosmetic['data'] }
-          >[]
-        >`
-          SELECT c.id, c.data, uc."equippedToId", uc."claimKey", uc."data" as "userData"
+        const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
+          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
           FROM "UserCosmetic" uc
-          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
-            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
-            AND c.type = 'ContentDecoration';
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity";
         `;
         return Object.fromEntries(
-          entityCosmetics.map((x) => {
-            if (x.userData) {
-              x.data.lights = x.userData.lights;
-            }
-            return [x.equippedToId, x];
-          })
+          entityCosmetics.map((x) => [
+            x.equippedToId,
+            // Hack here so we can fix it in the appendFn
+            x as any as WithClaimKey<ContentDecorationCosmetic>,
+          ])
         );
+      },
+      appendFn: async (records) => {
+        const rawRecords = records as any as Set<EntityCosmeticLookupRaw>;
+        const cosmeticIds = [...new Set(Array.from(rawRecords).map((x) => x.cosmeticId))];
+        const cosmetics = await cosmeticCache.fetch(cosmeticIds);
+
+        for (const record of records) {
+          const rawRecord = record as any as EntityCosmeticLookupRaw;
+          const cosmetic = cosmetics[rawRecord.cosmeticId];
+          if (!cosmetic) continue;
+          record.data = cosmetic.data as ContentDecorationCosmetic['data'];
+          if (rawRecord.userData) {
+            const userData = rawRecord.userData as ContentDecorationCosmetic['data'];
+            if (userData.lights) record.data.lights = userData.lights;
+          }
+        }
       },
       ttl: CacheTTL.day,
     }),

@@ -2,7 +2,6 @@ import { PrismaClient } from '@prisma/client';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
-import { userCosmeticCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 
 // Disable pod memory keeping for now... We might not need it.
