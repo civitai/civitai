@@ -28,7 +28,6 @@ $borderRadius: 8px;
     inset: 6px;
     border-radius: #{$borderRadius - 2px};
     box-shadow: inset 0 1px 2px 1px rgba(255, 255, 255, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
-    z-index: 1000;
   }
 }
 .texture {

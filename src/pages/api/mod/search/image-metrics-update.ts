@@ -169,6 +169,7 @@ const updateBaseModel = async () => {
 
 const addCollections = async () => {
   const fetchKey = 'Fetch';
+  console.log(fetchKey);
   console.time(fetchKey);
   const query = await pgDbReadLong.cancellableQuery<{ id: number; collections: number[] }>(`
     SELECT
@@ -183,29 +184,12 @@ const addCollections = async () => {
 
   const chunks = chunk(results, BATCH_SIZE);
   const tasks = chunks.map((batch, i) => async () => {
-    const batchKey = `${i} of ${chunks.length}`;
-    const postCheckKey = `Post Check: ${batchKey}`;
-    console.log(postCheckKey);
-    console.time(postCheckKey);
-    const imageIds = batch.map((r) => r.id);
-    const havePosts = await dbRead.$queryRaw<{ id: number }[]>`
-      SELECT DISTINCT "id"
-      FROM "Image"
-      WHERE "id" IN (${Prisma.join(imageIds)});
-    `;
-    console.timeEnd(postCheckKey);
-
-    const documents = havePosts.map(({ id }) => {
-      const collections = results.find((r) => r.id === id)?.collections;
-      return { id, collections };
-    });
-
     const consolePushKey = `Push: ${i} of ${chunks.length}`;
     console.log(consolePushKey);
     console.time(consolePushKey);
     await updateDocs({
       indexName: INDEX_ID,
-      documents,
+      documents: batch,
       batchSize: BATCH_SIZE,
       client: metricsSearchClient,
     });
