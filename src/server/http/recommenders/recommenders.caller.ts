@@ -1,6 +1,5 @@
 import { env } from '~/env/server.mjs';
 import { HttpCaller } from '~/server/http/httpCaller';
-import { parseStringPromise, Builder } from 'xml2js';
 import {
   RecommendationRequest,
   RecommendationsResponse,
@@ -37,4 +36,4 @@ class RecommenderCaller extends HttpCaller {
   }
 }
 
-export default RecommenderCaller.getInstance();
+export default RecommenderCaller.getInstance;
