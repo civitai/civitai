@@ -483,6 +483,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     // workflow and quantity are only here because they are required for other components to function
     params: {
       ...input,
+      sourceImage: (input as any).sourceImage ?? (input as any).sourceImageUrl,
       workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },

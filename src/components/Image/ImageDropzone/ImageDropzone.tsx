@@ -1,4 +1,4 @@
-import { createStyles, Group, Input, Stack, Text } from '@mantine/core';
+import { Input, Text, useMantineTheme } from '@mantine/core';
 import { Dropzone, DropzoneProps } from '@mantine/dropzone';
 import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import { DragEvent, useState } from 'react';
@@ -6,6 +6,12 @@ import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
+import clsx from 'clsx';
+
+const internalUrlDropList = [
+  'https://orchestration.civitai.com',
+  'https://orchestration-stage.civitai.com',
+];
 
 export function ImageDropzone({
   disabled: initialDisabled,
@@ -17,12 +23,11 @@ export function ImageDropzone({
   description,
   accept = IMAGE_MIME_TYPE,
   maxSize = constants.mediaUpload.maxImageFileSize,
-  orientation = 'vertical',
   onExceedMax,
+  allowExternalImageDrop,
   ...props
 }: Props) {
-  const { classes, cx, theme } = useStyles();
-
+  const theme = useMantineTheme();
   const [error, setError] = useState('');
 
   const canAddFiles = max - count > 0;
@@ -51,44 +56,30 @@ export function ImageDropzone({
 
   const handleDropCapture = async (e: DragEvent) => {
     const url = e.dataTransfer.getData('text/uri-list');
-    if (
-      !(
-        url.startsWith('https://orchestration.civitai.com') ||
-        url.startsWith('https://orchestration-stage.civitai.com')
-      )
-    )
-      return;
+    if (!allowExternalImageDrop && !internalUrlDropList.some((x) => url.startsWith(x))) return;
     const blob = await fetchBlob(url);
     if (!blob) return;
     const file = new File([blob], url.substring(url.lastIndexOf('/')), { type: blob.type });
     handleDrop([file]);
   };
 
-  const verticalOrientation = orientation === 'vertical';
-
   return (
-    <Stack spacing={5}>
+    <>
       <Dropzone
         {...props}
         accept={accept}
-        className={cx({ [classes.disabled]: disabled })}
+        className={clsx({
+          ['bg-gray-0 dark:bg-dark-6 border-gray-2 dark:border-dark-5 cursor-not-allowed [&_*]:text-gray-5 [&_*]:dark:text-dark-3']:
+            disabled,
+        })}
         classNames={{
-          root: hasError || !!error ? classes.error : undefined,
+          root: clsx({ ['border-red-6 mb-1']: hasError || !!error }),
         }}
         disabled={!canAddFiles || disabled}
         onDrop={handleDrop}
         onDropCapture={handleDropCapture}
       >
-        <Group
-          position="center"
-          spacing={verticalOrientation ? 8 : 'xl'}
-          style={{
-            minHeight: 120,
-            pointerEvents: 'none',
-            flexDirection: verticalOrientation ? 'column' : 'row',
-          }}
-          noWrap
-        >
+        <div className="pointer-events-none flex min-h-28 flex-col items-center justify-center gap-2">
           <Dropzone.Accept>
             <IconUpload
               size={50}
@@ -107,14 +98,16 @@ export function ImageDropzone({
             <IconPhoto size={50} stroke={1.5} />
           </Dropzone.Idle>
 
-          <Stack spacing={4} align={verticalOrientation ? 'center' : 'flex-start'}>
-            <Text size="xl" inline>
+          <div className="flex flex-col items-center gap-1">
+            <Text size="xl" inline align="center">
               {label ?? 'Drag images here or click to select files'}
             </Text>
             {description}
-            <Text size="sm" color="dimmed" mt={7} inline>
-              {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
-            </Text>
+            {(!max || max > 1) && (
+              <Text size="sm" color="dimmed" mt={7} inline>
+                {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
+              </Text>
+            )}
             {fileExtensions.length > 0 && (
               <Text size="sm" color="dimmed" inline>
                 {`Accepted file types: ${fileExtensions.join(', ')}`}
@@ -132,29 +125,13 @@ export function ImageDropzone({
                 } seconds in duration`}
               </Text>
             )}
-          </Stack>
-        </Group>
+          </div>
+        </div>
       </Dropzone>
-      {error && <Input.Error>{error}</Input.Error>}
-    </Stack>
+      {error && <Input.Error className="mt-1">{error}</Input.Error>}
+    </>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  disabled: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-    cursor: 'not-allowed',
-
-    '& *': {
-      color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[5],
-    },
-  },
-  error: {
-    borderColor: theme.colors.red[6],
-    marginBottom: theme.spacing.xs / 2,
-  },
-}));
 
 type Props = Omit<DropzoneProps, 'children'> & {
   count: number;
@@ -163,6 +140,6 @@ type Props = Omit<DropzoneProps, 'children'> & {
   label?: string;
   description?: React.ReactNode;
   accept?: string[];
-  orientation?: 'vertical' | 'horizontal';
   onExceedMax?: () => void;
+  allowExternalImageDrop?: boolean;
 };

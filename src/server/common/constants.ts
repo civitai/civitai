@@ -226,6 +226,7 @@ export const constants = {
   },
   maxTrainingRetries: 2,
   mediaUpload: {
+    maxOrchestratorImageFileSize: 60 * 1024 ** 2, // 16MB
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
     maxVideoFileSize: 750 * 1024 ** 2, // 750MB
     maxVideoDimension: 3840,
@@ -403,6 +404,12 @@ export const constants = {
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
 );
+
+export const maxOrchestratorImageFileSize = 16 * 1024 ** 2; // 16MB
+export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
+export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
+export const maxVideoDimension = 3840;
+export const maxVideoDurationSeconds = 245;
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];

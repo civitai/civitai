@@ -27,6 +27,7 @@ import {
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
+import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
   createTextToImage,
   createTextToImageStep,
@@ -243,6 +244,12 @@ export const orchestratorRouter = router({
   generate: orchestratorGuardedProcedure
     .input(z.any())
     .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
+  // #endregion
+
+  // #region [Image upload]
+  imageUpload: orchestratorGuardedProcedure
+    .input(z.object({ sourceImage: z.string() }))
+    .mutation(({ ctx, input }) => imageUpload({ token: ctx.token, ...input })),
   // #endregion
 
   // #region [image training]

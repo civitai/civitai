@@ -39,7 +39,7 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
-import { ImageUrlInput } from '~/components/Generate/Input/InputImageUrl';
+import { GeneratorImageInput } from '~/components/Generate/Input/InputImageUrl';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
@@ -137,12 +137,16 @@ export function VideoGenerationForm() {
               data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
             />
 
-            {workflow?.subType.startsWith('img') && (
+            {/* {workflow?.subType.startsWith('img') && (
               <ImageUrlInput
                 value={sourceImageUrl}
                 onChange={generationFormStore.setSourceImageUrl}
               />
-            )}
+            )} */}
+            <GeneratorImageInput
+              value={sourceImageUrl}
+              onChange={generationFormStore.setSourceImageUrl}
+            />
           </div>
           <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
             <EngineForm />
@@ -571,7 +575,7 @@ function validateInput(workflow: GenerationWorkflowConfig, data?: Record<string,
     ...data,
     engine: workflow.engine,
     workflow: workflow.key,
-    sourceImageUrl,
+    sourceImage: sourceImageUrl,
     width,
     height,
     type: workflow.subType,

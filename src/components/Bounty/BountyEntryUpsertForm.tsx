@@ -216,7 +216,6 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
             onDrop={handleDropImages}
             count={imageFiles.length}
             mt={5}
-            orientation="vertical"
             accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           />
         </Input.Wrapper>
