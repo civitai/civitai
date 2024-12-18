@@ -26,11 +26,6 @@ export type EdgeMediaProps = EdgeUrlProps &
     thumbnailUrl?: string | null;
   };
 
-type InternalState = {
-  src: string;
-  anim?: boolean;
-};
-
 export function EdgeMedia({
   src,
   height,
@@ -69,17 +64,15 @@ export function EdgeMedia({
   useEffect(() => {
     mediaRef?.[1](imgRef.current);
   }, [mediaRef]);
-  const [internalState, setInternalState] = useState<InternalState>({
-    anim,
-    src: thumbnailUrl ?? src,
-  });
+
+  const [isPlaying, setIsPlaying] = useState(false);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
-  const { url, type: inferredType } = useEdgeUrl(internalState.src, {
+  const { url, type: inferredType } = useEdgeUrl(anim === false && thumbnailUrl && !isPlaying  ? thumbnailUrl : src , {
     width,
     height,
     fit,
-    anim: internalState.anim ?? anim,
+    anim: type === 'video' && isPlaying ? true : anim,
     transcode,
     blur,
     quality,
@@ -91,11 +84,12 @@ export function EdgeMedia({
   });
 
   const { start, clear } = useTimeout(() => {
-    setInternalState({ anim: true, src: src });
+    setIsPlaying(true);
   }, 1000);
 
   const handleMouseOut = () => {
-    if (!anim && internalState.anim) setInternalState({ anim: false, src: thumbnailUrl ?? src });
+    if (type !== 'video') return;
+    if (isPlaying && !anim) setIsPlaying(false);
     clear();
   };
 

@@ -71,12 +71,11 @@ function getClickHouse() {
 export let clickhouse: CustomClickHouseClient | undefined;
 const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
 if (shouldConnect) {
-  clickhouse = getClickHouse();
-  // if (isProd) clickhouse = getClickHouse();
-  // else {
-  //   if (!global.globalClickhouse) global.globalClickhouse = getClickHouse();
-  //   clickhouse = global.globalClickhouse;
-  // }
+  if (isProd) clickhouse = getClickHouse();
+  else {
+    if (!global.globalClickhouse) global.globalClickhouse = getClickHouse();
+    clickhouse = global.globalClickhouse;
+  }
 }
 
 function formatSqlType(value: any): string {
