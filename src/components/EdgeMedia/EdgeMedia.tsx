@@ -68,20 +68,23 @@ export function EdgeMedia({
   const [isPlaying, setIsPlaying] = useState(false);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
-  const { url, type: inferredType } = useEdgeUrl(anim === false && thumbnailUrl && !isPlaying  ? thumbnailUrl : src , {
-    width,
-    height,
-    fit,
-    anim: type === 'video' && isPlaying ? true : anim,
-    transcode,
-    blur,
-    quality,
-    gravity,
-    name,
-    type,
-    original,
-    skip,
-  });
+  const { url, type: inferredType } = useEdgeUrl(
+    anim === false && thumbnailUrl && !isPlaying ? thumbnailUrl : src,
+    {
+      width,
+      height,
+      fit,
+      anim: type === 'video' && isPlaying ? true : anim,
+      transcode,
+      blur,
+      quality,
+      gravity,
+      name,
+      type,
+      original,
+      skip,
+    }
+  );
 
   const { start, clear } = useTimeout(() => {
     setIsPlaying(true);
