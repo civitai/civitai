@@ -7,6 +7,7 @@ import {
   Box,
   Button,
   Card,
+  Center,
   Divider,
   Group,
   Loader,
@@ -60,6 +61,7 @@ import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageTools
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
@@ -96,7 +98,7 @@ type State = {
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
-  isOnSite: boolean;
+  canAdd: boolean;
   otherImages: PostEditImageDetail[];
   allowedResources: AllowedResource[];
   isPendingManualAssignment: boolean;
@@ -154,6 +156,10 @@ const getAllowedResources = (resources: ResourceHelper[]) => {
   return [];
 };
 
+const canAddFunc = (type: MediaType, meta: ImageMetaProps | null) => {
+  return type === MediaType.video || !isMadeOnSite(meta);
+};
+
 // #region [AddedImage Provider]
 export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
@@ -168,10 +174,10 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     state.post?.id,
   ]);
 
-  const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta } = storedImage;
+  const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type } = storedImage;
   const otherImages = images
     .filter((img) => img.type === 'added')
-    .filter((img) => img.data.id !== id && !isMadeOnSite(img.data.meta)) // double filter because TS is stupid
+    .filter((img) => img.data.id !== id && canAddFunc(img.data.type, img.data.meta)) // double filter because TS is stupid
     .map((i) => i.data);
 
   const allowedResources = useMemo(() => {
@@ -183,7 +189,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
   const isBlocked = false;
-  const isOnSite = isMadeOnSite(meta);
+  const canAdd = canAddFunc(type, meta);
   // #endregion
 
   // #region [delete image]
@@ -257,7 +263,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     },
   });
   const addResource = (modelVersionId: number) => {
-    if (isOnSite) return;
+    if (!canAdd) return;
     addResourceMutation.mutate({ id: [id], modelVersionId });
   };
   // #endregion
@@ -269,7 +275,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isBlocked,
         isPending,
         isScanned,
-        isOnSite,
+        canAdd,
         otherImages,
         allowedResources,
         onDelete: handleDelete,
@@ -322,8 +328,7 @@ function Preview() {
 
 const ResourceHeader = () => {
   const status = useGenerationStatus();
-  const { image, allowedResources, addResource, isAddingResource, isOnSite } =
-    useAddedImageContext();
+  const { image, allowedResources, addResource, isAddingResource, canAdd } = useAddedImageContext();
 
   const cantAdd = image.resourceHelper.length >= status.limits.resources;
 
@@ -345,7 +350,7 @@ const ResourceHeader = () => {
           create this image.
         </InfoPopover>
       </div>
-      {!isOnSite ? (
+      {canAdd ? (
         <Group spacing="xs">
           <Box className="hidden group-hover:block">
             <InfoPopover
@@ -401,7 +406,7 @@ const ResourceHeader = () => {
 };
 
 const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) => {
-  const { image, isOnSite, otherImages } = useAddedImageContext();
+  const { image, canAdd, otherImages } = useAddedImageContext();
   const status = useGenerationStatus();
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
@@ -470,7 +475,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   });
 
   const handleRemoveResource = () => {
-    if (isOnSite || !modelVersionId || detected) return;
+    if (!canAdd || !modelVersionId || detected) return;
     openConfirmModal({
       centered: true,
       title: 'Remove Resource',
@@ -478,7 +483,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
-        if (isOnSite) return;
+        if (!canAdd) return;
         removeResourceMutation.mutate({ id: image.id, modelVersionId });
       },
     });
@@ -544,7 +549,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
               </ActionIcon>
             </Tooltip>
           )}
-          {isOnSite ? (
+          {!canAdd ? (
             <></>
           ) : (
             <Tooltip label="Delete">
@@ -760,24 +765,28 @@ function EditDetail() {
             {/*
           // #region [missing resources]
           */}
-            {!resources?.length && image.type === 'image' && (
+            {!resources?.length && (
               <CustomCard className="flex flex-col gap-2">
                 <ResourceHeader />
-                <Alert className="rounded-lg" color="yellow">
-                  <Text>
-                    Install the{' '}
-                    <Text
-                      component="a"
-                      href="https://github.com/civitai/sd_civitai_extension"
-                      target="_blank"
-                      variant="link"
-                      rel="nofollow"
-                    >
-                      Civitai Extension for Automatic 1111 Stable Diffusion Web UI
-                    </Text>{' '}
-                    to automatically detect all the resources used in your images.
-                  </Text>
-                </Alert>
+                {image.type === 'image' ? (
+                  <Alert className="rounded-lg" color="yellow">
+                    <Text>
+                      Install the{' '}
+                      <Text
+                        component="a"
+                        href="https://github.com/civitai/sd_civitai_extension"
+                        target="_blank"
+                        variant="link"
+                        rel="nofollow"
+                      >
+                        Civitai Extension for Automatic 1111 Stable Diffusion Web UI
+                      </Text>{' '}
+                      to automatically detect all the resources used in your images.
+                    </Text>
+                  </Alert>
+                ) : (
+                  <Center>No resources found.</Center>
+                )}
               </CustomCard>
             )}
             {/* #endregion */}

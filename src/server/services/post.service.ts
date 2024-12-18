@@ -54,6 +54,7 @@ import {
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
+  MediaType,
   ModelHashType,
   TagTarget,
   TagType,
@@ -1006,14 +1007,14 @@ export const addResourceToPostImage = async ({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
-    select: { postId: true, meta: true, resourceHelper: true },
+    select: { postId: true, meta: true, resourceHelper: true, type: true },
   });
 
   if (images.length !== imageIds.length) {
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
   // TODO technically this can be called with a combo of on/off site imgs
-  if (images.some((i) => isMadeOnSite(i.meta as ImageMetaProps))) {
+  if (images.some((i) => i.type !== MediaType.video && isMadeOnSite(i.meta as ImageMetaProps))) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
