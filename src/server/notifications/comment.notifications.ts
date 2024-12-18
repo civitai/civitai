@@ -1,4 +1,4 @@
-import { startCase } from 'lodash-es';
+import { isEmpty, startCase } from 'lodash-es';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { QS } from '~/utils/qs';
@@ -440,10 +440,13 @@ export const commentNotifications = createNotificationProcessor({
   'new-article-comment': {
     displayName: 'New comments on your articles',
     category: NotificationCategory.Comment,
-    prepareMessage: ({ details }) => ({
-      message: `${details.username} commented on your article: "${details.articleTitle}"`,
-      url: `/articles/${details.articleId}?highlight=${details.commentId}#comments`,
-    }),
+    prepareMessage: ({ details }) =>
+      details && !isEmpty(details)
+        ? {
+            message: `${details.username} commented on your article: "${details.articleTitle}"`,
+            url: `/articles/${details.articleId}?highlight=${details.commentId}#comments`,
+          }
+        : undefined,
     prepareQuery: ({ lastSent }) => `
       WITH new_article_comment AS (
         SELECT DISTINCT

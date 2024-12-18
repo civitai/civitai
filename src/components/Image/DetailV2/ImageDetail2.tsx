@@ -134,9 +134,10 @@ export function ImageDetail2() {
 
   if (!image) return <NotFound />;
 
-  const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel;
+  const actualCollection = collection || collectionItems[0]?.collection;
+  const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
-  const hideAds = collection?.metadata?.hideAds ?? false;
+  const hideAds = actualCollection?.metadata?.hideAds ?? false;
 
   const handleSaveClick = () =>
     openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });

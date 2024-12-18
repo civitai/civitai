@@ -615,3 +615,43 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
   },
   ttl: CacheTTL.hour,
 });
+
+export const thumbnailCache = createCachedObject<{
+  id: number;
+  url: string;
+  nsfwLevel: NsfwLevel;
+  parentId?: number;
+}>({
+  key: REDIS_KEYS.CACHES.THUMBNAILS,
+  idKey: 'parentId',
+  lookupFn: async (ids) => {
+    if (ids.length === 0) return {};
+
+    const targets = await dbRead.$queryRaw<{ thumbnailId: string }[]>`
+        SELECT
+          cast(metadata->'thumbnailId' as int) as "thumbnailId"
+        FROM "Image"
+        WHERE id IN (${Prisma.join(ids as number[])})
+          AND type = 'video'::"MediaType"
+      `;
+
+    const thumbnailIds = targets.map((x) => x.thumbnailId).filter(isDefined);
+    if (thumbnailIds.length === 0) return {};
+
+    const thumbnails = await dbRead.$queryRaw<
+      { id: number; url: string; nsfwLevel: NsfwLevel; parentId: number }[]
+    >`
+        SELECT
+          id,
+          url,
+          "nsfwLevel",
+          cast(metadata->'parentId' as int) as "parentId"
+        FROM "Image"
+        WHERE id IN (${Prisma.join(thumbnailIds)})
+      `;
+
+    return Object.fromEntries(thumbnails.filter((x) => !!x.parentId).map((x) => [x.parentId, x]));
+  },
+  dontCacheFn: (data) => !data.nsfwLevel,
+  ttl: CacheTTL.day,
+});

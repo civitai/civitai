@@ -7,10 +7,17 @@ import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   const milestone = 1;
-  const milestoneCosmeticId = await dbWrite.cosmetic.findFirst({
-    where: { name: `Holiday 2024: ${milestone} lights` },
-    select: { id: true },
-  });
+  const milestoneCosmeticId = (
+    await dbWrite.cosmetic.findFirst({
+      where: { name: `Holiday 2024: ${milestone} lights` },
+      select: { id: true },
+    })
+  )?.id;
+  if (!milestoneCosmeticId) {
+    return res
+      .status(404)
+      .json({ success: false, message: `Cosmetic not found for milestone ${milestone}` });
+  }
 
   const earnedBadge = await dbWrite.$queryRaw<{ userId: number }[]>`
     SELECT DISTINCT
