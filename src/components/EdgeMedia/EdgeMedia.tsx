@@ -1,7 +1,7 @@
 import { createStyles, Text } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPlayerPlayFilled } from '@tabler/icons-react';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
@@ -84,10 +84,10 @@ export function EdgeMedia({
     setInternalAnim(true);
   }, 1000);
 
-  const handleMouseOut = () => {
+  const handleMouseOut = useCallback(() => {
     if (!anim && internalAnim) setInternalAnim(false);
     clear();
-  };
+  }, [anim, internalAnim, clear]);
 
   switch (inferredType) {
     case 'image': {

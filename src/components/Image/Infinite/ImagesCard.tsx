@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -60,12 +60,40 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
+  const handleRemixClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      generationPanel.open({
+        type: image.type,
+        id: image.id,
+      });
+    },
+    [image.type, image.id]
+  );
+
+  const twCardStyle = useMemo(() => {
+    return !image.cosmetic?.data ? { height } : undefined;
+  }, [image.cosmetic, height]);
+
+  const reactionMetrics = useMemo(
+    () => ({
+      likeCount: image.stats?.likeCountAllTime,
+      dislikeCount: image.stats?.dislikeCountAllTime,
+      heartCount: image.stats?.heartCountAllTime,
+      laughCount: image.stats?.laughCountAllTime,
+      cryCount: image.stats?.cryCountAllTime,
+      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+    }),
+    [image.stats]
+  );
+
   return (
     <TwCosmeticWrapper
       cosmetic={image.cosmetic?.data}
       style={image.cosmetic?.data ? { height } : undefined}
     >
-      <TwCard style={!image.cosmetic?.data ? { height } : undefined} ref={ref} className="border">
+      <TwCard style={twCardStyle} ref={ref} className="border">
         {inView && (
           <ImageGuard2 image={image} inView={inView}>
             {(safe) => (
@@ -116,14 +144,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           color="white"
                           variant="filled"
                           data-activity="remix:image-card"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            generationPanel.open({
-                              type: image.type,
-                              id: image.id,
-                            });
-                          }}
+                          onClick={handleRemixClick}
                         >
                           <IconBrush stroke={2.5} size={16} />
                         </HoverActionButton>
@@ -208,16 +229,9 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     entityId={image.id}
                     entityType="image"
                     reactions={image.reactions}
-                    metrics={{
-                      likeCount: image.stats?.likeCountAllTime,
-                      dislikeCount: image.stats?.dislikeCountAllTime,
-                      heartCount: image.stats?.heartCountAllTime,
-                      laughCount: image.stats?.laughCountAllTime,
-                      cryCount: image.stats?.cryCountAllTime,
-                      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                    }}
+                    metrics={reactionMetrics}
                     targetUserId={image.user.id}
-                    readonly={!safe}
+                    readonly={!isBlocked && isScanned}
                     className={cx('justify-between p-2')}
                     invisibleEmpty
                   />

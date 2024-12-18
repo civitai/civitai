@@ -6,7 +6,7 @@ export function DurationBadge({ duration, ...badgeProps }: Props) {
     <Badge
       color="gray"
       radius="xl"
-      className="text-white"
+      className="text-gray-500 dark:text-white"
       style={{ flexShrink: 0, boxShadow: '1px 2px 3px -1px #25262B33' }}
       {...badgeProps}
     >

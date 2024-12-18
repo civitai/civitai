@@ -187,7 +187,6 @@ function ImageContent({
               }}
               width={!isVideo || isClient ? undefined : 450} // Leave as undefined to get original size
               anim={isClient}
-              controls
               quality={90}
               original={isVideo && isClient ? true : undefined}
               html5Controls={shouldDisplayHtmlControls(image)}
@@ -206,6 +205,8 @@ function ImageContent({
                   ? (image.metadata as VideoMetadata)?.vimeoVideoId
                   : undefined
               }
+              controls
+              contain
             />
           )}
         </div>

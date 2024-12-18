@@ -157,3 +157,12 @@ export const enterFall = keyframes({
     animationTimingFunction: 'ease-out',
   },
 });
+
+export const fadeInOut = keyframes({
+  '0%': {
+    opacity: 1,
+  },
+  '100%': {
+    opacity: 0,
+  },
+});
