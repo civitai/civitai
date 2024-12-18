@@ -1,4 +1,14 @@
-import { Alert, Badge, Button, Text, ThemeIcon, Title, Tooltip, TooltipProps } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
+  TooltipProps,
+} from '@mantine/core';
 import { IconClock, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
@@ -127,8 +137,16 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           <Alert mb="xs">
             <div className="flex">
               <Text size="xs">
-                Did you tag the tools you used in your entry? Adding the tools used to create your
-                entry may make you elegible for more prizes.
+                Please add the AI and filmmaking tools you used in your entry. Depending on the
+                tool, you&apos;ll automatically be eligible for the{' '}
+                <Anchor
+                  target="_blank"
+                  rel="noopener nofollow"
+                  href="https://www.projectodyssey.ai/free-trials-and-prizes"
+                >
+                  Title and Gold Sponsor Awards
+                </Anchor>
+                .
               </Text>
             </div>
           </Alert>

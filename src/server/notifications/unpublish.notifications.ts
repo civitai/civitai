@@ -1,3 +1,4 @@
+import { isEmpty } from 'lodash-es';
 import { NotificationCategory } from '~/server/common/enums';
 import { type UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
@@ -51,15 +52,20 @@ export const unpublishNotifications = createNotificationProcessor({
     displayName: 'Model unpublished',
     category: NotificationCategory.System,
     toggleable: false,
-    prepareMessage: ({ details }) => ({
-      message:
-        details.reason !== 'other'
-          ? `Your ${details.modelName} model has been unpublished: ${
-              unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
-            }`
-          : `Your ${details.modelName} model has been unpublished: ${details.customMessage ?? ''}`,
-      url: `/models/${details.modelId}/${slugit(details.modelName)}`,
-    }),
+    prepareMessage: ({ details }) =>
+      details && !isEmpty(details)
+        ? {
+            message:
+              details.reason !== 'other'
+                ? `Your ${details.modelName} model has been unpublished: ${
+                    unpublishReasons[details.reason as UnpublishReason].notificationMessage ?? ''
+                  }`
+                : `Your ${details.modelName} model has been unpublished: ${
+                    details.customMessage ?? ''
+                  }`,
+            url: `/models/${details.modelId}/${slugit(details.modelName)}`,
+          }
+        : undefined,
     prepareQuery: ({ lastSent }) => `
       WITH unpublished AS (
         SELECT DISTINCT

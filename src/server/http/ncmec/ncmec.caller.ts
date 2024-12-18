@@ -133,4 +133,4 @@ class NcmecCaller extends HttpCaller {
   }
 }
 
-export default NcmecCaller.getInstance();
+export default NcmecCaller.getInstance;

@@ -1,11 +1,15 @@
+import { chunk } from 'lodash-es';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { dataProcessor } from '~/server/db/db-helpers';
+import { pgDbReadLong } from '~/server/db/pgDb';
 import { metricsSearchClient, updateDocs } from '~/server/meilisearch/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { Prisma } from '@prisma/client';
 
 const BATCH_SIZE = 100000;
 const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
@@ -13,7 +17,7 @@ const INDEX_ID = METRICS_IMAGES_SEARCH_INDEX;
 // TODO sync this with the search-index code
 
 const schema = z.object({
-  update: z.enum(['addFields', 'baseModel']),
+  update: z.enum(['addFields', 'baseModel', 'addCollections']),
 });
 
 const addFields = async () => {
@@ -138,7 +142,7 @@ const updateBaseModel = async () => {
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"
           WHERE ir."imageId" BETWEEN ${start} AND ${end}
-          GROUP BY ir."imageId" 
+          GROUP BY ir."imageId"
         `;
       console.timeEnd(consoleFetchKey);
 
@@ -163,13 +167,44 @@ const updateBaseModel = async () => {
   });
 };
 
+const addCollections = async () => {
+  const fetchKey = 'Fetch';
+  console.log(fetchKey);
+  console.time(fetchKey);
+  const query = await pgDbReadLong.cancellableQuery<{ id: number; collections: number[] }>(`
+    SELECT
+      "imageId" as id,
+      array_agg("collectionId") as "collections"
+    FROM "CollectionItem"
+    WHERE "imageId" IS NOT NULL
+    GROUP BY 1;
+  `);
+  const results = await query.result();
+  console.timeEnd(fetchKey);
+
+  const chunks = chunk(results, BATCH_SIZE);
+  const tasks = chunks.map((batch, i) => async () => {
+    const consolePushKey = `Push: ${i} of ${chunks.length}`;
+    console.log(consolePushKey);
+    console.time(consolePushKey);
+    await updateDocs({
+      indexName: INDEX_ID,
+      documents: batch,
+      batchSize: BATCH_SIZE,
+      client: metricsSearchClient,
+    });
+    console.timeEnd(consolePushKey);
+  });
+  await limitConcurrency(tasks, 10);
+};
+
+const updateMethods = { addFields, updateBaseModel, addCollections };
+
 export default ModEndpoint(
   async function updateImageSearchIndex(req: NextApiRequest, res: NextApiResponse) {
     const { update } = schema.parse(req.query);
     const start = Date.now();
-    const updateMethod: (() => Promise<any>) | null =
-      update === 'addFields' ? addFields : update === 'baseModel' ? updateBaseModel : null;
-
+    const updateMethod = updateMethods[update as keyof typeof updateMethods];
     try {
       if (!updateMethod) {
         return res.status(400).json({ ok: false, message: 'Invalid update method' });

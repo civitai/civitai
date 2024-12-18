@@ -50,7 +50,7 @@ export const editPostImageSelect = Prisma.validator<Prisma.ImageSelect>()({
 type PostImageNavigationProps = { previewUrl?: string; objectUrl?: string };
 export type PostImageEditSelect = Prisma.ImageGetPayload<typeof postImage>;
 export type PostImageEditProps = Omit<PostImageEditSelect, 'meta'> &
-  PostImageNavigationProps & { meta: ImageMetaProps | null };
+  PostImageNavigationProps & { meta: ImageMetaProps | null; thumbnailUrl?: string | null };
 const postImage = Prisma.validator<Prisma.ImageDefaultArgs>()({ select: editPostImageSelect });
 
 export const postSelect = Prisma.validator<Prisma.PostSelect>()({

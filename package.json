@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.373",
+  "version": "5.0.379",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -8,6 +8,7 @@
     "dev": "next dev",
     "dev-debug": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --inspect\" next dev",
     "dev-snap": "cross-env NODE_OPTIONS=\"--max_old_space_size=8192 --heapsnapshot-near-heap-limit=3\" next dev",
+    "prod": "cross-env NODE_ENV=production next dev",
     "boost": "next-boost",
     "release:base": "git checkout release && git pull && git rebase main && git push && git checkout main",
     "release:major": "git pull && npm version major && git push --follow-tags && npm run release:base",
@@ -134,6 +135,7 @@
     "crypto": "^1.0.1",
     "dayjs": "^1.11.12",
     "discord.js": "^14.7.1",
+    "dotenv": "^16.4.5",
     "draft-js": "^0.11.7",
     "embla-carousel-autoplay": "^7.1.0",
     "embla-carousel-react": "^7.0.3",
@@ -221,6 +223,7 @@
     "zustand": "^4.3.7"
   },
   "devDependencies": {
+    "@faker-js/faker": "^9.0.3",
     "@next/eslint-plugin-next": "^12.1.4",
     "@prisma/generator-helper": "^5.22.0",
     "@types/archiver": "^6.0.2",
@@ -237,6 +240,7 @@
     "@types/nodemailer": "^6.4.7",
     "@types/offscreencanvas": "^2019.7.3",
     "@types/pg": "^8.11.0",
+    "@types/pg-format": "^1.0.5",
     "@types/randomstring": "^1.1.8",
     "@types/react": "18.0.14",
     "@types/react-dom": "18.0.5",
@@ -264,6 +268,7 @@
     "eslint-plugin-tailwindcss": "^3.15.1",
     "husky": "^9.1.1",
     "lint-staged": "^15.2.7",
+    "pg-format": "^1.0.4",
     "postcss": "^8.4.38",
     "prettier": "^2.8.8",
     "prisma": "^5.17.0",
@@ -271,6 +276,7 @@
     "tailwindcss": "^3.4.3",
     "ts-node": "^10.9.1",
     "tsc-files": "^1.1.4",
+    "tsx": "^4.19.2",
     "typescript": "^5.5.3"
   },
   "ct3aMetadata": {

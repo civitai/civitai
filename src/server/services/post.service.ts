@@ -7,7 +7,7 @@ import { PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { userContentOverviewCache } from '~/server/redis/caches';
+import { thumbnailCache, userContentOverviewCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { externalMetaSchema, ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
@@ -54,6 +54,7 @@ import {
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
+  MediaType,
   ModelHashType,
   TagTarget,
   TagType,
@@ -570,6 +571,8 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
   const tags = await getVotableImageTags({ ids: imageIds, user });
+  const thumbnails = await thumbnailCache.fetch(imageIds);
+
   return _images
     .map((image) => ({
       ...image,
@@ -577,6 +580,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       tags: tags.filter((x) => x.imageId === image.id),
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
+      thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 }
@@ -1003,14 +1007,14 @@ export const addResourceToPostImage = async ({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
-    select: { postId: true, meta: true, resourceHelper: true },
+    select: { postId: true, meta: true, resourceHelper: true, type: true },
   });
 
   if (images.length !== imageIds.length) {
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
   // TODO technically this can be called with a combo of on/off site imgs
-  if (images.some((i) => isMadeOnSite(i.meta as ImageMetaProps))) {
+  if (images.some((i) => i.type !== MediaType.video && isMadeOnSite(i.meta as ImageMetaProps))) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 
