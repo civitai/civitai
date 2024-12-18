@@ -159,11 +159,13 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // #region [state]
   const { showPreview } = usePostPreviewContext();
   const storedImage = useImageStore(image);
+  const queryUtils = trpc.useUtils();
 
-  const [images, updateImage, setImages] = usePostEditStore((state) => [
+  const [images, updateImage, setImages, postId] = usePostEditStore((state) => [
     state.images,
     state.updateImage,
     state.setImages,
+    state.post?.id,
   ]);
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta } = storedImage;
@@ -186,8 +188,15 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
 
   // #region [delete image]
   const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) =>
-      setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id)),
+    onSuccess: (_, { id }) => {
+      setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
+      if (postId)
+        queryUtils.post.getEdit.setData({ id: postId }, (old) => {
+          if (!old) return old;
+
+          return { ...old, images: old.images?.filter((x) => x.id !== id) };
+        });
+    },
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
@@ -942,7 +951,6 @@ function EditDetail() {
                           src: image.url,
                           duration: metadata?.duration ?? 1,
                           width: metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH,
-                          height: metadata?.height ?? 1,
                           postId,
                           thumbnailFrame: metadata?.thumbnailFrame,
                         },
@@ -954,19 +962,14 @@ function EditDetail() {
                   </Button>
                 </div>
                 <div className="flex items-center gap-2">
-                  {image.metadata &&
-                  'thumbnailFrame' in image.metadata &&
-                  image.metadata.thumbnailFrame != null ? (
-                    <CurrentThumbnail
-                      imageId={image.id}
-                      postId={postId}
-                      src={image.url}
-                      thumbnailFrame={image.metadata.thumbnailFrame}
-                      width={image.metadata.width}
-                    />
-                  ) : (
-                    <Text>Thumbnail will be auto generated.</Text>
-                  )}
+                  <CurrentThumbnail
+                    imageId={image.id}
+                    postId={postId}
+                    src={image.url}
+                    thumbnailFrame={(image.metadata as VideoMetadata)?.thumbnailFrame}
+                    thumbnailUrl={image.thumbnailUrl}
+                    width={image.metadata.width}
+                  />
                 </div>
               </CustomCard>
             )}
