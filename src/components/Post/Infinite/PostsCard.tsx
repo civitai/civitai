@@ -25,11 +25,11 @@ export function PostsCard({
   height?: number;
 }) {
   const currentUser = useCurrentUser();
-  const { ref, inView } = useInView({ rootMargin: '600px' });
+  const image = images[0];
+  const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
   const { classes } = useStyles();
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
 
-  const image = images[0];
   const isOwner = currentUser?.id === user.id;
 
   return (
