@@ -145,7 +145,7 @@ export function NumberSlider({
       className={clsx('flex flex-col', inputWrapperProps.className)}
       styles={{ label: hasPresets ? { width: '100%', marginBottom: 5 } : undefined }}
     >
-      <div className={clsx('flex items-center gap-2', { ['flex-row-reverse']: reverse })}>
+      <div className={clsx('mt-1 flex items-center gap-2', { ['flex-row-reverse']: reverse })}>
         <Slider
           {...sliderProps}
           className={clsx('flex-1', sliderProps?.className)}

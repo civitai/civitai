@@ -1,12 +1,24 @@
-import { ActionIcon, Button, Modal, Skeleton, UnstyledButton } from '@mantine/core';
+import {
+  ActionIcon,
+  Button,
+  Modal,
+  SimpleGrid,
+  Skeleton,
+  Text,
+  UnstyledButton,
+} from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
 import clsx from 'clsx';
 import produce from 'immer';
 import { uniq } from 'lodash-es';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { SimpleImageUpload } from '~/libs/form/components/SimpleImageUpload';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
+import { MIME_TYPES } from '~/server/common/mime-types';
+import { SetVideoThumbnailInput } from '~/server/schema/image.schema';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { roundDownToPowerOfTwo } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -16,9 +28,22 @@ type Props = {
   src: string;
   duration: number;
   width: number;
-  height: number;
   postId?: number;
   thumbnailFrame?: number | null;
+};
+
+type ImageProps = {
+  id?: number;
+  nsfwLevel?: number;
+  userId?: number;
+  user?: { id: number };
+  url: string;
+  type: MediaType;
+};
+
+type State = {
+  selectedFrame: number | null;
+  customThumbnail: ImageProps | null;
 };
 
 const getSkipFrames = (duration: number) =>
@@ -32,7 +57,6 @@ export function PostImageThumbnailSelect({
   src,
   duration,
   width,
-  height,
   imageId,
   postId,
   thumbnailFrame,
@@ -40,32 +64,62 @@ export function PostImageThumbnailSelect({
   const skipFrames = getSkipFrames(duration);
 
   const dialog = useDialogContext();
-  const [selectedFrame, setSelectedFrame] = useState(thumbnailFrame);
+  const [state, setState] = useState<State>({
+    selectedFrame: thumbnailFrame ?? null,
+    customThumbnail: null,
+  });
   const { setThumbnail, loading } = useSetThumbnailMutation({ imageId, postId });
 
   const handleSubmit = async () => {
     try {
-      await setThumbnail({ frame: selectedFrame ?? null });
+      await setThumbnail({
+        frame: state.selectedFrame,
+        customThumbnail: !state.selectedFrame ? state.customThumbnail : null,
+      });
       dialog.onClose();
     } catch {} // Error is handled by mutation hook
   };
 
   return (
-    <Modal title="Select Thumbnail" size="lg" {...dialog}>
+    <Modal title="Select Thumbnail" size="xl" {...dialog}>
       <div className="flex flex-col gap-8">
-        <div className="flex flex-wrap gap-4">
+        <SimpleGrid
+          spacing="md"
+          breakpoints={[
+            { minWidth: 'xs', cols: 1 },
+            { minWidth: 'sm', cols: 2 },
+          ]}
+        >
+          <SimpleImageUpload
+            dropzoneProps={{
+              className: 'flex h-full items-center justify-center',
+              mt: 0,
+              accept: [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.jpg],
+            }}
+            value={state.customThumbnail ?? undefined}
+            aspectRatio={9 / 16}
+            mt={-5} // Offset the dropzone margin
+            onChange={(value) =>
+              setState((current) => ({ ...current, customThumbnail: value, selectedFrame: null }))
+            }
+            withNsfwLevel={false}
+          />
           {skipFrames.map((frame) => (
             <ThumbnailImageButton
               key={frame}
               frame={frame}
               src={src}
               width={width}
-              height={height}
-              selected={selectedFrame === frame}
-              onClick={() => setSelectedFrame((current) => (current !== frame ? frame : null))}
+              selected={state.selectedFrame === frame}
+              onClick={() =>
+                setState((current) => ({
+                  ...current,
+                  selectedFrame: current.selectedFrame !== frame ? frame : null,
+                }))
+              }
             />
           ))}
-        </div>
+        </SimpleGrid>
         <div className="flex w-full justify-end">
           <Button onClick={handleSubmit} loading={loading}>
             Submit
@@ -79,42 +133,34 @@ export function PostImageThumbnailSelect({
 function ThumbnailImageButton({
   frame,
   width,
-  height,
   src,
   selected,
   onClick,
 }: {
   frame: number;
   width: number;
-  height: number;
   src: string;
   selected: boolean;
   onClick: VoidFunction;
 }) {
   const [status, setStatus] = useState<'loading' | 'error' | 'loaded'>('loading');
 
-  const aspectRatio = width / height;
-
   return (
     <div
       className={clsx(
-        'mx-auto flex-1 overflow-hidden rounded-lg',
+        'h-[210px] flex-1 rounded-lg',
         selected && 'border-[3px] border-solid border-blue-5',
         status === 'error' && 'hidden'
       )}
-      style={{
-        aspectRatio,
-        maxHeight: 400,
-      }}
     >
       <Skeleton
-        className={clsx('size-full', status !== 'loading' && 'hidden')}
+        className={clsx('h-[210px] w-full', status !== 'loading' && 'hidden')}
         width="100%"
         visible={status === 'loading'}
         animate
       />
       <UnstyledButton className="size-full" onClick={onClick}>
-        <EdgeMedia
+        <EdgeMedia2
           src={src}
           className={clsx('h-full rounded-[4px] object-cover', status !== 'loaded' && 'hidden')}
           type="image"
@@ -134,21 +180,28 @@ function ThumbnailImageButton({
 export function CurrentThumbnail({
   src,
   thumbnailFrame,
+  thumbnailUrl,
   width,
   imageId,
   postId,
 }: CurrentThumbnailProps) {
   const { setThumbnail, loading } = useSetThumbnailMutation({ imageId, postId });
+  const hasThumbnailUrl = !!thumbnailUrl;
+
+  if (!thumbnailFrame && !hasThumbnailUrl) return <Text>Thumbnail will be auto generated.</Text>;
+  const finalSrc = thumbnailUrl ?? src;
 
   return (
     <div className="flex w-full items-start justify-between gap-2">
       <div className="size-24 shrink-0 grow-0 overflow-hidden rounded-lg">
-        <EdgeMedia
-          src={src}
+        <EdgeMedia2
+          // TODO: remove key and rework video cover logic
+          key={finalSrc}
+          src={finalSrc}
           type="image"
           className="h-full object-cover object-top"
           width={width ?? DEFAULT_EDGE_IMAGE_WIDTH}
-          skip={thumbnailFrame ?? undefined}
+          skip={!hasThumbnailUrl ? thumbnailFrame ?? undefined : undefined}
           anim={false}
           transcode
         />
@@ -156,7 +209,7 @@ export function CurrentThumbnail({
 
       <ActionIcon
         color="red"
-        onClick={() => setThumbnail({ frame: null }).catch(() => null)}
+        onClick={() => setThumbnail({ frame: null, customThumbnail: null }).catch(() => null)}
         loading={loading}
       >
         <IconTrash size={16} />
@@ -170,6 +223,7 @@ type CurrentThumbnailProps = {
   imageId: number;
   width: number;
   thumbnailFrame?: number | null;
+  thumbnailUrl?: string | null;
   postId?: number;
 };
 
@@ -179,14 +233,24 @@ const useSetThumbnailMutation = ({ postId, imageId }: { imageId: number; postId?
   const setThumbnailMutation = trpc.image.setThumbnail.useMutation({
     onSuccess: (_, payload) => {
       if (postId) {
-        const { frame } = payload;
+        const { frame, customThumbnail } = payload;
         queryUtils.post.getEdit.setData(
           { id: postId },
           produce((old) => {
             if (!old) return;
+
             const affectedImage = old.images.find((image) => image.id === imageId);
-            if (affectedImage && 'duration' in affectedImage.metadata)
-              affectedImage.metadata.thumbnailFrame = frame;
+            if (affectedImage) {
+              if (frame) {
+                affectedImage.metadata = { ...affectedImage.metadata, thumbnailFrame: frame };
+                affectedImage.thumbnailUrl = null;
+              } else {
+                affectedImage.metadata = { ...affectedImage.metadata, thumbnailFrame: null };
+              }
+
+              if (customThumbnail) affectedImage.thumbnailUrl = customThumbnail.url;
+              else affectedImage.thumbnailUrl = null;
+            }
           })
         );
       }
@@ -199,8 +263,11 @@ const useSetThumbnailMutation = ({ postId, imageId }: { imageId: number; postId?
     },
   });
 
-  const handleSetThumbnail = ({ frame }: { frame: number | null }) => {
-    return setThumbnailMutation.mutateAsync({ imageId, frame });
+  const handleSetThumbnail = ({
+    frame,
+    customThumbnail,
+  }: Omit<SetVideoThumbnailInput, 'imageId'>) => {
+    return setThumbnailMutation.mutateAsync({ imageId, frame, customThumbnail, postId });
   };
 
   return { setThumbnail: handleSetThumbnail, loading: setThumbnailMutation.isLoading };

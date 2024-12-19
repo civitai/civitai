@@ -16,6 +16,7 @@ export const PostContestCollectionInfoAlert = ({
 }) => {
   const showDetails =
     collectionItem &&
+    collectionItem.collection.metadata?.includeContestCallouts &&
     (isOwner || isModerator || collectionItem.status === CollectionItemStatus.ACCEPTED);
 
   if (!showDetails) return null;

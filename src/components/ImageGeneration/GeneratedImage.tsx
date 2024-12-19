@@ -41,11 +41,14 @@ import {
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
 import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
-import { generationStore } from '~/store/generation.store';
+import {
+  generationStore,
+  useGenerationFormStore,
+  useVideoGenerationWorkflows,
+} from '~/store/generation.store';
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -64,21 +67,14 @@ export function GeneratedImage({
 }) {
   const { classes } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: image.id });
-  // const { ref, inView, sizeMapping } = useIntersectionObserverContext({ id: image.id });
-  // const { ref, inView } = useInView({ rootMargin: '600px' });
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
     stepName: step.name,
     imageId: image.id,
   });
 
-  const { updateImages, isLoading } = useUpdateImageStepMetadata();
+  const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
-  const img2imgWorkflows = workflowDefinitions?.filter((x) => x.type === 'img2img');
-
-  // if (request.id.indexOf('-') !== request.id.lastIndexOf('-')) {
-  //   console.log({ workflowId: request.id, stepName: step.name, imageId: image.id, selected });
-  // }
 
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
@@ -113,7 +109,12 @@ export function GeneratedImage({
 
   const handleGenerate = (
     { seed, ...rest }: Partial<TextToImageParams> = {},
-    { type, workflow: workflow }: { type: MediaType; workflow?: string } = {
+    {
+      type,
+      workflow: workflow,
+      sourceImageUrl,
+      engine,
+    }: { type: MediaType; workflow?: string; sourceImageUrl?: string; engine?: string } = {
       type: image.type,
       workflow: step.params.workflow,
     }
@@ -125,6 +126,8 @@ export function GeneratedImage({
       remixOfId: step.metadata?.remixOfId,
       type,
       workflow: workflow ?? step.params.workflow,
+      sourceImageUrl: sourceImageUrl ?? (step.params as any).sourceImageUrl,
+      engine: engine ?? (step.params as any).engine,
     });
   };
 
@@ -243,8 +246,7 @@ export function GeneratedImage({
     );
   }
 
-  const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
-  const img2vidConfigs = availableEngineConfigurations?.filter((x) => x.subType === 'img2vid');
+  const { data: availableEngineConfigurations } = useVideoGenerationWorkflows();
 
   if (!available) return <></>;
 
@@ -254,6 +256,10 @@ export function GeneratedImage({
   const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
   const canRemix = !isUpscale;
   const canImg2Img = !isFlux && !isUpscale && !isSD3 && !isVideo;
+  const img2imgWorkflows = !isVideo ? workflowDefinitions?.filter((x) => x.type === 'img2img') : [];
+  const img2vidConfigs = availableEngineConfigurations?.filter(
+    (x) => !x.disabled && x.subType === 'img2vid'
+  );
   // const canRemix = true;
   // const canImg2Img = true;
 
@@ -261,7 +267,7 @@ export function GeneratedImage({
     <TwCard
       ref={ref}
       className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{ aspectRatio: image.width / image.height }}
+      style={{ aspectRatio: image.aspectRatio ?? image.width / image.height }}
     >
       {inView && (
         <>
@@ -361,19 +367,20 @@ export function GeneratedImage({
               {!isVideo && !!img2vidConfigs?.length && (
                 <>
                   <Menu.Divider />
-                  {img2vidConfigs.map(({ name, key, type }) => (
-                    <Menu.Item
-                      key={key}
-                      onClick={() =>
-                        handleGenerate({ sourceImageUrl: image.url } as any, {
-                          type,
-                          workflow: key,
-                        })
-                      }
-                    >
-                      {name}
-                    </Menu.Item>
-                  ))}
+                  <Menu.Item
+                    onClick={() =>
+                      handleGenerate(
+                        {},
+                        {
+                          type: 'video',
+                          sourceImageUrl: image.url,
+                          engine: useGenerationFormStore.getState().engine,
+                        }
+                      )
+                    }
+                  >
+                    Image To Video
+                  </Menu.Item>
                 </>
               )}
               <Menu.Divider />
@@ -450,19 +457,22 @@ export function GeneratedImage({
                           {workflow.name}
                         </Menu.Item>
                       ))}
-                  {img2vidConfigs?.map(({ name, key, type }) => (
+                  {!isVideo && !!img2vidConfigs?.length && (
                     <Menu.Item
-                      key={key}
                       onClick={() =>
-                        handleGenerate({ sourceImageUrl: image.url } as any, {
-                          type,
-                          workflow: key,
-                        })
+                        handleGenerate(
+                          {},
+                          {
+                            type: 'video',
+                            sourceImageUrl: image.url,
+                            engine: useGenerationFormStore.getState().engine,
+                          }
+                        )
                       }
                     >
-                      {name}
+                      Image To Video
                     </Menu.Item>
-                  ))}
+                  )}
                 </Menu.Dropdown>
               </Menu>
             )}

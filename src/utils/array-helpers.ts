@@ -1,3 +1,4 @@
+import { uniq } from 'instantsearch.js/es/lib/utils';
 import { uniqBy } from 'lodash-es';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
@@ -11,8 +12,8 @@ export function toStringList(array: string[]) {
   return formatter.format(array);
 }
 
-export function removeDuplicates<T extends object>(array: T[], property: keyof T) {
-  return uniqBy<T>(array, property);
+export function removeDuplicates<T>(array: T[], property?: keyof T) {
+  return property ? uniqBy<T>(array, property) : uniq<T>(array);
 }
 
 export function sortAlphabetically<T>(array: T[]) {
@@ -22,6 +23,7 @@ export function sortAlphabetically<T>(array: T[]) {
     return 0;
   });
 }
+
 export function sortAlphabeticallyBy<T>(array: T[], fn: (item: T) => string) {
   return array.sort((...args) => {
     const a = fn(args[0]);
@@ -54,8 +56,9 @@ const modelTypeOrder: { [k in ModelType]: number } = {
   [ModelType.Hypernetwork]: 13,
   [ModelType.Other]: 14,
 };
+
 export function sortByModelTypes<T extends { modelType: ModelType | null }>(data: T[] = []) {
-  return data.toSorted((a, b) => {
+  return [...data].sort((a, b) => {
     const mA = a.modelType;
     const mB = b.modelType;
 

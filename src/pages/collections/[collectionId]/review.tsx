@@ -231,7 +231,11 @@ const ReviewCollection = () => {
               filters={filters}
               render={(props) => {
                 return (
-                  <CollectionItemGridItem {...props} collectionId={collection?.id as number} />
+                  <CollectionItemGridItem
+                    {...props}
+                    collectionId={collection?.id as number}
+                    statuses={statuses}
+                  />
                 );
               }}
             />
@@ -249,6 +253,7 @@ export default ReviewCollection;
 const CollectionItemGridItem = ({
   data: collectionItem,
   collectionId,
+  statuses,
 }: CollectionItemGridItemProps) => {
   const currentUser = useCurrentUser();
   const router = useRouter();
@@ -294,7 +299,12 @@ const CollectionItemGridItem = ({
           }
         }}
       />
-      <FeedCard>
+      <FeedCard
+        className={cx({
+          ['opacity-60']:
+            selected || (collectionItem.status && !statuses.includes(collectionItem.status)),
+        })}
+      >
         <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
           <Stack
             sx={{
@@ -459,6 +469,7 @@ type CollectionItemGridItemProps = {
   index: number;
   width: number;
   collectionId: number;
+  statuses: CollectionItemStatus[];
 };
 
 function ModerationControls({

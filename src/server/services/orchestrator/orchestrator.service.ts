@@ -14,16 +14,16 @@ export async function createWorkflowStep(args: GenerationSchema) {
 }
 
 export async function createVideoGenStep(data: VideoGenerationSchema) {
-  switch (data.engine) {
-    case 'haiper':
-      if (data.sourceImageUrl) {
-        data.negativePrompt = undefined;
-      }
-      break;
-    case 'mochi':
-      if ('negativePrompt' in data) data.negativePrompt = undefined;
-      break;
-  }
+  // switch (data.engine) {
+  //   case 'haiper':
+  //     if (data.sourceImageUrl) {
+  //       data.negativePrompt = undefined;
+  //     }
+  //     break;
+  //   case 'mochi':
+  //     if ('negativePrompt' in data) data.negativePrompt = undefined;
+  //     break;
+  // }
 
   return {
     $type: 'videoGen',

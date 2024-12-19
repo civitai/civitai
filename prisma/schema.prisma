@@ -1279,6 +1279,7 @@ model Image {
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(now())
+  minor             Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]

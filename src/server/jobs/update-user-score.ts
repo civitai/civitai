@@ -156,7 +156,7 @@ async function getReportAgainstScore(ctx: Context) {
         ownerId
       FROM images
       WHERE type = 'DeleteTOS'
-      AND time > parseDateTimeBestEffortOrNull('${ctx.lastUpdate}')
+      AND time > ${ctx.lastUpdate}
     )
     SELECT
       ownerId as id,

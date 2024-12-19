@@ -11,7 +11,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
 import { registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
-import { getSession, SessionProvider } from 'next-auth/react';
+import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -22,7 +22,10 @@ import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { CustomNextPage } from '~/components/AppLayout/Page';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { BrowsingModeOverrideProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import {
+  BrowsingLevelProviderOptional,
+  BrowsingLevelProvider,
+} from '~/components/BrowsingLevel/BrowsingLevelProvider';
 // import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
 import { CivitaiLinkProvider } from '~/components/CivitaiLink/CivitaiLinkProvider';
@@ -31,7 +34,6 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
@@ -60,6 +62,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -97,18 +100,20 @@ function MyApp(props: CustomAppProps) {
 
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
-      {Component.getLayout?.(page) ?? (
-        <AppLayout
-          left={Component.left}
-          right={Component.right}
-          subNav={Component.subNav}
-          scrollable={Component.scrollable}
-          footer={Component.footer}
-          announcements={Component.announcements}
-        >
-          {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
-        </AppLayout>
-      )}
+      <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
+        {Component.getLayout?.(page) ?? (
+          <AppLayout
+            left={Component.left}
+            right={Component.right}
+            subNav={Component.subNav}
+            scrollable={Component.scrollable}
+            footer={Component.footer}
+            announcements={Component.announcements}
+          >
+            {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+          </AppLayout>
+        )}
+      </BrowsingLevelProviderOptional>
     </FeatureLayout>
   );
 
@@ -134,22 +139,22 @@ function MyApp(props: CustomAppProps) {
                 <GoogleAnalytics />
                 <AccountProvider>
                   <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                    <BrowserSettingsProvider>
-                      <BrowsingModeOverrideProvider>
-                        <SignalProvider>
-                          <ActivityReportingProvider>
-                            <ReferralsProvider {...cookies.referrals}>
-                              <FiltersProvider>
-                                <AdsProvider>
-                                  <PaddleProvider>
-                                    <HiddenPreferencesProvider>
-                                      <CivitaiLinkProvider>
-                                        <NotificationsProvider
-                                          className="notifications-container"
-                                          zIndex={9999}
-                                        >
-                                          <BrowserRouterProvider>
-                                            <GenerationProvider>
+                    <ErrorBoundary>
+                      <BrowserSettingsProvider>
+                        <BrowsingLevelProvider>
+                          <SignalProvider>
+                            <ActivityReportingProvider>
+                              <ReferralsProvider {...cookies.referrals}>
+                                <FiltersProvider>
+                                  <AdsProvider>
+                                    <PaddleProvider>
+                                      <HiddenPreferencesProvider>
+                                        <CivitaiLinkProvider>
+                                          <NotificationsProvider
+                                            className="notifications-container"
+                                            zIndex={9999}
+                                          >
+                                            <BrowserRouterProvider>
                                               <IntersectionObserverProvider>
                                                 <BaseLayout>
                                                   {isProd && <TrackPageView />}
@@ -163,19 +168,19 @@ function MyApp(props: CustomAppProps) {
                                                   </ChatContextProvider>
                                                 </BaseLayout>
                                               </IntersectionObserverProvider>
-                                            </GenerationProvider>
-                                          </BrowserRouterProvider>
-                                        </NotificationsProvider>
-                                      </CivitaiLinkProvider>
-                                    </HiddenPreferencesProvider>
-                                  </PaddleProvider>
-                                </AdsProvider>
-                              </FiltersProvider>
-                            </ReferralsProvider>
-                          </ActivityReportingProvider>
-                        </SignalProvider>
-                      </BrowsingModeOverrideProvider>
-                    </BrowserSettingsProvider>
+                                            </BrowserRouterProvider>
+                                          </NotificationsProvider>
+                                        </CivitaiLinkProvider>
+                                      </HiddenPreferencesProvider>
+                                    </PaddleProvider>
+                                  </AdsProvider>
+                                </FiltersProvider>
+                              </ReferralsProvider>
+                            </ActivityReportingProvider>
+                          </SignalProvider>
+                        </BrowsingLevelProvider>
+                      </BrowserSettingsProvider>
+                    </ErrorBoundary>
                   </CivitaiSessionProvider>
                 </AccountProvider>
               </FeatureFlagsProvider>
@@ -203,15 +208,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const parsedCookies = parseCookies(cookies);
 
   const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
-  const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  // const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
+  // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+  // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+  const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
 
   // Pass this via the request so we can use it in SSR
-  if (session) {
-    (appContext.ctx.req as any)['session'] = session;
-    // (appContext.ctx.req as any)['flags'] = flags;
-  }
+  // if (session) {
+  //   (appContext.ctx.req as any)['session'] = session;
+  //   // (appContext.ctx.req as any)['flags'] = flags;
+  // }
 
   return {
     pageProps: {
@@ -219,7 +224,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       colorScheme,
       cookies: parsedCookies,
       // cookieKeys: Object.keys(cookies),
-      session,
+      // session,
       flags,
       seed: Date.now(),
       hasAuthCookie,

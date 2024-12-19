@@ -128,6 +128,9 @@ export const collectionMetadataSchema = z
     entriesRequireTitle: z.boolean().optional(),
     entriesRequireTools: z.boolean().optional(),
     termsOfServicesUrl: z.string().optional(),
+    rulesUrl: z.string().optional(),
+    hideAds: z.boolean().optional(),
+    includeContestCallouts: z.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

@@ -40,7 +40,7 @@ export function PostImageDropzone({
   // #region [mutations]
   const createPostMutation = trpc.post.create.useMutation();
   const addImageMutation = trpc.post.addImage.useMutation({
-    onSuccess: (data) =>
+    onSuccess: (data, payload) => {
       setImages((images) => {
         const resolvingIndex = images.findIndex((x) => x.type === 'resolving');
         if (resolvingIndex > -1) images.splice(resolvingIndex, 1);
@@ -48,7 +48,16 @@ export function PostImageDropzone({
         if (index > -1) images[index] = { type: 'added', data: { ...data, index: data.index! } };
         else images.push({ type: 'added', data: { ...data, index: data.index! } });
         return images;
-      }),
+      });
+
+      if (payload.postId) {
+        queryUtils.post.getEdit.setData({ id: payload.postId }, (old) => {
+          if (!old) return old;
+
+          return { ...old, images: [...(old.images || []), data] };
+        });
+      }
+    },
   });
   // #endregion
 

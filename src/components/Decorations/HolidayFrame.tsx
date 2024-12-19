@@ -134,62 +134,10 @@ export function HolidayFrame({ cosmetic, data, force, children, animated }: Prop
   );
 }
 
-export function CardDecoration({ cosmetic, data, className, animated }: Props2) {
-  const { lights = 0, upgradedLights = 0 } = data ?? {};
-  const { classes, cx } = useStyles({
-    size: Math.max(Math.ceil(((MAX_SIZE - lights) / 31) * MAX_SIZE), MIN_SIZE),
-  });
-  const [showDecorations] = useLocalStorage({ key: 'showDecorations', defaultValue: true });
-
-  if (!showDecorations || !cosmetic) return null;
-
-  const { color, type, brightness } = cosmetic.data as HolidayGarlandData;
-
-  return (
-    <a
-      href="/events/holiday2023"
-      target="_blank"
-      className={cx('frame-decor', classes.wrapper, className)}
-    >
-      <div className={classes.decoration}>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={cosmeticTypeImage[type as keyof typeof cosmeticTypeImage]}
-          style={{ width: '100%', height: 'auto', objectFit: 'contain' }}
-          alt={cosmetic.name}
-        />
-        {lights > 0 && (
-          <div className={classes.lights}>
-            {Array.from({ length: lights }).map((_, index) => (
-              <Lightbulb
-                key={index}
-                variant={upgradedLights && index < upgradedLights ? 'star' : 'default'}
-                className={
-                  upgradedLights && index < upgradedLights ? classes.upgradedLight : classes.light
-                }
-                color={color}
-                brightness={brightness}
-                animated={animated}
-              />
-            ))}
-          </div>
-        )}
-      </div>
-    </a>
-  );
-}
-
 type Props = {
   cosmetic?: UserWithCosmetics['cosmetics'][number]['cosmetic'];
   data?: { lights?: number; upgradedLights?: number } | null;
   children?: React.ReactNode;
   force?: boolean;
-  animated?: boolean;
-};
-
-type Props2 = {
-  cosmetic?: UserWithCosmetics['cosmetics'][number]['cosmetic'];
-  data?: { lights?: number; upgradedLights?: number } | null;
-  className?: string;
   animated?: boolean;
 };

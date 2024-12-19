@@ -40,6 +40,7 @@ import { ImageGetInfinite } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useCollection } from './collection.utils';
+import clsx from 'clsx';
 
 export function AddUserContentModal({ collectionId }: Props) {
   const dialog = useDialogContext();
@@ -149,7 +150,11 @@ export function AddUserContentModal({ collectionId }: Props) {
           </AlertWithIcon>
         )}
 
-        <Button component={Link} href={`/posts/create?collectionId=${collectionId}`}>
+        <Button
+          component={Link}
+          href={`/posts/create?collectionId=${collectionId}`}
+          onClick={() => dialog.onClose()}
+        >
           Create a new image post
         </Button>
 
@@ -232,9 +237,8 @@ function SelectableImageCard({ data: image }: { data: ImageGetInfinite[number] }
   return (
     <MasonryCard
       shadow="sm"
-      p={0}
       onClick={() => toggleSelected(image.id)}
-      sx={{ opacity: selected ? 0.6 : 1, cursor: 'pointer' }}
+      className={clsx('cursor-pointer', { ['opacity-60']: selected })}
       withBorder
     >
       <div style={{ position: 'relative' }}>

@@ -2,8 +2,14 @@ import { articleNotifications } from '~/server/notifications/article.notificatio
 import { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
+import { clubNotifications } from '~/server/notifications/club.notifications';
+import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
+import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
+import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
+import { followNotifications } from '~/server/notifications/follow.notifications';
+import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { reactionNotifications } from '~/server/notifications/reaction.notifications';
@@ -12,14 +18,8 @@ import { reviewNotifications } from '~/server/notifications/review.notifications
 import { systemNotifications } from '~/server/notifications/system.notifications';
 import { unpublishNotifications } from '~/server/notifications/unpublish.notifications';
 import { userJourneyNotifications } from '~/server/notifications/user-journey.notifications';
-import { collectionNotifications } from '~/server/notifications/collection.notifications';
-import { imageNotifications } from '~/server/notifications/image.notifications';
-import { clubNotifications } from '~/server/notifications/club.notifications';
-import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
-import { followNotifications } from '~/server/notifications/follow.notifications';
-import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
 
-const notificationProcessors = {
+export const notificationProcessors = {
   ...mentionNotifications,
   ...modelNotifications,
   ...reviewNotifications,

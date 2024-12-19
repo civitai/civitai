@@ -84,34 +84,48 @@ export const tagIdsForImagesCache = createCachedObject<{
 type UserCosmeticLookup = {
   userId: number;
   cosmetics: {
-    cosmetic: {
-      id: number;
-      name: string;
-      type: CosmeticType;
-      data: Prisma.JsonValue;
-      source: CosmeticSource;
-    };
+    cosmeticId: number;
     data: Prisma.JsonValue;
   }[];
 };
 export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
-  key: REDIS_KEYS.CACHES.COSMETICS,
+  key: REDIS_KEYS.CACHES.USER_COSMETICS,
   idKey: 'userId',
   lookupFn: async (ids) => {
     const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
       where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
       select: {
         userId: true,
+        cosmeticId: true,
         data: true,
-        cosmetic: { select: { id: true, data: true, type: true, source: true, name: true } },
       },
     });
-    const results = userCosmeticsRaw.reduce((acc, { userId, ...cosmetic }) => {
+    const results = userCosmeticsRaw.reduce((acc, { userId, cosmeticId, data }) => {
       acc[userId] ??= { userId, cosmetics: [] };
-      acc[userId].cosmetics.push(cosmetic);
+      acc[userId].cosmetics.push({ cosmeticId, data });
       return acc;
     }, {} as Record<number, UserCosmeticLookup>);
     return results;
+  },
+  ttl: CacheTTL.day,
+});
+
+type CosmeticLookup = {
+  id: number;
+  name: string;
+  type: CosmeticType;
+  data: Prisma.JsonValue;
+  source: CosmeticSource;
+};
+export const cosmeticCache = createCachedObject<CosmeticLookup>({
+  key: REDIS_KEYS.CACHES.COSMETICS,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    const cosmetics = await dbRead.cosmetic.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, name: true, type: true, data: true, source: true },
+    });
+    return Object.fromEntries(cosmetics.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
 });
@@ -204,6 +218,12 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   },
 });
 
+type EntityCosmeticLookupRaw = {
+  equippedToId: number;
+  cosmeticId: number;
+  claimKey: string;
+  userData: Prisma.JsonValue;
+};
 export const cosmeticEntityCaches = Object.fromEntries(
   Object.values(CosmeticEntity).map((entity) => [
     entity as CosmeticEntity,
@@ -212,18 +232,42 @@ export const cosmeticEntityCaches = Object.fromEntries(
       idKey: 'equippedToId',
       cacheNotFound: false,
       lookupFn: async (ids) => {
-        // TODO: This might be a gamble since dbWrite could be heavily hit, however, considering we have
-        // 1 day TTL, it might be worth it to keep the cache fresh. With dbRead, lag can cause cosmetics to linger
-        // for 1 day.
-        const entityCosmetics = await dbWrite.$queryRaw<WithClaimKey<ContentDecorationCosmetic>[]>`
-          SELECT c.id, c.data, uc."equippedToId", uc."claimKey"
+        const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
+          SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
           FROM "UserCosmetic" uc
-          JOIN "Cosmetic" c ON c.id = uc."cosmeticId"
           WHERE uc."equippedToId" IN (${Prisma.join(ids as number[])})
-            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity"
-            AND c.type = 'ContentDecoration';
+            AND uc."equippedToType" = '${Prisma.raw(entity)}'::"CosmeticEntity";
         `;
-        return Object.fromEntries(entityCosmetics.map((x) => [x.equippedToId, x]));
+        return Object.fromEntries(
+          entityCosmetics.map((x) => [
+            x.equippedToId,
+            // Hack here so we can fix it in the appendFn
+            x as any as WithClaimKey<ContentDecorationCosmetic>,
+          ])
+        );
+      },
+      appendFn: async (records) => {
+        const rawRecords = records as any as Set<EntityCosmeticLookupRaw>;
+        const cosmeticIds = [...new Set(Array.from(rawRecords).map((x) => x.cosmeticId))];
+        const cosmetics = await cosmeticCache.fetch(cosmeticIds);
+
+        for (const record of records) {
+          const rawRecord = record as any as EntityCosmeticLookupRaw;
+          const cosmetic = cosmetics[rawRecord.cosmeticId];
+          if (!cosmetic) continue;
+
+          // Swap the id field to the cosmeticId
+          record.id = rawRecord.cosmeticId;
+          delete (record as any).cosmeticId;
+
+          // Add userData to the data field
+          record.data = cosmetic.data as ContentDecorationCosmetic['data'];
+          if (rawRecord.userData) {
+            const userData = rawRecord.userData as ContentDecorationCosmetic['data'];
+            if (userData.lights) record.data.lights = userData.lights;
+            delete (record as any).userData;
+          }
+        }
       },
       ttl: CacheTTL.day,
     }),
@@ -577,4 +621,44 @@ export const imageMetadataCache = createCachedObject<ImageWithMetadata>({
     return Object.fromEntries(images.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.hour,
+});
+
+export const thumbnailCache = createCachedObject<{
+  id: number;
+  url: string;
+  nsfwLevel: NsfwLevel;
+  parentId?: number;
+}>({
+  key: REDIS_KEYS.CACHES.THUMBNAILS,
+  idKey: 'parentId',
+  lookupFn: async (ids) => {
+    if (ids.length === 0) return {};
+
+    const targets = await dbRead.$queryRaw<{ thumbnailId: string }[]>`
+        SELECT
+          cast(metadata->'thumbnailId' as int) as "thumbnailId"
+        FROM "Image"
+        WHERE id IN (${Prisma.join(ids as number[])})
+          AND type = 'video'::"MediaType"
+      `;
+
+    const thumbnailIds = targets.map((x) => x.thumbnailId).filter(isDefined);
+    if (thumbnailIds.length === 0) return {};
+
+    const thumbnails = await dbRead.$queryRaw<
+      { id: number; url: string; nsfwLevel: NsfwLevel; parentId: number }[]
+    >`
+        SELECT
+          id,
+          url,
+          "nsfwLevel",
+          cast(metadata->'parentId' as int) as "parentId"
+        FROM "Image"
+        WHERE id IN (${Prisma.join(thumbnailIds)})
+      `;
+
+    return Object.fromEntries(thumbnails.filter((x) => !!x.parentId).map((x) => [x.parentId, x]));
+  },
+  dontCacheFn: (data) => !data.nsfwLevel,
+  ttl: CacheTTL.day,
 });

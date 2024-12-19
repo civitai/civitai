@@ -19,6 +19,12 @@ type ModelVersionForGeneratedImagesReward = {
   userId: number;
 };
 
+type ModelVersionRow = {
+  modelVersionId: number;
+  createdAt: Date;
+  generations: number;
+};
+
 export const processCreatorProgramImageGenerationRewards = createJob(
   'creator-program-image-generation-reward-process',
   // Job runs once a month.
@@ -61,7 +67,7 @@ export const processCreatorProgramImageGenerationRewards = createJob(
         mv.name as "modelVersionName"
       FROM "ModelVersion" mv
       JOIN "Model" m ON mv."modelId" = m.id
-      WHERE mv."status" = 'Published' 
+      WHERE mv."status" = 'Published'
         AND m."userId" IN (${Prisma.join(creatorProgramUserIds, ',')})
     `;
 
@@ -74,30 +80,24 @@ export const processCreatorProgramImageGenerationRewards = createJob(
     // We grant buzz for the previous month on start of month.
     // Extract 26 days in case 1 month  = 30 days and may break february.
     const lastMonth = date.subtract(26, 'day').startOf('month');
-    const chLastUpdate = dayjs(lastUpdate).toISOString();
 
     // Get all records that need to be processed
-    const modelVersionData = await clickhouse
-      .query({
-        query: `
-          SELECT 
-              resourceId as modelVersionId,
-              createdAt,
-              SUM(1) as generations
-          FROM (
-              SELECT 
-                  arrayJoin(resourcesUsed) as resourceId,
-                  createdAt::date as createdAt 
-              FROM orchestration.textToImageJobs
-              WHERE createdAt >= parseDateTimeBestEffortOrNull('${chLastUpdate}')
-          )
-          WHERE resourceId IN (${modelVersions.map((x) => x.id).join(',')})
-          GROUP BY resourceId, createdAt 
-          ORDER BY createdAt DESC;
-    `,
-        format: 'JSONEachRow',
-      })
-      .then((x) => x.json<{ modelVersionId: number; createdAt: Date; generations: number }[]>());
+    const modelVersionData = await clickhouse.$query<ModelVersionRow>`
+      SELECT
+          resourceId as modelVersionId,
+          createdAt,
+          SUM(1) as generations
+      FROM (
+          SELECT
+              arrayJoin(resourcesUsed) as resourceId,
+              createdAt::date as createdAt
+          FROM orchestration.textToImageJobs
+          WHERE createdAt >= ${lastUpdate}
+      )
+      WHERE resourceId IN (${modelVersions.map((x) => x.id)})
+      GROUP BY resourceId, createdAt
+      ORDER BY createdAt DESC;
+    `;
 
     const transactions = modelVersions
       .map((version) => {

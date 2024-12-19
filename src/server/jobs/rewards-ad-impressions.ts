@@ -13,6 +13,7 @@ const hourlyCap = 100;
 const buzzPerAd = 0.25;
 
 export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * * *', async () => {
+  if (!clickhouse) return;
   try {
     const defaultLastRun = new Date().getTime() - 1 * 60 * 60 * 1000;
     const [lastRun, setLastRun] = await getJobDate(
@@ -23,7 +24,7 @@ export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * *
     const millisecondsSinceLastRun = now.getTime() - lastRun.getTime();
     const hours = Math.max(Math.floor((millisecondsSinceLastRun / (1000 * 60 * 60)) % 24), 1);
 
-    const results = await clickhouse?.$query<Impression>(`
+    const results = await clickhouse.$query<Impression>`
       SELECT
       userId,
       0 as deviceId, -- Disable deviceIds for now
@@ -32,10 +33,10 @@ export const rewardsAdImpressions = createJob('rewards-ad-impressions', '0 * * *
       sum(duration) as totalAdDuration
       FROM adImpressions
       WHERE
-        time >= toStartOfHour(parseDateTimeBestEffort('${lastRun.toISOString()}'))
+        time >= toStartOfHour(${lastRun})
         AND time < toStartOfHour(now())
       GROUP BY userId, deviceId;
-    `);
+    `;
 
     if (!!results?.length) {
       const cachedAmounts = await BuzzEventsCache.getMany(

@@ -1,12 +1,12 @@
-import { ClickHouseClient } from '@clickhouse/client';
 import { z } from 'zod';
+import { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { NotificationCategory } from '~/server/common/enums';
 
 export type NotificationProcessor = {
   displayName: string;
   priority?: number;
   toggleable?: boolean;
-  prepareQuery?: (input: NotificationProcessorRunInput) => Promise<string> | string;
+  prepareQuery?: (input: NotificationProcessorRunInput) => Promise<string | undefined> | string;
   prepareMessage: (notification: Omit<BareNotification, 'id'>) => NotificationMessage | undefined;
   getDetails?: (notifications: BareNotification[]) => BareNotification[];
   category: NotificationCategory;
@@ -27,7 +27,8 @@ type NotificationMessage = {
 };
 export type NotificationProcessorRunInput = {
   lastSent: string;
-  clickhouse: ClickHouseClient | undefined;
+  lastSentDate: Date;
+  clickhouse: CustomClickHouseClient | undefined;
 };
 
 export function createNotificationProcessor(processor: Record<string, NotificationProcessor>) {

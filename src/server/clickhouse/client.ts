@@ -69,7 +69,7 @@ function getClickHouse() {
 }
 
 export let clickhouse: CustomClickHouseClient | undefined;
-const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME && env.CLICKHOUSE_PASSWORD;
+const shouldConnect = env.CLICKHOUSE_HOST && env.CLICKHOUSE_USERNAME;
 if (shouldConnect) {
   if (isProd) clickhouse = getClickHouse();
   else {
@@ -79,12 +79,20 @@ if (shouldConnect) {
 }
 
 function formatSqlType(value: any): string {
-  if (value instanceof Date) return dayjs(value).toISOString();
+  // Catch any dates being passed in as a string
+  if (
+    typeof value === 'string' &&
+    (value.endsWith('(Coordinated Universal Time)') || /\.\d{3}Z$/.test(value))
+  ) {
+    value = new Date(value);
+  }
+  if (value instanceof Date) return "parseDateTimeBestEffort('" + dayjs(value).toISOString() + "')";
   if (typeof value === 'object') {
     if (Array.isArray(value)) return value.map(formatSqlType).join(',');
     if (value === null) return 'null';
     return JSON.stringify(value);
   }
+
   return value;
 }
 

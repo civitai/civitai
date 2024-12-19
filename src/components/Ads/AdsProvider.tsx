@@ -8,6 +8,7 @@ import { useDeviceFingerprint } from '~/providers/ActivityReportingProvider';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { create } from 'zustand';
 import { isDev } from '~/env/other';
+import { useRouter } from 'next/router';
 
 declare global {
   interface Window {
@@ -36,7 +37,10 @@ const useAdProviderStore = create<{ ready: boolean; adsBlocked: boolean }>(() =>
   adsBlocked: true,
 }));
 
+const blockedUrls: string[] = ['/collections/6503138', '/moderator'];
+
 export function AdsProvider({ children }: { children: React.ReactNode }) {
+  const router = useRouter();
   const ready = useAdProviderStore((state) => state.ready);
   const adsBlocked = useAdProviderStore((state) => state.adsBlocked);
   const currentUser = useCurrentUser();
@@ -45,7 +49,11 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
-  const adsEnabled = isDev ? true : features.adsEnabled && (allowAds || !isMember);
+  const adsEnabled = isDev
+    ? false
+    : features.adsEnabled &&
+      (allowAds || !isMember) &&
+      !blockedUrls.some((url) => router.asPath.includes(url));
 
   function handleLoadedError() {
     useAdProviderStore.setState({ adsBlocked: true });

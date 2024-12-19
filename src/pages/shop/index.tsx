@@ -9,6 +9,7 @@ import {
   Title,
   ActionIcon,
   Tooltip,
+  SimpleGrid,
 } from '@mantine/core';
 import { IconBell, IconBellOff, IconPencilMinus } from '@tabler/icons-react';
 import { useState } from 'react';
@@ -158,10 +159,12 @@ export default function CosmeticShopMain() {
   );
 }
 
+const MAX_SHOWN_ITEMS = 4;
+
 function MerchShowcaseSection() {
   const [opened, { open, close }] = useDisclosure();
-  const displayedItems = merchProducts.slice(0, 6);
-  const collapsedItems = merchProducts.slice(6);
+  const displayedItems = merchProducts.slice(0, MAX_SHOWN_ITEMS);
+  const collapsedItems = merchProducts.slice(MAX_SHOWN_ITEMS);
 
   return (
     <section className="flex flex-col gap-8">
@@ -192,18 +195,24 @@ function MerchShowcaseSection() {
           in Paris, each unique design is limited to an edition of 25.
         </Text>
       </div> */}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(300px,1fr))] gap-10 lg:px-11">
+      <SimpleGrid
+        spacing="md"
+        breakpoints={[
+          { minWidth: 'xs', cols: 1 },
+          { minWidth: 'sm', cols: 3 },
+          { minWidth: 'lg', cols: 4 },
+        ]}
+      >
         {displayedItems.map((product) => (
           <ProductItem key={product.imageUrl} {...product} />
         ))}
         {opened
           ? collapsedItems.map((product) => <ProductItem key={product.imageUrl} {...product} />)
           : null}
-      </div>
+      </SimpleGrid>
       {collapsedItems.length > 0 && (
         <Button
           onClick={opened ? close : open}
-          size="xl"
           color="dark.4"
           radius="xl"
           fullWidth
@@ -225,8 +234,8 @@ function ProductItem({
   url,
 }: (typeof merchProducts)[number]) {
   return (
-    <div key={imageUrl} className="flex flex-col gap-6 rounded-[20px] bg-[#2F2F2F] p-6">
-      <div className="relative overflow-hidden rounded-lg">
+    <div key={imageUrl} className="flex flex-col gap-4 rounded-lg bg-[#2F2F2F] p-4">
+      <div className="relative mx-auto w-52 overflow-hidden rounded-lg">
         <Image
           src={imageUrl}
           alt="t-shirt with an AI generated face of a cat"
@@ -248,14 +257,17 @@ function ProductItem({
         <Text size={22} weight="bold">
           {name}
         </Text>
-        {description && <Text size={16}>{description}</Text>}
+        {description && (
+          <Text size={16} lineClamp={3}>
+            {description}
+          </Text>
+        )}
       </div>
       <Button
         component="a"
         className="mt-auto"
         href={url}
         rel="nofollow noreferrer"
-        size="xl"
         target="_blank"
         color="dark.4"
         radius="xl"

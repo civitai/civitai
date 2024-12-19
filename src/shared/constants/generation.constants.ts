@@ -1,4 +1,4 @@
-import { WorkflowStatus } from '@civitai/client';
+import { KlingMode, WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import {
   baseModelSets,
@@ -15,6 +15,10 @@ import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosest } from '~/utils/number-helpers';
+import { Kling } from '~/server/orchestrator/kling/kling.schema';
+import { Haiper } from '~/server/orchestrator/haiper/haiper.schema';
+import { Mochi } from '~/server/orchestrator/mochi/mochi.schema';
+import { Minimax } from '~/server/orchestrator/minimax/minimax.schema';
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -518,6 +522,36 @@ export function getBaseModelSetTypes({
 // #endregion
 
 // #region [workflows]
+type EnginesDictionary = Record<
+  string,
+  {
+    label: string;
+    description: string | (() => React.ReactNode);
+    whatIf?: string[];
+  }
+>;
+export const engineDefinitions: EnginesDictionary = {
+  haiper: {
+    label: 'Haiper',
+    description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
+    whatIf: ['duration'],
+  },
+  mochi: {
+    label: 'Mochi',
+    description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
+  },
+  kling: {
+    label: 'Kling',
+    description: ``,
+    whatIf: ['mode', 'duration'],
+  },
+  minimax: {
+    label: 'Hailou by MiniMax',
+    description: '',
+    whatIf: [],
+  },
+};
+
 export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = [
   {
     type: 'video',
@@ -526,15 +560,8 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'haiper',
     key: 'haiper-txt2vid',
-    defaultValues: {
-      prompt: '',
-      negativePrompt: '',
-      aspectRatio: '1:1',
-      duration: 4,
-      seed: undefined,
-      enablePromptEnhancer: true,
-    },
     metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
+    validate: Haiper.validateInput,
   },
   {
     type: 'video',
@@ -543,13 +570,8 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'haiper',
     key: 'haiper-img2vid',
-    defaultValues: {
-      prompt: '',
-      duration: 4,
-      seed: undefined,
-      enablePromptEnhancer: true,
-    },
     metadataDisplayProps: ['duration', 'seed', 'resolution'],
+    validate: Haiper.validateInput,
   },
   {
     type: 'video',
@@ -558,12 +580,48 @@ export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = 
     category: 'service',
     engine: 'mochi',
     key: 'mochi-txt2vid',
-    defaultValues: {
-      prompt: '',
-      seed: undefined,
-      enablePromptEnhancer: true,
-    },
     metadataDisplayProps: ['seed'],
+    validate: Mochi.validateInput,
+  },
+  {
+    type: 'video',
+    subType: 'txt2vid',
+    name: 'Text to video',
+    category: 'service',
+    engine: 'kling',
+    key: 'kling-txt2vid',
+    metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
+    validate: Kling.validateInput,
+  },
+  {
+    type: 'video',
+    subType: 'img2vid',
+    name: 'Image to video',
+    category: 'service',
+    engine: 'kling',
+    key: 'kling-img2vid',
+    metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
+    validate: Kling.validateInput,
+  },
+  {
+    type: 'video',
+    subType: 'txt2vid',
+    name: 'Text to video',
+    category: 'service',
+    engine: 'minimax',
+    key: 'minimax-txt2vid',
+    metadataDisplayProps: [],
+    validate: Minimax.validateInput,
+  },
+  {
+    type: 'video',
+    subType: 'img2vid',
+    name: 'Image to video',
+    category: 'service',
+    engine: 'minimax',
+    key: 'minimax-img2vid',
+    metadataDisplayProps: [],
+    validate: Minimax.validateInput,
   },
 ];
 // #endregion

@@ -1,14 +1,20 @@
-import { Button, Input, Text, Select, Alert, Loader } from '@mantine/core';
+import { Button, Input, Text, Select, Alert, Loader, Anchor } from '@mantine/core';
 import React, { createContext, useEffect, useState, useContext, useMemo } from 'react';
 import { UseFormReturn, useFormContext } from 'react-hook-form';
 import { z } from 'zod';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/HaiperAspectRatio';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import { Form, InputSegmentedControl, InputSwitch, InputText, InputTextArea } from '~/libs/form';
+import {
+  Form,
+  InputNumberSlider,
+  InputSegmentedControl,
+  InputSwitch,
+  InputText,
+  InputTextArea,
+} from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import {
-  VideoGenerationInput,
   VideoGenerationSchema,
   videoGenerationSchema,
 } from '~/server/schema/orchestrator/orchestrator.schema';
@@ -22,29 +28,37 @@ import {
   generationStore,
   useGenerationFormStore,
   generationFormStore,
-  useGenerationFormWorkflowConfig,
   useGenerationStore,
+  useVideoGenerationWorkflows,
+  useSelectedVideoWorkflow,
 } from '~/store/generation.store';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
   WORKFLOW_TAGS,
+  engineDefinitions,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
-import { InputImageUrl } from '~/components/Generate/Input/InputImageUrl';
+import { ImageUrlInput } from '~/components/Generate/Input/InputImageUrl';
 import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
-import { TwCard } from '~/components/TwCard/TwCard';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { hashify } from '~/utils/string-helpers';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { useGetGenerationEngines } from '~/components/Generate/hooks/useGetGenerationEngines';
-import { useGetAvailableGenerationEngineConfigurations } from '~/components/Generate/hooks/useGetAvailableGenerationEngineConfigurations';
+import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { KlingMode } from '@civitai/client';
+import { type OrchestratorEngine } from '~/server/orchestrator/infrastructure/base.enums';
+import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
+import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
 
 const schema = videoGenerationSchema;
 
-const WorkflowContext = createContext<{ workflow: GenerationWorkflowConfig } | null>(null);
+const WorkflowContext = createContext<{
+  workflow: GenerationWorkflowConfig;
+  engine: string;
+} | null>(null);
 function useWorkflowContext() {
   const ctx = useContext(WorkflowContext);
   if (!ctx) throw new Error('missing video gen ctx');
@@ -52,24 +66,17 @@ function useWorkflowContext() {
 }
 
 export function VideoGenerationForm() {
-  const engine = useGenerationFormStore((state) => state.engine ?? 'haiper');
+  const { data: workflows, isLoading } = useVideoGenerationWorkflows();
+  const workflow = useSelectedVideoWorkflow();
+  const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
 
-  const { workflow, availableWorkflows } = useGenerationFormWorkflowConfig({
-    type: 'video',
-    category: 'service',
-    engine,
-  });
-
-  const { data: engines, isLoading } = useGetGenerationEngines();
-  const engineData = engines?.find((x) => x.engine === engine);
-
-  // TODO - handle case where workflow is no longer available
-  if (!workflow) return null;
-
-  const workflows =
-    workflow.subType === 'txt2vid'
-      ? availableWorkflows.filter((x) => x.subType === 'txt2vid')
-      : availableWorkflows;
+  const availableEngines = Object.keys(engineDefinitions)
+    .filter((key) =>
+      workflows
+        ?.filter((x) => (sourceImageUrl ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
+        .some((x) => x.engine === key && !x.disabled)
+    )
+    .map((key) => ({ key, ...engineDefinitions[key] }));
 
   return (
     <div className="flex flex-1 flex-col gap-2">
@@ -92,48 +99,19 @@ export function VideoGenerationForm() {
             to change.
           </Text>
         </Alert>
-        <Select
-          label="Tool"
-          value={engine}
-          onChange={(value) => generationFormStore.setEngine(value!)}
-          data={[
-            { label: 'Haiper', value: 'haiper' },
-            { label: 'Mochi', value: 'mochi' },
-          ]}
-        />
-        {engineData?.message && !engineData?.disabled && (
-          <Alert color="blue">{engineData.message}</Alert>
-        )}
-        {workflows.length > 1 ? (
-          <Select
-            label="Workflow"
-            data={workflows.map((x) => ({ label: x.name, value: x.key }))}
-            value={workflow.key ?? workflows[0].key}
-            onChange={(workflow) => generationFormStore.setWorkflow(workflow!)}
-          />
-        ) : (
-          <div>
-            <Input.Label>Workflow</Input.Label>
-            <TwCard className="border px-3 py-2">
-              <Text size="sm" className="leading-5">
-                {workflow.name}
-              </Text>
-            </TwCard>
-          </div>
-        )}
       </div>
       {isLoading ? (
         <div className="flex items-center justify-center p-3">
           <Loader />
         </div>
-      ) : engineData?.disabled ? (
-        <Alert color="yellow" className="mx-3" title={`${engine} generation disabled`}>
-          {engineData?.message && <Text className="mb-2">{engineData?.message}</Text>}
-          {engines && (
+      ) : workflow?.disabled ? (
+        <Alert color="yellow" className="mx-3" title={`${workflow?.engine} generation disabled`}>
+          {workflow?.message && <Text className="mb-2">{workflow?.message}</Text>}
+          {workflows && (
             <>
               <Text className="mb-1">Try out another of our generation tools</Text>
               <div className="flex flex-wrap gap-2">
-                {engines
+                {workflows
                   .filter((x) => !x.disabled)
                   .map(({ engine }) => (
                     <Button
@@ -148,11 +126,29 @@ export function VideoGenerationForm() {
             </>
           )}
         </Alert>
-      ) : (
-        <WorkflowContext.Provider value={{ workflow }}>
-          <EngineForm />
-        </WorkflowContext.Provider>
-      )}
+      ) : workflow ? (
+        <>
+          <div className="flex flex-col gap-2 px-3">
+            <Select
+              label="Tool"
+              value={workflow.engine}
+              description={workflow?.message && !workflow?.disabled ? workflow.message : undefined}
+              onChange={(value) => generationFormStore.setEngine(value!)}
+              data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
+            />
+
+            {workflow?.subType.startsWith('img') && (
+              <ImageUrlInput
+                value={sourceImageUrl}
+                onChange={generationFormStore.setSourceImageUrl}
+              />
+            )}
+          </div>
+          <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
+            <EngineForm />
+          </WorkflowContext.Provider>
+        </>
+      ) : null}
     </div>
   );
 }
@@ -166,9 +162,145 @@ function EngineForm() {
       return <HaiperImg2VidGenerationForm />;
     case 'mochi-txt2vid':
       return <MochiGenerationForm />;
+    case 'kling-txt2vid':
+      return <KlingTextToVideoForm />;
+    case 'kling-img2vid':
+      return <KlingImageToVideoForm />;
+    case 'minimax-txt2vid':
+      return <MinimaxTxt2VidGenerationForm />;
+    case 'minimax-img2vid':
+      return <MinimaxImg2VidGenerationForm />;
     default:
       return null;
   }
+}
+
+function KlingTextToVideoForm() {
+  return (
+    <FormWrapper engine="kling">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <InputAspectRatioColonDelimited
+        name="aspectRatio"
+        label="Aspect Ratio"
+        options={klingAspectRatios}
+      />
+
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={klingDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <Input.Label>Mode</Input.Label>
+          <InfoPopover size="xs" iconProps={{ size: 14 }}>
+            Standard mode is faster to generate and more cost-effective. Pro takes longer to
+            generate and has higher quality video output.
+          </InfoPopover>
+        </div>
+        <InputSegmentedControl
+          name="mode"
+          data={[
+            { label: 'Standard', value: KlingMode.STANDARD },
+            { label: 'Professional', value: KlingMode.PROFESSIONAL },
+          ]}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={0}
+        max={1}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+    </FormWrapper>
+  );
+}
+
+function KlingImageToVideoForm() {
+  return (
+    <FormWrapper engine="kling">
+      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={klingDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <div className="flex items-center gap-1">
+          <Input.Label>Mode</Input.Label>
+          <InfoPopover size="xs" iconProps={{ size: 14 }}>
+            Standard mode is faster to generate and more cost-effective. Pro takes longer to
+            generate and has higher quality video output.
+          </InfoPopover>
+        </div>
+        <InputSegmentedControl
+          name="mode"
+          data={[
+            { label: 'Standard', value: KlingMode.STANDARD },
+            { label: 'Professional', value: KlingMode.PROFESSIONAL },
+          ]}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        description="A value above 0.7 may cause visual errors due to conflicts between the image and the text"
+        min={0}
+        max={1}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+    </FormWrapper>
+  );
 }
 
 function HaiperTxt2VidGenerationForm() {
@@ -182,7 +314,7 @@ function HaiperTxt2VidGenerationForm() {
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={[2, 4, 8].map((value) => ({ label: `${value}s`, value }))}
+          data={haiperDuration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
       <InputSeed name="seed" label="Seed" />
@@ -193,14 +325,14 @@ function HaiperTxt2VidGenerationForm() {
 function HaiperImg2VidGenerationForm() {
   return (
     <FormWrapper engine="haiper">
-      <InputImageUrl name="sourceImageUrl" label="Image" />
+      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
-          data={[2, 4, 8].map((value) => ({ label: `${value}s`, value }))}
+          data={haiperDuration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
       <InputSeed name="seed" label="Seed" />
@@ -225,36 +357,51 @@ function MochiGenerationForm() {
   );
 }
 
-type Engine = VideoGenerationInput['engine'];
+function MinimaxTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="minimax">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+    </FormWrapper>
+  );
+}
+
+function MinimaxImg2VidGenerationForm() {
+  return (
+    <FormWrapper engine="minimax">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+    </FormWrapper>
+  );
+}
+
 function FormWrapper({
   engine,
   children,
 }: {
-  engine: Engine;
+  engine: OrchestratorEngine;
   children: React.ReactNode | ((form: UseFormReturn) => React.ReactNode);
 }) {
   const type = useGenerationFormStore((state) => state.type);
   const storeData = useGenerationStore((state) => state.data);
   const { workflow } = useWorkflowContext();
-  const { defaultValues } = workflow ?? {};
   const status = useGenerationStatus();
   const messageHash = useMemo(
     () => (status.message ? hashify(status.message).toString() : undefined),
     [status.message]
   );
 
-  const { data: availableEngineConfigurations } = useGetAvailableGenerationEngineConfigurations();
-
   const form = usePersistForm(workflow.key, {
-    schema: schema as any,
+    schema: z.record(z.string(), z.any()) as any,
     version: 1,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
-    defaultValues: { ...defaultValues, engine, workflow: workflow.key },
+    defaultValues: validateInput(workflow),
     storage: localStorage,
   });
 
   const { mutate, isLoading, error } = useGenerate();
+  const [debouncedIsLoading, setDebouncedIsLoading] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
     type: 'Generation',
     message: (requiredBalance) =>
@@ -268,13 +415,13 @@ function FormWrapper({
     for (const workflow of generationFormWorkflowConfigurations) {
       localStorage.removeItem(workflow.key);
     }
-    form.reset(defaultValues);
-    const engineConfig = availableEngineConfigurations?.[0];
-    if (engineConfig) generationFormStore.setWorkflow(engineConfig.key);
+    form.reset();
+    generationFormStore.reset();
   }
 
   function handleSubmit(data: z.infer<typeof schema>) {
     if (isLoading) return;
+    setDebouncedIsLoading(true);
 
     const { cost } = useCostStore.getState();
     const totalCost = cost;
@@ -282,22 +429,28 @@ function FormWrapper({
     conditionalPerformTransaction(totalCost, () => {
       mutate({
         type: 'video',
-        data: { ...data, engine, workflow: workflow.key },
+        data: validateInput(workflow, data),
         tags: [WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
       });
     });
+    // if the workflow uses the same input, it will be short-circuited and the workflow will return an immediate success.
+    // use `debouncedIsLoading` to better show that a submission has occurred
+    setTimeout(() => {
+      setDebouncedIsLoading(false);
+    }, 1000);
   }
 
   useEffect(() => {
-    if (type === 'video' && storeData) {
+    if (type === 'video' && storeData && workflow) {
       const registered = Object.keys(form.getValues());
       const { params } = storeData;
-      for (const [key, value] of Object.entries(params)) {
+      const validated = validateInput(workflow, params);
+      for (const [key, value] of Object.entries(validated)) {
         if (registered.includes(key) && key !== 'engine') form.setValue(key as any, value);
       }
       generationStore.clearData();
     }
-  }, [storeData, type]);
+  }, [storeData, type, workflow]);
 
   useEffect(() => {
     if (!error) return;
@@ -330,7 +483,7 @@ function FormWrapper({
         <DailyBoostRewardClaim />
         <QueueSnackbar />
         <div className="flex gap-2">
-          <SubmitButton2 loading={isLoading} engine={engine} />
+          <SubmitButton2 loading={isLoading || debouncedIsLoading} engine={engine} />
           <Button onClick={handleReset} variant="default" className="h-auto px-3">
             Reset
           </Button>
@@ -353,9 +506,10 @@ function FormWrapper({
   );
 }
 
-function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }) {
+function SubmitButton2({ loading, engine }: { loading: boolean; engine: OrchestratorEngine }) {
   const [query, setQuery] = useState<VideoGenerationSchema | null>(null);
   const { getValues, watch } = useFormContext();
+  const [error, setError] = useState<string | null>(null);
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
     { type: 'video', data: query as VideoGenerationSchema },
     { keepPreviousData: false, enabled: !!query }
@@ -367,8 +521,8 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
 
   useEffect(() => {
-    const { whatIf = [] } = engines[engine] ?? {};
-    const { defaultValues } = workflow;
+    const { whatIf = [] } = engineDefinitions[engine] ?? {};
+    // const { defaultValues } = workflow;
     const subscription = watch(() => {
       const formData = getValues();
       const whatIfData = whatIf.reduce<Record<string, unknown>>(
@@ -376,14 +530,15 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
         {}
       );
 
-      const result = schema.safeParse({
-        engine,
-        workflow: workflow.key,
-        ...defaultValues,
-        ...whatIfData,
-      });
-      if (!result.success) setQuery(null);
-      else setQuery(result.data);
+      try {
+        const result = validateInput(workflow, whatIfData);
+        setQuery(result);
+        setError(null);
+      } catch (e: any) {
+        const { message, path } = JSON.parse(e.message)?.[0] as any;
+        setQuery(null);
+        setError(`${path?.[0]}: ${message}`);
+      }
     });
     return subscription.unsubscribe;
   }, [workflow, engine]);
@@ -409,39 +564,16 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Engine }
 
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
 
-type EnginesDictionary = Record<
-  string,
-  {
-    label: string;
-    description: string | (() => React.ReactNode);
-    whatIf?: string[];
-  }
->;
-const engines: EnginesDictionary = {
-  haiper: {
-    label: 'Haiper',
-    description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
-    whatIf: ['duration'],
-  },
-  mochi: {
-    label: 'Mochi',
-    description() {
-      return (
-        <>
-          Mochi 1 preview, by creators{' '}
-          <Text
-            variant="link"
-            component="a"
-            rel="nofollow"
-            href="https://www.genmo.ai/"
-            target="_blank"
-          >
-            https://www.genmo.ai/
-          </Text>
-          , is an open state-of-the-art video generation model with high-fidelity motion and strong
-          prompt adherence in preliminary evaluation.
-        </>
-      );
-    },
-  },
-};
+function validateInput(workflow: GenerationWorkflowConfig, data?: Record<string, unknown>) {
+  const { sourceImageUrl, width, height } = useGenerationFormStore.getState();
+
+  return workflow.validate({
+    ...data,
+    engine: workflow.engine,
+    workflow: workflow.key,
+    sourceImageUrl,
+    width,
+    height,
+    type: workflow.subType,
+  });
+}

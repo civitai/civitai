@@ -40,9 +40,9 @@ export const dailyChallengeConfig: ChallengeConfig = {
     { buzz: 2500, points: 100 },
     { buzz: 1500, points: 50 },
   ] as Prize[],
-  entryPrizeRequirement: 20,
-  entryPrize: { buzz: 400, points: 10 } as Prize,
-  reviewAmount: { min: 8, max: 12 },
+  entryPrizeRequirement: 10,
+  entryPrize: { buzz: 200, points: 10 } as Prize,
+  reviewAmount: { min: 2, max: 6 },
   finalReviewAmount: 10,
   resourceCosmeticId: null,
   articleTagId: 128643, // Announcement.

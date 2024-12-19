@@ -1,13 +1,4 @@
-import {
-  Badge,
-  BadgeProps,
-  Group,
-  HoverCard,
-  Stack,
-  Text,
-  ThemeIcon,
-  UnstyledButton,
-} from '@mantine/core';
+import { Badge, BadgeProps, HoverCard, Text, ThemeIcon } from '@mantine/core';
 import { Currency } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
@@ -17,29 +8,18 @@ import {
   IconSwords,
   IconViewfinder,
 } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
-import { useRouter } from 'next/router';
 import React from 'react';
 import { useBountyEngagement } from '~/components/Bounty/bounty.utils';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { FeedCard } from '~/components/Cards/FeedCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BountyGetAll } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getDisplayName, slugit } from '~/utils/string-helpers';
 import { BountyContextMenu } from '../Bounty/BountyContextMenu';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { constants } from '~/server/common/constants';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-
-const IMAGE_CARD_WIDTH = 450;
+import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
 const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
   radius: 'xl',
@@ -51,9 +31,7 @@ const sharedBadgeProps: Omit<BadgeProps, 'children'> = {
 
 export function BountyCard({ data }: Props) {
   const { classes, cx, theme } = useCardStyles({ aspectRatio: 1 });
-  const router = useRouter();
-  const currentUser = useCurrentUser();
-  const { id, name, images, user, type, expiresAt, stats, complete } = data;
+  const { id, name, images, type, expiresAt, stats, complete } = data;
   const image = images?.[0];
   const expired = expiresAt < new Date();
 
@@ -101,87 +79,33 @@ export function BountyCard({ data }: Props) {
       : countdownBadge;
 
   return (
-    <FeedCard href={`/bounties/${id}/${slugit(name)}`} aspectRatio="square">
-      <div className={classes.root}>
-        {image && (
-          <ImageGuard2 image={image} connectId={id} connectType="bounty">
-            {(safe) => (
-              <>
-                <Group
-                  spacing={4}
-                  position="apart"
-                  className={cx(classes.contentOverlay, classes.top)}
-                  noWrap
-                >
-                  <Group spacing={4}>
-                    <ImageGuard2.BlurToggle h={26} radius="xl" />
-                    {type && (
-                      <Badge
-                        className={cx(classes.infoChip, classes.chip)}
-                        variant="light"
-                        radius="xl"
-                      >
-                        <Text color="white" size="xs" transform="capitalize">
-                          {getDisplayName(type)}
-                        </Text>
-                      </Badge>
-                    )}
-                  </Group>
-                  {deadlineBadge}
-                  <BountyContextMenu
-                    bounty={data}
-                    buttonProps={{ ml: 'auto', variant: 'transparent' }}
-                    position="bottom-end"
-                    withinPortal
-                  />
-                </Group>
-                {safe ? (
-                  <EdgeMedia2
-                    metadata={image.metadata}
-                    src={image.url}
-                    name={image.name ?? image.id.toString()}
-                    alt={
-                      image.meta
-                        ? truncate((image.meta as ImageMetaProps).prompt, {
-                            length: constants.altTruncateLength,
-                          })
-                        : undefined
-                    }
-                    type={image.type}
-                    width={IMAGE_CARD_WIDTH}
-                    className={classes.image}
-                    skip={getSkipValue(image)}
-                  />
-                ) : (
-                  <MediaHash {...image} />
-                )}
-              </>
+    <AspectRatioImageCard
+      href={`/bounties/${id}/${slugit(name)}`}
+      aspectRatio="square"
+      contentType="bounty"
+      contentId={id}
+      image={image}
+      header={
+        <div className="flex w-full justify-between">
+          <div className="flex gap-1">
+            {type && (
+              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
+                <Text color="white" size="xs" transform="capitalize">
+                  {getDisplayName(type)}
+                </Text>
+              </Badge>
             )}
-          </ImageGuard2>
-        )}
-
-        <Stack
-          className={cx(classes.contentOverlay, classes.bottom, classes.fullOverlay)}
-          spacing="sm"
-        >
-          {user ? (
-            user?.id !== -1 && (
-              <UnstyledButton
-                sx={{ color: 'white', alignSelf: 'flex-start' }}
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-
-                  router.push(`/user/${user.username}`);
-                }}
-              >
-                <UserAvatar user={user} avatarProps={{ radius: 'xl', size: 32 }} withUsername />
-              </UnstyledButton>
-            )
-          ) : (
-            <UserAvatar user={user} />
-          )}
-          <Group position="apart" align="start" spacing={8}>
+            {deadlineBadge}
+          </div>
+          <BountyContextMenu bounty={data} position="bottom-end" withinPortal />
+        </div>
+      }
+      footerGradient
+      footer={
+        <div className="flex w-full flex-col gap-2">
+          <UserAvatarSimple {...data.user} />
+          <div className="flex items-start justify-between gap-2"></div>
+          <div className="flex items-start justify-between gap-2">
             <Text size="xl" weight={700} lineClamp={2} lh={1.2}>
               {name}
             </Text>
@@ -193,7 +117,7 @@ export function BountyCard({ data }: Props) {
                   </ThemeIcon>
                 </HoverCard.Target>
                 <HoverCard.Dropdown>
-                  <Stack spacing={0}>
+                  <div>
                     <Text color="yellow" weight={590}>
                       Pending scan
                     </Text>
@@ -201,12 +125,12 @@ export function BountyCard({ data }: Props) {
                       This bounty won&apos;t be visible publicly until it has completed the image
                       scan process
                     </Text>
-                  </Stack>
+                  </div>
                 </HoverCard.Dropdown>
               </HoverCard>
             )}
-          </Group>
-          <Group spacing={8} position="apart">
+          </div>
+          <div className="flex items-center justify-between gap-2">
             <CurrencyBadge
               currency={Currency.BUZZ}
               unitAmount={stats?.unitAmountCountAllTime ?? 0}
@@ -223,7 +147,7 @@ export function BountyCard({ data }: Props) {
               px={8}
               variant="filled"
             >
-              <Group spacing="xs" noWrap>
+              <div className="flex items-center gap-2">
                 <IconBadge
                   icon={
                     <IconViewfinder
@@ -275,12 +199,12 @@ export function BountyCard({ data }: Props) {
                 >
                   <Text size="xs">{abbreviateNumber(stats?.entryCountAllTime ?? 0)}</Text>
                 </IconBadge>
-              </Group>
+              </div>
             </Badge>
-          </Group>
-        </Stack>
-      </div>
-    </FeedCard>
+          </div>
+        </div>
+      }
+    />
   );
 }
 

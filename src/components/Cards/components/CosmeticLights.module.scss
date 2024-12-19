@@ -1,0 +1,191 @@
+$padding-y: 15px;
+$offset: -2px;
+$width: 18px;
+$height: 14px;
+$bulbEndRadius: 6px;
+$baseGlowOffset: -3px;
+
+$yellow: rgb(255, 255, 0);
+$red: rgb(255, 0, 0);
+$green: rgb(0, 255, 0);
+$blue: rgb(0, 200, 255);
+
+.light {
+  position: absolute;
+  top: $padding-y;
+  left: $offset;
+  right: $offset;
+  bottom: $padding-y;
+  z-index: 1001;
+  pointer-events: none;
+
+  span {
+    width: $width;
+    height: $height;
+    position: absolute;
+    box-shadow: inset 0px 0px 1px 1px rgba(0, 0, 0, 0.3);
+
+    &::before {
+      content: '';
+      position: absolute;
+      filter: blur(3px);
+      width: #{$width + abs($baseGlowOffset)};
+      height: #{$height * 1.5};
+      top: 50%;
+      transform: translateY(-50%);
+      will-change: width, opacity;
+      opacity: 0.5;
+      z-index: -1;
+    }
+
+    &:nth-child(odd) {
+      border-radius: $bulbEndRadius 50% 50% $bulbEndRadius;
+      left: 0;
+      &::before {
+        left: 0;
+        border-radius: $bulbEndRadius 50% 50% $bulbEndRadius;
+      }
+    }
+
+    &:nth-child(even) {
+      border-radius: 50% $bulbEndRadius $bulbEndRadius 50%;
+      right: 0;
+      &::before {
+        border-radius: 50% $bulbEndRadius $bulbEndRadius 50%;
+        right: 0;
+      }
+    }
+
+    @for $i from 1 through 12 {
+      &:nth-child(#{$i}) {
+        top: calc(100% / 6 * #{($i - 1) / 2});
+      }
+    }
+  }
+
+  &.red span {
+    background: $red;
+    &::before {
+      background: darken($red, 10%);
+    }
+  }
+
+  &.green span {
+    background: $green;
+    &::before {
+      background: $green;
+    }
+  }
+
+  &.blue span {
+    background: $blue;
+    &::before {
+      background: darken($blue, 10%);
+    }
+  }
+
+  &.yellow span {
+    background: $yellow;
+    &::before {
+      background: $yellow;
+    }
+  }
+
+  &.brightness-100 span {
+    &::before {
+      animation: flicker-100 1s ease infinite alternate;
+    }
+  }
+
+  &.brightness-75 span {
+    &::before {
+      animation: flicker-75 1.25s ease infinite alternate;
+    }
+  }
+
+  &.brightness-50 span {
+    &.yellow span {
+      background: darken($yellow, 5%);
+    }
+    &.red span {
+      background: darken($red, 5%);
+    }
+    &.green span {
+      background: darken($green, 5%);
+    }
+    &.blue span {
+      background: darken($blue, 5%);
+    }
+    &::before {
+      animation: flicker-50 1.5s ease infinite alternate;
+    }
+  }
+
+  &.brightness-25 {
+    &.yellow span {
+      background: darken($yellow, 10%);
+    }
+    &.red span {
+      background: darken($red, 10%);
+    }
+    &.green span {
+      background: darken($green, 10%);
+    }
+    &.blue span {
+      background: darken($blue, 10%);
+    }
+    span {
+      &::before {
+        animation: flicker-25 2s ease infinite alternate;
+      }
+    }
+  }
+}
+
+@keyframes flicker-100 {
+  0% {
+    opacity: 0.25;
+    width: #{$width + abs($baseGlowOffset * 1)};
+  }
+
+  100% {
+    opacity: 0.6;
+    width: #{$width + abs($baseGlowOffset * 4)};
+  }
+}
+
+@keyframes flicker-75 {
+  0% {
+    opacity: 0.15;
+    width: #{$width + abs($baseGlowOffset * 1)};
+  }
+
+  100% {
+    opacity: 0.4;
+    width: #{$width + abs($baseGlowOffset * 3)};
+  }
+}
+
+@keyframes flicker-50 {
+  0% {
+    opacity: 0.05;
+    width: #{$width + abs($baseGlowOffset * 1)};
+  }
+
+  100% {
+    opacity: 0.3;
+    width: #{$width + abs($baseGlowOffset * 2.5)};
+  }
+}
+
+@keyframes flicker-25 {
+  0% {
+    opacity: 0.05;
+    width: #{$width + abs($baseGlowOffset * 1)};
+  }
+
+  100% {
+    opacity: 0.2;
+    width: #{$width + abs($baseGlowOffset * 2)};
+  }
+}

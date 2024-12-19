@@ -36,6 +36,8 @@ export function UserAvatarSimple({
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
   const router = useRouter();
 
+  if (id === -1) return null;
+
   const nameplate = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'NamePlate' : undefined
   )?.cosmetic as Omit<NamePlateCosmetic, 'name' | 'description' | 'obtainedAt'>;
