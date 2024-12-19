@@ -1,13 +1,19 @@
-import { Card, Text, Badge, UnstyledButton, Popover } from '@mantine/core';
+import { Card, Text, Badge, UnstyledButton, Popover, MantineColor } from '@mantine/core';
 import { IconChartBubble, IconMessage } from '@tabler/icons-react';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 
+const toolPriorityColor: Record<number, MantineColor> = {
+  1: 'teal.3',
+  2: 'yellow.4',
+  3: 'gray.4',
+  4: 'orange.5',
+};
+
 export function ImageProcess({ imageId }: { imageId: number }) {
   const { data } = trpc.image.getGenerationData.useQuery({ id: imageId });
-
   if (!data) return null;
 
   const { tools, techniques } = data;
@@ -25,39 +31,44 @@ export function ImageProcess({ imageId }: { imageId: number }) {
             <Text className="font-semibold">Tools</Text>
           </div>
           <div className="flex flex-wrap gap-2">
-            {tools.map(({ id, name, notes }) => (
-              <Badge
-                key={id}
-                size="lg"
-                className={`rounded-full border border-blue-8 border-opacity-30 ${
-                  notes ? 'pr-2' : ''
-                }`}
-                classNames={{ inner: 'flex gap-1 h-full' }}
-              >
-                <Link
-                  href={`/tools/${slugit(name)}?tools=${id}`}
-                  as={`/tools/${slugit(name)}`}
-                  data-activity={`tool-click:${id}`}
+            {tools.map(({ id, name, notes, priority }) => {
+              const color = priority ? toolPriorityColor[priority] : undefined;
+
+              return (
+                <Badge
+                  key={id}
+                  size="lg"
+                  className={`rounded-full border border-blue-8 border-opacity-30 ${
+                    notes ? 'pr-2' : ''
+                  }`}
+                  color={color}
+                  classNames={{ inner: 'flex gap-1 h-full' }}
                 >
-                  {name}
-                </Link>
-                {notes && (
-                  <>
-                    <div className="h-full border-l border-blue-8 border-opacity-30"></div>
-                    <Popover width={300} withinPortal>
-                      <Popover.Target>
-                        <UnstyledButton>
-                          <IconMessage size={18} className="text-blue-6 dark:text-blue-2" />
-                        </UnstyledButton>
-                      </Popover.Target>
-                      <Popover.Dropdown>
-                        <Text size="sm">{notes}</Text>
-                      </Popover.Dropdown>
-                    </Popover>
-                  </>
-                )}
-              </Badge>
-            ))}
+                  <Link
+                    href={`/tools/${slugit(name)}?tools=${id}`}
+                    as={`/tools/${slugit(name)}`}
+                    data-activity={`tool-click:${id}`}
+                  >
+                    {name}
+                  </Link>
+                  {notes && (
+                    <>
+                      <div className="h-full border-l border-blue-8 border-opacity-30"></div>
+                      <Popover width={300} withinPortal>
+                        <Popover.Target>
+                          <UnstyledButton>
+                            <IconMessage size={18} className="text-blue-6 dark:text-blue-2" />
+                          </UnstyledButton>
+                        </Popover.Target>
+                        <Popover.Dropdown>
+                          <Text size="sm">{notes}</Text>
+                        </Popover.Dropdown>
+                      </Popover>
+                    </>
+                  )}
+                </Badge>
+              );
+            })}
           </div>
         </div>
       )}

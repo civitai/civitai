@@ -316,4 +316,6 @@ export enum BlocklistType {
 export enum ToolSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
+  AZ = 'AZ',
+  ZA = 'ZA',
 }

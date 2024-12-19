@@ -4207,6 +4207,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
       meta: true,
       type: true,
       tools: {
+        orderBy: { tool: { priority: 'asc' } },
         select: {
           notes: true,
           tool: {
@@ -4215,6 +4216,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
               name: true,
               icon: true,
               domain: true,
+              priority: true,
             },
           },
         },

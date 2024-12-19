@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+import { ToolSort } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { GetAllToolsSchema, ToolMetadata } from '~/server/schema/tool.schema';
 
@@ -5,6 +7,13 @@ export type ToolModel = AsyncReturnType<typeof getAllTools>['items'][number];
 export async function getAllTools(input?: GetAllToolsSchema) {
   const { cursor, limit, sort, type, include } = input || {};
   const includeUnlisted = include?.includes('unlisted');
+
+  const orderBy: Prisma.ToolFindManyArgs['orderBy'] = [{ supported: 'desc' }];
+  if (sort === ToolSort.AZ) orderBy.push({ name: 'asc' });
+  if (sort === ToolSort.ZA) orderBy.push({ name: 'desc' });
+  if (sort === ToolSort.Newest) orderBy.push({ id: 'desc' });
+  if (sort === ToolSort.Oldest) orderBy.push({ id: 'asc' });
+  if (includeUnlisted) orderBy.shift();
 
   const tools = await dbRead.tool.findMany({
     select: {
@@ -22,7 +31,7 @@ export async function getAllTools(input?: GetAllToolsSchema) {
     },
     where: { type, enabled: true, unlisted: includeUnlisted ? undefined : false },
     cursor: cursor ? { id: cursor } : undefined,
-    orderBy: [{ supported: 'desc' }, { id: sort === 'Newest' ? 'desc' : 'asc' }],
+    orderBy,
     take: limit ? limit + 1 : undefined,
   });
 
