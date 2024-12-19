@@ -1,24 +1,26 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
-import { Tracker } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
-type Row = { application_name: string; duration: number; query: string };
-
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
-  const [result] = await dbWrite.$queryRaw<Row[]>`
+  const [result] = await dbWrite.$queryRaw<any[]>`
     SELECT
-      application_name,
-      floor(EXTRACT(EPOCH FROM (NOW() - query_start))) AS duration,
-      query
-    FROM
-      pg_stat_activity
+      a.pid,
+      a.application_name,
+      floor(EXTRACT(EPOCH FROM (NOW() - query_start)))::int AS duration,
+      a.query,
+      l.locktype,
+      l.mode,
+      CAST(l.relation::regclass as text) AS locked_table,
+      l.granted
+    FROM pg_stat_activity a
+    JOIN pg_locks l ON a.pid = l.pid
     WHERE
-      state = 'active'
-      AND datname = 'civitai'
-      ORDER BY 1 DESC
-      LIMIT 1;
+      a.state = 'active'
+      AND l.granted = true
+    ORDER BY
+      duration DESC
+    LIMIT 1;
   `;
 
   return res.status(200).json(result);
