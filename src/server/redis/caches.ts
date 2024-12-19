@@ -255,10 +255,17 @@ export const cosmeticEntityCaches = Object.fromEntries(
           const rawRecord = record as any as EntityCosmeticLookupRaw;
           const cosmetic = cosmetics[rawRecord.cosmeticId];
           if (!cosmetic) continue;
+
+          // Swap the id field to the cosmeticId
+          record.id = rawRecord.cosmeticId;
+          delete (record as any).cosmeticId;
+
+          // Add userData to the data field
           record.data = cosmetic.data as ContentDecorationCosmetic['data'];
           if (rawRecord.userData) {
             const userData = rawRecord.userData as ContentDecorationCosmetic['data'];
             if (userData.lights) record.data.lights = userData.lights;
+            delete (record as any).userData;
           }
         }
       },
