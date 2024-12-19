@@ -69,13 +69,7 @@ export type TrainingDetailsBaseModel =
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
 export type OptimizerTypes = (typeof optimizerTypes)[number];
 export const loraTypes = ['lora'] as const; // LoCon Lycoris", "LoHa Lycoris
-export const lrSchedulerTypes = [
-  'constant',
-  'cosine',
-  'cosine_with_restarts',
-  'constant_with_warmup',
-  'linear',
-] as const;
+export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
 export const engineTypes = ['kohya', 'x-flux', 'rapid'] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 

@@ -10,6 +10,7 @@ import { getImageData, isImage } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
 
+// TODO - if the image is being uploaded, don't make a whatIf query
 export function GeneratorImageInput({
   value,
   onChange,
@@ -24,7 +25,7 @@ export function GeneratorImageInput({
       setImageError(error.message);
     },
     onSuccess: ({ blob }) => {
-      onChange?.(blob.url);
+      onChange?.(blob.url ?? undefined);
     },
   });
 
@@ -44,8 +45,6 @@ export function GeneratorImageInput({
   }
 
   async function handleTextChange(e: React.ChangeEvent<HTMLInputElement>) {
-    // TODO - ensure that the downloaded image is in our supported mime types
-
     const result = z.string().url().safeParse(e.target.value);
     if (inputError) setInputError(undefined);
     if (!result.success) return;

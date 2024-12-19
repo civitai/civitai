@@ -8,9 +8,9 @@ import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
+import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
-import { generationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import {
   generateImageSchema,
   generateImageWhatIfSchema,
@@ -238,7 +238,7 @@ export const orchestratorRouter = router({
       }
     }),
   whatIf: orchestratorGuardedProcedure
-    .input(z.any())
+    .input(generationSchema)
     .use(edgeCacheIt({ ttl: 60 }))
     .query(({ ctx, input }) => whatIf({ ...input, userId: ctx.user.id, token: ctx.token })),
   generate: orchestratorGuardedProcedure

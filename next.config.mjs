@@ -56,7 +56,7 @@ export default defineNextConfig(withAxiom({
     // scrollRestoration: true,
     largePageDataBytes: 512 * 100000,
     optimizePackageImports: [
-      // '@civitai/client',
+      '@civitai/client',
       './srs/libs/form'
     ]
   },

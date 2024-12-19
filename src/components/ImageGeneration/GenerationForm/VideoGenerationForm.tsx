@@ -14,10 +14,6 @@ import {
   InputTextArea,
 } from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import {
-  VideoGenerationSchema,
-  videoGenerationSchema,
-} from '~/server/schema/orchestrator/orchestrator.schema';
 import { trpc } from '~/utils/trpc';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -40,7 +36,6 @@ import {
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { GeneratorImageInput } from '~/components/Generate/Input/InputImageUrl';
-import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { hashify } from '~/utils/string-helpers';
@@ -52,11 +47,11 @@ import { KlingMode } from '@civitai/client';
 import { type OrchestratorEngine } from '~/server/orchestrator/infrastructure/base.enums';
 import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
 import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
-
-const schema = videoGenerationSchema;
+import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
+import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 
 const WorkflowContext = createContext<{
-  workflow: GenerationWorkflowConfig;
+  workflow: VideoGenerationConfig;
   engine: string;
 } | null>(null);
 function useWorkflowContext() {
@@ -423,7 +418,7 @@ function FormWrapper({
     generationFormStore.reset();
   }
 
-  function handleSubmit(data: z.infer<typeof schema>) {
+  function handleSubmit(data: VideoGenerationSchema) {
     if (isLoading) return;
     setDebouncedIsLoading(true);
 
@@ -511,11 +506,11 @@ function FormWrapper({
 }
 
 function SubmitButton2({ loading, engine }: { loading: boolean; engine: OrchestratorEngine }) {
-  const [query, setQuery] = useState<VideoGenerationSchema | null>(null);
+  const [query, setQuery] = useState<Record<string, any> | null>(null);
   const { getValues, watch } = useFormContext();
   const [error, setError] = useState<string | null>(null);
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
-    { type: 'video', data: query as VideoGenerationSchema },
+    { type: 'video', data: query as Record<string, any> },
     { keepPreviousData: false, enabled: !!query }
   );
   const { workflow } = useWorkflowContext();
@@ -568,10 +563,13 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
 
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
 
-function validateInput(workflow: GenerationWorkflowConfig, data?: Record<string, unknown>) {
+function validateInput<TSchema extends z.AnyZodObject>(
+  workflow: VideoGenerationConfig<TSchema>,
+  data?: Record<string, unknown>
+) {
   const { sourceImage, width, height } = useGenerationFormStore.getState();
 
-  return workflow.validate({
+  return workflow.schema.parse({
     ...data,
     engine: workflow.engine,
     workflow: workflow.key,

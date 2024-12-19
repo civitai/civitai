@@ -122,7 +122,7 @@ export function GeneratedImage({
     handleCloseImageLightbox();
     generationStore.setData({
       resources: step.resources,
-      params: { ...step.params, seed, ...rest },
+      params: { ...(step.params as any), seed, ...rest },
       remixOfId: step.metadata?.remixOfId,
       type,
       workflow: workflow ?? step.params.workflow,
@@ -498,7 +498,7 @@ export function GeneratedImage({
           {!isLightbox && (
             <div className="absolute bottom-2 right-2">
               <ImageMetaPopover
-                meta={step.params}
+                meta={step.params as any}
                 zIndex={constants.imageGeneration.drawerZIndex + 1}
                 hideSoftware
               >

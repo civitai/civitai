@@ -1,11 +1,11 @@
-import { postV2ConsumerRecipesImageUpload } from '@civitai/client';
+import { invokeImageUploadStepTemplate } from '@civitai/client';
 import { createOrchestratorClient } from '~/server/services/orchestrator/common';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 export async function imageUpload({ sourceImage, token }: { sourceImage: string; token: string }) {
   const client = createOrchestratorClient(token);
 
-  const { data, error } = await postV2ConsumerRecipesImageUpload({
+  const { data, error } = await invokeImageUploadStepTemplate({
     client,
     body: sourceImage,
   }).catch((error) => {

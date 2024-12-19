@@ -60,9 +60,9 @@ import { logToAxiom } from '~/server/logging/client';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { UserTier } from '~/server/schema/user.schema';
+import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -377,7 +377,7 @@ export async function formatGenerationResponse(workflows: Workflow[]) {
 function getTextToImageAirs(inputs: TextToImageInput[]) {
   return Object.entries(
     inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
-      acc[input.model] = {};
+      if (input.model) acc[input.model] = {};
       const additionalNetworks = input.additionalNetworks ?? {};
       for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
       return acc;
@@ -407,35 +407,39 @@ function formatWorkflowStep(args: {
 function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
   const { input, output, jobs } = step as VideoGenStep;
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
-
-  let width = videoMetadata.params?.width;
-  let height = videoMetadata.params?.height;
-  let aspectRatio = width && height ? width / height : 16 / 9;
-
-  // if ((workflowId = '0-20241108234000287')) console.log(input);
-
   const { params } = videoMetadata;
+
+  let width: number | undefined;
+  let height: number | undefined;
+  let aspectRatio = 1;
+
   if (params) {
-    switch (params.engine) {
-      case 'haiper': {
-        if (params.aspectRatio) {
-          const [rw, rh] = params.aspectRatio.split(':').map(Number);
-          aspectRatio = rw / rh;
+    if (params.type === 'img2vid') {
+      width = params?.width;
+      height = params?.height;
+      aspectRatio = width && height ? width / height : 16 / 9;
+    } else if (params.type === 'txt2vid') {
+      switch (params.engine) {
+        case 'haiper': {
+          if (params.aspectRatio) {
+            const [rw, rh] = params.aspectRatio.split(':').map(Number);
+            aspectRatio = rw / rh;
+          }
+          break;
         }
-        break;
-      }
-      case 'kling': {
-        if (params.aspectRatio) {
-          const [rw, rh] = params.aspectRatio.split(':').map(Number);
-          aspectRatio = rw / rh;
+        case 'kling': {
+          if (params.aspectRatio) {
+            const [rw, rh] = params.aspectRatio.split(':').map(Number);
+            aspectRatio = rw / rh;
+          }
+          break;
         }
-        break;
+        case 'mochi':
+          width = 848;
+          height = 480;
+          aspectRatio = width / height;
+          break;
       }
-      case 'mochi':
-        width = 848;
-        height = 480;
-        aspectRatio = width / height;
-        break;
     }
   }
 
