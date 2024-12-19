@@ -37,6 +37,13 @@ export type EdgeVideoRef = {
   stop: () => void;
 };
 
+type State = {
+  loaded: boolean;
+  muted: boolean;
+  isPlaying: boolean;
+  showPlayIndicator: boolean;
+};
+
 export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   (
     {
@@ -57,12 +64,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   ) => {
     const ref = useRef<HTMLVideoElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
-    const [muted, setMuted] = useState(initialMuted);
-    const [loaded, setLoaded] = useState(false);
-    const [showPlayIndicator, setShowPlayIndicator] = useState(false);
+    const [state, setState] = useState<State>({
+      loaded: false,
+      muted: initialMuted,
+      isPlaying: false,
+      showPlayIndicator: false,
+    });
     const [volume, setVolume] = useLocalStorage({
       key: 'global-volume',
-      defaultValue: muted ? 0 : 0.5,
+      defaultValue: state.muted ? 0 : 0.5,
     });
 
     const { classes, cx } = useStyles();
@@ -84,8 +94,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           ref.current.pause();
         }
 
-        setShowPlayIndicator(true);
-        setTimeout(() => setShowPlayIndicator(false), 500);
+        setState((current) => ({ ...current, showPlayIndicator: true }));
+        setTimeout(() => setState((current) => ({ ...current, showPlayIndicator: false })), 500);
       }
     }, [controls, html5Controls]);
 
@@ -103,7 +113,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     }, []);
 
     const handleLoadedData = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
-      setLoaded(true);
+      setState((current) => ({ ...current, loaded: true }));
       e.currentTarget.style.opacity = '1';
     }, []);
 
@@ -113,7 +123,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
       video.muted = !video.muted;
       setVolume(video.muted ? 0 : video.volume);
-      setMuted(video.muted);
+      setState((current) => ({ ...current, muted: video.muted }));
       onMutedChange?.(video.muted);
     }, [onMutedChange, setVolume]);
 
@@ -124,15 +134,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
         video.volume = value;
         setVolume(value);
-        setMuted(value === 0);
+        setState((current) => ({ ...current, muted: value === 0 }));
       },
       [setVolume]
     );
 
-    const showCustomControls = loaded && controls && !html5Controls;
+    const showCustomControls = state.loaded && controls && !html5Controls;
     const enableAudioControl = ref.current && hasAudio(ref.current);
 
-    if (!initialMuted && loaded && ref.current) ref.current.volume = volume;
+    if (!initialMuted && state.loaded && ref.current) ref.current.volume = volume;
 
     useEffect(() => {
       // Hard set the src for Safari because it doesn't support autoplay webm
@@ -157,11 +167,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           <video
             ref={ref}
             className="block cursor-pointer"
-            muted={muted}
+            muted={state.muted}
             style={style}
             onLoadedData={handleLoadedData}
             controls={html5Controls}
             onClick={handleTogglePlayPause}
+            onPlaying={() => setState((current) => ({ ...current, isPlaying: true }))}
+            onPause={() => setState((current) => ({ ...current, isPlaying: false }))}
             onVolumeChange={(e) =>
               !initialMuted ? handleVolumeChange(e.currentTarget.volume) : undefined
             }
@@ -182,10 +194,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                 size="lg"
                 radius="xl"
               >
-                {ref.current?.paused ? (
-                  <IconPlayerPlayFilled size={16} />
-                ) : (
+                {state.isPlaying ? (
                   <IconPlayerPauseFilled size={16} />
+                ) : (
+                  <IconPlayerPlayFilled size={16} />
                 )}
               </ActionIcon>
               <div className="flex flex-nowrap gap-4">
@@ -211,7 +223,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                     radius="xl"
                     disabled={!enableAudioControl}
                   >
-                    {muted || volume === 0 ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
+                    {state.muted || volume === 0 || !enableAudioControl ? (
+                      <IconVolumeOff size={16} />
+                    ) : (
+                      <IconVolume size={16} />
+                    )}
                   </ActionIcon>
                 </div>
                 <ActionIcon
@@ -230,7 +246,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
               </div>
             </div>
           )}
-          {showPlayIndicator && (
+          {state.showPlayIndicator && (
             <ThemeIcon className={classes.playIndicator} size={64} radius="xl" color="dark">
               {ref.current?.paused ? <IconPlayerPauseFilled /> : <IconPlayerPlayFilled />}
             </ThemeIcon>
