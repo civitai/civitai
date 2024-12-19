@@ -410,6 +410,13 @@ export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
 export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
 export const maxVideoDimension = 3840;
 export const maxVideoDurationSeconds = 245;
+export const orchestratorUrls = [
+  'https://orchestration.civitai.com',
+  'https://orchestration-dev.civitai.com',
+];
+export function isOrchestratorUrl(url: string) {
+  return orchestratorUrls.some((orchestratorUrl) => url.startsWith(orchestratorUrl));
+}
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];

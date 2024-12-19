@@ -1,13 +1,14 @@
-import { CloseButton, Divider, LoadingOverlay, TextInput } from '@mantine/core';
+import { CloseButton, Divider, LoadingOverlay, TextInput, Input } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import { maxOrchestratorImageFileSize } from '~/server/common/constants';
+import { maxOrchestratorImageFileSize, isOrchestratorUrl } from '~/server/common/constants';
 
 import { useGenerationFormStore } from '~/store/generation.store';
 import { getBase64 } from '~/utils/file-utils';
 import { getImageData, isImage } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
+import clsx from 'clsx';
 
 export function GeneratorImageInput({
   value,
@@ -22,11 +23,12 @@ export function GeneratorImageInput({
     onError: (error) => {
       setImageError(error.message);
     },
-    onSuccess: (data) => {
-      console.log({ data });
-      // onChange?.(data.url)
+    onSuccess: ({ blob }) => {
+      onChange?.(blob.url);
     },
   });
+
+  console.log({ value });
 
   useEffect(() => {
     if (value)
@@ -39,19 +41,19 @@ export function GeneratorImageInput({
   }, [value]);
 
   async function handleChange(value?: string) {
-    if (!value) onChange?.(value);
+    if (!value || isOrchestratorUrl(value)) onChange?.(value);
     else mutate({ sourceImage: value });
-    // onChange?.(value);
   }
 
   async function handleTextChange(e: React.ChangeEvent<HTMLInputElement>) {
+    // TODO - ensure that the downloaded image is in our supported mime types
+
     const result = z.string().url().safeParse(e.target.value);
     if (inputError) setInputError(undefined);
     if (!result.success) return;
     const resolved = await isImage(result.data);
     if (resolved) handleChange(result.data);
     else setInputError('invalid image url');
-    // isImage(result.data).then((isImage) => (isImage ? handleChange(result.data) : onChange?.()));
   }
 
   async function handleDrop(files: File[]) {
@@ -59,41 +61,72 @@ export function GeneratorImageInput({
     handleChange(base64);
   }
 
-  return !value ? (
-    <div className="relative flex flex-col gap-2">
-      <LoadingOverlay visible={isLoading} />
-      <TextInput
-        label="Add an image"
-        placeholder="Enter image url here"
-        onChange={handleTextChange}
-        error={inputError}
-      />
-      <Divider label="OR" labelPosition="center" />
-      <ImageDropzone
-        allowExternalImageDrop
-        onDrop={handleDrop}
-        count={value ? 1 : 0}
-        max={1}
-        maxSize={maxOrchestratorImageFileSize}
-        label="Drag image here or click to select a file"
-      />
+  async function handleDropCapture(url: string) {
+    if (isOrchestratorUrl(url)) {
+      handleChange(url);
+    }
+  }
+
+  // TODO - make sure that remixing an image sets the value correctly
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="relative flex flex-col items-center justify-center">
+        <div className={clsx('relative flex w-full flex-col gap-2', { ['invisible']: value })}>
+          <LoadingOverlay visible={isLoading} />
+          <TextInput
+            label="Add an image"
+            placeholder="Enter image url here"
+            onChange={handleTextChange}
+            error={inputError}
+          />
+          <Divider label="OR" labelPosition="center" />
+          <ImageDropzone
+            allowExternalImageDrop
+            onDrop={handleDrop}
+            count={value ? 1 : 0}
+            max={1}
+            maxSize={maxOrchestratorImageFileSize}
+            label="Drag image here or click to select a file"
+            onDropCapture={handleDropCapture}
+          />
+        </div>
+        {value && (
+          <div className="absolute inset-0 flex">
+            <ImageWithCloseButton value={value} onChange={onChange} />
+          </div>
+        )}
+      </div>
+      {imageError && <Input.Error className="mt-1">{imageError}</Input.Error>}
     </div>
-  ) : (
-    <div className="flex">
-      <div className="relative inline-block">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={value}
-          alt="image to refine"
-          className="max-w-40 rounded-md shadow-sm shadow-black"
-        />
+  );
+}
+
+function ImageWithCloseButton({
+  value,
+  onChange,
+}: {
+  value?: string;
+  onChange?: (value?: string) => void;
+}) {
+  const [loaded, setLoaded] = useState(false);
+  return (
+    <div className="relative">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={value}
+        alt="image to refine"
+        className="max-h-full rounded-md shadow-sm shadow-black"
+        onLoad={() => setLoaded(true)}
+      />
+      {loaded && (
         <CloseButton
           color="red"
           variant="filled"
           className="absolute right-0 top-0"
           onClick={() => onChange?.()}
         />
-      </div>
+      )}
     </div>
   );
 }

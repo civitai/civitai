@@ -7,11 +7,7 @@ import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mi
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 import clsx from 'clsx';
-
-const internalUrlDropList = [
-  'https://orchestration.civitai.com',
-  'https://orchestration-stage.civitai.com',
-];
+import { isOrchestratorUrl } from '~/server/common/constants';
 
 export function ImageDropzone({
   disabled: initialDisabled,
@@ -25,6 +21,7 @@ export function ImageDropzone({
   maxSize = constants.mediaUpload.maxImageFileSize,
   onExceedMax,
   allowExternalImageDrop,
+  onDropCapture,
   ...props
 }: Props) {
   const theme = useMantineTheme();
@@ -56,12 +53,16 @@ export function ImageDropzone({
 
   const handleDropCapture = async (e: DragEvent) => {
     const url = e.dataTransfer.getData('text/uri-list');
-    if (!allowExternalImageDrop && !internalUrlDropList.some((x) => url.startsWith(x))) return;
+    if (!allowExternalImageDrop && !isOrchestratorUrl(url)) return;
+    onDropCapture ? onDropCapture(url) : handleDropCaptureUrl(url);
+  };
+
+  async function handleDropCaptureUrl(url: string) {
     const blob = await fetchBlob(url);
     if (!blob) return;
     const file = new File([blob], url.substring(url.lastIndexOf('/')), { type: blob.type });
     handleDrop([file]);
-  };
+  }
 
   return (
     <>
@@ -133,7 +134,7 @@ export function ImageDropzone({
   );
 }
 
-type Props = Omit<DropzoneProps, 'children'> & {
+type Props = Omit<DropzoneProps, 'children' | 'onDropCapture'> & {
   count: number;
   max?: number;
   hasError?: boolean;
@@ -142,4 +143,5 @@ type Props = Omit<DropzoneProps, 'children'> & {
   accept?: string[];
   onExceedMax?: () => void;
   allowExternalImageDrop?: boolean;
+  onDropCapture?: (url: string) => void;
 };
