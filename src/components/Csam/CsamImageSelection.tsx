@@ -118,7 +118,7 @@ function SelectedCount() {
 }
 
 function CsamImageCard({ data: image, height }: { data: ModerationImageModel; height: number }) {
-  const { ref, inView } = useInView({ rootMargin: '600px' });
+  const { ref, inView } = useInView();
   const theme = useMantineTheme();
   const userId = image.userId;
   const imageId = image.id;

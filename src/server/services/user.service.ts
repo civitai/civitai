@@ -411,6 +411,9 @@ export async function getUserDownloads({
     where.modelVersionId = { in: versionIds };
   }
 
+  const { hideDownloadsSince } = await getUserSettings(userId);
+  if (hideDownloadsSince) where.downloadAt = { gt: new Date(hideDownloadsSince) };
+
   return dbRead.downloadHistory.findMany({
     where,
     select: { modelVersionId: true },

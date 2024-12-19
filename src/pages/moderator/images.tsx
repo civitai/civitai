@@ -268,7 +268,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const pendingReport = hasReport && image.report?.status === 'Pending';
   const entityUrl = getImageEntityUrl(image);
 
-  const { ref: inViewRef, inView } = useInView({ rootMargin: '200%' });
+  const { ref: inViewRef, inView } = useInView();
   const ref = useRef<HTMLElement>(null);
   const mergedRef = useMergedRef(inViewRef, ref);
 

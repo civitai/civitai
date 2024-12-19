@@ -1,7 +1,7 @@
 import { createStyles, Text } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { IconPlayerPlayFilled } from '@tabler/icons-react';
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
@@ -68,30 +68,33 @@ export function EdgeMedia({
   const [isPlaying, setIsPlaying] = useState(false);
 
   if (width && typeof width === 'number') width = Math.min(width, 4096);
-  const { url, type: inferredType } = useEdgeUrl(anim === false && thumbnailUrl && !isPlaying  ? thumbnailUrl : src , {
-    width,
-    height,
-    fit,
-    anim: type === 'video' && isPlaying ? true : anim,
-    transcode,
-    blur,
-    quality,
-    gravity,
-    name,
-    type,
-    original,
-    skip,
-  });
+  const { url, type: inferredType } = useEdgeUrl(
+    anim === false && thumbnailUrl && !isPlaying ? thumbnailUrl : src,
+    {
+      width,
+      height,
+      fit,
+      anim: type === 'video' && isPlaying ? true : anim,
+      transcode,
+      blur,
+      quality,
+      gravity,
+      name,
+      type,
+      original,
+      skip,
+    }
+  );
 
   const { start, clear } = useTimeout(() => {
     setIsPlaying(true);
   }, 1000);
 
-  const handleMouseOut = () => {
+  const handleMouseOut = useCallback(() => {
     if (type !== 'video') return;
     if (isPlaying && !anim) setIsPlaying(false);
     clear();
-  };
+  }, [anim, isPlaying, clear, type]);
 
   switch (inferredType) {
     case 'image': {

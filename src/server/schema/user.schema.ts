@@ -208,6 +208,7 @@ export const userSettingsSchema = z.object({
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
+  hideDownloadsSince: z.number().optional(),
   gallerySettings: modelGallerySettingsSchema
     .omit({ pinnedPosts: true, images: true })
     .partial()

@@ -95,18 +95,21 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
     `;
 
     const { data } = (await dbWrite.userCosmetic.findUnique({
-      where: { userId_cosmeticId_claimKey: { userId, cosmeticId, claimKey: 'claimed' } },
+      where: { userId_cosmeticId_claimKey: { userId, cosmeticId, claimKey: event } },
       select: { data: true },
     })) ?? { data: {} };
 
     // Update cache
-    await redis.packed.hSet(`packed:event:${event}:cosmetics`, userId.toString(), {
-      equipped: true,
-      available: true,
-      obtained: true,
-      data,
-      cosmeticId,
-    });
+    await Promise.all([
+      redis.packed.hSet(`packed:event:${event}:cosmetics`, userId.toString(), {
+        equipped: true,
+        available: true,
+        obtained: true,
+        data,
+        cosmeticId,
+      }),
+      redis.hExpire(`packed:event:${event}:cosmetics`, userId.toString(), CacheTTL.hour),
+    ]);
 
     // Queue adding to role
     await eventEngine.queueAddRole({ event, team, userId });
