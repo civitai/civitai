@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
 import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
+import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 type DownloadHistoryRaw = {
@@ -20,6 +21,9 @@ export const getUserDownloads = async ({
 }) => {
   const AND = [Prisma.sql`dh."userId" = ${userId}`, Prisma.sql`dh.hidden = false`];
   if (cursor) AND.push(Prisma.sql`dh."downloadAt" < ${cursor}`);
+
+  const { hideDownloadsSince } = await getUserSettings(userId);
+  if (hideDownloadsSince) AND.push(Prisma.sql`dh."downloadAt" > ${new Date(hideDownloadsSince)}`);
 
   const downloadHistory = await dbRead.$queryRaw<DownloadHistoryRaw[]>`
     SELECT
@@ -57,8 +61,16 @@ export const updateUserActivityById = ({
   data,
   all = false,
 }: HideDownloadInput & { data: Prisma.DownloadHistoryUpdateInput; userId: number }) => {
-  return dbWrite.downloadHistory.updateMany({
-    where: { modelVersionId: !all ? modelVersionId : undefined, userId, hidden: { equals: false } },
-    data,
-  });
+  if (all) {
+    setUserSetting(userId, { hideDownloadsSince: Date.now() });
+  } else {
+    return dbWrite.downloadHistory.updateMany({
+      where: {
+        modelVersionId: !all ? modelVersionId : undefined,
+        userId,
+        hidden: { equals: false },
+      },
+      data,
+    });
+  }
 };
