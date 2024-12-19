@@ -112,9 +112,9 @@ export function GeneratedImage({
     {
       type,
       workflow: workflow,
-      sourceImageUrl,
+      sourceImage,
       engine,
-    }: { type: MediaType; workflow?: string; sourceImageUrl?: string; engine?: string } = {
+    }: { type: MediaType; workflow?: string; sourceImage?: string; engine?: string } = {
       type: image.type,
       workflow: step.params.workflow,
     }
@@ -126,7 +126,7 @@ export function GeneratedImage({
       remixOfId: step.metadata?.remixOfId,
       type,
       workflow: workflow ?? step.params.workflow,
-      sourceImageUrl: sourceImageUrl ?? (step.params as any).sourceImageUrl,
+      sourceImage: sourceImage ?? (step.params as any).sourceImage,
       engine: engine ?? (step.params as any).engine,
     });
   };
@@ -373,7 +373,7 @@ export function GeneratedImage({
                         {},
                         {
                           type: 'video',
-                          sourceImageUrl: image.url,
+                          sourceImage: image.url,
                           engine: useGenerationFormStore.getState().engine,
                         }
                       )
@@ -464,7 +464,7 @@ export function GeneratedImage({
                           {},
                           {
                             type: 'video',
-                            sourceImageUrl: image.url,
+                            sourceImage: image.url,
                             engine: useGenerationFormStore.getState().engine,
                           }
                         )

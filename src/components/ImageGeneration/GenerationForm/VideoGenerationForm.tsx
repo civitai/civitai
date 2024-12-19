@@ -68,12 +68,12 @@ function useWorkflowContext() {
 export function VideoGenerationForm() {
   const { data: workflows, isLoading } = useVideoGenerationWorkflows();
   const workflow = useSelectedVideoWorkflow();
-  const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
+  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
 
   const availableEngines = Object.keys(engineDefinitions)
     .filter((key) =>
       workflows
-        ?.filter((x) => (sourceImageUrl ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
+        ?.filter((x) => (sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
         .some((x) => x.engine === key && !x.disabled)
     )
     .map((key) => ({ key, ...engineDefinitions[key] }));
@@ -139,13 +139,13 @@ export function VideoGenerationForm() {
 
             {/* {workflow?.subType.startsWith('img') && (
               <ImageUrlInput
-                value={sourceImageUrl}
-                onChange={generationFormStore.setSourceImageUrl}
+                value={sourceImage}
+                onChange={generationFormStore.setsourceImage}
               />
             )} */}
             <GeneratorImageInput
-              value={sourceImageUrl}
-              onChange={generationFormStore.setSourceImageUrl}
+              value={sourceImage}
+              onChange={generationFormStore.setsourceImage}
             />
           </div>
           <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
@@ -248,7 +248,7 @@ function KlingTextToVideoForm() {
 function KlingImageToVideoForm() {
   return (
     <FormWrapper engine="kling">
-      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
+      {/* <InputImageUrl name="sourceImage" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <div className="flex flex-col gap-0.5">
@@ -329,7 +329,7 @@ function HaiperTxt2VidGenerationForm() {
 function HaiperImg2VidGenerationForm() {
   return (
     <FormWrapper engine="haiper">
-      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
+      {/* <InputImageUrl name="sourceImage" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <div className="flex flex-col gap-0.5">
@@ -569,13 +569,13 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
 
 function validateInput(workflow: GenerationWorkflowConfig, data?: Record<string, unknown>) {
-  const { sourceImageUrl, width, height } = useGenerationFormStore.getState();
+  const { sourceImage, width, height } = useGenerationFormStore.getState();
 
   return workflow.validate({
     ...data,
     engine: workflow.engine,
     workflow: workflow.key,
-    sourceImage: sourceImageUrl,
+    sourceImage: sourceImage,
     width,
     height,
     type: workflow.subType,

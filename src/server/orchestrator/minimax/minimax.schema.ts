@@ -24,7 +24,7 @@ const minSize = 300;
 
 export const minimaxTxt2VidSchema = textEnhancementSchema.merge(baseMinimaxSchema);
 export const minimaxImg2VidSchema = imageEnhancementSchema.merge(baseMinimaxSchema);
-// .superRefine(({ sourceImageUrl, width, height }, ctx) => {
+// .superRefine(({ sourceImage, width, height }, ctx) => {
 //   const
 // });
 

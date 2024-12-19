@@ -8,7 +8,7 @@ const baseVideoSchema = z.object({
   seed: z.number().min(0).max(4294967295).optional(),
   width: z.number().optional(),
   height: z.number().optional(),
-  sourceImageUrl: z.string().optional(),
+  sourceImage: z.string().optional(),
 });
 
 export const haiperVideoGenerationSchema = baseVideoSchema.extend({

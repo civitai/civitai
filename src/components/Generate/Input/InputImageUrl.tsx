@@ -28,8 +28,6 @@ export function GeneratorImageInput({
     },
   });
 
-  console.log({ value });
-
   useEffect(() => {
     if (value)
       getImageData(value).then(({ width, height }) => {
@@ -66,8 +64,6 @@ export function GeneratorImageInput({
       handleChange(url);
     }
   }
-
-  // TODO - make sure that remixing an image sets the value correctly
 
   return (
     <div className="flex flex-col gap-1">

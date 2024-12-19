@@ -16,7 +16,7 @@ export async function createWorkflowStep(args: GenerationSchema) {
 export async function createVideoGenStep(data: VideoGenerationSchema) {
   // switch (data.engine) {
   //   case 'haiper':
-  //     if (data.sourceImageUrl) {
+  //     if (data.sourceImage) {
   //       data.negativePrompt = undefined;
   //     }
   //     break;
