@@ -198,8 +198,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         logger,
       };
       // Check if update is needed
-      const shouldUpdate = true;
-      // const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
+      const shouldUpdate = lastUpdatedAt.getTime() + updateInterval < Date.now();
 
       if (!shouldUpdate) {
         console.log(
