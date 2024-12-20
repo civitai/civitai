@@ -40,8 +40,12 @@ export default PublicEndpoint(
   ['POST']
 );
 
+const baseDir = 'sourceMaps';
 async function applySourceMaps(minifiedStackTrace: string) {
-  const dir = `sourceMaps/${Date.now}`;
+  const date = new Date();
+  date.setUTCHours(0, 0, 0, 0);
+  const datetime = `${date.getTime()}`;
+  const dir = `${baseDir}/${datetime}`;
 
   const stack = stackTraceParser.parse(minifiedStackTrace);
   const lines = minifiedStackTrace.split('\n');
@@ -52,9 +56,9 @@ async function applySourceMaps(minifiedStackTrace: string) {
     const fileName = sourceMapLocation.split('/').reverse()[0];
     try {
       // download file
-      if (fs.existsSync(`${dir}/${fileName}`)) return;
+      if (fs.existsSync(`${dir}/${fileName}`)) continue;
       const res = await fetch(sourceMapLocation);
-      if (!res.body) return;
+      if (!res.body) continue;
       if (!fs.existsSync(dir)) await mkdir(dir); //Optional if you already have downloads directory
       const destination = path.resolve(`./${dir}`, fileName);
       const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
@@ -86,7 +90,16 @@ async function applySourceMaps(minifiedStackTrace: string) {
       });
     } catch (e) {}
   }
-  fs.rmSync(dir, { recursive: true });
+
+  const directories = fs
+    .readdirSync(baseDir, { withFileTypes: true })
+    .filter((x) => x.isDirectory())
+    .map((x) => x.name);
+
+  const toRemove = directories.filter((x) => x !== datetime);
+  for (const dir of toRemove) {
+    fs.rmSync(dir, { recursive: true });
+  }
 
   return `${lines.join('\n')}`;
 }
