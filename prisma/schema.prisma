@@ -2187,6 +2187,8 @@ model BuzzClaim {
   amount             Int
   availableStart     DateTime?
   availableEnd       DateTime?
+  claimed            Int             @default(0)
+  limit              Int?
   accountType        BuzzAccountType @default(user)
   useMultiplier      Boolean         @default(false)
 }

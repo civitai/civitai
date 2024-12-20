@@ -1724,6 +1724,8 @@ export interface BuzzClaim {
   amount: number;
   availableStart: Date | null;
   availableEnd: Date | null;
+  claimed: number;
+  limit: number | null;
   accountType: BuzzAccountType;
   useMultiplier: boolean;
 }
