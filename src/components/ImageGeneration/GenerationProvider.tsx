@@ -65,7 +65,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
     data: requests,
     steps,
     isLoading,
-  } = useGetTextToImageRequests(undefined, { enabled: opened });
+  } = useGetTextToImageRequests(undefined, { enabled: opened, includeTags: false });
   const generationStatus = useGenerationStatus();
 
   // #region [queue state]
