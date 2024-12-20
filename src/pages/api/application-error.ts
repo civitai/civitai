@@ -11,6 +11,7 @@ import fs from 'fs';
 import { mkdir } from 'fs/promises';
 import { finished } from 'stream/promises';
 import { Readable } from 'stream';
+import { env } from '~/env/server.mjs';
 
 const schema = z.object({ message: z.string(), stack: z.string() });
 
@@ -65,7 +66,10 @@ async function applySourceMaps(minifiedStackTrace: string) {
     // const destination = path.resolve(`./${dir}`, fileName);
     // const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
     // await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
-    const sourceMap = fs.readFileSync(sourceMapLocation, 'utf-8');
+    const sourceMap = fs.readFileSync(
+      `${env.DIRNAME ?? process.cwd()}${sourceMapLocation}`,
+      'utf-8'
+    );
 
     if (!sourceMap) continue;
 
