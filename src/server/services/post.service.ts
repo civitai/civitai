@@ -28,6 +28,7 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {
   createImage,
+  createImageResources,
   deleteImageById,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
@@ -42,6 +43,7 @@ import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/servi
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -875,35 +877,7 @@ export const addPostImage = async ({
     skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
   });
 
-  try {
-    // Read the resources based on complex metadata and hash matches
-    const resources = await dbWrite.$queryRaw<
-      (ImageResource & { modelversionid?: number })[]
-    >`SELECT * FROM get_image_resources(${partialResult.id}::int)`;
-
-    const sql: Prisma.Sql[] = resources.map(
-      (r) => Prisma.sql`
-      (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
-        r.detected
-      })
-    `
-    );
-
-    if (resources.length > 0) {
-      // Write the resources to the image
-      await dbWrite.$executeRaw`
-      INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
-      VALUES ${Prisma.join(sql, ',')}
-      ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
-      SET
-          detected = excluded.detected,
-          hash = excluded.hash,
-          strength = excluded.strength;
-    `;
-    }
-  } catch (e) {
-    console.error(e);
-  }
+  await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 
   const result = await dbWrite.image.findUnique({
     where: { id: partialResult.id },
