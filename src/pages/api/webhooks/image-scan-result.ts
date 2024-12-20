@@ -174,8 +174,8 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
 
     await dbWrite.$executeRawUnsafe(`
       UPDATE "Image" i SET
-        "scanJobs" = COALESCE("scanJobs", '{}') || '${JSON.stringify(update)}'::jsonb)
-        ${additionalUpdates ? `, ${additionalUpdates.join(', ')}` : ''}
+        "scanJobs" = COALESCE("scanJobs", '{}') || '${JSON.stringify(update)}'::jsonb
+        ${additionalUpdates.length ? `, ${additionalUpdates.join(', ')}` : ''}
       WHERE id = ${id};
     `);
     return;
