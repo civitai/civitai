@@ -3,7 +3,7 @@ import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import stackTraceParser from 'stacktrace-parser';
+import * as stackTraceParser from 'stacktrace-parser';
 import { SourceMapConsumer } from 'source-map';
 
 import path from 'node:path';
@@ -19,17 +19,17 @@ export default PublicEndpoint(
     try {
       const session = await getServerAuthSession({ req, res });
       const queryInput = schema.parse(JSON.parse(req.body));
+      const payload = {
+        name: 'application-error',
+        type: 'error',
+        url: req.headers.referer,
+        userId: session?.user?.id,
+        browser: req.headers['user-agent'],
+        message: queryInput.message,
+        // don't know if this would even work in dev
+        stack: await applySourceMaps(queryInput.stack),
+      };
       if (isProd) {
-        const payload = {
-          name: 'application-error',
-          type: 'error',
-          url: req.headers.referer,
-          userId: session?.user?.id,
-          browser: req.headers['user-agent'],
-          message: queryInput.message,
-          // don't know if this would even work in dev
-          stack: await applySourceMaps(queryInput.stack),
-        };
         await logToAxiom(payload);
       }
       return res.status(200).end();
@@ -63,10 +63,10 @@ async function applySourceMaps(minifiedStackTrace: string) {
       const destination = path.resolve(`./${dir}`, fileName);
       const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
       await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
+      const sourceMap = await fs.readFileSync(`${process.cwd()}/${dir}/${fileName}`, 'utf-8');
 
-      const sourceMap = JSON.parse(
-        await fs.readFileSync(`${process.cwd()}/${dir}/${fileName}`, 'utf-8')
-      );
+      if (!sourceMap) continue;
+
       // WTF? promise?
       const smc = await new SourceMapConsumer(sourceMap);
 
