@@ -201,8 +201,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                 )}
               </ActionIcon>
               <div className="flex flex-nowrap gap-4">
-                <div className={classes.volumeControl}>
-                  {enableAudioControl && (
+                {enableAudioControl && (
+                  <div className={classes.volumeControl}>
                     <div className={classes.volumeSlider}>
                       <input
                         type="range"
@@ -214,22 +214,22 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
                         onChange={(e) => handleVolumeChange(e.currentTarget.valueAsNumber)}
                       />
                     </div>
-                  )}
-                  <ActionIcon
-                    onClick={handleToggleMuted}
-                    className="z-10"
-                    variant="light"
-                    size="lg"
-                    radius="xl"
-                    disabled={!enableAudioControl}
-                  >
-                    {state.muted || volume === 0 || !enableAudioControl ? (
-                      <IconVolumeOff size={16} />
-                    ) : (
-                      <IconVolume size={16} />
-                    )}
-                  </ActionIcon>
-                </div>
+                    <ActionIcon
+                      onClick={handleToggleMuted}
+                      className="z-10"
+                      variant="light"
+                      size="lg"
+                      radius="xl"
+                      disabled={!enableAudioControl}
+                    >
+                      {state.muted || volume === 0 || !enableAudioControl ? (
+                        <IconVolumeOff size={16} />
+                      ) : (
+                        <IconVolume size={16} />
+                      )}
+                    </ActionIcon>
+                  </div>
+                )}
                 <ActionIcon
                   onClick={handleToggleFullscreen}
                   className="z-10"

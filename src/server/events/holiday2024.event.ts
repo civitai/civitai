@@ -12,7 +12,7 @@ type CosmeticData = {
   milestonesEarned: number[];
 } & DonationCosmeticData;
 
-const lightMilestones = [1, 12];
+const lightMilestones = [1, 6, 12];
 const donationRewards = {
   Donor: 5000,
   'Golden Donor': 25000,

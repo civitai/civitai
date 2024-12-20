@@ -98,7 +98,6 @@ export const upsertBountyEntry = async ({
       }
       // confirm it exists:
       const entry = await tx.bountyEntry.update({ where: { id }, data: { description } });
-
       if (!entry) return null;
 
       if (files) {

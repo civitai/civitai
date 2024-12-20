@@ -76,7 +76,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -1724,6 +1724,8 @@ export interface BuzzClaim {
   amount: number;
   availableStart: Date | null;
   availableEnd: Date | null;
+  claimed: number;
+  limit: number | null;
   accountType: BuzzAccountType;
   useMultiplier: boolean;
 }

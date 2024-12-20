@@ -157,6 +157,7 @@ export const REDIS_KEYS = {
   DOWNLOAD: {
     COUNT: 'download:count',
     LIMITS: 'download:limits',
+    HISTORY_EXCLUSION: 'download:history-exclusion',
   },
   USER: {
     SESSION: 'session:data2',

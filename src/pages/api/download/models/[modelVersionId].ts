@@ -4,8 +4,9 @@ import { z } from 'zod';
 
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { colorDomains, constants, getRequestDomainColor } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { addUserDownload } from '~/server/services/download.service';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
@@ -150,14 +151,7 @@ export default PublicEndpoint(
       });
 
       const userId = session?.user?.id;
-      if (userId) {
-        await dbWrite.$executeRaw`
-          -- Update user history
-          INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
-          VALUES (${userId}, ${modelVersionId}, ${now}, false)
-          ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
-        `;
-      }
+      await addUserDownload({ userId, modelVersionId, downloadAt: now });
 
       // Increment download count for user
       await downloadLimiter.increment(userKey);

@@ -31,6 +31,7 @@ import {
 import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import dayjs from 'dayjs';
 import { InferGetServerSidePropsType } from 'next';
+import Image from 'next/image';
 import { forwardRef, Fragment, useMemo, useRef, useState } from 'react';
 import { Line } from 'react-chartjs-2';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
@@ -637,13 +638,14 @@ const CharitySection = ({ visible, partners }: { visible: boolean; partners: Eve
     <>
       <HeroCard
         title={
-          <img
+          <Image
             src="/images/event/holiday2024/ahh_logo.png"
             alt="All Hands and Hearts"
-            style={{ height: 50 }}
+            width={206}
+            height={50}
           />
         }
-        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, All Hands and Hearts. Want to contribute to the cause without competing? [Donate here!](https://give.allhandsandhearts.org/campaign/635787/donate)"
+        description="All Buzz purchased and donated to Team Spirit Banks will be given to the global charity, All Hands and Hearts. Want to contribute to the cause without competing? [Donate here!](https://give.allhandsandhearts.org/campaign/650534/donate)"
         imageUrl="https://www.allhandsandhearts.org/wp-content/uploads/2019/12/400_1147_PR_Construction_Volunteer_5416_18.02.15-460x295.jpg"
         externalLink="https://www.allhandsandhearts.org/"
       />

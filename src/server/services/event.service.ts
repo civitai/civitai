@@ -88,16 +88,12 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
     if (!cosmetic) throw new Error("That cosmetic doesn't exist");
 
     // Update database
-    await dbWrite.$executeRaw`
+    const [{ data }] = (await dbWrite.$queryRaw<{ data: any }[]>`
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "obtainedAt")
       VALUES (${userId}, ${cosmeticId}, ${event}, NOW())
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO UPDATE SET "equippedAt" = NOW()
-    `;
-
-    const { data } = (await dbWrite.userCosmetic.findUnique({
-      where: { userId_cosmeticId_claimKey: { userId, cosmeticId, claimKey: event } },
-      select: { data: true },
-    })) ?? { data: {} };
+      RETURNING data;
+    `) ?? [{ data: {} }];
 
     // Update cache
     await Promise.all([

@@ -669,6 +669,8 @@ export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
     return unavailable('This reward is not available yet');
   if (claimable.availableEnd && claimable.availableEnd < new Date())
     return unavailable('This reward is no longer available');
+  if (claimable.limit && claimable.claimed > claimable.limit)
+    return unavailable("This reward has reached it's claim limit");
 
   const query = claimable.transactionIdQuery.replace('${userId}', userId.toString());
   let transactionId: string | undefined;
@@ -703,6 +705,23 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
 
   const { rewardsMultiplier } = await getMultipliersForUser(userId);
 
+  const priorTransaction = await getTransactionByExternalId(claimStatus.claimId);
+  if (priorTransaction) {
+    return {
+      status: 'claimed',
+      details: claimStatus.details,
+      claimedAt: priorTransaction.date,
+    } as BuzzClaimResult;
+  }
+
+  // Update the claim count
+  await dbWrite.$executeRaw`
+    UPDATE buzz_claim
+    SET claimed = claimed + 1
+    WHERE key = ${id}
+  `;
+
+  // Create the transaction
   await createBuzzTransaction({
     amount: claimStatus.details.useMultiplier
       ? Math.ceil(claimStatus.details.amount * rewardsMultiplier)

@@ -265,10 +265,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           onClick={() => {
             const [image] = images;
             if (images.length > 1) {
-              router.push(`/posts/${post.id}`);
-            } else if (images.length === 1 && image && image.data.hasOwnProperty('id')) {
-              // @ts-ignore - we know it's an image that has ID based off of the above.
-              router.push(`/images/${image.data.id}`);
+              if (collectionId) router.replace(`/posts/${post.id}`);
+              else router.push(`/posts/${post.id}`);
+            } else if (images.length === 1 && image && 'id' in image.data) {
+              if (collectionId) router.replace(`/images/${image.data.id}`);
+              else router.push(`/images/${image.data.id}`);
             }
           }}
           variant="outline"

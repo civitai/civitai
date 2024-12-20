@@ -47,6 +47,7 @@ import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { getFilesHash } from '~/client-utils/file-hashing';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeatureIntroductionHelpButton } from '../FeatureIntroduction/FeatureIntroduction';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 // import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 
 const dropzoneOptionsByModelType: Record<BountyType, string[] | Record<string, string[]>> = {
@@ -258,11 +259,11 @@ export function BountyEntryUpsertForm({ bountyEntry, bounty }: Props) {
                 </div>
                 {image.meta && (
                   <div style={{ position: 'absolute', bottom: 12, right: 12 }}>
-                    <ImageMetaPopover meta={image.meta}>
+                    <ImageMetaPopover2 imageId={image.id} type={image.type}>
                       <ActionIcon variant="light" color="dark" size="lg">
                         <IconInfoCircle color="white" strokeWidth={2.5} size={26} />
                       </ActionIcon>
-                    </ImageMetaPopover>
+                    </ImageMetaPopover2>
                   </div>
                 )}
               </Paper>

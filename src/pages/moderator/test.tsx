@@ -96,7 +96,14 @@ export default function Test() {
     <IsClient>
       <div className="container flex items-center gap-2 pb-2">
         <span>{count}</span>
-        <Button onClick={() => setCount((c) => c + 1)}>Counter</Button>
+        <Button
+          onClick={() => {
+            setCount((c) => c + 1);
+            throw new Error('custom error for testing');
+          }}
+        >
+          Counter
+        </Button>
       </div>
       <ComponentWithSlots>
         <Content />

@@ -232,7 +232,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     reactions={image.reactions}
                     metrics={reactionMetrics}
                     targetUserId={image.user.id}
-                    readonly={!isBlocked && isScanned}
+                    readonly={!safe || (isScanned && isBlocked)}
                     className={cx('justify-between p-2')}
                     invisibleEmpty
                   />

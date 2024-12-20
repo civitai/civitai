@@ -492,7 +492,7 @@ function FormWrapper({
         {status.message && !status.isLoading && (
           <DismissibleAlert
             color="yellow"
-            title="Image Generation Status Alert"
+            title="Generation Status Alert"
             id={messageHash}
             storage="sessionStorage"
             getInitialValueInEffect={false}
