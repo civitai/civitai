@@ -29,6 +29,7 @@ export default PublicEndpoint(
         // don't know if this would even work in dev
         stack: await applySourceMaps(queryInput.stack),
       };
+      console.dir({ payload }, { depth: null });
       if (isProd) {
         await logToAxiom(payload);
       }
@@ -40,7 +41,7 @@ export default PublicEndpoint(
   ['POST']
 );
 
-const baseDir = 'sourceMaps';
+const baseDir = 'tmp/sourceMaps';
 async function applySourceMaps(minifiedStackTrace: string) {
   const date = new Date();
   date.setUTCHours(0, 0, 0, 0);
@@ -54,41 +55,36 @@ async function applySourceMaps(minifiedStackTrace: string) {
   for (const toDownload of filesToDownload) {
     const sourceMapLocation = `${toDownload}.map`;
     const fileName = sourceMapLocation.split('/').reverse()[0];
-    try {
-      // download file
-      if (fs.existsSync(`${dir}/${fileName}`)) continue;
-      const res = await fetch(sourceMapLocation);
-      if (!res.body) continue;
-      if (!fs.existsSync(dir)) await mkdir(dir); //Optional if you already have downloads directory
-      const destination = path.resolve(`./${dir}`, fileName);
-      const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
-      await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
-      const sourceMap = await fs.readFileSync(`${process.cwd()}/${dir}/${fileName}`, 'utf-8');
 
-      if (!sourceMap) continue;
+    // download file
+    if (fs.existsSync(`${dir}/${fileName}`)) continue;
+    const res = await fetch(sourceMapLocation);
+    if (!res.body) continue;
+    if (!fs.existsSync(dir)) await mkdir(dir); //Optional if you already have downloads directory
+    const destination = path.resolve(`./${dir}`, fileName);
+    const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
+    await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
+    const sourceMap = await fs.readFileSync(`${process.cwd()}/${dir}/${fileName}`, 'utf-8');
 
-      // WTF? promise?
-      const smc = await new SourceMapConsumer(sourceMap);
+    if (!sourceMap) continue;
 
-      stack.forEach(({ methodName, lineNumber, column, file }) => {
-        try {
-          if (file) {
-            const lineIndex = lines.findIndex((x) => x.includes(file));
-            if (lineIndex > -1 && !!lineNumber && !!column) {
-              const pos = smc.originalPositionFor({ line: lineNumber, column });
-              if (pos && pos.line != null) {
-                const name = pos.name || methodName;
-                lines[lineIndex] = `    at ${name !== '<unknown>' ? name : ''} (${pos.source}:${
-                  pos.line
-                }:${pos.column})`;
-              }
-            }
+    // WTF? promise?
+    const smc = await new SourceMapConsumer(sourceMap);
+
+    stack.forEach(({ methodName, lineNumber, column, file }) => {
+      if (file) {
+        const lineIndex = lines.findIndex((x) => x.includes(file));
+        if (lineIndex > -1 && !!lineNumber && !!column) {
+          const pos = smc.originalPositionFor({ line: lineNumber, column });
+          if (pos && pos.line != null) {
+            const name = pos.name || methodName;
+            lines[lineIndex] = `    at ${name !== '<unknown>' ? name : ''} (${pos.source}:${
+              pos.line
+            }:${pos.column})`;
           }
-        } catch (err) {
-          console.log(`    at FAILED_TO_PARSE_LINE`);
         }
-      });
-    } catch (e) {}
+      }
+    });
   }
 
   const directories = fs
