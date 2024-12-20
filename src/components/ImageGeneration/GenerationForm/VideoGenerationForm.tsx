@@ -35,7 +35,7 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
-import { GeneratorImageInput } from '~/components/Generate/Input/InputImageUrl';
+import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { hashify } from '~/utils/string-helpers';
@@ -49,6 +49,8 @@ import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
 import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
 import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { useIsMutating } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -509,10 +511,15 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   const [query, setQuery] = useState<Record<string, any> | null>(null);
   const { getValues, watch } = useFormContext();
   const [error, setError] = useState<string | null>(null);
+  const isUploadingImageValue = useIsMutating({
+    mutationKey: getQueryKey(trpc.orchestrator.imageUpload),
+  });
+  const isUploadingImage = isUploadingImageValue === 1;
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
     { type: 'video', data: query as Record<string, any> },
-    { keepPreviousData: false, enabled: !!query }
+    { keepPreviousData: false, enabled: !!query && !isUploadingImage }
   );
+
   const { workflow } = useWorkflowContext();
   // console.log({ query, workflow, engine });
 
@@ -552,7 +559,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
     <GenerateButton
       type="submit"
       className="flex-1"
-      disabled={!data || !query}
+      disabled={!data || !query || isUploadingImage}
       loading={isFetching || loading}
       cost={totalCost}
     >
