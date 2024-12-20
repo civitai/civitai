@@ -41,30 +41,31 @@ export default PublicEndpoint(
   ['POST']
 );
 
-const baseDir = 'tmp/sourceMaps';
+// const baseDir = 'tmp/sourceMaps';
 async function applySourceMaps(minifiedStackTrace: string) {
-  const date = new Date();
-  date.setUTCHours(0, 0, 0, 0);
-  const datetime = `${date.getTime()}`;
-  const dir = `${baseDir}/${datetime}`;
+  // const date = new Date();
+  // date.setUTCHours(0, 0, 0, 0);
+  // const datetime = `${date.getTime()}`;
+  // const dir = `${baseDir}/${datetime}`;
 
   const stack = stackTraceParser.parse(minifiedStackTrace);
   const lines = minifiedStackTrace.split('\n');
-  const filesToDownload = [...new Set(stack.map((x) => x.file))];
+  const filesToDownload = [...new Set(stack.map((x) => x.file))] as string[];
+  const filesToRead = filesToDownload.map((x) => x.split('_next')[1]);
 
-  for (const toDownload of filesToDownload) {
+  for (const toDownload of filesToRead) {
     const sourceMapLocation = `${toDownload}.map`;
-    const fileName = sourceMapLocation.split('/').reverse()[0];
+    // const fileName = sourceMapLocation.split('/').reverse()[0];
 
-    // download file
-    if (fs.existsSync(`${dir}/${fileName}`)) continue;
-    const res = await fetch(sourceMapLocation);
-    if (!res.body) continue;
-    if (!fs.existsSync(dir)) await mkdir(dir); //Optional if you already have downloads directory
-    const destination = path.resolve(`./${dir}`, fileName);
-    const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
-    await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
-    const sourceMap = await fs.readFileSync(`${process.cwd()}/${dir}/${fileName}`, 'utf-8');
+    // // download file
+    // if (fs.existsSync(`${dir}/${fileName}`)) continue;
+    // const res = await fetch(sourceMapLocation);
+    // if (!res.body) continue;
+    // if (!fs.existsSync(dir)) await mkdir(dir); //Optional if you already have downloads directory
+    // const destination = path.resolve(`./${dir}`, fileName);
+    // const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
+    // await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
+    const sourceMap = fs.readFileSync(sourceMapLocation, 'utf-8');
 
     if (!sourceMap) continue;
 
@@ -87,15 +88,15 @@ async function applySourceMaps(minifiedStackTrace: string) {
     });
   }
 
-  const directories = fs
-    .readdirSync(baseDir, { withFileTypes: true })
-    .filter((x) => x.isDirectory())
-    .map((x) => x.name);
+  // const directories = fs
+  //   .readdirSync(baseDir, { withFileTypes: true })
+  //   .filter((x) => x.isDirectory())
+  //   .map((x) => x.name);
 
-  const toRemove = directories.filter((x) => x !== datetime);
-  for (const dir of toRemove) {
-    fs.rmSync(dir, { recursive: true });
-  }
+  // const toRemove = directories.filter((x) => x !== datetime);
+  // for (const dir of toRemove) {
+  //   fs.rmSync(dir, { recursive: true });
+  // }
 
   return `${lines.join('\n')}`;
 }
