@@ -72,7 +72,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { dateWithoutTimezone, endOfDay, stripTime } from '~/utils/date-helpers';
+import { dateWithoutTimezone, stripTime } from '~/utils/date-helpers';
 import { BountyGetById } from '~/types/router';
 import { BaseFileSchema } from '~/server/schema/file.schema';
 import { containerQuery } from '~/utils/mantine-css-helpers';
