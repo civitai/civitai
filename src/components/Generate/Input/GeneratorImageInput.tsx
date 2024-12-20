@@ -26,6 +26,7 @@ export function GeneratorImageInput({
     },
     onSuccess: ({ blob }) => {
       onChange?.(blob.url ?? undefined);
+      setImageError(undefined);
     },
   });
 
@@ -40,8 +41,10 @@ export function GeneratorImageInput({
   }, [value]);
 
   async function handleChange(value?: string) {
-    if (!value || isOrchestratorUrl(value)) onChange?.(value);
-    else mutate({ sourceImage: value });
+    if (!value || isOrchestratorUrl(value)) {
+      onChange?.(value);
+      setImageError(undefined);
+    } else mutate({ sourceImage: value });
   }
 
   async function handleTextChange(e: React.ChangeEvent<HTMLInputElement>) {
