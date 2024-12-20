@@ -168,7 +168,7 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
     if (context?.hasMinor) {
       update.hasMinor = true;
       additionalUpdates.push(
-        `"reviewKey" = IIF(i."nsfwLevel" > ${NsfwLevel.PG} && i."nsfwLevel" < ${NsfwLevel.Blocked}, 'minor', i."reviewKey")`
+        `"needsReview" = IIF(i."nsfwLevel" > ${NsfwLevel.PG} && i."nsfwLevel" < ${NsfwLevel.Blocked}, 'minor', i."needsReview")`
       );
     }
 

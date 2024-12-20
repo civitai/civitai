@@ -26,7 +26,7 @@ BEGIN
   UPDATE "Image" i SET
     nsfw = il.nsfw,
     "nsfwLevel" = il."nsfwLevel",
-    "review" = IIF((i."scanJobs"->'hasMinor')::boolean AND il."nsfwLevel" > 1 AND il."nsfwLevel" < 32, 'minor', i."review")
+    "needsReview" = IIF((i."scanJobs"->'hasMinor')::boolean AND il."nsfwLevel" > 1 AND il."nsfwLevel" < 32, 'minor', i."review")
   FROM image_level il
   WHERE il."imageId" = i.id AND NOT i."nsfwLevelLocked" AND (il."nsfwLevel" != i."nsfwLevel" OR il.nsfw != i.nsfw) AND i.ingestion = 'Scanned' AND i."nsfwLevel" != 32;
 END;
