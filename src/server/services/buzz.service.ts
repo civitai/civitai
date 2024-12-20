@@ -705,6 +705,15 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
 
   const { rewardsMultiplier } = await getMultipliersForUser(userId);
 
+  const priorTransaction = await getTransactionByExternalId(claimStatus.claimId);
+  if (priorTransaction) {
+    return {
+      status: 'claimed',
+      details: claimStatus.details,
+      claimedAt: priorTransaction.date,
+    } as BuzzClaimResult;
+  }
+
   // Update the claim count
   await dbWrite.$executeRaw`
     UPDATE buzz_claim
