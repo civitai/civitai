@@ -458,6 +458,7 @@ const defaultScanTypes = [
     : [ImageScanType.Moderation, ImageScanType.Label]),
   ImageScanType.WD14,
   ImageScanType.Hash,
+  ImageScanType.MinorDetection,
 ];
 
 export const ingestImage = async ({
