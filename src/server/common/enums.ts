@@ -91,6 +91,7 @@ export enum ImageScanType {
   WD14,
   Hash,
   Hive,
+  MinorDetection,
 }
 
 export enum CommentV2Sort {
