@@ -78,6 +78,11 @@ export async function addUserDownload({
   `;
 }
 
+export async function excludeUserDownloadHistory(userIds: number | number[]) {
+  if (!Array.isArray(userIds)) userIds = [userIds];
+  await redis.packed.sAdd(REDIS_KEYS.DOWNLOAD.HISTORY_EXCLUSION, userIds);
+}
+
 export const updateUserActivityById = ({
   modelVersionId,
   userId,
