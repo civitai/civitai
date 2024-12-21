@@ -29,3 +29,11 @@ export class VideoGenerationConfig<TSchema extends z.AnyZodObject = z.AnyZodObje
   schema: TSchema;
   key: string;
 }
+
+// export class ImageGenerationConfig<TSchema extends z.AnyZodObject = z.AnyZodObject> {
+//   constructor() {}
+//   type = 'image';
+//   subType: GenerationType;
+//   schema: TSchema;
+//   key: string;
+// }
