@@ -16,13 +16,18 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
-import { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { useSortBy } from 'react-instantsearch';
+import {
+  ResourceFilter,
+  ResourceSelectOptions,
+  resourceSort,
+  ResourceSort,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { activeBaseModels, BaseModel } from '~/server/common/constants';
-import { ResourceSort } from '~/server/common/enums'; // Add this import
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { sortByModelTypes } from '~/utils/array-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -64,15 +69,12 @@ const baseModelLimit = 4;
 
 export function ResourceSelectFiltersDropdown({
   options,
-  states,
+  selectFilters,
+  setSelectFilters,
 }: {
   options: ResourceSelectOptions;
-  states: {
-    resourceTypes: ModelType[];
-    setResourceTypes: React.Dispatch<React.SetStateAction<ModelType[]>>;
-    baseModels: BaseModel[];
-    setBaseModels: React.Dispatch<React.SetStateAction<BaseModel[]>>;
-  };
+  selectFilters: ResourceFilter;
+  setSelectFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
 }) {
   const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
@@ -84,25 +86,30 @@ export function ResourceSelectFiltersDropdown({
     defaultValue: false,
   });
 
-  const resourceTypesList = sortByModelTypes(
-    (options.resources ? options.resources.map((r) => r.type) : Object.values(ModelType)).map(
-      (rt) => ({ modelType: rt as ModelType })
-    )
+  let resourceTypesList = sortByModelTypes(
+    (options.resources?.length
+      ? options.resources.map((r) => r.type)
+      : Object.values(ModelType)
+    ).map((rt) => ({ modelType: rt as ModelType }))
   );
-  const baseModelsList = options.resources
+  let baseModelsList = options.resources?.length
     ? uniq(options.resources.flatMap((r) => (r.baseModels ?? []) as BaseModel[]))
     : activeBaseModels;
+  if (!resourceTypesList.length)
+    resourceTypesList = Object.values(ModelType).map((rt) => ({ modelType: rt as ModelType }));
+  if (!baseModelsList.length) baseModelsList = activeBaseModels;
 
   const displayedBaseModels = truncateBaseModels
-    ? baseModelsList.filter((bm, idx) => idx < baseModelLimit || states.baseModels.includes(bm))
+    ? baseModelsList.filter(
+        (bm, idx) => idx < baseModelLimit || selectFilters.baseModels.includes(bm)
+      )
     : baseModelsList;
 
   const filterLength =
-    (states.resourceTypes.length > 0 ? 1 : 0) + (states.baseModels.length > 0 ? 1 : 0);
+    (selectFilters.types.length > 0 ? 1 : 0) + (selectFilters.baseModels.length > 0 ? 1 : 0);
 
   const clearFilters = () => {
-    states.setResourceTypes([]);
-    states.setBaseModels([]);
+    setSelectFilters({ types: [], baseModels: [] });
   };
 
   const chipProps: Partial<ChipProps> = {
@@ -148,8 +155,8 @@ export function ResourceSelectFiltersDropdown({
         <Divider label="Resource types" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
-          value={states.resourceTypes}
-          onChange={(rts: ModelType[]) => states.setResourceTypes(rts)}
+          value={selectFilters.types}
+          onChange={(rts: ModelType[]) => setSelectFilters((f) => ({ ...f, types: rts }))}
           multiple
           my={4}
         >
@@ -162,8 +169,8 @@ export function ResourceSelectFiltersDropdown({
         <Divider label="Base model" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
-          value={states.baseModels}
-          onChange={(bms: BaseModel[]) => states.setBaseModels(bms)}
+          value={selectFilters.baseModels}
+          onChange={(bms: BaseModel[]) => setSelectFilters((f) => ({ ...f, baseModels: bms }))}
           multiple
           my={4}
         >
@@ -249,25 +256,22 @@ export function ResourceSelectFiltersDropdown({
   );
 }
 
-export function ResourceSelectSort({
-  value,
-  onChange,
-}: {
-  value: ResourceSort;
-  onChange: (value: ResourceSort) => void;
-}) {
+export function ResourceSelectSort({}: {}) {
   const { canViewNsfw } = useFeatureFlags();
+  const { currentRefinement, options, refine } = useSortBy({
+    items: Object.entries(resourceSort)
+      .map(([k, v]) => ({ label: v, value: k }))
+      .filter((x) => {
+        return !(!canViewNsfw && x.label === 'Newest');
+      }),
+  });
 
   return (
     <SelectMenuV2
-      label={value}
-      value={value}
-      onClick={onChange}
-      options={Object.values(ResourceSort)
-        .map((x) => ({ label: x, value: x }))
-        .filter((x) => {
-          return !(!canViewNsfw && x.value === 'Newest');
-        })}
+      label={resourceSort[currentRefinement as ResourceSort]}
+      value={currentRefinement}
+      onClick={refine}
+      options={options}
       drawerStyles={{
         root: {
           zIndex: 400,

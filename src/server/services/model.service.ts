@@ -1829,6 +1829,17 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
   return getPagingData({ items, count }, take, page);
 };
 
+export const getAvailableModelsByUserId = async ({ userId }: { userId: number }) => {
+  return dbRead.model.findMany({
+    select: { id: true },
+    where: {
+      userId,
+      status: { in: [ModelStatus.Published] },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+};
+
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   const model = await dbWrite.model.update({ where: { id }, data: { locked } });
   await userContentOverviewCache.bust(model.userId);

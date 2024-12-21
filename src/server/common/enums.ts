@@ -322,9 +322,3 @@ export enum ToolSort {
   AZ = 'AZ',
   ZA = 'ZA',
 }
-
-export enum ResourceSort {
-  Relevant = 'Relevant',
-  Popular = 'Popular',
-  Newest = 'Newest',
-}

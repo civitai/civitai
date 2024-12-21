@@ -92,12 +92,13 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   const filterableAttributes = [
+    'id',
     'hashes',
     'nsfwLevel',
     'type',
     'checkpointType',
     'tags.name',
-    'user.username',
+    'user.id',
     'version.baseModel',
     'user.username',
     'status',

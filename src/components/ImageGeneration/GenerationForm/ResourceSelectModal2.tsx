@@ -15,6 +15,7 @@ import {
   Text,
   ThemeIcon,
   Title,
+  Tooltip,
 } from '@mantine/core';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import {
@@ -63,10 +64,12 @@ import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
+import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceReview.utils';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { env } from '~/env/client.mjs';
@@ -75,15 +78,18 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
-import { ResourceSort } from '~/server/common/enums';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
+import {
+  ResourceFilter,
+  ResourceSelectOptions,
+  ResourceSelectSource,
+} from './resource-select.types';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -105,12 +111,22 @@ export default function ResourceSelectModal({
 }: ResourceSelectModalProps) {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
+  const currentUser = useCurrentUser();
   const [selectedTab, setSelectedTab] = useState<Tabs>('all');
-  const [resourceTypes, setResourceTypes] = useState<ModelType[]>([]);
-  const [baseModels, setBaseModels] = useState<BaseModel[]>([]);
-  const [sortVal, setSortVal] = useState<ResourceSort>(ResourceSort.Relevant);
+  const [selectFilters, setSelectFilters] = useState<ResourceFilter>({ types: [], baseModels: [] });
+
+  const {
+    data: likedModels,
+    isLoading: isLoadingLikedModels,
+    isError: isErrorLikedModels,
+  } = trpc.user.getBookmarkedModels.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
 
   const { resources = [], excludeIds = [], canGenerate } = options;
+  const allowedTabs = tabs.filter((t) => {
+    return !(!currentUser && ['recent', 'liked', 'uploaded'].includes(t));
+  });
 
   const filters: string[] = [];
   const or: string[] = [];
@@ -132,6 +148,31 @@ export default function ResourceSelectModal({
   //   exclude.push(`versions.id NOT IN [${excludeIds.join(',')}]`);
   // }
 
+  if (selectFilters.types.length) {
+    filters.push(`type IN [${selectFilters.types.map((x) => `"${x}"`).join(',')}]`);
+  }
+  if (selectFilters.baseModels.length) {
+    filters.push(
+      `versions.baseModel IN [${selectFilters.baseModels.map((x) => `"${x}"`).join(',')}]`
+    );
+  }
+
+  if (selectedTab === 'featured') {
+  } else if (selectedTab === 'recent') {
+  } else if (selectedTab === 'liked') {
+    if (!!likedModels) {
+      filters.push(`id IN [${likedModels.join(',')}]`);
+    }
+  } else if (selectedTab === 'uploaded') {
+    if (currentUser) {
+      filters.push(`user.id = ${currentUser.id}`);
+    }
+  }
+
+  const totalFilters = [...filters, ...exclude].join(' AND ');
+
+  console.log(totalFilters);
+
   function handleSelect(value: GenerationResource) {
     onSelect(value);
     dialog.onClose();
@@ -151,7 +192,7 @@ export default function ResourceSelectModal({
             indexName={searchIndexMap.models}
             future={{ preserveSharedStateOnUnmount: true }}
           >
-            <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
+            <Configure hitsPerPage={20} filters={totalFilters} />
 
             <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
               <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
@@ -168,20 +209,16 @@ export default function ResourceSelectModal({
                 <SegmentedControl
                   value={selectedTab}
                   onChange={(v) => setSelectedTab(v as Tabs)}
-                  data={tabs.map((v) => ({ value: v, label: v.toUpperCase() }))}
+                  data={allowedTabs.map((v) => ({ value: v, label: v.toUpperCase() }))}
                   className="shrink-0 @sm:w-full"
                 />
                 <CategoryTagFilters />
                 <div className="flex shrink-0 flex-row gap-3">
-                  <ResourceSelectSort value={sortVal} onChange={setSortVal} />
+                  <ResourceSelectSort />
                   <ResourceSelectFiltersDropdown
                     options={options}
-                    states={{
-                      resourceTypes,
-                      setResourceTypes,
-                      baseModels,
-                      setBaseModels,
-                    }}
+                    selectFilters={selectFilters}
+                    setSelectFilters={setSelectFilters}
                   />
                 </div>
               </div>
@@ -189,10 +226,12 @@ export default function ResourceSelectModal({
               <Divider />
             </div>
 
+            {/*TODO possibly add loader for tab = x and isloading*/}
             <ResourceHitList
               resources={resources}
               canGenerate={canGenerate}
               excludeIds={excludeIds}
+              likes={likedModels}
             />
           </InstantSearch>
         </ResourceSelectContext.Provider>
@@ -241,7 +280,11 @@ function ResourceHitList({
   canGenerate,
   resources,
   excludeIds,
-}: ResourceSelectOptions & Required<Pick<ResourceSelectOptions, 'resources' | 'excludeIds'>>) {
+  likes,
+}: ResourceSelectOptions &
+  Required<Pick<ResourceSelectOptions, 'resources' | 'excludeIds'>> & {
+    likes: number[] | undefined;
+  }) {
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
@@ -330,7 +373,11 @@ function ResourceHitList({
         {filtered
           .filter((model) => model.versions.length > 0)
           .map((model) => (
-            <ResourceSelectCard key={model.id} data={model} />
+            <ResourceSelectCard
+              key={model.id}
+              data={model}
+              isFavorite={!!likes && likes.includes(model.id)}
+            />
           ))}
       </div>
       {items.length > 0 && !isLastPage && (
@@ -479,10 +526,18 @@ const TopRightIcons = ({
   );
 };
 
-function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][number] }) {
+function ResourceSelectCard({
+  data,
+  isFavorite,
+}: {
+  data: SearchIndexDataMap['models'][number];
+  isFavorite: boolean;
+}) {
   // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
   const { onSelect } = useResourceSelectContext();
   const features = useFeatureFlags();
+  const currentUser = useCurrentUser();
+
   const image = data.images[0];
   const { classes, cx } = useCardStyles({
     aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
@@ -513,6 +568,16 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
       strength: settings?.strength ?? 1,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
+    });
+  };
+
+  const favoriteMutation = useToggleFavoriteMutation();
+  const handleToggleFavorite = ({ versionId, setTo }: { versionId?: number; setTo: boolean }) => {
+    if (favoriteMutation.isLoading) return;
+    favoriteMutation.mutate({
+      modelId: data.id,
+      modelVersionId: versionId,
+      setTo,
     });
   };
 
@@ -640,6 +705,7 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
           type={data.type}
           modelId={data.id}
           modelVersionId={selectedVersion.id}
+          withCopy={false}
         />
       ),
       visible: features.air,
@@ -724,6 +790,26 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
                       )}
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
+                    {!!currentUser && (
+                      <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                        <Tooltip
+                          label={isFavorite ? 'Unlike' : 'Like'}
+                          position="top"
+                          withArrow
+                          withinPortal
+                        >
+                          <Button
+                            onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
+                            color={isFavorite ? 'green' : 'gray'}
+                            px={4}
+                            size="xs"
+                            variant="light"
+                          >
+                            <ThumbsUpIcon color="#fff" filled={isFavorite} size={20} />
+                          </Button>
+                        </Tooltip>
+                      </div>
+                    )}
                   </div>
                 );
               }}
