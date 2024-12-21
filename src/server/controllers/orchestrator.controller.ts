@@ -6,7 +6,7 @@ import { SignalMessages } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { GenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
+import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -84,7 +84,7 @@ export async function generate({
     token: token,
     body: {
       tags: [WORKFLOW_TAGS.GENERATION, ...tags],
-      steps: [step],
+      steps: [step as any], // TODO.orchestrator -  fix types
       tips: {
         civitai: civitaiTip,
         creators: creatorTip,

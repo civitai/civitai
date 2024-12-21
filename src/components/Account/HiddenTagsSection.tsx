@@ -65,8 +65,7 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
           withinPortal
           variant="unstyled"
           zIndex={400}
-          limit={20}
-          maxDropdownHeight={250}
+          limit={10}
         />
       </Card.Section>
       <Card.Section inheritPadding py="md">

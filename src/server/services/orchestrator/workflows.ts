@@ -1,5 +1,4 @@
 import {
-  $OpenApiTs,
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
   getWorkflow as clientGetWorkflow,
@@ -8,6 +7,8 @@ import {
   removeWorkflowTag,
   submitWorkflow as clientSubmitWorkflow,
   updateWorkflow as clientUpdateWorkflow,
+  GetWorkflowData,
+  SubmitWorkflowData,
 } from '@civitai/client';
 import { z } from 'zod';
 import { isProd } from '~/env/other';
@@ -57,11 +58,7 @@ export async function queryWorkflows({
   return { nextCursor: next, items };
 }
 
-export async function getWorkflow({
-  token,
-  path,
-  query,
-}: $OpenApiTs['/v2/consumer/workflows/{workflowId}']['get']['req'] & { token: string }) {
+export async function getWorkflow({ token, path, query }: GetWorkflowData & { token: string }) {
   const client = createOrchestratorClient(token);
   const { data, error } = await clientGetWorkflow({ client, path, query });
   if (!data) {
@@ -86,7 +83,7 @@ export async function submitWorkflow({
   token,
   body,
   query,
-}: $OpenApiTs['/v2/consumer/workflows']['post']['req'] & { token: string }) {
+}: SubmitWorkflowData & { token: string }) {
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
 
@@ -100,7 +97,7 @@ export async function submitWorkflow({
     if (!isProd) {
       console.log('----Workflow Error----');
       console.log({ token });
-      console.log({ error });
+      console.dir({ error }, { depth: null });
       console.log('----Workflow Error Request Body----');
       console.dir(JSON.stringify(body));
       console.log('----Workflow End Error Request Body----');
