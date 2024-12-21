@@ -20,18 +20,17 @@ export default PublicEndpoint(
     try {
       const session = await getServerAuthSession({ req, res });
       const queryInput = schema.parse(JSON.parse(req.body));
-      const payload = {
-        name: 'application-error',
-        type: 'error',
-        url: req.headers.referer,
-        userId: session?.user?.id,
-        browser: req.headers['user-agent'],
-        message: queryInput.message,
-        // don't know if this would even work in dev
-        stack: await applySourceMaps(queryInput.stack),
-      };
-      console.dir({ payload }, { depth: null });
       if (isProd) {
+        const payload = {
+          name: 'application-error',
+          type: 'error',
+          url: req.headers.referer,
+          userId: session?.user?.id,
+          browser: req.headers['user-agent'],
+          message: queryInput.message,
+          // this won't work in dev
+          stack: await applySourceMaps(queryInput.stack),
+        };
         await logToAxiom(payload);
       }
       return res.status(200).end();
@@ -66,7 +65,7 @@ async function applySourceMaps(minifiedStackTrace: string) {
     // const destination = path.resolve(`./${dir}`, fileName);
     // const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
     // await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
-    const pathname = path.resolve(path.join(process.cwd(), sourceMapLocation));
+    const pathname = path.resolve(path.join(process.cwd(), '_next', sourceMapLocation));
     const sourceMap = fs.readFileSync(pathname, 'utf-8');
 
     if (!sourceMap) continue;
