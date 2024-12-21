@@ -12,7 +12,6 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -30,6 +29,7 @@ import {
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import { Generation } from '~/server/services/generation/generation.types';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import {
   defaultBase,
   defaultBaseType,
@@ -147,7 +147,7 @@ const ModelSelector = ({
               ],
             }}
             allowRemove={true}
-            isTraining={true}
+            selectSource="training"
             value={selectedRun.customModel}
             onChange={(val) => {
               const gVal = val as Generation.Resource | undefined;

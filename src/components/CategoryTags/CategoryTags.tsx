@@ -1,20 +1,24 @@
 import { Button, useMantineTheme } from '@mantine/core';
+import { IconClock } from '@tabler/icons-react';
 
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCategoryTags } from '~/components/Tags/tag.utils';
-import { TagTarget } from '~/shared/utils/prisma/enums';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
-import { IconClock } from '@tabler/icons-react';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { TagTarget } from '~/shared/utils/prisma/enums';
 
 export function CategoryTags({
   selected,
   setSelected,
   filter,
+  includeEA = true,
+  includeAll = true,
 }: {
   selected?: string;
   setSelected?: (tag?: string) => void;
   filter?: (tag: string) => boolean;
+  includeEA?: boolean;
+  includeAll?: boolean;
 }) {
   const theme = useMantineTheme();
   const { set, tag: tagQuery } = useModelQueryParams();
@@ -30,16 +34,18 @@ export function CategoryTags({
 
   return (
     <TwScrollX className="flex gap-1">
-      <EarlyAccessBadge />
-      <Button
-        className="uppercase"
-        variant={!_tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        color={!_tag ? 'blue' : 'gray'}
-        onClick={() => _setTag(undefined)}
-        compact
-      >
-        All
-      </Button>
+      {includeEA && <EarlyAccessBadge />}
+      {includeAll && (
+        <Button
+          className="uppercase"
+          variant={!_tag ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          color={!_tag ? 'blue' : 'gray'}
+          onClick={() => _setTag(undefined)}
+          compact
+        >
+          All
+        </Button>
+      )}
       {categories
         .filter((x) => (filter ? filter(x.name) : true))
         .map((tag) => {

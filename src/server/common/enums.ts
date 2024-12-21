@@ -210,6 +210,7 @@ export enum OnboardingSteps {
   BrowsingLevels = 4,
   Buzz = 8,
 }
+
 export const OnboardingComplete =
   OnboardingSteps.TOS |
   OnboardingSteps.Profile |
@@ -303,6 +304,7 @@ export enum OrchPriorityTypes {
   Normal = 'normal',
   Low = 'low',
 }
+
 export enum OrchEngineTypes {
   Kohya = 'kohya',
   Rapid = 'flux-dev-fast',
@@ -319,4 +321,10 @@ export enum ToolSort {
   Oldest = 'Oldest',
   AZ = 'AZ',
   ZA = 'ZA',
+}
+
+export enum ResourceSort {
+  Relevant = 'Relevant',
+  Popular = 'Popular',
+  Newest = 'Newest',
 }

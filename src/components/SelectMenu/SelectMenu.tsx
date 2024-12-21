@@ -1,16 +1,18 @@
 import {
+  Button,
+  ButtonProps,
+  CSSObject,
+  Drawer,
+  DrawerStylesNames,
   Menu,
   Text,
-  useMantineTheme,
-  Button,
-  Drawer,
   UnstyledButton,
-  ButtonProps,
+  useMantineTheme,
 } from '@mantine/core';
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import clsx from 'clsx';
 
 type SelectMenu<T extends string | number> = {
   label: React.ReactNode;
@@ -75,7 +77,11 @@ export function SelectMenuV2<T extends string | number>({
   children,
   buttonProps,
   icon,
-}: SelectMenu<T> & { icon?: React.ReactNode }) {
+  drawerStyles,
+}: SelectMenu<T> & {
+  icon?: React.ReactNode;
+  drawerStyles?: { [p in DrawerStylesNames]?: CSSObject };
+}) {
   const theme = useMantineTheme();
   const [opened, setOpened] = useState(false);
   const mobile = useIsMobile();
@@ -113,6 +119,7 @@ export function SelectMenuV2<T extends string | number>({
           opened={opened}
           onClose={() => setOpened(false)}
           styles={{
+            ...drawerStyles,
             body: { padding: 16, paddingTop: 0, overflow: 'auto' },
             drawer: { height: 'auto' },
             header: { padding: '4px 8px' },

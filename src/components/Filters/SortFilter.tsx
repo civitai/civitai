@@ -1,7 +1,6 @@
 import { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
 import React from 'react';
-import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu, SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -83,6 +82,7 @@ type DumbProps = {
       | ToolSort
   ) => void;
 } & SortFilterComponentProps;
+
 function DumbSortFilter({ type, value, onChange, ...props }: DumbProps) {
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const { canViewNsfw } = useFeatureFlags();
@@ -118,6 +118,7 @@ type StatefulProps = {
   value?: undefined;
   onChange?: undefined;
 } & SortFilterComponentProps;
+
 function StatefulSortFilter({ type, variant, ...props }: StatefulProps) {
   const { query, pathname, replace } = useRouter();
   const globalSort = useFiltersContext((state) => state[type].sort);

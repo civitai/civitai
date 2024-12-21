@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
 import { ActionIcon } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useEffect, useState } from 'react';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 
 export function TwScrollX({ children, className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
@@ -18,6 +18,7 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
       else if (node.scrollLeft >= node.scrollWidth - node.offsetWidth - 1) setPosition('end');
       else setPosition(null);
     }
+
     scroll();
 
     const observer = new MutationObserver(scroll);
@@ -35,7 +36,7 @@ export function TwScrollX({ children, className, ...props }: React.HTMLAttribute
   const isMobile = isMobileDevice();
 
   return (
-    <div className={clsx('relative')} {...props}>
+    <div className={clsx('relative overflow-hidden')} {...props}>
       {largerThanViewport && position !== 'start' && (
         <div
           className={clsx(

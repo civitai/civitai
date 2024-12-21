@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileType } from '../common/constants';
 import { modelFileSelect } from './modelFile.selector';
 import { modelHashSelect } from './modelHash.selector';
@@ -57,11 +58,29 @@ export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersi
   baseModel: true,
   baseModelType: true,
   settings: true,
+  steps: true,
+  epochs: true,
+  clipSkip: true,
   files: { select: { metadata: true }, where: { type: 'Model' } },
   hashes: {
-    select: modelHashSelect,
+    select: {
+      ...modelHashSelect,
+      hashType: true,
+    },
     where: {
       fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+      hashType: { notIn: ['AutoV1'] as ModelHashType[] },
+    },
+  },
+  metrics: {
+    where: { timeframe: 'AllTime' },
+    select: {
+      downloadCount: true,
+      ratingCount: true,
+      rating: true,
+      thumbsUpCount: true,
+      thumbsDownCount: true,
+      generationCount: true,
     },
   },
 });
