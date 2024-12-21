@@ -92,6 +92,10 @@ const someObject = new Promise((resolve) =>
 export default function Test() {
   const [count, setCount] = useState(0);
 
+  useEffect(() => {
+    throw new Error('custom error for testing');
+  }, []);
+
   return (
     <IsClient>
       <div className="container flex items-center gap-2 pb-2">
@@ -99,7 +103,6 @@ export default function Test() {
         <Button
           onClick={() => {
             setCount((c) => c + 1);
-            throw new Error('custom error for testing');
           }}
         >
           Counter
