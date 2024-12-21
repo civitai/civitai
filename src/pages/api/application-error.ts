@@ -66,7 +66,8 @@ async function applySourceMaps(minifiedStackTrace: string) {
     // const destination = path.resolve(`./${dir}`, fileName);
     // const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
     // await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
-    const sourceMap = fs.readFileSync(`${process.cwd()}${sourceMapLocation}`, 'utf-8');
+    const pathname = path.resolve(path.join(process.cwd(), sourceMapLocation));
+    const sourceMap = fs.readFileSync(pathname, 'utf-8');
 
     if (!sourceMap) continue;
 
