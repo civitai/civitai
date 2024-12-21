@@ -11,7 +11,6 @@ import {
   Switch,
   Text,
 } from '@mantine/core';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
@@ -37,7 +36,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants, activeBaseModels } from '~/server/common/constants';
+import { activeBaseModels, constants } from '~/server/common/constants';
 import { ClubResourceSchema } from '~/server/schema/club.schema';
 import {
   GenerationResourceSchema,
@@ -56,6 +55,7 @@ import {
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -784,6 +784,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   name="recommendedResources"
                   label="Resources"
                   description="Select which resources work best with your model"
+                  selectSource="modelVersion"
                   buttonLabel="Add resource"
                   w="100%"
                   limit={10}

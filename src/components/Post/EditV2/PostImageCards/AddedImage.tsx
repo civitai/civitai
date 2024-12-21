@@ -377,7 +377,8 @@ const ResourceHeader = () => {
           >
             <ResourceSelectMultiple
               buttonLabel="RESOURCE"
-              isTraining={true}
+              modalTitle="Select resource(s)"
+              selectSource="addResource"
               options={{
                 resources: allowedResources,
                 excludeIds: image.resourceHelper.map((r) => r.modelVersionId).filter(isDefined),

@@ -9,6 +9,7 @@ import {
   Loader,
   Menu,
   Modal,
+  SegmentedControl,
   Select,
   Stack,
   Text,
@@ -17,8 +18,10 @@ import {
 } from '@mantine/core';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import {
+  IconBrush,
   IconCloudOff,
   IconDotsVertical,
+  IconDownload,
   IconHorse,
   IconInfoCircle,
   IconTagOff,
@@ -36,50 +39,77 @@ import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
+import {
+  DescriptionTable,
+  Props as DescriptionTableProps,
+} from '~/components/DescriptionTable/DescriptionTable';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import {
+  ResourceSelectFiltersDropdown,
+  ResourceSelectSort,
+} from '~/components/ImageGeneration/GenerationForm/ResourceSelectFilters';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
+import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
+import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { env } from '~/env/client.mjs';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { constants } from '~/server/common/constants';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { BaseModel, constants } from '~/server/common/constants';
+import { ResourceSort } from '~/server/common/enums';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
-import { aDayAgo } from '~/utils/date-helpers';
+import { ModelType } from '~/shared/utils/prisma/enums';
+import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { ResourceSelectOptions } from './resource-select.types';
+import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
   onSelect: (value: Generation.Resource) => void;
   onClose?: () => void;
   options?: ResourceSelectOptions;
+  selectSource?: ResourceSelectSource;
 };
+
+const tabs = ['all', 'featured', 'recent', 'liked', 'uploaded'] as const;
+type Tabs = (typeof tabs)[number];
 
 export default function ResourceSelectModal({
   title,
   onSelect,
   onClose,
   options = {},
+  selectSource = 'generation',
 }: ResourceSelectModalProps) {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
+  const [selectedTab, setSelectedTab] = useState<Tabs>('all');
+  const [resourceTypes, setResourceTypes] = useState<ModelType[]>([]);
+  const [baseModels, setBaseModels] = useState<BaseModel[]>([]);
+  const [sortVal, setSortVal] = useState<ResourceSort>(ResourceSort.Relevant);
+
   const { resources = [], excludeIds = [], canGenerate } = options;
 
   const filters: string[] = [];
@@ -114,7 +144,7 @@ export default function ResourceSelectModal({
 
   return (
     <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
-      <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden">
+      <div className="flex size-full max-h-full max-w-full flex-col">
         <ResourceSelectContext.Provider value={{ onSelect: handleSelect, canGenerate, resources }}>
           <InstantSearch
             searchClient={searchClient}
@@ -122,14 +152,43 @@ export default function ResourceSelectModal({
             future={{ preserveSharedStateOnUnmount: true }}
           >
             <Configure hitsPerPage={20} filters={[...filters, ...exclude].join(' AND ')} />
-            <div className="flex flex-col gap-3 p-3">
-              <div className="flex items-center justify-between">
+
+            <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
+              <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
                 <Text>{title}</Text>
+                <CustomSearchBox
+                  isMobile={isMobile}
+                  autoFocus
+                  className="order-last w-full grow sm:order-none sm:w-auto"
+                />
                 <CloseButton onClick={handleClose} />
               </div>
-              <CustomSearchBox isMobile={isMobile} autoFocus />
-              <CategoryTagFilters />
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between sm:gap-10">
+                <SegmentedControl
+                  value={selectedTab}
+                  onChange={(v) => setSelectedTab(v as Tabs)}
+                  data={tabs.map((v) => ({ value: v, label: v.toUpperCase() }))}
+                  className="shrink-0 @sm:w-full"
+                />
+                <CategoryTagFilters />
+                <div className="flex shrink-0 flex-row gap-3">
+                  <ResourceSelectSort value={sortVal} onChange={setSortVal} />
+                  <ResourceSelectFiltersDropdown
+                    options={options}
+                    states={{
+                      resourceTypes,
+                      setResourceTypes,
+                      baseModels,
+                      setBaseModels,
+                    }}
+                  />
+                </div>
+              </div>
+
+              <Divider />
             </div>
+
             <ResourceHitList
               resources={resources}
               canGenerate={canGenerate}
@@ -172,6 +231,8 @@ function CategoryTagFilters() {
       selected={tag}
       setSelected={handleSetTag}
       filter={(tag) => !['celebrity'].includes(tag)}
+      includeEA={false}
+      includeAll={false}
     />
   );
 }
@@ -286,75 +347,45 @@ function ResourceHitList({
 
 const IMAGE_CARD_WIDTH = 450;
 
-function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][number] }) {
+const TopRightIcons = ({
+  setFlipped,
+  data,
+  imageId,
+}: {
+  setFlipped: React.Dispatch<React.SetStateAction<boolean>>;
+  data: SearchIndexDataMap['models'][number];
+  imageId?: number;
+}) => {
   const currentUser = useCurrentUser();
-  // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
-  const { onSelect } = useResourceSelectContext();
-  const image = data.images[0];
-  const { classes, cx } = useCardStyles({
-    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
-  });
-
-  const versions = data.versions;
-  const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
-
-  const handleSelect = () => {
-    const version = data.versions.find((x) => x.id === selected);
-    if (!version) return;
-    const { id, name, trainedWords, baseModel, settings } = version;
-
-    onSelect({
-      id,
-      name,
-      trainedWords,
-      baseModel,
-      modelId: data.id,
-      modelName: data.name,
-      modelType: data.type,
-      minor: data.minor,
-      image: image,
-      covered: data.canGenerate,
-      available:
-        data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
-      strength: settings?.strength ?? 1,
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
-    });
-  };
-
-  const selectedVersion = data.versions.find((x) => x.id === selected);
-  const isSDXL = getIsSdxl(selectedVersion?.baseModel);
-  const isPony = selectedVersion?.baseModel === 'Pony';
-  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
-  const isUpdated =
-    data.lastVersionAt &&
-    data.publishedAt &&
-    data.lastVersionAt > aDayAgo &&
-    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
 
   let contextMenuItems: React.ReactNode[] = [];
 
-  if (currentUser?.id !== data.user.id)
-    contextMenuItems = contextMenuItems.concat([
-      <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
-      <HideUserButton key="hide-button" as="menu-item" userId={data.user.id} />,
-      <ReportMenuItem
-        key="report-model"
-        loginReason="report-model"
-        onReport={() => openReportModal({ entityType: ReportEntity.Model, entityId: data.id })}
-      />,
-      <ReportMenuItem
-        key="report-image"
-        label="Report image"
-        onReport={() =>
-          openReportModal({
-            entityType: ReportEntity.Image,
-            // Explicitly cast to number because we know it's not undefined
-            entityId: image.id,
-          })
-        }
-      />,
-    ]);
+  if (currentUser?.id !== data.user.id) {
+    contextMenuItems = contextMenuItems
+      .concat([
+        <HideModelButton key="hide-model" as="menu-item" modelId={data.id} />,
+        <HideUserButton key="hide-button" as="menu-item" userId={data.user.id} />,
+        <ReportMenuItem
+          key="report-model"
+          loginReason="report-model"
+          onReport={() => openReportModal({ entityType: ReportEntity.Model, entityId: data.id })}
+        />,
+        !!imageId ? (
+          <ReportMenuItem
+            key="report-image"
+            label="Report image"
+            onReport={() =>
+              openReportModal({
+                entityType: ReportEntity.Image,
+                // Explicitly cast to number because we know it's not undefined
+                entityId: imageId,
+              })
+            }
+          />
+        ) : undefined,
+      ])
+      .filter(isDefined);
+  }
   if (currentUser)
     contextMenuItems.splice(
       2,
@@ -391,8 +422,234 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
     );
   }
 
+  return (
+    <>
+      <div className="absolute right-9 top-2 flex flex-col gap-1">
+        <ActionIcon
+          variant="transparent"
+          className="mix-blend-difference"
+          size="md"
+          onClick={() => setFlipped((f) => !f)}
+        >
+          <IconInfoCircle strokeWidth={2.5} size={24} />
+        </ActionIcon>
+      </div>
+      <div className="absolute right-2 top-2 flex flex-col gap-1">
+        {contextMenuItems.length > 0 && (
+          <Menu position="left-start" withArrow offset={-5}>
+            <Menu.Target>
+              <ActionIcon
+                variant="transparent"
+                className="mix-blend-difference"
+                p={0}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }}
+              >
+                <IconDotsVertical size={24} style={{ filter: `drop-shadow(0 0 2px #000)` }} />
+              </ActionIcon>
+            </Menu.Target>
+            <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
+          </Menu>
+        )}
+        <CivitaiLinkManageButton
+          modelId={data.id}
+          modelName={data.name}
+          modelType={data.type}
+          hashes={data.hashes}
+          noTooltip
+          iconSize={16}
+        >
+          {({ color, onClick, icon, label }) => (
+            <HoverActionButton
+              onClick={onClick}
+              label={label}
+              size={30}
+              color={color}
+              variant="filled"
+              keepIconOnHover
+            >
+              {icon}
+            </HoverActionButton>
+          )}
+        </CivitaiLinkManageButton>
+      </div>
+    </>
+  );
+};
+
+function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][number] }) {
+  // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
+  const { onSelect } = useResourceSelectContext();
+  const features = useFeatureFlags();
+  const image = data.images[0];
+  const { classes, cx } = useCardStyles({
+    aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
+  });
+
+  const versions = data.versions;
+  const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
+  const [flipped, setFlipped] = useState(false);
+
+  const handleSelect = () => {
+    const version = versions.find((x) => x.id === selected);
+    if (!version) return;
+    const { id, name, trainedWords, baseModel, settings } = version;
+
+    onSelect({
+      id,
+      name,
+      trainedWords,
+      baseModel,
+      modelId: data.id,
+      modelName: data.name,
+      modelType: data.type,
+      minor: data.minor,
+      image: image,
+      covered: data.canGenerate,
+      available:
+        data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
+      strength: settings?.strength ?? 1,
+      minStrength: settings?.minStrength ?? -1,
+      maxStrength: settings?.maxStrength ?? 2,
+    });
+  };
+
+  const selectedVersion = versions.find((x) => x.id === selected)!;
+  const isSDXL = getIsSdxl(selectedVersion?.baseModel);
+  const isPony = selectedVersion?.baseModel === 'Pony';
+  const isNew = data.publishedAt && data.publishedAt > aDayAgo;
+  const isUpdated =
+    data.lastVersionAt &&
+    data.publishedAt &&
+    data.lastVersionAt > aDayAgo &&
+    data.lastVersionAt.getTime() - data.publishedAt.getTime() > constants.timeCutOffs.updatedModel;
+
   const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
   const width = originalAspectRatio > 1 ? IMAGE_CARD_WIDTH * originalAspectRatio : IMAGE_CARD_WIDTH;
+
+  const modelDetails: DescriptionTableProps['items'] = [
+    {
+      label: 'Type',
+      value: (
+        <Badge radius="sm" px={5}>
+          {getDisplayName(data.type)} {data.checkpointType}
+        </Badge>
+      ),
+    },
+    {
+      label: 'Stats',
+      value: (
+        <Group spacing={4}>
+          <IconBadge radius="xs" icon={<IconDownload size={14} />}>
+            <Text>{(selectedVersion.metrics?.downloadCount ?? 0).toLocaleString()}</Text>
+          </IconBadge>
+          {selectedVersion.canGenerate && (
+            <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+              <Text>{(selectedVersion.metrics?.generationCount ?? 0).toLocaleString()}</Text>
+            </IconBadge>
+          )}
+        </Group>
+      ),
+    },
+    {
+      label: 'Reviews',
+      value: (
+        <ModelVersionReview
+          modelId={data.id}
+          versionId={selectedVersion.id}
+          thumbsUpCount={selectedVersion.metrics?.thumbsUpCount ?? 0}
+          thumbsDownCount={selectedVersion.metrics?.thumbsDownCount ?? 0}
+        />
+      ),
+    },
+    { label: 'Created', value: formatDate(selectedVersion.createdAt) },
+    {
+      label: 'Base Model',
+      value:
+        selectedVersion.baseModel === 'ODOR' ? (
+          <Text component={Link} href="/product/odor" target="_blank">
+            {selectedVersion.baseModel}{' '}
+          </Text>
+        ) : (
+          <Text>
+            {selectedVersion.baseModel}{' '}
+            {selectedVersion.baseModelType && selectedVersion.baseModelType === 'Standard'
+              ? ''
+              : selectedVersion.baseModelType}
+          </Text>
+        ),
+    },
+    {
+      label: 'Training',
+      value: (
+        <Group spacing={4}>
+          {selectedVersion.steps && (
+            <Badge size="sm" radius="sm" color="teal">
+              Steps: {selectedVersion.steps.toLocaleString()}
+            </Badge>
+          )}
+          {selectedVersion.epochs && (
+            <Badge size="sm" radius="sm" color="teal">
+              Epochs: {selectedVersion.epochs.toLocaleString()}
+            </Badge>
+          )}
+        </Group>
+      ),
+      visible: !!selectedVersion.steps || !!selectedVersion.epochs,
+    },
+    {
+      label: 'Usage Tips',
+      value: (
+        <Group spacing={4}>
+          {selectedVersion.clipSkip && (
+            <Badge size="sm" radius="sm" color="cyan">
+              Clip Skip: {selectedVersion.clipSkip.toLocaleString()}
+            </Badge>
+          )}
+          {!!selectedVersion.settings?.strength && (
+            <Badge size="sm" radius="sm" color="cyan">
+              {`Strength: ${selectedVersion.settings.strength}`}
+            </Badge>
+          )}
+        </Group>
+      ),
+      visible: !!selectedVersion.clipSkip || !!selectedVersion.settings?.strength,
+    },
+    {
+      label: 'Trigger Words',
+      visible: !!selectedVersion.trainedWords?.length,
+      value: <TrainedWords trainedWords={selectedVersion.trainedWords} type={data.type} />,
+    },
+    {
+      label: 'Hash',
+      value: <ModelHash hashes={selectedVersion.hashData ?? []} />,
+      visible: !!(selectedVersion.hashData ?? []).length,
+    },
+    {
+      label: (
+        <Group spacing="xs">
+          <Text weight={500}>AIR</Text>
+          <URNExplanation size={20} />
+        </Group>
+      ),
+      value: (
+        <ModelURN
+          baseModel={selectedVersion.baseModel as BaseModel}
+          type={data.type}
+          modelId={data.id}
+          modelVersionId={selectedVersion.id}
+        />
+      ),
+      visible: features.air,
+    },
+    {
+      label: 'Permissions',
+      value: <PermissionIndicator permissions={data.permissions} />,
+      visible: !!data.permissions,
+    },
+  ];
 
   return (
     // Visually hide card if there are no versions
@@ -403,117 +660,88 @@ function ResourceSelectCard({ data }: { data: SearchIndexDataMap['models'][numbe
     >
       {/* {inView && ( */}
       <>
-        {image && (
-          <ImageGuard2 image={image} connectType="model" connectId={data.id}>
-            {(safe) => {
-              return (
-                <div className="relative overflow-hidden aspect-portrait">
-                  {safe ? (
-                    <Link href={`/models/${data.id}?modelVersionId=${selected}`} target="_blank">
-                      <EdgeMedia
-                        src={image.url}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        type={image.type}
-                        width={width}
-                        placeholder="empty"
-                        className={classes.image}
-                        loading="lazy"
-                      />
-                    </Link>
-                  ) : (
-                    <MediaHash {...image} />
-                  )}
-                  <div className="absolute left-2 top-2 flex items-center gap-1">
-                    <ImageGuard2.BlurToggle />
-                    <Badge
-                      className={cx(classes.infoChip, classes.chip)}
-                      variant="light"
-                      radius="xl"
-                    >
-                      <Text color="white" size="xs" transform="capitalize">
-                        {getDisplayName(data.type)}
-                      </Text>
-                      {isSDXL && (
-                        <>
-                          <Divider orientation="vertical" />
-                          {isPony ? (
-                            <IconHorse size={16} strokeWidth={2.5} />
-                          ) : (
-                            <Text color="white" size="xs">
-                              XL
-                            </Text>
-                          )}
-                        </>
-                      )}
-                    </Badge>
-
-                    {(isNew || isUpdated) && (
+        {image &&
+          (!flipped ? (
+            <ImageGuard2 image={image} connectType="model" connectId={data.id}>
+              {(safe) => {
+                return (
+                  <div className="relative overflow-hidden aspect-portrait">
+                    {safe ? (
+                      <Link href={`/models/${data.id}?modelVersionId=${selected}`} target="_blank">
+                        <EdgeMedia
+                          src={image.url}
+                          name={image.name ?? image.id.toString()}
+                          alt={image.name ?? undefined}
+                          type={image.type}
+                          width={width}
+                          placeholder="empty"
+                          className={classes.image}
+                          loading="lazy"
+                        />
+                      </Link>
+                    ) : (
+                      <MediaHash {...image} />
+                    )}
+                    <div className="absolute left-2 top-2 flex items-center gap-1">
+                      <ImageGuard2.BlurToggle />
                       <Badge
-                        className={classes.chip}
-                        variant="filled"
+                        className={cx(classes.infoChip, classes.chip)}
+                        variant="light"
                         radius="xl"
-                        sx={(theme) => ({
-                          backgroundColor: isUpdated
-                            ? '#1EBD8E'
-                            : theme.colors.blue[theme.fn.primaryShade()],
-                        })}
                       >
                         <Text color="white" size="xs" transform="capitalize">
-                          {isUpdated ? 'Updated' : 'New'}
+                          {getDisplayName(data.type)}
                         </Text>
+                        {isSDXL && (
+                          <>
+                            <Divider orientation="vertical" />
+                            {isPony ? (
+                              <IconHorse size={16} strokeWidth={2.5} />
+                            ) : (
+                              <Text color="white" size="xs">
+                                XL
+                              </Text>
+                            )}
+                          </>
+                        )}
                       </Badge>
-                    )}
-                  </div>
-                  <div className="absolute right-2 top-2 flex flex-col gap-1">
-                    {contextMenuItems.length > 0 && (
-                      <Menu position="left-start" withArrow offset={-5}>
-                        <Menu.Target>
-                          <ActionIcon
-                            variant="transparent"
-                            p={0}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                            }}
-                          >
-                            <IconDotsVertical
-                              size={24}
-                              color="#fff"
-                              style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                            />
-                          </ActionIcon>
-                        </Menu.Target>
-                        <Menu.Dropdown>{contextMenuItems.map((el) => el)}</Menu.Dropdown>
-                      </Menu>
-                    )}
-                    <CivitaiLinkManageButton
-                      modelId={data.id}
-                      modelName={data.name}
-                      modelType={data.type}
-                      hashes={data.hashes}
-                      noTooltip
-                      iconSize={16}
-                    >
-                      {({ color, onClick, icon, label }) => (
-                        <HoverActionButton
-                          onClick={onClick}
-                          label={label}
-                          size={30}
-                          color={color}
+
+                      {(isNew || isUpdated) && (
+                        <Badge
+                          className={classes.chip}
                           variant="filled"
-                          keepIconOnHover
+                          radius="xl"
+                          sx={(theme) => ({
+                            backgroundColor: isUpdated
+                              ? '#1EBD8E'
+                              : theme.colors.blue[theme.fn.primaryShade()],
+                          })}
                         >
-                          {icon}
-                        </HoverActionButton>
+                          <Text color="white" size="xs" transform="capitalize">
+                            {isUpdated ? 'Updated' : 'New'}
+                          </Text>
+                        </Badge>
                       )}
-                    </CivitaiLinkManageButton>
+                    </div>
+                    <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                   </div>
-                </div>
-              );
-            }}
-          </ImageGuard2>
-        )}
+                );
+              }}
+            </ImageGuard2>
+          ) : (
+            <div className="relative overflow-auto aspect-portrait">
+              <Stack className="size-full">
+                <DescriptionTable
+                  title="Model Details"
+                  items={modelDetails}
+                  labelWidth="33%"
+                  withBorder
+                  fontSize="xs"
+                />
+              </Stack>
+              <TopRightIcons data={data} setFlipped={setFlipped} />
+            </div>
+          ))}
 
         <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
           <Text size="sm" weight={700} lineClamp={1} lh={1}>

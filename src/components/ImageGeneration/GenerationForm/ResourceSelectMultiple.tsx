@@ -6,19 +6,20 @@ import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
-import { ResourceSelectOptions } from './resource-select.types';
+import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
 
 type ResourceSelectMultipleProps = {
   limit?: number;
   value?: Generation.Resource[];
   onChange?: (value?: Generation.Resource[]) => void;
   buttonLabel: React.ReactNode;
+  modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
   options?: ResourceSelectOptions;
   modalOpened?: boolean;
   onCloseModal?: () => void;
   hideButton?: boolean;
-  isTraining?: boolean;
+  selectSource?: ResourceSelectSource;
 } & Omit<InputWrapperProps, 'children'>;
 
 export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
@@ -28,12 +29,13 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
       value = [],
       onChange,
       buttonLabel,
+      modalTitle,
       buttonProps,
       options = {},
       modalOpened,
       onCloseModal,
       hideButton = false,
-      isTraining = false, // TODO change to type/source
+      selectSource = 'generation',
       ...inputWrapperProps
     },
     ref
@@ -81,10 +83,11 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     const handleOpenModal = () => {
       openResourceSelectModal({
-        title: buttonLabel,
+        title: modalTitle ?? buttonLabel,
         onSelect: handleAdd,
         options,
         onClose: onCloseModal,
+        selectSource,
       });
     };
 
@@ -120,7 +123,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
                       <ResourceSelectCard
                         key={resource.id}
                         resource={resource}
-                        isTraining={isTraining}
+                        selectSource={selectSource}
                         onUpdate={handleUpdate}
                         onRemove={handleRemove}
                       />

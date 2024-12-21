@@ -159,6 +159,10 @@ const modelSelect = {
   mode: true,
   checkpointType: true,
   availability: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
   // Joins:
   user: {
     select: userWithCosmeticsSelect,
@@ -214,7 +218,17 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
 
   const indexReadyRecords = models
     .map((modelRecord) => {
-      const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+      const {
+        user,
+        modelVersions,
+        tagsOnModels,
+        hashes,
+        allowNoCredit,
+        allowCommercialUse,
+        allowDerivatives,
+        allowDifferentLicense,
+        ...model
+      } = modelRecord;
       const metrics = modelRecord.metrics[0] ?? {};
 
       const weightedRating =
@@ -240,17 +254,30 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
         category: category?.tag,
+        permissions: {
+          allowNoCredit,
+          allowCommercialUse,
+          allowDerivatives,
+          allowDifferentLicense,
+          minor: modelRecord.minor,
+        },
         version: {
           ...restVersion,
           settings: restVersion.settings as RecommendedSettingsSchema,
           hashes: restVersion.hashes.map((hash) => hash.hash),
+          hashData: restVersion.hashes.map((hash) => ({ ...hash, type: hash.hashType })),
         },
-        versions: modelVersions.map(({ generationCoverage, files, hashes, settings, ...x }) => ({
-          ...x,
-          hashes: hashes.map((hash) => hash.hash),
-          canGenerate: generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
-          settings: settings as RecommendedSettingsSchema,
-        })),
+        versions: modelVersions.map(
+          ({ generationCoverage, files, hashes, settings, metrics, ...x }) => ({
+            ...x,
+            metrics: metrics[0],
+            hashes: hashes.map((hash) => hash.hash),
+            hashData: hashes.map((hash) => ({ ...hash, type: hash.hashType })),
+            canGenerate:
+              generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
+            settings: settings as RecommendedSettingsSchema,
+          })
+        ),
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],

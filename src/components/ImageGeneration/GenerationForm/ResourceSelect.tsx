@@ -1,9 +1,12 @@
 import { Button, ButtonProps, Input, InputWrapperProps } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
-import { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
-import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
+import {
+  ResourceSelectOptions,
+  ResourceSelectSource,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
 import { Generation } from '~/server/services/generation/generation.types';
 
@@ -11,10 +14,11 @@ export const ResourceSelect = ({
   value,
   onChange,
   buttonLabel,
+  modalTitle,
   buttonProps,
   options = {},
   allowRemove = true,
-  isTraining = false,
+  selectSource = 'generation',
   disabled,
   hideVersion,
   ...inputWrapperProps
@@ -22,10 +26,11 @@ export const ResourceSelect = ({
   value?: Generation.Resource;
   onChange?: (value?: Generation.Resource) => void;
   buttonLabel: React.ReactNode;
+  modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
   options?: ResourceSelectOptions;
   allowRemove?: boolean;
-  isTraining?: boolean;
+  selectSource?: ResourceSelectSource;
   hideVersion?: boolean;
 } & Omit<InputWrapperProps, 'children'> & { disabled?: boolean }) => {
   const types = options.resources?.map((x) => x.type);
@@ -45,9 +50,10 @@ export const ResourceSelect = ({
 
   const handleOpenResourceSearch = () => {
     openResourceSelectModal({
-      title: buttonLabel,
+      title: modalTitle ?? buttonLabel,
       onSelect: handleAdd,
       options,
+      selectSource,
     });
   };
 
@@ -74,7 +80,7 @@ export const ResourceSelect = ({
       ) : (
         <ResourceSelectCard
           resource={value}
-          isTraining={isTraining}
+          selectSource={selectSource}
           onUpdate={handleUpdate}
           onRemove={allowRemove ? handleRemove : undefined}
           onSwap={handleOpenResourceSearch}
