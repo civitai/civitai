@@ -91,6 +91,7 @@ export enum ImageScanType {
   WD14,
   Hash,
   Hive,
+  MinorDetection,
 }
 
 export enum CommentV2Sort {
@@ -318,6 +319,8 @@ export enum BlocklistType {
 export enum ToolSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
+  AZ = 'AZ',
+  ZA = 'ZA',
 }
 
 export enum ResourceSort {

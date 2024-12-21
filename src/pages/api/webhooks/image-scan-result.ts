@@ -59,6 +59,7 @@ const schema = z.object({
     .object({
       movie_rating: z.string().optional(),
       movie_rating_model_id: z.string().optional(),
+      hasMinor: z.boolean().optional(),
     })
     .nullish(),
 });
@@ -156,6 +157,27 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
       where: { id },
       data: { pHash: BigInt(hash), updatedAt: new Date() },
     });
+    return;
+  }
+
+  if (source === TagSource.MinorDetection) {
+    const update: Record<string, any> = {
+      [source]: Date.now(),
+    };
+    const additionalUpdates: string[] = [];
+    if (context?.hasMinor) {
+      update.hasMinor = true;
+      additionalUpdates.push(
+        `"needsReview" = CASE WHEN i."nsfwLevel" > ${NsfwLevel.PG} AND i."nsfwLevel" < ${NsfwLevel.Blocked} THEN 'minor' ELSE i."needsReview" END`
+      );
+    }
+
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "Image" i SET
+        "scanJobs" = COALESCE("scanJobs", '{}') || '${JSON.stringify(update)}'::jsonb
+        ${additionalUpdates.length ? `, ${additionalUpdates.join(', ')}` : ''}
+      WHERE id = ${id};
+    `);
     return;
   }
 

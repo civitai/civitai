@@ -116,6 +116,7 @@ import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { getUnavailableResources } from '../services/generation/generation.service';
+import { addUserDownload } from '~/server/services/download.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -784,14 +785,7 @@ export const getDownloadCommandHandler = async ({
     if (!canDownload) throw throwNotFoundError();
 
     const now = new Date();
-    if (userId) {
-      await dbWrite.$executeRaw`
-        -- Update user history
-        INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
-        VALUES (${userId}, ${modelVersion.id}, ${now}, false)
-        ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
-      `;
-    }
+    await addUserDownload({ userId, modelVersionId: modelVersion.id, downloadAt: now });
     ctx.track.modelVersionEvent({
       type: 'Download',
       modelId: modelVersion.model.id,

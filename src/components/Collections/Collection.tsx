@@ -324,7 +324,7 @@ const ImageCollection = ({
                   <ToolMultiSelect
                     value={query.tools ?? []}
                     onChange={(tools) => {
-                      if (!tools) {
+                      if (!tools || tools.length === 0) {
                         replace({ tools: undefined });
                       } else {
                         replace({ tools });
@@ -334,6 +334,7 @@ const ImageCollection = ({
                     // Needed to hack the select dropdown to be visible when the dropdown is open
                     onDropdownOpen={() => setToolSearchOpened(true)}
                     onDropdownClose={() => setToolSearchOpened(false)}
+                    grouped={false}
                   />
                 </Stack>
               </AdaptiveFiltersDropdown>

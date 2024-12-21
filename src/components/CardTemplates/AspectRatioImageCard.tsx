@@ -2,7 +2,7 @@ import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector'
 import styles from './AspectRatioImageCard.module.scss';
 import { useInView } from '~/hooks/useInView';
 import clsx from 'clsx';
-import React, { type Key } from 'react';
+import React, { useState, type Key } from 'react';
 import { ConnectType, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -80,7 +80,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   onSite,
   routedDialog,
 }: AspectRatioImageCardProps<T>) {
-  const { ref, inView } = useInView();
+  const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
 
   // Small hack to prevent blurry landscape images
   const originalAspectRatio = image && image.width && image.height ? image.width / image.height : 1;

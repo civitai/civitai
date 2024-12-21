@@ -37,7 +37,7 @@ export function CreatorCard({
   data: LeaderboardGetModel;
   index: number;
 }) {
-  const { ref, inView } = useInView({ rootMargin: '200%' });
+  const { ref, inView } = useInView();
   const { classes, theme, cx } = useStyles();
   const router = useRouter();
 

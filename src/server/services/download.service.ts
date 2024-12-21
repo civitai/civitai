@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
 
 import { dbWrite, dbRead } from '~/server/db/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
+import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 type DownloadHistoryRaw = {
@@ -20,6 +22,9 @@ export const getUserDownloads = async ({
 }) => {
   const AND = [Prisma.sql`dh."userId" = ${userId}`, Prisma.sql`dh.hidden = false`];
   if (cursor) AND.push(Prisma.sql`dh."downloadAt" < ${cursor}`);
+
+  const { hideDownloadsSince } = await getUserSettings(userId);
+  if (hideDownloadsSince) AND.push(Prisma.sql`dh."downloadAt" > ${new Date(hideDownloadsSince)}`);
 
   const downloadHistory = await dbRead.$queryRaw<DownloadHistoryRaw[]>`
     SELECT
@@ -51,14 +56,49 @@ export const getUserDownloads = async ({
   return { items };
 };
 
+export async function addUserDownload({
+  userId,
+  modelVersionId,
+  downloadAt,
+}: {
+  userId?: number;
+  modelVersionId: number;
+  downloadAt?: Date;
+}) {
+  if (!userId) return;
+
+  const excludedUsers = await redis.packed.sMembers<number>(REDIS_KEYS.DOWNLOAD.HISTORY_EXCLUSION);
+  if (excludedUsers.includes(userId)) return;
+
+  await dbWrite.$executeRaw`
+    -- Update user history
+    INSERT INTO "DownloadHistory" ("userId", "modelVersionId", "downloadAt", hidden)
+    VALUES (${userId}, ${modelVersionId}, ${downloadAt ?? new Date()}, false)
+    ON CONFLICT ("userId", "modelVersionId") DO UPDATE SET "downloadAt" = excluded."downloadAt"
+  `;
+}
+
+export async function excludeUserDownloadHistory(userIds: number | number[]) {
+  if (!Array.isArray(userIds)) userIds = [userIds];
+  await redis.packed.sAdd(REDIS_KEYS.DOWNLOAD.HISTORY_EXCLUSION, userIds);
+}
+
 export const updateUserActivityById = ({
   modelVersionId,
   userId,
   data,
   all = false,
 }: HideDownloadInput & { data: Prisma.DownloadHistoryUpdateInput; userId: number }) => {
-  return dbWrite.downloadHistory.updateMany({
-    where: { modelVersionId: !all ? modelVersionId : undefined, userId, hidden: { equals: false } },
-    data,
-  });
+  if (all) {
+    setUserSetting(userId, { hideDownloadsSince: Date.now() });
+  } else {
+    return dbWrite.downloadHistory.updateMany({
+      where: {
+        modelVersionId: !all ? modelVersionId : undefined,
+        userId,
+        hidden: { equals: false },
+      },
+      data,
+    });
+  }
 };

@@ -64,7 +64,7 @@ export function ImagesAsPostsCard({
   height: number;
 }) {
   const theme = useMantineTheme();
-  const { ref, inView } = useInView({ rootMargin: '200%' });
+  const { ref, inView } = useInView();
   const { classes, cx } = useStyles();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();

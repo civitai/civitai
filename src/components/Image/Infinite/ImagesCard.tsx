@@ -37,13 +37,13 @@ import { useImageStore } from '~/store/image.store';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
-  const { ref, inView } = useInView({ rootMargin: '200% 0px' });
   const { classes, cx } = useStyles();
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
 
   const image = useImageStore(data);
+  const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
 
   const isBlocked = image.ingestion === ImageIngestionStatus.Blocked;
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
@@ -232,7 +232,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     reactions={image.reactions}
                     metrics={reactionMetrics}
                     targetUserId={image.user.id}
-                    readonly={!isBlocked && isScanned}
+                    readonly={!safe || (isScanned && isBlocked)}
                     className={cx('justify-between p-2')}
                     invisibleEmpty
                   />

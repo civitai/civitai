@@ -136,6 +136,7 @@ import {
   ingestImageSchema,
 } from './../schema/image.schema';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { ImageResource } from '~/shared/utils/prisma/models';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -458,6 +459,7 @@ const defaultScanTypes = [
     : [ImageScanType.Moderation, ImageScanType.Label]),
   ImageScanType.WD14,
   ImageScanType.Hash,
+  ImageScanType.MinorDetection,
 ];
 
 export const ingestImage = async ({
@@ -3032,9 +3034,14 @@ export const createEntityImages = async ({
     },
   });
 
+  const shouldAddImageResources = !!entityType && ['Bounty', 'BountyEntry'].includes(entityType);
   const batches = chunk(imageRecords, 50);
   for (const batch of batches) {
-    await Promise.all(batch.map((image) => ingestImage({ image, tx: dbClient })));
+    if (shouldAddImageResources) {
+      await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
+    }
+
+    await Promise.all(batch.map((image) => ingestImage({ image, tx })));
   }
 
   if (entityType && entityId) {
@@ -3337,8 +3344,13 @@ export const updateEntityImages = async ({
     links.push(...imageRecords.map((i) => i.id));
 
     // Process the new images just in case:
+    const shouldAddImageResources = !!entityType && ['Bounty', 'BountyEntry'].includes(entityType);
     const batches = chunk(imageRecords, 50);
     for (const batch of batches) {
+      if (shouldAddImageResources) {
+        await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
+      }
+
       await Promise.all(batch.map((image) => ingestImage({ image, tx })));
     }
   }
@@ -4207,6 +4219,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
       meta: true,
       type: true,
       tools: {
+        orderBy: { tool: { priority: 'asc' } },
         select: {
           notes: true,
           tool: {
@@ -4215,6 +4228,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
               name: true,
               icon: true,
               domain: true,
+              priority: true,
             },
           },
         },
@@ -4526,4 +4540,40 @@ export async function updateImageMinor({ id, minor }: UpdateImageMinorInput) {
   });
 
   return image;
+}
+
+export async function createImageResources({
+  imageId,
+  tx,
+}: {
+  imageId: number;
+  tx?: Prisma.TransactionClient;
+}) {
+  const dbClient = tx ?? dbWrite;
+  // Read the resources based on complex metadata and hash matches
+  const resources = await dbClient.$queryRaw<
+    (ImageResource & { modelversionid?: number })[]
+  >`SELECT * FROM get_image_resources(${imageId}::int)`;
+  if (!resources.length) return null;
+
+  const sql: Prisma.Sql[] = resources.map(
+    (r) => Prisma.sql`
+        (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
+      r.detected
+    })
+      `
+  );
+
+  // Write the resources to the image
+  await dbClient.$executeRaw`
+    INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
+    VALUES ${Prisma.join(sql, ',')}
+    ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
+    SET
+      detected = excluded.detected,
+      hash = excluded.hash,
+      strength = excluded.strength;
+  `;
+
+  return resources;
 }

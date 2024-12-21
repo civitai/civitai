@@ -355,6 +355,7 @@ export const TagSource = {
   Computed: 'Computed',
   ImageHash: 'ImageHash',
   Hive: 'Hive',
+  MinorDetection: 'MinorDetection',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];
