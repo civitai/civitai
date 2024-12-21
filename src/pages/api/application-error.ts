@@ -70,7 +70,6 @@ async function applySourceMaps(minifiedStackTrace: string) {
 
     if (!sourceMap) continue;
 
-    // WTF? promise?
     const smc = await new SourceMapConsumer(sourceMap);
 
     stack.forEach(({ methodName, lineNumber, column, file }) => {
