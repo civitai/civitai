@@ -21,6 +21,7 @@ export default PublicEndpoint(
     try {
       const session = await getServerAuthSession({ req, res });
       const queryInput = schema.parse(JSON.parse(req.body));
+      await applySourceMaps(queryInput.stack);
       try {
         if (isProd) {
           const payload = {
@@ -40,7 +41,9 @@ export default PublicEndpoint(
         // eslint-disable-next-line
 
         const json = readDir(process.cwd(), 4);
-        return res.status(200).send({ root: process.cwd(), ...json });
+        return res
+          .status(200)
+          .send({ root: process.cwd(), join: path.join(process.cwd(), `./.next`), ...json });
       }
     } catch (e: any) {
       res.status(400).send({ message: e.message });
@@ -73,7 +76,7 @@ async function applySourceMaps(minifiedStackTrace: string) {
     // const destination = path.resolve(`./${dir}`, fileName);
     // const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
     // await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
-    const pathname = path.join(process.cwd(), `.${sourceMapLocation}`);
+    const pathname = path.join(process.cwd(), `./.next/${sourceMapLocation}`);
     const sourceMap = fs.readFileSync(pathname, 'utf-8');
 
     if (!sourceMap) continue;
