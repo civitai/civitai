@@ -5,6 +5,7 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import * as stackTraceParser from 'stacktrace-parser';
 import { SourceMapConsumer } from 'source-map';
+import getConfig from 'next/config';
 
 import path from 'node:path';
 import fs from 'fs';
@@ -20,20 +21,27 @@ export default PublicEndpoint(
     try {
       const session = await getServerAuthSession({ req, res });
       const queryInput = schema.parse(JSON.parse(req.body));
-      if (isProd) {
-        const payload = {
-          name: 'application-error',
-          type: 'error',
-          url: req.headers.referer,
-          userId: session?.user?.id,
-          browser: req.headers['user-agent'],
-          message: queryInput.message,
-          // this won't work in dev
-          stack: await applySourceMaps(queryInput.stack),
-        };
-        await logToAxiom(payload);
+      try {
+        if (isProd) {
+          const payload = {
+            name: 'application-error',
+            type: 'error',
+            url: req.headers.referer,
+            userId: session?.user?.id,
+            browser: req.headers['user-agent'],
+            message: queryInput.message,
+            // this won't work in dev
+            stack: await applySourceMaps(queryInput.stack),
+          };
+          await logToAxiom(payload);
+        }
+        return res.status(200).end();
+      } catch (e) {
+        // eslint-disable-next-line
+
+        const json = readDir(process.cwd(), 4);
+        return res.status(200).send({ root: process.cwd(), ...json });
       }
-      return res.status(200).end();
     } catch (e: any) {
       res.status(400).send({ message: e.message });
     }
@@ -65,7 +73,7 @@ async function applySourceMaps(minifiedStackTrace: string) {
     // const destination = path.resolve(`./${dir}`, fileName);
     // const fileStream = fs.createWriteStream(destination, { flags: 'wx' });
     // await finished(Readable.fromWeb(res.body as any).pipe(fileStream));
-    const pathname = path.resolve(`.${sourceMapLocation}`);
+    const pathname = path.join(process.cwd(), `.${sourceMapLocation}`);
     const sourceMap = fs.readFileSync(pathname, 'utf-8');
 
     if (!sourceMap) continue;
@@ -99,4 +107,18 @@ async function applySourceMaps(minifiedStackTrace: string) {
   // }
 
   return `${lines.join('\n')}`;
+}
+
+const excludeDirs = ['node_modules', 'prisma', 'containers'];
+function readDir(path: string, depth: number): MixedObject {
+  return fs
+    .readdirSync(path, { withFileTypes: true })
+    .filter((x) => x.isDirectory() && !excludeDirs.includes(x.name))
+    .reduce(
+      (acc, { name }) => ({
+        ...acc,
+        [name]: depth > 0 ? readDir(`${path}/${name}`, depth - 1) : undefined,
+      }),
+      {}
+    );
 }
