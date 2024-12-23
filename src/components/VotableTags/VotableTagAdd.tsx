@@ -1,15 +1,49 @@
-import { Badge, createStyles, Group, TextInput } from '@mantine/core';
-import { getHotkeyHandler, useDisclosure } from '@mantine/hooks';
+import { Autocomplete, Badge, createStyles, Group, TextInput } from '@mantine/core';
+import { getHotkeyHandler, useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { IconPlus } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useCallback, useState } from 'react';
+import { TagTarget } from '~/shared/utils/prisma/enums';
+import { getDisplayName } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
-export function VotableTagAdd({ addTag }: VotableTagAddProps) {
+export function VotableTagAdd({ addTag, autosuggest }: VotableTagAddProps) {
   // Autocomplete logic
   const [search, setSearch] = useState('');
+  const [debouncedSearch] = useDebouncedValue(search, 300);
   const [adding, { open, close }] = useDisclosure(false);
 
   // Style
   const { classes } = useStyles();
+
+  const { data, isFetching } = trpc.tag.getAll.useQuery(
+    {
+      limit: 10,
+      entityType: [TagTarget.Image],
+      types: ['UserGenerated', 'Label'],
+      query: debouncedSearch.trim().toLowerCase(),
+      include: ['nsfwLevel'],
+    },
+    {
+      enabled: autosuggest && debouncedSearch.trim().length > 0,
+    }
+  );
+
+  const handleClose = useCallback(() => {
+    close();
+    setSearch('');
+  }, [close]);
+
+  const handleKeyDownEventsEvent = getHotkeyHandler([
+    [
+      'Enter',
+      () => {
+        const value = search.trim().toLowerCase();
+        if (value) addTag(value);
+
+        handleClose();
+      },
+    ],
+  ]);
 
   return (
     <Badge radius="xs" className={classes.badge} px={5} onClick={!adding ? open : undefined}>
@@ -17,6 +51,29 @@ export function VotableTagAdd({ addTag }: VotableTagAddProps) {
         <IconPlus size={14} strokeWidth={2.5} />
         {!adding ? (
           <span>Tag</span>
+        ) : autosuggest ? (
+          <Autocomplete
+            variant="unstyled"
+            classNames={{ dropdown: classes.dropdown, input: classes.input }}
+            value={search}
+            onChange={setSearch}
+            data={
+              data?.items.map((tag) => ({
+                id: tag.id,
+                value: tag.name,
+                name: getDisplayName(tag.name),
+              })) ?? []
+            }
+            nothingFound={isFetching ? 'Searching...' : 'Nothing found'}
+            placeholder="Type to search..."
+            onItemSubmit={(item) => {
+              addTag(item.value);
+              handleClose();
+            }}
+            onBlur={handleClose}
+            withinPortal
+            autoFocus
+          />
         ) : (
           <TextInput
             variant="unstyled"
@@ -24,22 +81,8 @@ export function VotableTagAdd({ addTag }: VotableTagAddProps) {
             value={search}
             onChange={(e) => setSearch(e.currentTarget.value)}
             placeholder="Type your tag"
-            onKeyDown={getHotkeyHandler([
-              [
-                'Enter',
-                () => {
-                  const value = search.trim().toLowerCase();
-                  if (value) addTag(value);
-
-                  close();
-                  setSearch('');
-                },
-              ],
-            ])}
-            onBlur={() => {
-              close();
-              setSearch('');
-            }}
+            onKeyDown={handleKeyDownEventsEvent}
+            onBlur={handleClose}
             autoFocus
           />
         )}
@@ -51,6 +94,7 @@ export function VotableTagAdd({ addTag }: VotableTagAddProps) {
 type VotableTagAddProps = {
   addTag: (tag: string) => void;
   excludeTags?: string[];
+  autosuggest?: boolean;
 };
 
 const useStyles = createStyles((theme) => {

@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Autocomplete,
   Badge,
   Center,
   createStyles,
@@ -7,11 +8,13 @@ import {
   Input,
   InputWrapperProps,
   TextInput,
+  UnstyledButton,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedState, useDisclosure } from '@mantine/hooks';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconPlus, IconX } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
+import { trpc } from '~/utils/trpc';
 
 type TagProps = {
   id?: number;
@@ -23,21 +26,49 @@ type TagsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: TagProps[];
   onChange?: (value: TagProps[]) => void;
   filter?: (tag: TagProps) => boolean;
+  autosuggest?: boolean;
 };
 // !important - output must remain in the format {id, name}[]
-export function TagsInput({ value = [], onChange, target, filter, ...props }: TagsInputProps) {
+export function TagsInput({
+  value = [],
+  onChange,
+  target,
+  filter,
+  autosuggest,
+  ...props
+}: TagsInputProps) {
   value = Array.isArray(value) ? value : value ? [value] : [];
   const { classes } = useStyles();
   const [search, setSearch] = useState('');
+  const [debouncedSearch] = useDebouncedState(search, 300);
   const [adding, { open, close }] = useDisclosure(false);
   const trimmedSearch = search.trim().toLowerCase();
+
+  const { data, isFetching } = trpc.tag.getAll.useQuery(
+    {
+      limit: 20,
+      entityType: target,
+      categories: false,
+      query: trimmedSearch,
+    },
+    { enabled: autosuggest && debouncedSearch.trim().length > 0 }
+  );
+  const filteredItems = useMemo(
+    () => (filter ? data?.items?.filter(filter) ?? [] : data?.items ?? []),
+    [data?.items, filter]
+  );
+
+  const handleClose = useCallback(() => {
+    close();
+    setSearch('');
+  }, [close]);
 
   const handleAddTag = (item: { id?: number; value: string }) => {
     const updated = [...value, { id: item.id, name: item.value.trim().toLowerCase() }];
     onChange?.(updated);
-    setSearch('');
-    close();
+    handleClose();
   };
+
   const handleRemoveTag = (index: number) => {
     const updated = [...value];
     updated.splice(index, 1);
@@ -97,30 +128,72 @@ export function TagsInput({ value = [], onChange, target, filter, ...props }: Ta
           }
         >
           {adding ? (
-            <TextInput
-              variant="unstyled"
-              onChange={(e) => setSearch(e.currentTarget.value)}
-              onKeyDown={getHotkeyHandler([
-                [
-                  'Enter',
-                  () => {
-                    if (!isNewTag) {
-                      close();
-                      setSearch('');
-                      return;
-                    }
+            autosuggest ? (
+              <Autocomplete
+                variant="unstyled"
+                classNames={{ dropdown: classes.dropdown }}
+                data={
+                  filteredItems
+                    .filter((tag) => !selectedTags.includes(tag.name))
+                    .map((tag) => ({
+                      id: tag.id,
+                      value: tag.name,
+                      group: !search ? 'Trending tags' : undefined,
+                    })) ?? []
+                }
+                onChange={setSearch}
+                onKeyDown={getHotkeyHandler([
+                  [
+                    'Enter',
+                    () => {
+                      if (!isNewTag) return;
+                      const existing = filteredItems.find((tag) => tag.name === trimmedSearch);
+                      handleAddTag({ id: existing?.id, value: existing?.name ?? search });
+                    },
+                  ],
+                ])}
+                nothingFound={
+                  isFetching ? (
+                    'Searching...'
+                  ) : isNewTag ? (
+                    <UnstyledButton
+                      className={classes.createOption}
+                      onClick={() => handleAddTag({ value: search })}
+                    >
+                      {`+ Create tag "${search}"`}
+                    </UnstyledButton>
+                  ) : (
+                    'Nothing found'
+                  )
+                }
+                placeholder="Type to search..."
+                onItemSubmit={handleAddTag}
+                onBlur={handleClose}
+                withinPortal
+                autoFocus
+              />
+            ) : (
+              <TextInput
+                variant="unstyled"
+                onChange={(e) => setSearch(e.currentTarget.value)}
+                onKeyDown={getHotkeyHandler([
+                  [
+                    'Enter',
+                    () => {
+                      if (!isNewTag) {
+                        handleClose();
+                        return;
+                      }
 
-                    if (trimmedSearch) handleAddTag({ value: trimmedSearch });
-                  },
-                ],
-              ])}
-              placeholder="Type your tag"
-              onBlur={() => {
-                close();
-                setSearch('');
-              }}
-              autoFocus
-            />
+                      if (trimmedSearch) handleAddTag({ value: trimmedSearch });
+                    },
+                  ],
+                ])}
+                placeholder="Type your tag"
+                onBlur={handleClose}
+                autoFocus
+              />
+            )
           ) : (
             <IconPlus size={16} />
           )}
