@@ -3519,6 +3519,7 @@ export const getImageModerationReviewQueue = async ({
       AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
   }
 
+  // TODO: find a better way to handle different select/join for each type of review
   const queryKey = reportReview ? 'report' : (needsReview as AdditionalQueryKey);
   const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 

@@ -6,6 +6,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { createEntityAppealSchema } from '~/server/schema/report.schema';
 import { EntityType } from '~/shared/utils/prisma/enums';
+import { imageStore } from '~/store/image.store';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -32,6 +33,7 @@ export function AppealDialog({ entityId, entityType }: Props) {
           ...(old as any),
           needsReview: 'appeal',
         }));
+        imageStore.setImage(entityId, { needsReview: 'appeal' });
       }
     },
     onError: (error) => {

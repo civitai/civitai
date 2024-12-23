@@ -449,26 +449,31 @@ export async function createEntityAppeal({
     buzzTransactionId = transaction.transactionId;
   }
 
-  const appeal = await dbWrite.$transaction(async (tx) => {
-    switch (entityType) {
-      case EntityType.Image:
-        // Update entity with needsReview = appeal
-        await tx.image.update({
-          where: { id: entityId },
-          data: { needsReview: 'appeal' },
-        });
-        break;
-      default:
-        // Do nothing
-        break;
-    }
+  try {
+    const appeal = await dbWrite.$transaction(async (tx) => {
+      switch (entityType) {
+        case EntityType.Image:
+          // Update entity with needsReview = appeal
+          await tx.image.update({
+            where: { id: entityId },
+            data: { needsReview: 'appeal' },
+          });
+          break;
+        default:
+          // Do nothing
+          break;
+      }
 
-    return tx.appeal.create({
-      data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId },
+      return tx.appeal.create({
+        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId },
+      });
     });
-  });
 
-  return appeal;
+    return appeal;
+  } catch (error) {
+    await refundTransaction(buzzTransactionId as string, 'Refund appeal fee');
+    throw error;
+  }
 }
 
 export async function resolveEntityAppeal({
