@@ -218,7 +218,9 @@ export default function ResourceSelectModal({
   } else if (selectedTab === 'recent') {
     if (selectSource === 'generation') {
       if (!!steps) {
-        const usedResources = uniq(steps.flatMap(({ resources }) => resources.map((r) => r.id)));
+        const usedResources = uniq(
+          steps.flatMap(({ resources }) => resources.map((r) => r.modelId))
+        );
         filters.push(`id IN [${usedResources.join(',')}]`);
       }
     } else if (selectSource === 'addResource') {
