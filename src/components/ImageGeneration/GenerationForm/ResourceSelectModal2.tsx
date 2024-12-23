@@ -804,8 +804,8 @@ function ResourceSelectCard({
       visible: features.air,
     },
     {
-      label: 'Permissions',
-      value: <PermissionIndicator permissions={data.permissions} />,
+      label: 'Restrictions',
+      value: <PermissionIndicator permissions={data.permissions} showNone={true} />,
       visible: !!data.permissions,
     },
   ];
