@@ -20,7 +20,7 @@ export const useVoteForTags = ({
   entityId: number;
   entityType: 'image' | 'model';
 }) => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const updateHiddenPreferences = useUpdateHiddenPreferences();
   const { hiddenTags } = useHiddenPreferencesData();
   const setVote = useVotableTagStore((state) => state.setVote);
@@ -71,7 +71,7 @@ export const useVoteForTags = ({
     vote: number;
     tagType?: TagType;
   }) => {
-    if (vote == 0) removeVotes({ tags, type: entityType, id: entityId });
+    if (vote === 0) removeVotes({ tags, type: entityType, id: entityId });
     else addVotes({ tags, vote, type: entityType, id: entityId });
     handleTagMutation(tags, vote, tagType);
     if (

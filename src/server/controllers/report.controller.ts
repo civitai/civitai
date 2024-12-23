@@ -1,21 +1,39 @@
 import { TRPCError } from '@trpc/server';
+import dayjs from 'dayjs';
+import { NotificationCategory } from '~/server/common/enums';
 
 import { Context } from '~/server/createContext';
 import {
   BulkUpdateReportStatusInput,
+  CreateEntityAppealInput,
   CreateReportInput,
+  GetRecentAppealsInput,
   GetReportsInput,
+  ResolveAppealInput,
   SetReportStatusInput,
   UpdateReportSchema,
 } from '~/server/schema/report.schema';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
+import { getImageById } from '~/server/services/image.service';
+import { trackModActivity } from '~/server/services/moderator.service';
+import { createNotification } from '~/server/services/notification.service';
 import {
   bulkSetReportStatus,
+  createEntityAppeal,
   createReport,
+  getAppealCount,
+  getRecentAppealsByUserId,
   getReports,
+  resolveEntityAppeal,
   updateReportById,
 } from '~/server/services/report.service';
-import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwDbCustomError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
 export async function createReportHandler({
   input,
@@ -258,3 +276,80 @@ export const updateReportHandler = async ({ input }: { input: UpdateReportSchema
     else throw throwDbError(error);
   }
 };
+
+export async function createEntityAppealHandler({
+  input,
+  ctx,
+}: {
+  input: CreateEntityAppealInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  const { id: userId } = ctx.user;
+  try {
+    // Check ownership before creating the appeal
+    switch (input.entityType) {
+      case EntityType.Image:
+        const image = await getImageById({ id: input.entityId });
+        if (!image) throw throwNotFoundError('Image not found');
+        if (image.userId !== userId) throw throwAuthorizationError();
+
+        break;
+      default:
+        throw throwDbCustomError('Entity type not supported for appeals');
+    }
+
+    const appeal = await createEntityAppeal({ ...input, userId });
+
+    return appeal;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+}
+
+export async function getRecentAppealsHandler({
+  input,
+  ctx,
+}: {
+  input: GetRecentAppealsInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  const sessionUser = ctx.user;
+  try {
+    const userId = input.userId ?? sessionUser.id;
+    const count = await getAppealCount({
+      userId,
+      status: [AppealStatus.Pending, AppealStatus.Rejected],
+      startDate: input.startDate ?? dayjs.utc().subtract(30, 'days').toDate(),
+    });
+
+    return count;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+}
+
+export async function resolveEntityAppealHandler({
+  input,
+  ctx,
+}: {
+  input: ResolveAppealInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  try {
+    const { id: userId } = ctx.user;
+    const appeals = await resolveEntityAppeal({ ...input, userId });
+
+    await trackModActivity(userId, {
+      entityType: 'image',
+      entityId: input.ids,
+      activity: 'resolveAppeal',
+    });
+
+    return appeals;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+}

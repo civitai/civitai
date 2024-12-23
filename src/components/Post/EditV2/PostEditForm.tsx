@@ -50,7 +50,14 @@ export function PostEditForm() {
     };
   }, []); // eslint-disable-line
 
-  const controls = ['heading', 'formatting', 'list', 'link', collectionId ? undefined : 'media', 'mentions'].filter(isDefined);
+  const controls = [
+    'heading',
+    'formatting',
+    'list',
+    'link',
+    collectionId ? undefined : 'media',
+    'mentions',
+  ].filter(isDefined);
 
   return (
     <Form form={form} className="flex flex-col gap-3">
@@ -62,14 +69,14 @@ export function PostEditForm() {
         styles={{ input: { fontWeight: 600, padding: 0 } }}
         autosize
       />
-      <Group spacing="sm">{post && <EditPostTags post={post} />}</Group>
+      <Group spacing="sm">{post && <EditPostTags post={post} autosuggest={false} />}</Group>
       <CollectionSelectDropdown />
       <InputRTE
         name="detail"
         placeholder="Add a description..."
         // Remove the `media` controls when the post is part of a collection.
         // @ts-ignore - `includeControls` does not export types.
-        includeControls={controls} 
+        includeControls={controls}
         editorSize="md"
       />
     </Form>

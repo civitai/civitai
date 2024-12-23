@@ -13,6 +13,7 @@ import {
   SegmentedControl,
   Stack,
   Text,
+  Textarea,
   Title,
   useMantineTheme,
 } from '@mantine/core';
@@ -21,6 +22,7 @@ import { useMergedRef } from '@mantine/hooks';
 import { showNotification } from '@mantine/notifications';
 import {
   IconAlertTriangle,
+  IconBan,
   IconCheck,
   IconExternalLink,
   IconInfoCircle,
@@ -57,8 +59,12 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { MAX_APPEAL_MESSAGE_LENGTH } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
+import { resolveAppealSchema } from '~/server/schema/report.schema';
+import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { ImageModerationReviewQueueImage } from '~/types/router';
+import { formatDate } from '~/utils/date-helpers';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { splitUppercase } from '~/utils/string-helpers';
@@ -107,6 +113,7 @@ const ImageReviewType = {
   newUser: 'New Users',
   reported: 'Reported',
   csam: 'CSAM',
+  appeal: 'Appeals',
 } as const;
 
 type ImageReviewType = keyof typeof ImageReviewType;
@@ -132,7 +139,7 @@ export default function Images() {
   const { data: nameTags } = trpc.image.getModeratorPOITags.useQuery(undefined, {
     enabled: type === 'poi',
   });
-  const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage, isRefetching } =
+  const { data, isLoading, fetchNextPage, hasNextPage, isRefetching } =
     trpc.image.getModeratorReviewQueue.useInfiniteQuery(filters, {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
     });
@@ -167,7 +174,7 @@ export default function Images() {
               position: 'sticky',
               top: 'var(--header-height,0)',
               marginBottom: -80,
-              zIndex: 10,
+              zIndex: 30,
             }}
           >
             <ModerationControls images={images} filters={filters} view={type} />
@@ -265,6 +272,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const theme = useMantineTheme();
 
   const hasReport = !!image.report;
+  const hasAppeal = !!image.appeal;
   const pendingReport = hasReport && image.report?.status === 'Pending';
   const entityUrl = getImageEntityUrl(image);
 
@@ -455,6 +463,45 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
             </Group>
           </Card.Section>
         )}
+        {image.needsReview === 'appeal' && hasAppeal && (
+          <Card.Section p="xs">
+            <Stack spacing={8} sx={{ cursor: 'auto', color: 'initial' }}>
+              <Group position="apart" noWrap>
+                <Stack spacing={2}>
+                  <Text size="xs" color="dimmed" inline>
+                    Appealed by
+                  </Text>
+                  <Link legacyBehavior href={`/user/${image.appeal?.user.username}`} passHref>
+                    <Anchor size="xs" target="_blank" lineClamp={1} inline>
+                      {image.appeal?.user.username}
+                    </Anchor>
+                  </Link>
+                </Stack>
+                {image.appeal?.moderator && (
+                  <Stack spacing={2}>
+                    <Text size="xs" color="dimmed" inline>
+                      Moderated by
+                    </Text>
+                    <Text size="xs" lineClamp={1} inline>
+                      {image.appeal?.moderator.username}
+                    </Text>
+                  </Stack>
+                )}
+                <Stack spacing={2} align="flex-end">
+                  <Text size="xs" color="dimmed" inline>
+                    Created at
+                  </Text>
+                  {image.appeal?.createdAt ? (
+                    <Text size="xs">{formatDate(image.appeal?.createdAt)}</Text>
+                  ) : null}
+                </Stack>
+              </Group>
+              <ContentClamp maxHeight={150}>
+                {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
+              </ContentClamp>
+            </Stack>
+          </Card.Section>
+        )}
       </>
     </MasonryCard>
   );
@@ -465,6 +512,12 @@ type ImageGridItemProps = {
   index: number;
   width: number;
   height: number;
+};
+
+const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
+  position: 'bottom',
+  withArrow: true,
+  withinPortal: true,
 };
 
 function ModerationControls({
@@ -482,12 +535,6 @@ function ModerationControls({
   const selectMany = useStore((state) => state.selectMany);
   const deselectAll = useStore((state) => state.deselectAll);
   const router = useRouter();
-
-  const tooltipProps: Omit<TooltipProps, 'label' | 'children'> = {
-    position: 'bottom',
-    withArrow: true,
-    withinPortal: true,
-  };
 
   const moderateImagesMutation = trpc.image.moderate.useMutation({
     async onMutate({ ids, needsReview, reviewAction }) {
@@ -665,24 +712,30 @@ function ModerationControls({
           <IconSquareOff size="1.25rem" />
         </ActionIcon>
       </ButtonTooltip>
-      <PopConfirm
-        message={`Are you sure you want to approve ${selected.length} image(s)?`}
-        position="bottom-end"
-        onConfirm={handleApproveSelected}
-        withArrow
-      >
-        <ButtonTooltip label="Accept" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="green">
-            <IconCheck size="1.25rem" />
-          </ActionIcon>
-        </ButtonTooltip>
-      </PopConfirm>
+      {view === 'appeal' ? (
+        <AppealActions selected={selected} filters={filters} />
+      ) : (
+        <PopConfirm
+          message={`Are you sure you want to approve ${selected.length} image(s)?`}
+          position="bottom-end"
+          onConfirm={handleApproveSelected}
+          withArrow
+          withinPortal
+        >
+          <ButtonTooltip label="Accept" {...tooltipProps}>
+            <ActionIcon variant="outline" disabled={!selected.length} color="green">
+              <IconCheck size="1.25rem" />
+            </ActionIcon>
+          </ButtonTooltip>
+        </PopConfirm>
+      )}
       {view === 'poi' && (
         <PopConfirm
           message={`Are you sure these ${selected.length} image(s) are not real people?`}
           position="bottom-end"
           onConfirm={handleNotPOI}
           withArrow
+          withinPortal
         >
           <ButtonTooltip label="Not POI" {...tooltipProps}>
             <ActionIcon variant="outline" disabled={!selected.length} color="green">
@@ -697,6 +750,7 @@ function ModerationControls({
           position="bottom-end"
           onConfirm={handleRemoveNames}
           withArrow
+          withinPortal
         >
           <ButtonTooltip label="Remove Name" {...tooltipProps}>
             <ActionIcon variant="outline" disabled={!selected.length} color="yellow">
@@ -705,18 +759,21 @@ function ModerationControls({
           </ButtonTooltip>
         </PopConfirm>
       )}
-      <PopConfirm
-        message={`Are you sure you want to delete ${selected.length} image(s)?`}
-        position="bottom-end"
-        onConfirm={handleDeleteSelected}
-        withArrow
-      >
-        <ButtonTooltip label="Delete" {...tooltipProps}>
-          <ActionIcon variant="outline" disabled={!selected.length} color="red">
-            <IconTrash size="1.25rem" />
-          </ActionIcon>
-        </ButtonTooltip>
-      </PopConfirm>
+      {view !== 'appeal' && (
+        <PopConfirm
+          message={`Are you sure you want to delete ${selected.length} image(s)?`}
+          position="bottom-end"
+          onConfirm={handleDeleteSelected}
+          withArrow
+          withinPortal
+        >
+          <ButtonTooltip label="Delete" {...tooltipProps}>
+            <ActionIcon variant="outline" disabled={!selected.length} color="red">
+              <IconTrash size="1.25rem" />
+            </ActionIcon>
+          </ButtonTooltip>
+        </PopConfirm>
+      )}
 
       <ButtonTooltip {...tooltipProps} label="Report CSAM">
         <ActionIcon
@@ -734,5 +791,145 @@ function ModerationControls({
         </ActionIcon>
       </ButtonTooltip>
     </Group>
+  );
+}
+
+function AppealActions({ selected, filters }: { selected: number[]; filters: MixedObject }) {
+  const queryUtils = trpc.useUtils();
+  const deselectAll = useStore((state) => state.deselectAll);
+
+  const [resolvedMessage, setResolvedMessage] = useState<string>();
+  const [error, setError] = useState<string>();
+
+  const resolveAppealMutation = trpc.report.resolveAppeal.useMutation({
+    async onMutate({ ids }) {
+      await queryUtils.image.getModeratorReviewQueue.cancel();
+      queryUtils.image.getModeratorReviewQueue.setInfiniteData(
+        filters,
+        produce((data) => {
+          if (!data?.pages?.length) return;
+
+          for (const page of data.pages)
+            for (const item of page.items) {
+              if (ids.includes(item.id)) {
+                item.needsReview = null;
+              }
+            }
+        })
+      );
+    },
+    onSuccess: (_, { status }) => {
+      showSuccessNotification({ message: `The images have been ${status.toLowerCase()}` });
+    },
+    onError: (error) => {
+      showErrorNotification({
+        title: 'Failed to resolve appeal',
+        error: new Error(error.message),
+      });
+    },
+  });
+
+  const handleResolveAppeal = (status: AppealStatus) => {
+    if (!resolvedMessage) return;
+
+    deselectAll();
+    resolveAppealMutation.mutate({
+      ids: selected,
+      status,
+      entityType: EntityType.Image,
+      resolvedMessage,
+    });
+  };
+
+  const handleResolvedMessageChange = (message: string) => {
+    const result = resolveAppealSchema.pick({ resolvedMessage: true }).safeParse({
+      resolvedMessage,
+    });
+    if (!result.success) {
+      setError(result.error.flatten().fieldErrors.resolvedMessage?.[0] ?? 'Message is required');
+    } else {
+      setError('');
+    }
+
+    setResolvedMessage(message);
+  };
+
+  return (
+    <>
+      <PopConfirm
+        message={
+          <ConfirmResolvedAppeal
+            status={AppealStatus.Approved}
+            onChange={handleResolvedMessageChange}
+            itemCount={selected.length}
+            error={error}
+          />
+        }
+        position="bottom-end"
+        onConfirm={() => handleResolveAppeal(AppealStatus.Approved)}
+        onCancel={() => setResolvedMessage('')}
+        withArrow
+        withinPortal
+      >
+        <ButtonTooltip label="Approve" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="green">
+            <IconCheck size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+      <PopConfirm
+        message={
+          <ConfirmResolvedAppeal
+            status={AppealStatus.Rejected}
+            onChange={handleResolvedMessageChange}
+            itemCount={selected.length}
+            error={error}
+          />
+        }
+        position="bottom-end"
+        onConfirm={() => handleResolveAppeal(AppealStatus.Rejected)}
+        onCancel={() => setResolvedMessage('')}
+        withArrow
+        withinPortal
+      >
+        <ButtonTooltip label="Reject" {...tooltipProps}>
+          <ActionIcon variant="outline" disabled={!selected.length} color="red">
+            <IconBan size="1.25rem" />
+          </ActionIcon>
+        </ButtonTooltip>
+      </PopConfirm>
+    </>
+  );
+}
+
+function ConfirmResolvedAppeal({
+  status,
+  onChange,
+  itemCount,
+  error,
+}: {
+  status: AppealStatus;
+  onChange: (message: string) => void;
+  itemCount?: number;
+  error?: string;
+}) {
+  return (
+    <Stack spacing="xs">
+      <Text size="sm">
+        Are you sure you want to {status === AppealStatus.Approved ? 'approve' : 'reject'}{' '}
+        {itemCount} image(s)?
+      </Text>
+      <Textarea
+        label="Resolved message"
+        description="This message will be sent to the user who appealed the image"
+        error={error}
+        onChange={(e) => onChange(e.currentTarget.value)}
+        minRows={2}
+        maxRows={5}
+        maxLength={MAX_APPEAL_MESSAGE_LENGTH}
+        autosize
+        required
+      />
+    </Stack>
   );
 }

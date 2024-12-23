@@ -92,6 +92,7 @@ export enum ImageScanType {
   Hash,
   Hive,
   MinorDetection,
+  HiveDemographic,
 }
 
 export enum CommentV2Sort {
@@ -176,6 +177,7 @@ export enum ClubSort {
 export enum BlockedReason {
   TOS = 'tos',
   Moderated = 'moderated',
+  CSAM = 'CSAM',
 }
 
 export enum ThreadSort {

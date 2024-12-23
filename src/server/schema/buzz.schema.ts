@@ -1,6 +1,5 @@
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
-import { titleCase } from '~/utils/string-helpers';
 import { stringDate } from '~/utils/zod-helpers';
 
 export enum TransactionType {
@@ -26,6 +25,7 @@ export enum TransactionType {
   Sell = 19,
   AuthorizedPurchase = 20,
   Compensation = 21,
+  Appeal = 22,
 }
 
 export const buzzAccountTypes = ['user', 'club', 'generation'] as const;
