@@ -105,6 +105,8 @@ export type ResourceSelectModalProps = {
 const tabs = ['all', 'featured', 'recent', 'liked', 'uploaded'] as const;
 type Tabs = (typeof tabs)[number];
 
+const take = 20;
+
 export default function ResourceSelectModal({
   title,
   onSelect,
@@ -127,11 +129,17 @@ export default function ResourceSelectModal({
   });
 
   const {
+    data: featuredModels,
+    isFetching: isLoadingFeatured,
+    isError: isErrorFeatured,
+  } = trpc.model.getFeaturedModels.useQuery({ take }, { enabled: selectedTab === 'featured' });
+
+  const {
     steps,
     isFetching: isLoadingGenerations,
     isError: isErrorGenerations,
   } = useGetTextToImageRequests(
-    { take: 20 },
+    { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'generation' }
   );
 
@@ -140,7 +148,7 @@ export default function ResourceSelectModal({
     isFetching: isLoadingTraining,
     isError: isErrorTraining,
   } = trpc.model.getAvailableTrainingModels.useQuery(
-    { take: 20 },
+    { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'training' }
   );
 
@@ -149,7 +157,7 @@ export default function ResourceSelectModal({
     isFetching: isLoadingManuallyAdded,
     isError: isErrorManuallyAdded,
   } = trpc.model.getRecentlyManuallyAdded.useQuery(
-    { take: 20 },
+    { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'addResource' }
   );
 
@@ -158,7 +166,7 @@ export default function ResourceSelectModal({
     isFetching: isLoadingRecommendedModels,
     isError: isErrorRecommendedModels,
   } = trpc.model.getRecentlyManuallyAdded.useQuery(
-    { take: 20 },
+    { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'modelVersion' }
   );
 
@@ -166,7 +174,8 @@ export default function ResourceSelectModal({
     isLoadingTraining ||
     isLoadingGenerations ||
     isLoadingManuallyAdded ||
-    isLoadingRecommendedModels;
+    isLoadingRecommendedModels ||
+    isLoadingFeatured;
 
   const { resources = [], excludeIds = [], canGenerate } = options;
   const allowedTabs = tabs.filter((t) => {
@@ -203,6 +212,9 @@ export default function ResourceSelectModal({
   }
 
   if (selectedTab === 'featured') {
+    if (!!featuredModels) {
+      filters.push(`id IN [${featuredModels.join(',')}]`);
+    }
   } else if (selectedTab === 'recent') {
     if (selectSource === 'generation') {
       if (!!steps) {

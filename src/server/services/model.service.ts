@@ -53,6 +53,7 @@ import {
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import { getSystemHomeBlocks } from '~/server/services/home-block.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
@@ -86,6 +87,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import {
   CommercialUse,
+  HomeBlockType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,
@@ -1863,9 +1865,27 @@ export const getRecentlyRecommended = async ({ take, userId }: LimitOnly & { use
     where: {
       source: { model: { userId } },
     },
+    orderBy: { source: { updatedAt: 'desc' } },
     take,
   });
   return uniq(data.map((d) => d.resource.modelId));
+};
+
+export const getFeaturedModels = async ({ take }: LimitOnly) => {
+  const homeblocks = await getSystemHomeBlocks({ input: {} });
+  const featuredModelCollection = homeblocks.find(
+    (h) => h.type === HomeBlockType.Collection && h.metadata.link === '/models'
+  );
+  const collectionId = featuredModelCollection?.metadata?.collection?.id ?? 104;
+
+  const featured = await dbRead.collectionItem.findMany({
+    where: { collectionId },
+    select: { modelId: true },
+    orderBy: { createdAt: 'desc' },
+    take,
+  });
+
+  return featured.map(({ modelId }) => modelId).filter(isDefined);
 };
 
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
