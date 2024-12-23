@@ -88,6 +88,13 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
     [image.stats]
   );
 
+  function getDialogState<T extends { id?: number }>(imageId: number, images: T[] = []) {
+    const index = images.findIndex((x) => x.id === imageId);
+    if (index === -1) return [];
+    const minIndex = index - 50 > -1 ? index - 50 : 0;
+    return images.slice(minIndex, index + 50);
+  }
+
   return (
     <TwCosmeticWrapper
       cosmetic={image.cosmetic?.data}
@@ -101,7 +108,11 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                 <div className="relative flex-1">
                   <RoutedDialogLink
                     name="imageDetail"
-                    state={{ imageId: image.id, images, ...contextProps }}
+                    state={{
+                      imageId: image.id,
+                      images: getDialogState(image.id, images),
+                      ...contextProps,
+                    }}
                     className="absolute inset-0"
                   >
                     {safe ? (
