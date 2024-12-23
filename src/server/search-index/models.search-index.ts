@@ -144,7 +144,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 };
 
-const modelSelect = {
+const modelSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
   type: true,
@@ -201,7 +201,7 @@ const modelSelect = {
       timeframe: MetricTimeframe.AllTime,
     },
   },
-};
+});
 
 type Model = Prisma.ModelGetPayload<{
   select: typeof modelSelect;
@@ -269,11 +269,11 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
           hashData: restVersion.hashes.map((hash) => ({ ...hash, type: hash.hashType })),
         },
         versions: modelVersions.map(
-          ({ generationCoverage, files, hashes, settings, metrics, ...x }) => ({
+          ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
             ...x,
-            metrics: metrics[0],
+            metrics: vMetrics[0],
             hashes: hashes.map((hash) => hash.hash),
-            hashData: hashes.map((hash) => ({ ...hash, type: hash.hashType })),
+            hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
             canGenerate:
               generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
             settings: settings as RecommendedSettingsSchema,
