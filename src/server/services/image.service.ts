@@ -459,7 +459,11 @@ const defaultScanTypes = [
     : [ImageScanType.Moderation, ImageScanType.Label]),
   ImageScanType.WD14,
   ImageScanType.Hash,
-  ImageScanType.MinorDetection,
+  ...(env.MINOR_SCANNER === 'custom'
+    ? [ImageScanType.MinorDetection]
+    : env.MINOR_SCANNER === 'hive'
+    ? [ImageScanType.HiveDemographic]
+    : []),
 ];
 
 export const ingestImage = async ({

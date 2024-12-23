@@ -92,6 +92,7 @@ export enum ImageScanType {
   Hash,
   Hive,
   MinorDetection,
+  HiveDemographic,
 }
 
 export enum CommentV2Sort {
