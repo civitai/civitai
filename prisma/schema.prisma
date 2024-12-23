@@ -291,6 +291,8 @@ model User {
   adTokens                   AdToken[]
   ratingRequests             ImageRatingRequest[]
   collectionItemScores       CollectionItemScore[]
+  appeals                    Appeal[]                       @relation("submittedAppeals")
+  resolvedAppeals            Appeal[]                       @relation("resolvedAppeals")
 }
 
 model CustomerSubscription {
@@ -3260,6 +3262,34 @@ model Blocklist {
   updatedAt DateTime @updatedAt
   type      String
   data      String[]
+}
+
+enum AppealStatus {
+  Pending
+  Approved
+  Rejected
+}
+
+model Appeal {
+  id                Int          @id @default(autoincrement())
+  userId            Int
+  user              User         @relation("submittedAppeals", fields: [userId], references: [id], onDelete: Cascade)
+  entityType        EntityType
+  entityId          Int
+  status            AppealStatus @default(Pending)
+  appealMessage     String
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+  resolvedAt        DateTime?
+  resolvedBy        Int?
+  resolvedByUser    User?        @relation("resolvedAppeals", fields: [resolvedBy], references: [id], onDelete: SetNull)
+  resolvedMessage   String?
+  internalNotes     String?
+  buzzTransactionId String?
+
+  @@unique([entityType, entityId, userId])
+  @@index([userId])
+  @@index([status])
 }
 
 /// @view

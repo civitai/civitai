@@ -150,6 +150,8 @@ export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audi
 
 export type TechniqueType = "Image" | "Video";
 
+export type AppealStatus = "Pending" | "Approved" | "Rejected";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -374,6 +376,8 @@ export interface User {
   adTokens?: AdToken[];
   ratingRequests?: ImageRatingRequest[];
   collectionItemScores?: CollectionItemScore[];
+  appeals?: Appeal[];
+  resolvedAppeals?: Appeal[];
 }
 
 export interface CustomerSubscription {
@@ -2481,6 +2485,24 @@ export interface Blocklist {
   updatedAt: Date;
   type: string;
   data: string[];
+}
+
+export interface Appeal {
+  id: number;
+  userId: number;
+  user?: User;
+  entityType: EntityType;
+  entityId: number;
+  status: AppealStatus;
+  appealMessage: string;
+  createdAt: Date;
+  updatedAt: Date;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  resolvedByUser?: User | null;
+  resolvedMessage: string | null;
+  internalNotes: string | null;
+  buzzTransactionId: string | null;
 }
 
 export interface QuestionRank {

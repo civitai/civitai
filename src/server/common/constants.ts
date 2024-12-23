@@ -1077,3 +1077,5 @@ export const banReasonDetails: Record<
 };
 
 export const HOLIDAY_PROMO_VALUE = 0.2;
+
+export const MAX_APPEAL_MESSAGE_LENGTH = 220;

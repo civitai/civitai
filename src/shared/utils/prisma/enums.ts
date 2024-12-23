@@ -687,6 +687,14 @@ export const TechniqueType = {
 
 export type TechniqueType = (typeof TechniqueType)[keyof typeof TechniqueType];
 
+export const AppealStatus = {
+  Pending: 'Pending',
+  Approved: 'Approved',
+  Rejected: 'Rejected',
+} as const;
+
+export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
+
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

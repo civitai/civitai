@@ -1,12 +1,32 @@
 import { Prisma } from '@prisma/client';
-import { ImageEngagementType, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
+import {
+  AppealStatus,
+  BuzzAccountType,
+  EntityType,
+  ImageEngagementType,
+  ImageIngestionStatus,
+  ReportReason,
+  ReportStatus,
+} from '~/shared/utils/prisma/enums';
 import { Report } from '~/shared/utils/prisma/models';
-import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  BlockedReason,
+  NotificationCategory,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { CreateReportInput, GetReportsInput, ReportEntity } from '~/server/schema/report.schema';
+import {
+  CreateEntityAppealInput,
+  CreateReportInput,
+  GetRecentAppealsInput,
+  GetReportsInput,
+  ReportEntity,
+  ResolveAppealInput,
+} from '~/server/schema/report.schema';
 import {
   articlesSearchIndex,
   collectionsSearchIndex,
@@ -15,8 +35,22 @@ import {
 } from '~/server/search-index';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { addTagVotes } from '~/server/services/tag.service';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import { withRetries } from '~/utils/errorHandling';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import dayjs from 'dayjs';
+import {
+  ingestImage,
+  queueImageSearchIndexUpdate,
+  updateNsfwLevel,
+} from '~/server/services/image.service';
+import { createNotification } from '~/server/services/notification.service';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -200,7 +234,11 @@ export const createReport = async ({
       });
       await dbWrite.image.update({
         where: { id },
-        data: { ingestion: 'Blocked', nsfwLevel: NsfwLevel.Blocked, blockedFor: 'CSAM' },
+        data: {
+          ingestion: 'Blocked',
+          nsfwLevel: NsfwLevel.Blocked,
+          blockedFor: BlockedReason.CSAM,
+        },
       });
       await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
       await imagesMetricsSearchIndex.queueUpdate([
@@ -335,3 +373,191 @@ function trackModReports({ ids, userId }: { ids: number[]; userId: number }) {
 }
 
 // #endregion
+
+export function getRecentAppealsByUserId({ userId }: GetRecentAppealsInput) {
+  return dbRead.appeal.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' },
+    take: 10,
+  });
+}
+
+export function getAppealCount({
+  userId,
+  status,
+  startDate,
+}: {
+  userId: number;
+  status: AppealStatus[];
+  startDate?: Date;
+}) {
+  return dbRead.appeal.count({
+    where: { userId, status: { in: status }, createdAt: { gte: startDate } },
+  });
+}
+
+function getAppealById({ id, select }: GetByIdInput & { select?: Prisma.AppealSelect }) {
+  return dbRead.appeal.findUnique({ where: { id }, select });
+}
+
+export async function getAppealDetails({ id }: GetByIdInput) {
+  const appeal = await getAppealById({ id });
+  if (!appeal) throw throwNotFoundError('Appeal not found');
+
+  // Get details based on entityType
+  let entityDetails: MixedObject | null = null;
+  switch (appeal.entityType) {
+    case EntityType.Image:
+      entityDetails = await dbRead.image.findUnique({
+        where: { id: appeal.entityId },
+        select: { id: true, url: true, userId: true },
+      });
+      break;
+    default:
+      // Do nothing
+      break;
+  }
+
+  return { ...appeal, entityDetails };
+}
+
+export async function createEntityAppeal({
+  entityId,
+  entityType,
+  message,
+  userId,
+}: CreateEntityAppealInput & { userId: number }) {
+  let buzzTransactionId: string | null = null;
+  // check if user has more than 3 pending or rejected appeal in the last 30 days
+  const appealsCount = await getAppealCount({
+    userId,
+    startDate: dayjs().subtract(30, 'days').toDate(),
+    status: [AppealStatus.Pending, AppealStatus.Rejected],
+  });
+
+  if (appealsCount >= 3) {
+    const transaction = await withRetries(() =>
+      createBuzzTransaction({
+        amount: 100,
+        fromAccountId: userId,
+        toAccountId: 0,
+        type: TransactionType.Appeal,
+        fromAccountType: BuzzAccountType.user,
+        description: `Appeal fee for ${entityType} ${entityId}`,
+      })
+    );
+    buzzTransactionId = transaction.transactionId;
+  }
+
+  try {
+    const appeal = await dbWrite.$transaction(async (tx) => {
+      switch (entityType) {
+        case EntityType.Image:
+          // Update entity with needsReview = appeal
+          await tx.image.update({
+            where: { id: entityId },
+            data: { needsReview: 'appeal' },
+          });
+          break;
+        default:
+          // Do nothing
+          break;
+      }
+
+      return tx.appeal.create({
+        data: { entityId, entityType, appealMessage: message, userId, buzzTransactionId },
+      });
+    });
+
+    return appeal;
+  } catch (error) {
+    await refundTransaction(buzzTransactionId as string, 'Refund appeal fee');
+    throw error;
+  }
+}
+
+export async function resolveEntityAppeal({
+  ids,
+  entityType,
+  status,
+  internalNotes,
+  resolvedMessage,
+  userId,
+}: ResolveAppealInput & { userId?: number }) {
+  const appeals = await dbRead.appeal.findMany({
+    where: { entityId: { in: ids }, status: AppealStatus.Pending, entityType },
+    select: {
+      id: true,
+      entityId: true,
+      entityType: true,
+      resolvedAt: true,
+      buzzTransactionId: true,
+      status: true,
+      userId: true,
+    },
+  });
+  const affectedIds = appeals.map((a) => a.id);
+  if (affectedIds.length === 0) return [];
+
+  await dbWrite.appeal.updateMany({
+    where: { id: { in: affectedIds } },
+    data: { status, resolvedBy: userId, resolvedMessage, internalNotes, resolvedAt: new Date() },
+  });
+
+  const approved = status === AppealStatus.Approved;
+  for (const appeal of appeals) {
+    switch (appeal.entityType) {
+      case EntityType.Image:
+        // Update entity with needsReview = null
+        const image = await dbWrite.image.update({
+          where: { id: appeal.entityId },
+          data: approved
+            ? {
+                needsReview: null,
+                blockedFor: null,
+                ingestion: ImageIngestionStatus.Scanned,
+                nsfwLevel: 0,
+              }
+            : { needsReview: null },
+        });
+
+        if (approved) await updateNsfwLevel(image.id);
+
+        await queueImageSearchIndexUpdate({
+          ids: [appeal.entityId],
+          action: approved
+            ? SearchIndexUpdateQueueAction.Update
+            : SearchIndexUpdateQueueAction.Delete,
+        });
+        break;
+      default:
+        // Do nothing
+        break;
+    }
+
+    if (approved && appeal.buzzTransactionId) {
+      await withRetries(() =>
+        refundTransaction(
+          appeal.buzzTransactionId as string,
+          `Refunded appeal ${appeal.id} for ${appeal.entityType} ${appeal.entityId}`
+        )
+      );
+    }
+
+    // Notify the user that their appeal has been resolved
+    await createNotification({
+      userId: appeal.userId,
+      type: 'entity-appeal-resolved',
+      category: NotificationCategory.Other,
+      key: `entity-appeal-resolved:${appeal.entityType}:${appeal.entityId}`,
+      details: {
+        entityType: appeal.entityType,
+        entityId: appeal.entityId,
+        status,
+        resolvedMessage,
+      },
+    });
+  }
+
+  return appeals;
+}

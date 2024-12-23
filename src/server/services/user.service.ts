@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
-import { BanReasonCode, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BanReasonCode, BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -641,7 +641,7 @@ export async function softDeleteUser({ id, userId }: { id: number; userId: numbe
     data: {
       ingestion: 'Blocked',
       nsfwLevel: NsfwLevel.Blocked,
-      blockedFor: 'CSAM',
+      blockedFor: BlockedReason.CSAM,
       needsReview: 'blocked',
     },
   });
