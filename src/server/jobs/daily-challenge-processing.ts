@@ -5,7 +5,9 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
   ChallengeConfig,
+  endChallenge,
   getChallengeConfig,
+  getChallengeDetails,
   getChallengeTypeConfig,
   getCurrentChallenge,
   getUpcomingChallenge,
@@ -61,10 +63,10 @@ export const dailyChallengeJobs = [
 
 // Job Functions
 // ----------------------------------------------
-async function createUpcomingChallenge() {
+export async function createUpcomingChallenge() {
   // Stop if we already have an upcoming challenge
   const upcomingChallenge = await getUpcomingChallenge();
-  if (upcomingChallenge) return;
+  if (upcomingChallenge) return upcomingChallenge;
   log('Setting up daily challenge');
   const config = await getChallengeConfig();
   const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
@@ -84,7 +86,7 @@ async function createUpcomingChallenge() {
       AND ci."status" = 'ACCEPTED'
     `;
 
-  //Get Users on Cooldown
+  // Get Users on cooldown
   const cooldownUsers = await dbRead.$queryRaw<{ userId: number }[]>`
       SELECT DISTINCT
         cast(a.metadata->'userId' as int) as "userId"
@@ -92,7 +94,7 @@ async function createUpcomingChallenge() {
       JOIN "Article" a ON a.id = ci."modelId"
       WHERE ci."collectionId" = ${config.challengeCollectionId}
       AND a."status" = 'Published'
-      AND a."publishedAt" > now() - ${config.cooldownPeriod}::interval
+      AND a."publishedAt" > now() - ${config.userCooldown}::interval
     `;
 
   // Remove users on cooldown
@@ -100,23 +102,41 @@ async function createUpcomingChallenge() {
     (user) => !cooldownUsers.some((cu) => cu.userId === user.userId)
   );
 
+  // Get resources on cooldown
+  const cooldownResources = (
+    await dbRead.$queryRaw<{ modelId: number }[]>`
+      SELECT DISTINCT
+        cast(metadata->'modelId' as int) as "modelId"
+      FROM "CollectionItem" ci
+      JOIN "Article" a ON a.id = ci."articleId"
+      WHERE ci."collectionId" = ${config.challengeCollectionId}
+      AND a."status" = 'Published'
+      AND "publishedAt" > now() - ${config.resourceCooldown}::interval
+    `
+  ).map((x) => x.modelId);
+
   let resource: SelectedResource | undefined;
   let randomUser: { userId: number } | undefined;
+  let attempts = 0;
   while (!resource) {
+    attempts++;
+    if (attempts > 100) throw new Error('Failed to find resource');
+
     // Pick a user
     randomUser = getRandom(availableUsers);
 
     // Get resources from that user
     const resourceIds = await dbRead.$queryRaw<{ id: number }[]>`
-        SELECT ci."modelId" as id
-        FROM "CollectionItem" ci
-        JOIN "Model" m ON m.id = ci."modelId"
-        WHERE "collectionId" = ${challengeTypeConfig.collectionId}
-        AND ci."status" = 'ACCEPTED'
-        AND m."userId" = ${randomUser.userId}
-        AND m.status = 'Published'
-        AND m.mode IS NULL
-      `;
+      SELECT ci."modelId" as id
+      FROM "CollectionItem" ci
+      JOIN "Model" m ON m.id = ci."modelId"
+      WHERE "collectionId" = ${challengeTypeConfig.collectionId}
+      AND ci."status" = 'ACCEPTED'
+      AND m."userId" = ${randomUser.userId}
+      AND m.status = 'Published'
+      AND m.id NOT IN (${Prisma.join(cooldownResources)})
+      AND m.mode IS NULL
+    `;
     if (!resourceIds.length) continue;
 
     // Pick a resource
@@ -247,6 +267,9 @@ async function createUpcomingChallenge() {
       SET description = COALESCE(description, ' [View Daily Challenge](/articles/${article.id})')
     WHERE id = ${collection.id};
   `);
+
+  const challenge = await getChallengeDetails(article.id);
+  return challenge;
 }
 
 async function reviewEntries() {
@@ -536,18 +559,8 @@ async function pickWinners() {
 
   // Close challenge
   // ----------------------------------------------
-  await dbWrite.$executeRaw`
-    UPDATE "Collection"
-    SET write = 'Private'::"CollectionWriteConfiguration"
-    WHERE id = ${currentChallenge.collectionId};
-  `;
+  await endChallenge(currentChallenge);
   log('Collection closed');
-
-  // Remove all contributors
-  await dbWrite.$executeRaw`
-    DELETE FROM "CollectionContributor"
-    WHERE "collectionId" = ${currentChallenge.collectionId}
-  `;
 
   // Pick Winners
   // ----------------------------------------------
@@ -782,7 +795,7 @@ export async function getJudgedEntries(collectionId: number, config: ChallengeCo
   return toFinalJudgement;
 }
 
-async function startNextChallenge(config: ChallengeConfig) {
+export async function startNextChallenge(config: ChallengeConfig) {
   let upcomingChallenge = await getUpcomingChallenge();
   if (!upcomingChallenge) {
     try {

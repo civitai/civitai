@@ -1,6 +1,6 @@
 import { mergeWith } from 'lodash-es';
 import { z } from 'zod';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 
 const challengeConfigSchema = z.object({
@@ -8,7 +8,8 @@ const challengeConfigSchema = z.object({
   challengeCollectionId: z.number(),
   judgedTagId: z.number(),
   reviewMeTagId: z.number(),
-  cooldownPeriod: z.string(),
+  userCooldown: z.string(),
+  resourceCooldown: z.string(),
   prizes: z.array(
     z.object({
       buzz: z.number(),
@@ -34,7 +35,8 @@ export const dailyChallengeConfig: ChallengeConfig = {
   challengeCollectionId: 6236625,
   judgedTagId: 299729,
   reviewMeTagId: 301770,
-  cooldownPeriod: '7 day',
+  userCooldown: '14 day',
+  resourceCooldown: '45 day',
   prizes: [
     { buzz: 5000, points: 150 },
     { buzz: 2500, points: 100 },
@@ -191,9 +193,11 @@ export async function getCurrentChallenge() {
       SELECT
         ci."articleId" as id
       FROM "CollectionItem" ci
+      JOIN "Article" a ON a.id = ci."articleId"
       WHERE
         ci."collectionId" = ${dailyChallengeConfig.challengeCollectionId}
         AND ci."status" = 'ACCEPTED'
+        AND (a.metadata->>'status') = 'active'
       ORDER BY ci."createdAt" DESC
       LIMIT 1
     `;
@@ -217,4 +221,22 @@ export async function getUpcomingChallenge() {
   if (!results.length) return null;
 
   return getChallengeDetails(results[0].articleId);
+}
+export async function endChallenge(challenge?: DailyChallengeDetails | null) {
+  challenge ??= await getCurrentChallenge();
+  if (!challenge) return;
+
+  // Close challenge
+  // ----------------------------------------------
+  await dbWrite.$executeRaw`
+    UPDATE "Collection"
+    SET write = 'Private'::"CollectionWriteConfiguration"
+    WHERE id = ${challenge.collectionId};
+  `;
+
+  // Remove all contributors
+  await dbWrite.$executeRaw`
+    DELETE FROM "CollectionContributor"
+    WHERE "collectionId" = ${challenge.collectionId}
+  `;
 }

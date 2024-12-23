@@ -716,7 +716,7 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
 
   // Update the claim count
   await dbWrite.$executeRaw`
-    UPDATE buzz_claim
+    UPDATE "BuzzClaim"
     SET claimed = claimed + 1
     WHERE key = ${id}
   `;
