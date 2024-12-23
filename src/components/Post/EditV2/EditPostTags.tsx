@@ -14,7 +14,7 @@ import {
 } from '@mantine/core';
 import { getHotkeyHandler, useClickOutside, useDebouncedValue, usePrevious } from '@mantine/hooks';
 import { IconPlus, IconStar, IconX } from '@tabler/icons-react';
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import { PostDetailEditable } from '~/server/services/post.service';
@@ -30,6 +30,7 @@ type EditPostTagsProps = {
   postId: number;
   tags: TagProps[];
   setTags: (cb: (post: TagProps[]) => TagProps[]) => void;
+  autosuggest?: boolean;
 };
 const EditPostTagsContext = createContext<EditPostTagsProps | null>(null);
 const useEditPostTagsContext = () => {
@@ -38,11 +39,19 @@ const useEditPostTagsContext = () => {
   return context;
 };
 
-export function EditPostTags({ post }: { post: PostDetailEditable }) {
+export function EditPostTags({
+  post,
+  autosuggest,
+}: {
+  post: PostDetailEditable;
+  autosuggest?: boolean;
+}) {
   const [tags, setTags] = useState<TagProps[]>(post.tags);
   const handleSetTags = (cb: (tags: TagProps[]) => TagProps[]) => setTags(cb);
   return (
-    <EditPostTagsContext.Provider value={{ postId: post.id, tags, setTags: handleSetTags }}>
+    <EditPostTagsContext.Provider
+      value={{ postId: post.id, tags, setTags: handleSetTags, autosuggest }}
+    >
       <Group spacing="xs">
         {tags.map((tag, index) => (
           <PostTag
@@ -66,7 +75,7 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
     onMutate({ tagId }) {
       setTags((tags) => tags.filter((x) => x.id !== tagId));
     },
-    onError(error, tag) {
+    onError() {
       if (previousTags) setTags(() => previousTags);
     },
   });
@@ -107,7 +116,7 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
 }
 
 function TagPicker() {
-  const { postId, tags, setTags } = useEditPostTagsContext();
+  const { postId, tags, setTags, autosuggest } = useEditPostTagsContext();
 
   const { classes, cx, theme } = useDropdownContentStyles();
   const [active, setActive] = useState<number>();
@@ -157,10 +166,13 @@ function TagPicker() {
     },
   });
 
-  const handleAddTag = (tag: TagProps) => {
-    mutate({ id: postId, tagId: tag.id, name: tag.name });
-    setTags((tags) => [...tags, tag]);
-  };
+  const handleAddTag = useCallback(
+    (tag: TagProps) => {
+      mutate({ id: postId, tagId: tag.id, name: tag.name });
+      setTags((tags) => [...tags, tag]);
+    },
+    [mutate, postId, setTags]
+  );
 
   useEffect(() => {
     setActive(undefined);
@@ -173,16 +185,16 @@ function TagPicker() {
     [data, tags]
   );
 
-  const handleUp = () => {
+  const handleUp = useCallback(() => {
     if (!filteredData?.length) return;
     setActive((active) => {
       if (active === undefined) return 0;
       if (active > 0) return active - 1;
       return active;
     });
-  };
+  }, [filteredData?.length]);
 
-  const handleDown = () => {
+  const handleDown = useCallback(() => {
     if (!filteredData?.length) return;
     setActive((active) => {
       if (active === undefined) return 0;
@@ -190,9 +202,9 @@ function TagPicker() {
       if (active < lastIndex) return active + 1;
       return active;
     });
-  };
+  }, [filteredData.length]);
 
-  const handleEnter = () => {
+  const handleEnter = useCallback(() => {
     if (!filteredData?.length || active === undefined) {
       const exists = tags?.find((x) => x.name === query);
       if (!exists) handleAddTag({ name: query });
@@ -203,7 +215,7 @@ function TagPicker() {
     }
     setEditing(false);
     setQuery('');
-  };
+  }, [active, filteredData, handleAddTag, query, tags]);
 
   const handleClick = (index: number) => {
     if (!filteredData?.length) return;
@@ -214,49 +226,56 @@ function TagPicker() {
     setQuery('');
   };
 
+  const target = useMemo(
+    () => (
+      <Alert
+        radius="xl"
+        py={4}
+        color="gray"
+        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+        onClick={() => setEditing(true)}
+        sx={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
+      >
+        {!editing ? (
+          <Group spacing={4}>
+            <IconPlus size={16} />
+            <Text>Tag</Text>
+          </Group>
+        ) : (
+          <TextInput
+            ref={setControl}
+            variant="unstyled"
+            value={query}
+            autoFocus
+            onChange={(e) => setQuery(e.target.value)}
+            styles={{
+              input: {
+                fontSize: 16,
+                padding: 0,
+                lineHeight: 1,
+                height: 'auto',
+                minHeight: 0,
+                minWidth: 42,
+                width: !query.length ? '1ch' : `${query.length}ch`,
+              },
+            }}
+            onKeyDown={getHotkeyHandler([
+              ['Enter', handleEnter],
+              ['ArrowUp', handleUp],
+              ['ArrowDown', handleDown],
+            ])}
+          />
+        )}
+      </Alert>
+    ),
+    [editing, handleDown, handleEnter, handleUp, query, theme.colorScheme]
+  );
+
+  if (!autosuggest) return target;
+
   return (
     <Popover opened={editing && !!filteredData?.length} position="bottom-start" shadow="lg">
-      <Popover.Target>
-        <Alert
-          radius="xl"
-          py={4}
-          color="gray"
-          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-          onClick={() => setEditing(true)}
-          sx={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
-        >
-          {!editing ? (
-            <Group spacing={4}>
-              <IconPlus size={16} />
-              <Text>Tag</Text>
-            </Group>
-          ) : (
-            <TextInput
-              ref={setControl}
-              variant="unstyled"
-              value={query}
-              autoFocus
-              onChange={(e) => setQuery(e.target.value)}
-              styles={{
-                input: {
-                  fontSize: 16,
-                  padding: 0,
-                  lineHeight: 1,
-                  height: 'auto',
-                  minHeight: 0,
-                  minWidth: 42,
-                  width: !query.length ? '1ch' : `${query.length}ch`,
-                },
-              }}
-              onKeyDown={getHotkeyHandler([
-                ['Enter', handleEnter],
-                ['ArrowUp', handleUp],
-                ['ArrowDown', handleDown],
-              ])}
-            />
-          )}
-        </Alert>
-      </Popover.Target>
+      <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown p={0}>
         <Box style={{ width: 300 }} ref={setDropdown}>
           <Group position="apart" px="sm" py="xs">

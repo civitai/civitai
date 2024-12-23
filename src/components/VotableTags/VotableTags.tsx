@@ -86,6 +86,7 @@ export function VotableTags({
           addTag={(tag) => {
             handleVote({ tags: [tag], vote: 1 });
           }}
+          autosuggest
         />
       )}
       {showAddibles && (
