@@ -12,7 +12,7 @@ export const getTagByNameSchema = z.object({
 export type TagUpsertSchema = z.infer<typeof tagSchema>;
 export const tagSchema = z.object({
   id: z.number().optional(),
-  name: z.string().min(1, 'Name cannot be empty.'),
+  name: z.string().trim().min(1, 'Name cannot be empty.').toLowerCase(),
   isCategory: z.boolean().optional(),
   color: z.string().nullish(),
 });
@@ -68,7 +68,7 @@ export const getVotableTagsSchema2 = z.object({
 const tagIdsOrNamesSchema = z.union([
   z
     .string()
-    .transform((val) => val.toLowerCase().trim())
+    .transform((val) => val.trim().toLowerCase())
     .array(),
   z.number().array(),
 ]);

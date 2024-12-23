@@ -74,7 +74,7 @@ export type AddPostTagInput = z.infer<typeof addPostTagSchema>;
 export const addPostTagSchema = z.object({
   tagId: z.number().optional(),
   id: z.number(),
-  name: z.string(),
+  name: z.string().trim().toLowerCase(),
 });
 
 // consider moving image creation to post service?

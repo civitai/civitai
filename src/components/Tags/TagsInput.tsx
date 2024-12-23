@@ -1,20 +1,17 @@
 import {
   ActionIcon,
-  Autocomplete,
   Badge,
   Center,
   createStyles,
   Group,
   Input,
   InputWrapperProps,
-  UnstyledButton,
+  TextInput,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedState, useDisclosure } from '@mantine/hooks';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconPlus, IconX } from '@tabler/icons-react';
-import { useMemo } from 'react';
-
-import { trpc } from '~/utils/trpc';
+import { useMemo, useState } from 'react';
 
 type TagProps = {
   id?: number;
@@ -31,23 +28,12 @@ type TagsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
 export function TagsInput({ value = [], onChange, target, filter, ...props }: TagsInputProps) {
   value = Array.isArray(value) ? value : value ? [value] : [];
   const { classes } = useStyles();
-  const [search, setSearch] = useDebouncedState<string>('', 300);
+  const [search, setSearch] = useState('');
   const [adding, { open, close }] = useDisclosure(false);
   const trimmedSearch = search.trim().toLowerCase();
 
-  const { data, isFetching } = trpc.tag.getAll.useQuery({
-    limit: 20,
-    entityType: target,
-    categories: false,
-    query: trimmedSearch,
-  });
-  const filteredItems = useMemo(
-    () => (filter ? data?.items?.filter(filter) ?? [] : data?.items ?? []),
-    [data?.items, filter]
-  );
-
   const handleAddTag = (item: { id?: number; value: string }) => {
-    const updated = [...value, { id: item.id, name: item.value }];
+    const updated = [...value, { id: item.id, name: item.value.trim().toLowerCase() }];
     onChange?.(updated);
     setSearch('');
     close();
@@ -111,50 +97,28 @@ export function TagsInput({ value = [], onChange, target, filter, ...props }: Ta
           }
         >
           {adding ? (
-            <Autocomplete
+            <TextInput
               variant="unstyled"
-              classNames={{ dropdown: classes.dropdown }}
-              data={
-                filteredItems
-                  .filter((tag) => !selectedTags.includes(tag.name))
-                  .map((tag) => ({
-                    id: tag.id,
-                    value: tag.name,
-                    group: !search ? 'Trending tags' : undefined,
-                  })) ?? []
-              }
-              onChange={setSearch}
+              onChange={(e) => setSearch(e.currentTarget.value)}
               onKeyDown={getHotkeyHandler([
                 [
                   'Enter',
                   () => {
-                    if (!isNewTag) return;
-                    const existing = filteredItems.find((tag) => tag.name === trimmedSearch);
-                    handleAddTag({ id: existing?.id, value: existing?.name ?? search });
+                    if (!isNewTag) {
+                      close();
+                      setSearch('');
+                      return;
+                    }
+
+                    if (trimmedSearch) handleAddTag({ value: trimmedSearch });
                   },
                 ],
               ])}
-              nothingFound={
-                isFetching ? (
-                  'Searching...'
-                ) : isNewTag ? (
-                  <UnstyledButton
-                    className={classes.createOption}
-                    onClick={() => handleAddTag({ value: search })}
-                  >
-                    {`+ Create tag "${search}"`}
-                  </UnstyledButton>
-                ) : (
-                  'Nothing found'
-                )
-              }
-              placeholder="Type to search..."
-              onItemSubmit={handleAddTag}
+              placeholder="Type your tag"
               onBlur={() => {
                 close();
                 setSearch('');
               }}
-              withinPortal
               autoFocus
             />
           ) : (
