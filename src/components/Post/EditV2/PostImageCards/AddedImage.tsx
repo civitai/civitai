@@ -33,7 +33,8 @@ import {
   IconTrash,
   IconUserPlus,
 } from '@tabler/icons-react';
-import { remove } from 'lodash-es';
+import { getQueryKey } from '@trpc/react-query';
+import { remove, uniq } from 'lodash-es';
 import React, { createContext, useContext, useMemo, useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
@@ -73,10 +74,11 @@ import {
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
+import { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
+import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
 
@@ -252,6 +254,12 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
       if (resp) {
         updateImage(id, (image) => {
           image.resourceHelper = image.resourceHelper.concat(resp);
+        });
+
+        const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
+        queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
+          if (!old) return;
+          return uniq([...resp.map((r) => r.modelId).filter(isDefined), ...old]);
         });
       }
     },

@@ -50,6 +50,7 @@ import {
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
   getSimpleModelsInfiniteSchema,
+  limitOnly,
   migrateResourceToCollectionSchema,
   modelByHashesInput,
   modelUpsertSchema,
@@ -67,6 +68,8 @@ import {
   getAllModelsWithCategories,
   getAssociatedResourcesSimple,
   getAvailableModelsByUserId,
+  getRecentlyManuallyAdded,
+  getRecentlyRecommended,
   getSimpleModelWithVersions,
   migrateResourceToCollection,
   rescanModel,
@@ -135,7 +138,15 @@ export const modelRouter = router({
   getMyAvailableModels: protectedProcedure.query(({ ctx }) =>
     getAvailableModelsByUserId({ userId: ctx.user.id })
   ),
-  getAvailableTrainingModels: protectedProcedure.query(getAvailableTrainingModelsHandler),
+  getAvailableTrainingModels: protectedProcedure
+    .input(limitOnly)
+    .query(getAvailableTrainingModelsHandler),
+  getRecentlyManuallyAdded: protectedProcedure
+    .input(limitOnly)
+    .query(({ ctx, ...input }) => getRecentlyManuallyAdded({ userId: ctx.user.id, ...input })),
+  getRecentlyRecommended: protectedProcedure
+    .input(limitOnly)
+    .query(({ ctx, ...input }) => getRecentlyRecommended({ userId: ctx.user.id, ...input })),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)

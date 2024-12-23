@@ -28,6 +28,7 @@ import {
   IconTagOff,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { uniq } from 'lodash-es';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Configure,
@@ -55,6 +56,7 @@ import {
   ResourceSelectFiltersDropdown,
   ResourceSelectSort,
 } from '~/components/ImageGeneration/GenerationForm/ResourceSelectFilters';
+import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -78,11 +80,12 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
+import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { Generation } from '~/server/services/generation/generation.types';
 import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import {
@@ -123,6 +126,48 @@ export default function ResourceSelectModal({
     enabled: !!currentUser,
   });
 
+  const {
+    steps,
+    isFetching: isLoadingGenerations,
+    isError: isErrorGenerations,
+  } = useGetTextToImageRequests(
+    { take: 20 },
+    { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'generation' }
+  );
+
+  const {
+    data: trainingModels,
+    isFetching: isLoadingTraining,
+    isError: isErrorTraining,
+  } = trpc.model.getAvailableTrainingModels.useQuery(
+    { take: 20 },
+    { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'training' }
+  );
+
+  const {
+    data: manuallyAdded,
+    isFetching: isLoadingManuallyAdded,
+    isError: isErrorManuallyAdded,
+  } = trpc.model.getRecentlyManuallyAdded.useQuery(
+    { take: 20 },
+    { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'addResource' }
+  );
+
+  const {
+    data: recommendedModels,
+    isFetching: isLoadingRecommendedModels,
+    isError: isErrorRecommendedModels,
+  } = trpc.model.getRecentlyManuallyAdded.useQuery(
+    { take: 20 },
+    { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'modelVersion' }
+  );
+
+  const isLoadingExtra =
+    isLoadingTraining ||
+    isLoadingGenerations ||
+    isLoadingManuallyAdded ||
+    isLoadingRecommendedModels;
+
   const { resources = [], excludeIds = [], canGenerate } = options;
   const allowedTabs = tabs.filter((t) => {
     return !(!currentUser && ['recent', 'liked', 'uploaded'].includes(t));
@@ -159,6 +204,33 @@ export default function ResourceSelectModal({
 
   if (selectedTab === 'featured') {
   } else if (selectedTab === 'recent') {
+    if (selectSource === 'generation') {
+      if (!!steps) {
+        const usedResources = uniq(steps.flatMap(({ resources }) => resources.map((r) => r.id)));
+        filters.push(`id IN [${usedResources.join(',')}]`);
+      }
+    } else if (selectSource === 'addResource') {
+      if (!!manuallyAdded) {
+        filters.push(`id IN [${manuallyAdded.join(',')}]`);
+      }
+    } else if (selectSource === 'training') {
+      if (!!trainingModels) {
+        const customModels = trainingModels.flatMap((m) =>
+          m.modelVersions
+            .map(
+              (mv) =>
+                parseAIRSafe((mv.trainingDetails as TrainingDetailsObj | undefined)?.baseModel)
+                  ?.model
+            )
+            .filter(isDefined)
+        );
+        filters.push(`id IN [${uniq(customModels).join(',')}]`);
+      }
+    } else if (selectSource === 'modelVersion') {
+      if (!!recommendedModels) {
+        filters.push(`id IN [${recommendedModels.join(',')}]`);
+      }
+    }
   } else if (selectedTab === 'liked') {
     if (!!likedModels) {
       filters.push(`id IN [${likedModels.join(',')}]`);
@@ -171,7 +243,7 @@ export default function ResourceSelectModal({
 
   const totalFilters = [...filters, ...exclude].join(' AND ');
 
-  console.log(totalFilters);
+  // console.log(totalFilters);
 
   function handleSelect(value: GenerationResource) {
     onSelect(value);
@@ -226,13 +298,20 @@ export default function ResourceSelectModal({
               <Divider />
             </div>
 
-            {/*TODO possibly add loader for tab = x and isloading*/}
-            <ResourceHitList
-              resources={resources}
-              canGenerate={canGenerate}
-              excludeIds={excludeIds}
-              likes={likedModels}
-            />
+            {isLoadingExtra ? (
+              <div className="p-3 py-5">
+                <Center mt="md">
+                  <Loader />
+                </Center>
+              </div>
+            ) : (
+              <ResourceHitList
+                resources={resources}
+                canGenerate={canGenerate}
+                excludeIds={excludeIds}
+                likes={likedModels}
+              />
+            )}
           </InstantSearch>
         </ResourceSelectContext.Provider>
       </div>
@@ -323,11 +402,13 @@ function ResourceHitList({
       })
       .filter(isDefined);
   }, [canGenerate, excludeIds, models, resources]);
+  // console.log({ filtered });
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
   }, [status]);
 
+  // TODO should these checks be off "filtered" or "items"?
   if (loading && !items.length)
     return (
       <div className="p-3 py-5">

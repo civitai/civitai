@@ -17,7 +17,6 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconConfetti,
@@ -62,6 +61,7 @@ import {
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
+import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   defaultRun,
   defaultTrainingState,
@@ -226,6 +226,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
         // TODO make this a setInfiniteData, too much work right now
         await queryUtils.model.getMyTrainingModels.invalidate();
+        await queryUtils.model.getAvailableTrainingModels.invalidate();
 
         await router.replace(userTrainingDashboardURL);
         setAwaitInvalidate(false);

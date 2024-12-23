@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
-import { isEmpty } from 'lodash-es';
+import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
@@ -21,6 +21,7 @@ import {
   GetModelVersionsSchema,
   IngestModelInput,
   ingestModelSchema,
+  LimitOnly,
   MigrateResourceToCollectionInput,
   ModelGallerySettingsSchema,
   ModelInput,
@@ -1838,6 +1839,33 @@ export const getAvailableModelsByUserId = async ({ userId }: { userId: number })
     },
     orderBy: { updatedAt: 'desc' },
   });
+};
+
+export const getRecentlyManuallyAdded = async ({
+  take,
+  userId,
+}: LimitOnly & { userId: number }) => {
+  const data = await dbRead.imageResource.findMany({
+    select: { modelVersion: { select: { modelId: true } } },
+    where: {
+      detected: false,
+      image: { userId },
+    },
+    orderBy: { image: { createdAt: 'desc' } },
+    take,
+  });
+  return uniq(data.map((d) => d.modelVersion?.modelId).filter(isDefined));
+};
+
+export const getRecentlyRecommended = async ({ take, userId }: LimitOnly & { userId: number }) => {
+  const data = await dbRead.recommendedResource.findMany({
+    select: { resource: { select: { modelId: true } } },
+    where: {
+      source: { model: { userId } },
+    },
+    take,
+  });
+  return uniq(data.map((d) => d.resource.modelId));
 };
 
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
