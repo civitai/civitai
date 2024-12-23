@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
-import { isEmpty } from 'lodash-es';
+import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
@@ -21,6 +21,7 @@ import {
   GetModelVersionsSchema,
   IngestModelInput,
   ingestModelSchema,
+  LimitOnly,
   MigrateResourceToCollectionInput,
   ModelGallerySettingsSchema,
   ModelInput,
@@ -52,6 +53,7 @@ import {
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import { getSystemHomeBlocks } from '~/server/services/home-block.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
@@ -85,6 +87,7 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import {
   CommercialUse,
+  HomeBlockType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,
@@ -1827,6 +1830,62 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
   const count = await dbRead.modelVersion.count({ where });
 
   return getPagingData({ items, count }, take, page);
+};
+
+export const getAvailableModelsByUserId = async ({ userId }: { userId: number }) => {
+  return dbRead.model.findMany({
+    select: { id: true },
+    where: {
+      userId,
+      status: { in: [ModelStatus.Published] },
+    },
+    orderBy: { updatedAt: 'desc' },
+  });
+};
+
+export const getRecentlyManuallyAdded = async ({
+  take,
+  userId,
+}: LimitOnly & { userId: number }) => {
+  const data = await dbRead.imageResource.findMany({
+    select: { modelVersion: { select: { modelId: true } } },
+    where: {
+      detected: false,
+      image: { userId },
+    },
+    orderBy: { image: { createdAt: 'desc' } },
+    take,
+  });
+  return uniq(data.map((d) => d.modelVersion?.modelId).filter(isDefined));
+};
+
+export const getRecentlyRecommended = async ({ take, userId }: LimitOnly & { userId: number }) => {
+  const data = await dbRead.recommendedResource.findMany({
+    select: { resource: { select: { modelId: true } } },
+    where: {
+      source: { model: { userId } },
+    },
+    orderBy: { source: { updatedAt: 'desc' } },
+    take,
+  });
+  return uniq(data.map((d) => d.resource.modelId));
+};
+
+export const getFeaturedModels = async ({ take }: LimitOnly) => {
+  const homeblocks = await getSystemHomeBlocks({ input: {} });
+  const featuredModelCollection = homeblocks.find(
+    (h) => h.type === HomeBlockType.Collection && h.metadata.link === '/models'
+  );
+  const collectionId = featuredModelCollection?.metadata?.collection?.id ?? 104;
+
+  const featured = await dbRead.collectionItem.findMany({
+    where: { collectionId },
+    select: { modelId: true },
+    orderBy: { createdAt: 'desc' },
+    take,
+  });
+
+  return featured.map(({ modelId }) => modelId).filter(isDefined);
 };
 
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {

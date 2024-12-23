@@ -1,3 +1,20 @@
+import dayjs from 'dayjs';
+import CustomParseFormat from 'dayjs/plugin/customParseFormat';
+import { z } from 'zod';
+import { constants } from '~/server/common/constants';
+import { ModelSort } from '~/server/common/enums';
+import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
+import {
+  baseQuerySchema,
+  getByIdSchema,
+  infiniteQuerySchema,
+  paginationSchema,
+  periodModeSchema,
+  userPreferencesSchema,
+} from '~/server/schema/base.schema';
+import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
+import { tagSchema } from '~/server/schema/tag.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   AssociationType,
   CheckpointType,
@@ -9,28 +26,10 @@ import {
   ModelType,
   ModelUploadType,
 } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
-import { z } from 'zod';
-import { constants } from '~/server/common/constants';
-import CustomParseFormat from 'dayjs/plugin/customParseFormat';
-dayjs.extend(CustomParseFormat);
-
-import { ModelSort } from '~/server/common/enums';
-import { UnpublishReason, unpublishReasons } from '~/server/common/moderation-helpers';
-import {
-  baseQuerySchema,
-  getAllQuerySchema,
-  getByIdSchema,
-  infiniteQuerySchema,
-  paginationSchema,
-  periodModeSchema,
-  userPreferencesSchema,
-} from '~/server/schema/base.schema';
-import { modelVersionUpsertSchema } from '~/server/schema/model-version.schema';
-import { tagSchema } from '~/server/schema/tag.schema';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
+
+dayjs.extend(CustomParseFormat);
 
 const licensingSchema = z.object({
   allowNoCredit: z.boolean().optional(),
@@ -356,4 +355,9 @@ export const ingestModelSchema = z.object({
   poi: z.coerce.boolean(),
   nsfw: z.coerce.boolean(),
   minor: z.coerce.boolean(),
+});
+
+export type LimitOnly = z.input<typeof limitOnly>;
+export const limitOnly = z.object({
+  take: z.number().optional(),
 });

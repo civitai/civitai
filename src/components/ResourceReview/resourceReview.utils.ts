@@ -308,7 +308,19 @@ export function useToggleFavoriteMutation() {
   const mutation = trpc.user.toggleFavorite.useMutation({
     onMutate: async ({ modelId, modelVersionId, setTo }) => {
       const engagedModels = queryUtils.user.getEngagedModels.getData();
+      const bookmarkedModels = queryUtils.user.getBookmarkedModels.getData();
       const modelDetails = queryUtils.model.getById.getData({ id: modelId });
+
+      // update liked models
+      // nb: should technically update the "liked models" collection too
+      queryUtils.user.getBookmarkedModels.setData(undefined, (old) => {
+        if (!old) return old;
+        if (setTo) {
+          return [modelId, ...old];
+        } else {
+          return old.filter((o) => o !== modelId);
+        }
+      });
 
       // Update model engagements
       const alreadyNotified = engagedModels?.Notify?.indexOf(modelId) ?? -1;
@@ -393,10 +405,11 @@ export function useToggleFavoriteMutation() {
         }
       });
 
-      return { prevData: { engagedModels, modelDetails, userReviews } };
+      return { prevData: { engagedModels, modelDetails, userReviews, bookmarkedModels } };
     },
     onError: (error, { modelId }, context) => {
       queryUtils.user.getEngagedModels.setData(undefined, context?.prevData?.engagedModels);
+      queryUtils.user.getBookmarkedModels.setData(undefined, context?.prevData?.bookmarkedModels);
       queryUtils.model.getById.setData({ id: modelId }, context?.prevData?.modelDetails);
     },
     onSettled: async (result, error, { modelId }) => {
@@ -422,6 +435,7 @@ export function getRatingCount(totals: ResourceReviewRatingTotals | undefined) {
 
   return count;
 }
+
 export function getAverageRating(totals: ResourceReviewRatingTotals | undefined, count?: number) {
   if (!count) count = getRatingCount(totals);
   const rating =

@@ -1,29 +1,29 @@
 import { Prisma } from '@prisma/client';
+import { chunk, isEqual } from 'lodash-es';
+import { TypoTolerance } from 'meilisearch';
+import { ModelFileType, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getOrCreateIndex } from '~/server/meilisearch/util';
+import { imagesForModelVersionsCache } from '~/server/redis/caches';
+import { ModelFileMetadata } from '~/server/schema/model-file.schema';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { modelHashSelect } from '~/server/selectors/modelHash.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
+import { ImagesForModelVersions } from '~/server/services/image.service';
+import { getCategoryTags } from '~/server/services/system-cache';
+import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
   Availability,
   MetricTimeframe,
   ModelHashType,
   ModelStatus,
 } from '~/shared/utils/prisma/enums';
-import { chunk, isEqual } from 'lodash-es';
-import { MODELS_SEARCH_INDEX, ModelFileType } from '~/server/common/constants';
-import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { TypoTolerance } from 'meilisearch';
 import { isDefined } from '~/utils/type-guards';
-import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { getCategoryTags } from '~/server/services/system-cache';
-import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
-import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
-import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
-import { imagesForModelVersionsCache } from '~/server/redis/caches';
-import { ImagesForModelVersions } from '~/server/services/image.service';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -92,13 +92,14 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   const filterableAttributes = [
+    'id',
     'hashes',
     'nsfwLevel',
     'type',
     'checkpointType',
     'tags.name',
-    'user.username',
     'version.baseModel',
+    'user.id',
     'user.username',
     'status',
     'category.name',
@@ -107,6 +108,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'lastVersionAtUnix',
     'versions.hashes',
     'versions.baseModel',
+    'versions.id',
   ];
 
   if (
@@ -142,7 +144,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 };
 
-const modelSelect = {
+const modelSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
   name: true,
   type: true,
@@ -158,6 +160,10 @@ const modelSelect = {
   mode: true,
   checkpointType: true,
   availability: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
   // Joins:
   user: {
     select: userWithCosmeticsSelect,
@@ -195,7 +201,7 @@ const modelSelect = {
       timeframe: MetricTimeframe.AllTime,
     },
   },
-};
+});
 
 type Model = Prisma.ModelGetPayload<{
   select: typeof modelSelect;
@@ -213,7 +219,17 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
 
   const indexReadyRecords = models
     .map((modelRecord) => {
-      const { user, modelVersions, tagsOnModels, hashes, ...model } = modelRecord;
+      const {
+        user,
+        modelVersions,
+        tagsOnModels,
+        hashes,
+        allowNoCredit,
+        allowCommercialUse,
+        allowDerivatives,
+        allowDifferentLicense,
+        ...model
+      } = modelRecord;
       const metrics = modelRecord.metrics[0] ?? {};
 
       const weightedRating =
@@ -239,17 +255,31 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
         category: category?.tag,
+        permissions: {
+          allowNoCredit,
+          allowCommercialUse,
+          allowDerivatives,
+          allowDifferentLicense,
+          minor: modelRecord.minor,
+        },
         version: {
           ...restVersion,
-          settings: restVersion.settings as RecommendedSettingsSchema,
+          metrics: restVersion.metrics[0],
           hashes: restVersion.hashes.map((hash) => hash.hash),
+          hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
+          settings: restVersion.settings as RecommendedSettingsSchema,
         },
-        versions: modelVersions.map(({ generationCoverage, files, hashes, settings, ...x }) => ({
-          ...x,
-          hashes: hashes.map((hash) => hash.hash),
-          canGenerate: generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
-          settings: settings as RecommendedSettingsSchema,
-        })),
+        versions: modelVersions.map(
+          ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
+            ...x,
+            metrics: vMetrics[0],
+            hashes: hashes.map((hash) => hash.hash),
+            hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
+            canGenerate:
+              generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
+            settings: settings as RecommendedSettingsSchema,
+          })
+        ),
         triggerWords: [
           ...new Set(modelVersions.flatMap((modelVersion) => modelVersion.trainedWords)),
         ],

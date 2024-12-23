@@ -1,63 +1,82 @@
 import {
+  Accordion,
+  ActionIcon,
   Alert,
+  Anchor,
+  Badge,
   Button,
   Card,
   Center,
+  createStyles,
+  Divider,
+  Group,
   Input,
+  List,
   NumberInputProps,
   Paper,
   SliderProps,
   Stack,
   Text,
-  createStyles,
-  List,
-  Accordion,
-  Anchor,
-  Badge,
-  Divider,
-  ActionIcon,
-  Group,
 } from '@mantine/core';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { hashify, parseAIR } from '~/utils/string-helpers';
 import { useLocalStorage } from '@mantine/hooks';
-import { ModelType } from '~/shared/utils/prisma/enums';
-import { IconInfoCircle, IconPlus, IconX } from '@tabler/icons-react';
-import { IconArrowAutofitDown } from '@tabler/icons-react';
-import { IconAlertTriangle, IconCheck } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  IconAlertTriangle,
+  IconArrowAutofitDown,
+  IconCheck,
+  IconInfoCircle,
+  IconPlus,
+  IconX,
+} from '@tabler/icons-react';
+import { clone } from 'lodash-es';
+import React, { useEffect, useMemo, useState } from 'react';
+import { create } from 'zustand';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
+import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
-import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
-import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
-import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import {
   useGenerationStatus,
   useUnstableResources,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import {
+  blockedRequest,
+  GenerationFormOutput,
+  useGenerationForm,
+} from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
+import InputQuantity from '~/components/ImageGeneration/GenerationForm/InputQuantity';
+import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
+import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
+import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputNumberSlider,
   InputSegmentedControl,
-  InputSwitch,
   InputSelect,
+  InputSwitch,
 } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
-  fluxModeOptions,
   fluxModelId,
+  fluxModeOptions,
   fluxUltraAir,
   fluxUltraAspectRatios,
   getBaseModelResourceTypes,
@@ -68,29 +87,14 @@ import {
   getWorkflowDefinitionFeatures,
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
+import { ModelType } from '~/shared/utils/prisma/enums';
+import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import {
-  GenerationFormOutput,
-  useGenerationForm,
-  blockedRequest,
-} from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import React, { useEffect, useState, useMemo } from 'react';
-import { create } from 'zustand';
-import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
-import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { clone } from 'lodash-es';
-import { useActiveSubscription } from '~/components/Stripe/memberships.util';
-import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
-import { useTipStore } from '~/store/tip.store';
-import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -144,6 +148,7 @@ export function GenerationFormContent() {
 
   // #region [handle parse prompt]
   const [showFillForm, setShowFillForm] = useState(false);
+
   async function handleParsePrompt() {
     const prompt = form.getValues('prompt');
     const metadata = parsePromptMetadata(prompt);
@@ -159,6 +164,7 @@ export function GenerationFormContent() {
       });
     }
   }
+
   // #endregion
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -171,6 +177,7 @@ export function GenerationFormContent() {
   });
 
   const { mutateAsync, isLoading } = useSubmitCreateImage();
+
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
     const { cost = 0 } = useCostStore.getState();
@@ -516,6 +523,7 @@ export function GenerationFormContent() {
                                       resources: resourceTypes.filter(
                                         (x) => x.type !== 'VAE' && x.type !== 'Checkpoint'
                                       ),
+                                      excludeIds: selectedResources.map((r) => r.id),
                                     }}
                                     hideButton
                                   />
@@ -1133,6 +1141,7 @@ export function GenerationFormContent() {
     </Form>
   );
 }
+
 // #endregion
 
 // #region [ready section]
@@ -1149,6 +1158,7 @@ function ReadySection() {
     </Card.Section>
   ) : null;
 }
+
 // #endregion
 
 // #region [submit button]
@@ -1208,6 +1218,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
     </Paper>
   );
 }
+
 // #endregion
 
 // #region [styles]

@@ -11,9 +11,9 @@ import {
   Switch,
   Text,
 } from '@mantine/core';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { isEqual } from 'lodash-es';
+import { getQueryKey } from '@trpc/react-query';
+import { isEqual, uniq } from 'lodash-es';
 import { useRouter } from 'next/router';
 import React, { useEffect, useMemo } from 'react';
 import { z } from 'zod';
@@ -37,7 +37,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { constants, activeBaseModels } from '~/server/common/constants';
+import { activeBaseModels, constants } from '~/server/common/constants';
 import { ClubResourceSchema } from '~/server/schema/club.schema';
 import {
   GenerationResourceSchema,
@@ -56,10 +56,12 @@ import {
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
+import { ModelType } from '~/shared/utils/prisma/enums';
+import { MyRecentlyRecommended } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
-import { trpc } from '~/utils/trpc';
+import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 const schema = modelVersionUpsertSchema2
@@ -200,6 +202,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const skipTrainedWords = !isTextualInversion && (form.watch('skipTrainedWords') ?? false);
   const trainedWords = form.watch('trainedWords') ?? [];
   const baseModel = form.watch('baseModel') ?? 'SD 1.5';
+  const recResources = form.watch('recommendedResources') ?? [];
   const [minStrength, maxStrength] = form.watch([
     'settings.minStrength',
     'settings.maxStrength',
@@ -255,6 +258,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
 
       await queryUtils.modelVersion.getById.invalidate({ id: result.id, withFiles: true });
       if (model) await queryUtils.model.getById.invalidate({ id: model.id });
+      if (rawRecommendedResources?.length) {
+        const queryKey = getQueryKey(trpc.model.getRecentlyRecommended);
+        queryClient.setQueriesData<MyRecentlyRecommended>({ queryKey, exact: false }, (old) => {
+          if (!old) return;
+          return uniq([...rawRecommendedResources.map((r) => r.modelId).filter(isDefined), ...old]);
+        });
+      }
       onSubmit(result as ModelVersionUpsertInput);
     } else {
       onSubmit(version as ModelVersionUpsertInput);
@@ -784,11 +794,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   name="recommendedResources"
                   label="Resources"
                   description="Select which resources work best with your model"
+                  selectSource="modelVersion"
                   buttonLabel="Add resource"
                   w="100%"
                   limit={10}
                   options={{
                     resources: [{ type: ModelType.Checkpoint, baseModels: [baseModel] }],
+                    excludeIds: recResources.map((r) => r.id),
                   }}
                 />
               )}

@@ -80,6 +80,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
+import { isDefined } from '~/utils/type-guards';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 import { profileImageSelect } from '../selectors/image.selector';
@@ -974,6 +975,24 @@ export const getUserBookmarkedArticles = async ({ userId }: { userId: number }) 
   });
 
   return bookmarked.map(({ articleId }) => articleId);
+};
+
+export const getUserBookmarkedModels = async ({ userId }: { userId: number }) => {
+  // TODO should we be using resourceReview instead to get versions?
+
+  const collections = await getUserBookmarkCollections({ userId });
+  const collection = collections.find((c) => c.type === CollectionType.Model);
+  if (!collection) {
+    // this should be impossible, but now that I've said that, it'll happen
+    throw throwNotFoundError('Could not find a matching collection.');
+  }
+
+  const bookmarked = await dbRead.collectionItem.findMany({
+    where: { collectionId: collection.id },
+    select: { modelId: true },
+  });
+
+  return bookmarked.map(({ modelId }) => modelId).filter(isDefined);
 };
 
 export const updateLeaderboardRank = async ({

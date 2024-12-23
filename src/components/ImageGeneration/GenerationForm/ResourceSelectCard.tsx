@@ -3,24 +3,25 @@ import {
   Badge,
   Button,
   Group,
+  Overlay,
   Paper,
   Stack,
   Text,
   ThemeIcon,
-  Overlay,
   useMantineTheme,
 } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { GenerationResourceSchema } from '~/server/schema/generation.schema';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 
 type Props = {
   resource: GenerationResourceSchema;
-  isTraining?: boolean;
+  selectSource?: ResourceSelectSource;
   onUpdate?: (value: GenerationResourceSchema) => void;
   onRemove?: (id: number) => void;
   onSwap?: VoidFunction;
@@ -47,8 +48,8 @@ export const ResourceSelectCard = (props: Props) => {
   );
 };
 
-function CheckpointInfo({ resource, isTraining, onRemove, onSwap, hideVersion }: Props) {
-  const unavailable = isTraining ? false : resource.covered === false;
+function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion }: Props) {
+  const unavailable = selectSource !== 'generation' ? false : resource.covered === false;
 
   return (
     <Group spacing="xs" position="apart" noWrap>
@@ -118,10 +119,10 @@ function CheckpointInfo({ resource, isTraining, onRemove, onSwap, hideVersion }:
   );
 }
 
-function ResourceInfo({ resource, onRemove, onUpdate }: Props) {
+function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.modelType);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
-  const unavailable = resource.covered === false;
+  const unavailable = selectSource !== 'generation' ? false : resource.covered === false;
 
   return (
     <Group spacing="xs" position="apart" noWrap>
