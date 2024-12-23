@@ -58,9 +58,10 @@ export function MediaDropzone({
     : constants.mediaUpload.maxVideoFileSize;
 
   const seconds = settings?.maxVideoDuration ?? constants.mediaUpload.maxVideoDurationSeconds;
-  const durationLabel =seconds > 60 ? dayjs
-    .duration(seconds, 'seconds')
-    .format(`mm [minutes (${seconds} seconds)]`) : `${seconds} seconds`;
+  const durationLabel =
+    seconds > 60
+      ? dayjs.duration(seconds, 'seconds').format(`mm [minutes (${seconds} seconds)]`)
+      : `${seconds} seconds`;
   // #region [render]
   return (
     <div className="flex w-full flex-col gap-1">

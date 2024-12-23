@@ -1,6 +1,6 @@
 import { KlingMode, KlingModel } from '@civitai/client';
 import z from 'zod';
-import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
+import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   imageEnhancementSchema,
   negativePromptSchema,
@@ -8,7 +8,6 @@ import {
   seedSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { unsupportedGenerationType } from '~/server/orchestrator/infrastructure/base.utils';
 
 export const klingAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const klingDuration = ['5', '10'] as const;
@@ -25,27 +24,25 @@ const baseKlingSchema = z.object({
   seed: seedSchema,
 });
 
-export const klingTxt2VidSchema = textEnhancementSchema.merge(baseKlingSchema).extend({
+const klingTxt2VidSchema = textEnhancementSchema.merge(baseKlingSchema).extend({
   negativePrompt: negativePromptSchema,
   aspectRatio: z.enum(klingAspectRatios).default('1:1').catch('1:1'),
 });
 
-export const klingImg2VidSchema = imageEnhancementSchema.merge(baseKlingSchema);
+const klingImg2VidSchema = imageEnhancementSchema.merge(baseKlingSchema);
 
-export namespace Kling {
-  export type Txt2VidInput = z.input<typeof textEnhancementSchema>;
-  // export type Txt2VidSchema = z.infer<typeof textEnhancementSchema>;
-  export type Img2VidInput = z.input<typeof imageEnhancementSchema>;
-  // export type Img2VidSchema = z.infer<typeof imageEnhancementSchema>;
+const klingTxt2ImgConfig = new VideoGenerationConfig({
+  subType: 'txt2vid',
+  engine: 'kling',
+  schema: klingTxt2VidSchema,
+  metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
+});
 
-  export function validateInput(args: Txt2VidInput | Img2VidInput) {
-    switch (args.type) {
-      case GenerationType.txt2vid:
-        return klingTxt2VidSchema.parse(args);
-      case GenerationType.img2vid:
-        return klingImg2VidSchema.parse(args);
-      default:
-        throw unsupportedGenerationType('kling');
-    }
-  }
-}
+const klingImg2VidConfig = new VideoGenerationConfig({
+  subType: 'img2vid',
+  engine: 'kling',
+  schema: klingImg2VidSchema,
+  metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
+});
+
+export const klingVideoGenerationConfig = [klingTxt2ImgConfig, klingImg2VidConfig];

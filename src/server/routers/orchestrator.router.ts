@@ -8,9 +8,9 @@ import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
+import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
-import { generationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import {
   generateImageSchema,
   generateImageWhatIfSchema,
@@ -27,6 +27,7 @@ import {
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
+import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
   createTextToImage,
   createTextToImageStep,
@@ -237,12 +238,18 @@ export const orchestratorRouter = router({
       }
     }),
   whatIf: orchestratorGuardedProcedure
-    .input(z.any())
+    .input(generationSchema)
     .use(edgeCacheIt({ ttl: 60 }))
     .query(({ ctx, input }) => whatIf({ ...input, userId: ctx.user.id, token: ctx.token })),
   generate: orchestratorGuardedProcedure
     .input(z.any())
     .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
+  // #endregion
+
+  // #region [Image upload]
+  imageUpload: orchestratorGuardedProcedure
+    .input(z.object({ sourceImage: z.string() }))
+    .mutation(({ ctx, input }) => imageUpload({ token: ctx.token, ...input })),
   // #endregion
 
   // #region [image training]

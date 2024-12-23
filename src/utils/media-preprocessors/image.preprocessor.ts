@@ -14,6 +14,12 @@ export const loadImage = async (src: string) =>
     img.src = src;
   });
 
+export function isImage(src: string) {
+  return loadImage(src)
+    .then((data) => true)
+    .catch(() => false);
+}
+
 export const getImageData = async (url: string): Promise<ImageMetadata> => {
   const img = await loadImage(url);
   const width = img.width;

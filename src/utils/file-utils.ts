@@ -8,6 +8,18 @@ export async function fetchBlob(src: string | Blob | File) {
   return blob;
 }
 
+export async function fetchBlobAsFile(src: string | Blob | File, fileName: string) {
+  const blob = await fetchBlob(src);
+  if (!blob) return null;
+  return new File([blob], fileName, { type: blob.type });
+}
+
+export async function fetchBlobAsBase64(src: string | Blob | File) {
+  const blob = await fetchBlob(src);
+  if (!blob) return null;
+  return getBase64(blob);
+}
+
 export const getBase64 = (blob: Blob | File) =>
   new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
