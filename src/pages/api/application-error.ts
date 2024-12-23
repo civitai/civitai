@@ -5,14 +5,9 @@ import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import * as stackTraceParser from 'stacktrace-parser';
 import { SourceMapConsumer } from 'source-map';
-import getConfig from 'next/config';
 
 import path from 'node:path';
 import fs from 'fs';
-import { mkdir } from 'fs/promises';
-import { finished } from 'stream/promises';
-import { Readable } from 'stream';
-import { env } from '~/env/server.mjs';
 
 const schema = z.object({ message: z.string(), stack: z.string() });
 
@@ -21,30 +16,20 @@ export default PublicEndpoint(
     try {
       const session = await getServerAuthSession({ req, res });
       const queryInput = schema.parse(JSON.parse(req.body));
-      await applySourceMaps(queryInput.stack);
-      try {
-        if (isProd) {
-          const payload = {
-            name: 'application-error',
-            type: 'error',
-            url: req.headers.referer,
-            userId: session?.user?.id,
-            browser: req.headers['user-agent'],
-            message: queryInput.message,
-            // this won't work in dev
-            stack: await applySourceMaps(queryInput.stack),
-          };
-          await logToAxiom(payload);
-        }
-        return res.status(200).end();
-      } catch (e) {
-        // eslint-disable-next-line
-
-        const json = readDir(process.cwd(), 4);
-        return res
-          .status(200)
-          .send({ root: process.cwd(), join: path.join(process.cwd(), `./.next`), ...json });
+      if (isProd) {
+        const payload = {
+          name: 'application-error',
+          type: 'error',
+          url: req.headers.referer,
+          userId: session?.user?.id,
+          browser: req.headers['user-agent'],
+          message: queryInput.message,
+          // this won't work in dev
+          stack: await applySourceMaps(queryInput.stack),
+        };
+        await logToAxiom(payload);
       }
+      return res.status(200).end();
     } catch (e: any) {
       res.status(400).send({ message: e.message });
     }
@@ -112,16 +97,16 @@ async function applySourceMaps(minifiedStackTrace: string) {
   return `${lines.join('\n')}`;
 }
 
-const excludeDirs = ['node_modules', 'prisma', 'containers'];
-function readDir(path: string, depth: number): MixedObject {
-  return fs
-    .readdirSync(path, { withFileTypes: true })
-    .filter((x) => x.isDirectory() && !excludeDirs.includes(x.name))
-    .reduce(
-      (acc, { name }) => ({
-        ...acc,
-        [name]: depth > 0 ? readDir(`${path}/${name}`, depth - 1) : undefined,
-      }),
-      {}
-    );
-}
+// const excludeDirs = ['node_modules', 'prisma', 'containers'];
+// function readDir(path: string, depth: number): MixedObject {
+//   return fs
+//     .readdirSync(path, { withFileTypes: true })
+//     .filter((x) => x.isDirectory() && !excludeDirs.includes(x.name))
+//     .reduce(
+//       (acc, { name }) => ({
+//         ...acc,
+//         [name]: depth > 0 ? readDir(`${path}/${name}`, depth - 1) : undefined,
+//       }),
+//       {}
+//     );
+// }
