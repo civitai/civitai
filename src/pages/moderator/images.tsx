@@ -276,7 +276,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
   const pendingReport = hasReport && image.report?.status === 'Pending';
   const entityUrl = getImageEntityUrl(image);
 
-  const { ref: inViewRef, inView } = useInView({ rootMargin: '200%' });
+  const { ref: inViewRef, inView } = useInView();
   const ref = useRef<HTMLElement>(null);
   const mergedRef = useMergedRef(inViewRef, ref);
 
@@ -397,6 +397,11 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
               </Stack>
             </Group>
+            {image.minor && (
+              <Badge variant="light" color="pink">
+                Acceptable Minor
+              </Badge>
+            )}
             <ContentClamp maxHeight={150}>
               {image.report?.details
                 ? Object.entries(image.report.details).map(([key, value]) => (
@@ -412,17 +417,27 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
           </Stack>
         )}
         {image.needsReview === 'minor' && (
-          <PromptHighlight prompt={image.meta?.prompt} negativePrompt={image.meta?.negativePrompt}>
-            {({ includesInappropriate, html }) =>
-              !includesInappropriate ? (
-                <></>
-              ) : (
-                <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
-                  <Text size="sm" lh={1.2} dangerouslySetInnerHTML={{ __html: html }} />
-                </Card.Section>
-              )
-            }
-          </PromptHighlight>
+          <Stack>
+            {image.minor && (
+              <Badge variant="light" color="pink">
+                Acceptable Minor
+              </Badge>
+            )}
+            <PromptHighlight
+              prompt={image.meta?.prompt}
+              negativePrompt={image.meta?.negativePrompt}
+            >
+              {({ includesInappropriate, html }) =>
+                !includesInappropriate ? (
+                  <></>
+                ) : (
+                  <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>
+                    <Text size="sm" lh={1.2} dangerouslySetInnerHTML={{ __html: html }} />
+                  </Card.Section>
+                )
+              }
+            </PromptHighlight>
+          </Stack>
         )}
         {image.needsReview === 'poi' && !!image.names?.length && (
           <Card.Section p="xs" sx={{ cursor: 'auto', color: 'initial' }}>

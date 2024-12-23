@@ -22,13 +22,14 @@ export function TwCosmeticWrapper({
   children,
   className,
   cosmetic,
+  style,
   ...props
 }: Omit<React.HTMLProps<HTMLDivElement>, 'children'> & {
   cosmetic?: Cosmetic;
   children: React.ReactElement;
 }) {
   const styleRef = useRef<Record<string, unknown> | undefined>();
-  if (!cosmetic) return children;
+  if (!cosmetic || !Object.keys(cosmetic).length) return children;
 
   const { cssFrame, texture, border, borderWidth, glow, type } = cosmetic;
 
@@ -46,9 +47,9 @@ export function TwCosmeticWrapper({
 
   return (
     <div
-      style={styleRef.current}
+      style={{ ...styleRef.current, ...style }}
       className={clsx(
-        'relative rounded-md ',
+        styles.wrapper,
         {
           [styles.border]: border,
           [styles.cssFrame]: cssFrame,

@@ -1,10 +1,16 @@
-import { IntersectionOptions, useInView as useInViewObserver } from 'react-intersection-observer';
-import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
-import { useInView as useElementInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import type { IntersectionOptions } from 'react-intersection-observer';
+import {
+  CustomIntersectionObserverCallback,
+  useInView as useElementInView,
+} from '~/components/IntersectionObserver/IntersectionObserverProvider';
+import { Key, useDeferredValue } from 'react';
 
-export function useInView<T extends HTMLElement = HTMLDivElement>(options?: IntersectionOptions) {
-  // const node = useScrollAreaRef();
-  // return useElementInView({ root: node?.current, ...options });
-  const [ref, inView] = useElementInView<T>();
+export function useInView<T extends HTMLElement = HTMLDivElement>(options?: {
+  key?: Key;
+  initialInView?: boolean;
+  callback?: CustomIntersectionObserverCallback;
+}) {
+  const [ref, inView] = useElementInView<T>(options);
+  // const deferred = useDeferredValue(inView);
   return { ref, inView };
 }

@@ -16,7 +16,12 @@ import {
   userMetrics,
 } from '~/server/metrics';
 import { updatePaddleCustomerEmail } from '~/server/paddle/client';
-import { profilePictureCache, userBasicCache, userCosmeticCache } from '~/server/redis/caches';
+import {
+  cosmeticCache,
+  profilePictureCache,
+  userBasicCache,
+  userCosmeticCache,
+} from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -405,6 +410,9 @@ export async function getUserDownloads({
     const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
     where.modelVersionId = { in: versionIds };
   }
+
+  const { hideDownloadsSince } = await getUserSettings(userId);
+  if (hideDownloadsSince) where.downloadAt = { gt: new Date(hideDownloadsSince) };
 
   return dbRead.downloadHistory.findMany({
     where,
@@ -903,7 +911,19 @@ export async function deleteBasicDataForUser(userId: number) {
 
 export async function getCosmeticsForUsers(userIds: number[]) {
   const userCosmetics = await userCosmeticCache.fetch(userIds);
-  return Object.fromEntries(Object.values(userCosmetics).map((x) => [x.userId, x.cosmetics]));
+  const cosmeticIds = [
+    ...new Set(Object.values(userCosmetics).flatMap((x) => x.cosmetics.map((y) => y.cosmeticId))),
+  ];
+  const cosmetics = await cosmeticCache.fetch(cosmeticIds);
+  return Object.fromEntries(
+    Object.values(userCosmetics).map((x) => [
+      x.userId,
+      x.cosmetics.map((y) => ({
+        ...y,
+        cosmetic: cosmetics[y.cosmeticId],
+      })),
+    ])
+  );
 }
 
 export async function deleteUserCosmeticCache(userId: number) {

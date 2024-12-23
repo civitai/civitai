@@ -1281,6 +1281,7 @@ model Image {
   scanJobs          Json?
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(now())
+  minor             Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]
@@ -1547,6 +1548,7 @@ enum TagSource {
   Computed
   ImageHash
   Hive
+  MinorDetection
 }
 
 model TagsOnImage {
@@ -2188,6 +2190,8 @@ model BuzzClaim {
   amount             Int
   availableStart     DateTime?
   availableEnd       DateTime?
+  claimed            Int             @default(0)
+  limit              Int?
   accountType        BuzzAccountType @default(user)
   useMultiplier      Boolean         @default(false)
 }

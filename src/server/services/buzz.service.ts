@@ -669,6 +669,8 @@ export async function getClaimStatus({ id, userId }: BuzzClaimRequest) {
     return unavailable('This reward is not available yet');
   if (claimable.availableEnd && claimable.availableEnd < new Date())
     return unavailable('This reward is no longer available');
+  if (claimable.limit && claimable.claimed > claimable.limit)
+    return unavailable("This reward has reached it's claim limit");
 
   const query = claimable.transactionIdQuery.replace('${userId}', userId.toString());
   let transactionId: string | undefined;
@@ -703,6 +705,23 @@ export async function claimBuzz({ id, userId }: BuzzClaimRequest) {
 
   const { rewardsMultiplier } = await getMultipliersForUser(userId);
 
+  const priorTransaction = await getTransactionByExternalId(claimStatus.claimId);
+  if (priorTransaction) {
+    return {
+      status: 'claimed',
+      details: claimStatus.details,
+      claimedAt: priorTransaction.date,
+    } as BuzzClaimResult;
+  }
+
+  // Update the claim count
+  await dbWrite.$executeRaw`
+    UPDATE "BuzzClaim"
+    SET claimed = claimed + 1
+    WHERE key = ${id}
+  `;
+
+  // Create the transaction
   await createBuzzTransaction({
     amount: claimStatus.details.useMultiplier
       ? Math.ceil(claimStatus.details.amount * rewardsMultiplier)
@@ -818,8 +837,8 @@ export const getDailyCompensationRewardByUser = async ({
 
   if (!clickhouse || !modelVersions.length) return [];
 
-  const minDate = dayjs.utc(date).startOf('day').startOf('month');
-  const maxDate = dayjs.utc(date).endOf('day').endOf('month');
+  const minDate = dayjs.utc(date).startOf('day').startOf('month').toDate();
+  const maxDate = dayjs.utc(date).endOf('day').endOf('month').toDate();
 
   const generationData = await clickhouse.$query<Row>`
     WITH user_resources AS (

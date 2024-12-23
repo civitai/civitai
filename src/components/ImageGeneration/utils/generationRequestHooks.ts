@@ -51,7 +51,7 @@ function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?
 
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
-  options?: { enabled?: boolean }
+  options?: { enabled?: boolean; includeTags?: boolean }
 ) {
   const currentUser = useCurrentUser();
 
@@ -73,7 +73,7 @@ export function useGetTextToImageRequests(
   }, [filters.marker]);
 
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
-    { ...input, tags: [WORKFLOW_TAGS.GENERATION, ...tags] },
+    { ...input, tags: [WORKFLOW_TAGS.GENERATION, ...(options?.includeTags === false ? [] : tags)] },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       enabled: !!currentUser && options?.enabled,

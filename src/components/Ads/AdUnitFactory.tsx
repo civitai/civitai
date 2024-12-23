@@ -48,7 +48,6 @@ function AdUnitContent({
           gpIdUniquifier: adUnitDictionary[adUnit],
           sizes,
         };
-        console.log(payload);
         window.adngin.cmd.startAuction([payload]);
       });
     }
@@ -65,7 +64,7 @@ function AdUnitContent({
     };
   }, []);
 
-  return id ? <div className="flex items-center justify-center" id={id}></div> : null;
+  return id ? <div className="notranslate flex items-center justify-center" id={id}></div> : null;
 }
 
 function SupportUsImage({ sizes }: { sizes?: AdSize[] }) {

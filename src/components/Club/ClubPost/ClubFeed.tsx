@@ -186,9 +186,7 @@ export function ClubPostContextMenu({
 export const ClubPostItem = ({ clubPost }: { clubPost: ClubPostGetAll[number] }) => {
   const { classes, cx } = useClubFeedStyles();
   const currentUser = useCurrentUser();
-  const { ref, inView } = useInView({
-    triggerOnce: true,
-  });
+  const { ref, inView } = useInView();
   const { metrics, reactions } = clubPost;
 
   const { title, description } = useMemo(() => {

@@ -1,4 +1,14 @@
-import { Alert, Badge, Button, Text, ThemeIcon, Title, Tooltip, TooltipProps } from '@mantine/core';
+import {
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Text,
+  ThemeIcon,
+  Title,
+  Tooltip,
+  TooltipProps,
+} from '@mantine/core';
 import { IconClock, IconTrash } from '@tabler/icons-react';
 import { useIsMutating } from '@tanstack/react-query';
 import { useRouter } from 'next/router';
@@ -10,6 +20,7 @@ import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
 import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
+import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { PostDetailEditable } from '~/server/services/post.service';
@@ -38,6 +49,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
+  const { collection } = usePostContestCollectionDetails(
+    { id: post.id },
+    { enabled: !!collectionId }
+  );
   // #endregion
 
   // #region [mutations]
@@ -118,12 +133,20 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   return (
     <>
       <div className="flex flex-col gap-0">
-        {collectionId && (
+        {collection?.metadata?.includeContestCallouts && (
           <Alert mb="xs">
             <div className="flex">
               <Text size="xs">
-                Did you tag the tools you used in your entry? Adding the tools used to create your
-                entry may make you elegible for more prizes.
+                Please add the AI and filmmaking tools you used in your entry. Depending on the
+                tool, you&apos;ll automatically be eligible for the{' '}
+                <Anchor
+                  target="_blank"
+                  rel="noopener nofollow"
+                  href="https://www.projectodyssey.ai/free-trials-and-prizes"
+                >
+                  Title and Gold Sponsor Awards
+                </Anchor>
+                .
               </Text>
             </div>
           </Alert>
@@ -242,10 +265,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           onClick={() => {
             const [image] = images;
             if (images.length > 1) {
-              router.push(`/posts/${post.id}`);
-            } else if (images.length === 1 && image && image.data.hasOwnProperty('id')) {
-              // @ts-ignore - we know it's an image that has ID based off of the above.
-              router.push(`/images/${image.data.id}`);
+              if (collectionId) router.replace(`/posts/${post.id}`);
+              else router.push(`/posts/${post.id}`);
+            } else if (images.length === 1 && image && 'id' in image.data) {
+              if (collectionId) router.replace(`/images/${image.data.id}`);
+              else router.push(`/images/${image.data.id}`);
             }
           }}
           variant="outline"

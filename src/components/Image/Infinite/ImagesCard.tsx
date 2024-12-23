@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Alert,
   Badge,
   Box,
@@ -13,7 +12,7 @@ import {
 } from '@mantine/core';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -38,13 +37,13 @@ import { useImageStore } from '~/store/image.store';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
-  const { ref, inView } = useInView({ rootMargin: '200% 0px' });
   const { classes, cx } = useStyles();
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
 
   const image = useImageStore(data);
+  const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
 
   const isBlocked = image.ingestion === ImageIngestionStatus.Blocked;
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
@@ -61,9 +60,40 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
+  const handleRemixClick = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      generationPanel.open({
+        type: image.type,
+        id: image.id,
+      });
+    },
+    [image.type, image.id]
+  );
+
+  const twCardStyle = useMemo(() => {
+    return !image.cosmetic?.data ? { height } : undefined;
+  }, [image.cosmetic, height]);
+
+  const reactionMetrics = useMemo(
+    () => ({
+      likeCount: image.stats?.likeCountAllTime,
+      dislikeCount: image.stats?.dislikeCountAllTime,
+      heartCount: image.stats?.heartCountAllTime,
+      laughCount: image.stats?.laughCountAllTime,
+      cryCount: image.stats?.cryCountAllTime,
+      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
+    }),
+    [image.stats]
+  );
+
   return (
-    <TwCosmeticWrapper cosmetic={image.cosmetic?.data}>
-      <TwCard style={{ height }} ref={ref} className="border">
+    <TwCosmeticWrapper
+      cosmetic={image.cosmetic?.data}
+      style={image.cosmetic?.data ? { height } : undefined}
+    >
+      <TwCard style={twCardStyle} ref={ref} className="border">
         {inView && (
           <ImageGuard2 image={image} inView={inView}>
             {(safe) => (
@@ -78,6 +108,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       <EdgeMedia2
                         metadata={image.metadata}
                         src={image.url}
+                        thumbnailUrl={image.thumbnailUrl}
                         className={cx(sharedClasses.image, { ['opacity-30']: isBlocked })}
                         name={image.name ?? image.id.toString()}
                         alt={image.name ?? undefined}
@@ -114,14 +145,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           color="white"
                           variant="filled"
                           data-activity="remix:image-card"
-                          onClick={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            generationPanel.open({
-                              type: image.type,
-                              id: image.id,
-                            });
-                          }}
+                          onClick={handleRemixClick}
                         >
                           <IconBrush stroke={2.5} size={16} />
                         </HoverActionButton>
@@ -206,16 +230,9 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     entityId={image.id}
                     entityType="image"
                     reactions={image.reactions}
-                    metrics={{
-                      likeCount: image.stats?.likeCountAllTime,
-                      dislikeCount: image.stats?.dislikeCountAllTime,
-                      heartCount: image.stats?.heartCountAllTime,
-                      laughCount: image.stats?.laughCountAllTime,
-                      cryCount: image.stats?.cryCountAllTime,
-                      tippedAmountCount: image.stats?.tippedAmountCountAllTime,
-                    }}
+                    metrics={reactionMetrics}
                     targetUserId={image.user.id}
-                    readonly={!safe}
+                    readonly={!safe || (isScanned && isBlocked)}
                     className={cx('justify-between p-2')}
                     invisibleEmpty
                   />

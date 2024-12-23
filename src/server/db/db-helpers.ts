@@ -42,7 +42,7 @@ export function getClient(
 
   const envUrl = instanceUrlMap[instance];
   const connectionStringUrl = new URL(envUrl);
-  connectionStringUrl.searchParams.set('sslmode', 'no-verify');
+  if (env.DATABASE_SSL !== false) connectionStringUrl.searchParams.set('sslmode', 'no-verify');
   const connectionString = connectionStringUrl.toString();
 
   const isNotification = instance === 'notification' || instance === 'notificationRead';

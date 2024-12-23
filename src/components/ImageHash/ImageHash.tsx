@@ -1,6 +1,7 @@
 import { CSSProperties } from 'react';
 import { BlurhashCanvas } from 'react-blurhash';
 import { getClampedSize } from '~/utils/blurhash';
+import clsx from 'clsx';
 
 export type MediaHashProps = {
   hash?: string | null;
@@ -22,17 +23,8 @@ export function MediaHash({ hash, height, width, style, cropFocus, className }: 
       hash={hash}
       height={size.height}
       width={size.width}
-      className={className}
-      style={{
-        width: '100%',
-        height: '100%',
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        objectFit: 'cover',
-        objectPosition: cropFocus ?? 'center',
-        ...style,
-      }}
+      className={clsx('absolute inset-0 size-full object-cover object-center', className)}
+      style={{ objectPosition: cropFocus, ...style }}
     />
   );
 }

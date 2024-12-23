@@ -3,7 +3,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { redis } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
 import { createEvent, DonationCosmeticData } from './base.event';
-import { cosmeticEntityCaches } from '~/server/redis/caches';
+import { cosmeticCache, cosmeticEntityCaches } from '~/server/redis/caches';
 
 type CosmeticData = {
   lights: number;
@@ -12,7 +12,7 @@ type CosmeticData = {
   milestonesEarned: number[];
 } & DonationCosmeticData;
 
-const lightMilestones = [1, 12];
+const lightMilestones = [1, 6, 12];
 const donationRewards = {
   Donor: 5000,
   'Golden Donor': 25000,
@@ -163,6 +163,9 @@ export const holiday2024 = createEvent('holiday2024', {
         SET data = jsonb_set(data, '{brightness}', to_jsonb(${brightness}))
         WHERE id = ${cosmeticId}
       `);
+
+      // Refresh cache
+      await cosmeticCache.refresh(cosmeticId);
     }
   },
   async onCleanup({ winner, winnerCosmeticId, db }) {

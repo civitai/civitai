@@ -97,10 +97,22 @@ export const CollectionSelectDropdown = () => {
       {!post?.publishedAt && collectionId && selectedCollection?.metadata.termsOfServicesUrl && (
         <Alert color="blue">
           By submitting an entry to {selectedCollection.name}, you agree to the competition&rsquo;s{' '}
+          {selectedCollection.metadata.rulesUrl && (
+            <>
+              <Anchor
+                href={selectedCollection.metadata.rulesUrl}
+                target="_blank"
+                rel="noopener nofollow"
+              >
+                Rules
+              </Anchor>{' '}
+              and{' '}
+            </>
+          )}
           <Anchor
             href={selectedCollection.metadata.termsOfServicesUrl}
             target="_blank"
-            rel="noopener noreferrer"
+            rel="noopener nofollow"
           >
             Terms of Service
           </Anchor>

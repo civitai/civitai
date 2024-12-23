@@ -103,13 +103,10 @@ export function PostDetailContent({ postId }: Props) {
     images,
     isLoading: imagesLoading,
   } = useQueryImages(
-    {
-      postId,
-      pending: true,
-      browsingLevel: forcedBrowsingLevel,
-    },
+    { postId, pending: true, browsingLevel: forcedBrowsingLevel },
     {
       applyHiddenPreferences: !requiresCollectionJudgement && !forcedBrowsingLevel,
+      enabled: !!post && (!post.collectionId || !isLoadingPostCollection),
     }
   );
 

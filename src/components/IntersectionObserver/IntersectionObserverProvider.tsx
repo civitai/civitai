@@ -1,4 +1,4 @@
-import { RefObject, createContext, useContext, useEffect, useRef, useState } from 'react';
+import { Key, RefObject, createContext, useContext, useEffect, useRef, useState } from 'react';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { generateToken } from '~/utils/string-helpers';
@@ -9,11 +9,14 @@ function getSizeMappingKey(ids: string[]) {
   return ids.join('_');
 }
 
-type ObserverCallback = (inView: boolean, entry: IntersectionObserverEntry) => void;
+export type CustomIntersectionObserverCallback = (
+  inView: boolean,
+  entry: IntersectionObserverEntry
+) => void;
 const IntersectionObserverCtx = createContext<{
   ready: boolean;
   providerId?: string;
-  observe: (element: HTMLElement, callback: ObserverCallback) => void;
+  observe: (element: HTMLElement, callback: CustomIntersectionObserverCallback) => void;
   unobserve: (element: HTMLElement) => void;
 } | null>(null);
 
@@ -27,19 +30,22 @@ type InViewResponse<T extends HTMLElement> = [RefObject<T>, boolean];
 export function useInView<T extends HTMLElement = HTMLDivElement>({
   initialInView = false,
   callback,
+  key,
 }: {
   initialInView?: boolean;
-  callback?: ObserverCallback;
+  callback?: CustomIntersectionObserverCallback;
+  key?: Key;
 } = {}): InViewResponse<T> {
   const ref = useRef<T>(null);
   const { ready, observe, unobserve } = useProviderContext();
   const [inView, setInView] = useState(initialInView);
 
-  const cbRef = useRef<ObserverCallback | null>();
+  const cbRef = useRef<CustomIntersectionObserverCallback | null>();
   cbRef.current = callback;
 
   useEffect(() => {
     if (!ready) return;
+    // console.log({ key });
 
     const target = ref.current;
 
@@ -57,7 +63,7 @@ export function useInView<T extends HTMLElement = HTMLDivElement>({
         unobserve(target);
       }
     };
-  }, [ready]);
+  }, [ready, key]);
 
   return [ref, inView];
 }
@@ -124,9 +130,10 @@ export function IntersectionObserverProvider({
 }) {
   const node = useScrollAreaRef();
   const observerRef = useRef<IntersectionObserver>();
-  const mappingRef = useRef<Map<string, ObserverCallback>>();
+  const mappingRef = useRef<Map<string, CustomIntersectionObserverCallback>>();
   const [ready, setReady] = useState(false);
-  if (!mappingRef.current) mappingRef.current = new Map<string, ObserverCallback>();
+  if (!mappingRef.current)
+    mappingRef.current = new Map<string, CustomIntersectionObserverCallback>();
 
   useEffect(() => {
     // assigne the observer in the effect so that we react has time to assign refs before we initialize
@@ -155,7 +162,7 @@ export function IntersectionObserverProvider({
     };
   }, []);
 
-  function observe(element: HTMLElement, callback: ObserverCallback) {
+  function observe(element: HTMLElement, callback: CustomIntersectionObserverCallback) {
     if (!element.id) element.id = generateToken(8);
     observerRef.current?.observe(element);
     mappingRef.current?.set(element.id, callback);

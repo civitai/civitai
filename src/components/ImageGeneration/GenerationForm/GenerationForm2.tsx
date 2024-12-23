@@ -1050,7 +1050,7 @@ export function GenerationFormContent() {
                 ) : !status.available ? (
                   <AlertWithIcon
                     color="yellow"
-                    title="Image Generation Status Alert"
+                    title="Generation Status Alert"
                     icon={<IconAlertTriangle size={20} />}
                     iconColor="yellow"
                   >
@@ -1115,7 +1115,7 @@ export function GenerationFormContent() {
                     {status.available && status.message && messageHash && (
                       <DismissibleAlert
                         color="yellow"
-                        title="Image Generation Status Alert"
+                        title="Generation Status Alert"
                         id={messageHash}
                       >
                         <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>

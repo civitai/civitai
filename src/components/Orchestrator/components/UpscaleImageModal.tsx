@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { UpscalePicker } from '~/components/ImageGeneration/GenerationForm/UpscalePicker';
+import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { Form, useForm } from '~/libs/form';
@@ -138,40 +139,42 @@ function UpscalImageForm({
   }
 
   return (
-    <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-      {params.image && (
-        <div className="flex flex-col items-end gap-0.5">
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img src={params.image} alt="image to upscale" className="mx-auto max-w-full" />
-          <Text color="dimmed" size="sm">
-            Image dimensions: {params.width} x {params.height}
-          </Text>
-        </div>
-      )}
-      <Controller
-        name="width"
-        control={form.control}
-        render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
-      />
-      <Controller
-        name="height"
-        control={form.control}
-        render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
-      />
-      <UpscalePicker label="Upscale multipliers" width={params.width} height={params.height} />
-      <GenerateButton
-        type="submit"
-        // onClick={handleSubmit}
-        loading={isLoading || generateImage.isLoading}
-        cost={data?.cost?.total ?? 0}
-        error={
-          !isInitialLoading && isError
-            ? 'Error calculating cost. Please try updating your values'
-            : undefined
-        }
-      >
-        Upscale
-      </GenerateButton>
-    </Form>
+    <GenerationProvider>
+      <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
+        {params.image && (
+          <div className="flex flex-col items-end gap-0.5">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={params.image} alt="image to upscale" className="mx-auto max-w-full" />
+            <Text color="dimmed" size="sm">
+              Image dimensions: {params.width} x {params.height}
+            </Text>
+          </div>
+        )}
+        <Controller
+          name="width"
+          control={form.control}
+          render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
+        />
+        <Controller
+          name="height"
+          control={form.control}
+          render={({ field: { value } }) => <input type="hidden" value={value ?? ''} />}
+        />
+        <UpscalePicker label="Upscale multipliers" width={params.width} height={params.height} />
+        <GenerateButton
+          type="submit"
+          // onClick={handleSubmit}
+          loading={isLoading || generateImage.isLoading}
+          cost={data?.cost?.total ?? 0}
+          error={
+            !isInitialLoading && isError
+              ? 'Error calculating cost. Please try updating your values'
+              : undefined
+          }
+        >
+          Upscale
+        </GenerateButton>
+      </Form>
+    </GenerationProvider>
   );
 }

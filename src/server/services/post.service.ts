@@ -7,7 +7,7 @@ import { PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
-import { userContentOverviewCache } from '~/server/redis/caches';
+import { thumbnailCache, userContentOverviewCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { externalMetaSchema, ImageMetaProps, ImageSchema } from '~/server/schema/image.schema';
@@ -28,6 +28,7 @@ import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getGenerationStatus } from '~/server/services/generation/generation.service';
 import {
   createImage,
+  createImageResources,
   deleteImageById,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
@@ -42,6 +43,7 @@ import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/servi
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import {
+  handleLogError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -54,6 +56,7 @@ import {
   CollectionMode,
   CollectionReadConfiguration,
   CollectionType,
+  MediaType,
   ModelHashType,
   TagTarget,
   TagType,
@@ -570,6 +573,8 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
   const imageIds = images.map((x) => x.id);
   const _images = images as PostImageEditProps[];
   const tags = await getVotableImageTags({ ids: imageIds, user });
+  const thumbnails = await thumbnailCache.fetch(imageIds);
+
   return _images
     .map((image) => ({
       ...image,
@@ -577,6 +582,7 @@ async function combinePostEditImageData(images: PostImageEditSelect[], user: Ses
       tags: tags.filter((x) => x.imageId === image.id),
       tools: image.tools.map(({ notes, tool }) => ({ ...tool, notes })),
       techniques: image.techniques.map(({ notes, technique }) => ({ ...technique, notes })),
+      thumbnailUrl: thumbnails[image.id]?.url as string | null, // Need to explicit type cast cause ts is trying to be smarter than it should be
     }))
     .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 }
@@ -871,35 +877,7 @@ export const addPostImage = async ({
     skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
   });
 
-  try {
-    // Read the resources based on complex metadata and hash matches
-    const resources = await dbWrite.$queryRaw<
-      (ImageResource & { modelversionid?: number })[]
-    >`SELECT * FROM get_image_resources(${partialResult.id}::int)`;
-
-    const sql: Prisma.Sql[] = resources.map(
-      (r) => Prisma.sql`
-      (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
-        r.detected
-      })
-    `
-    );
-
-    if (resources.length > 0) {
-      // Write the resources to the image
-      await dbWrite.$executeRaw`
-      INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
-      VALUES ${Prisma.join(sql, ',')}
-      ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
-      SET
-          detected = excluded.detected,
-          hash = excluded.hash,
-          strength = excluded.strength;
-    `;
-    }
-  } catch (e) {
-    console.error(e);
-  }
+  await createImageResources({ imageId: partialResult.id }).catch(handleLogError);
 
   const result = await dbWrite.image.findUnique({
     where: { id: partialResult.id },
@@ -1003,14 +981,14 @@ export const addResourceToPostImage = async ({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
-    select: { postId: true, meta: true, resourceHelper: true },
+    select: { postId: true, meta: true, resourceHelper: true, type: true },
   });
 
   if (images.length !== imageIds.length) {
     throw throwNotFoundError(`Image${imageIds.length > 1 ? 's' : ''} not found.`);
   }
   // TODO technically this can be called with a combo of on/off site imgs
-  if (images.some((i) => isMadeOnSite(i.meta as ImageMetaProps))) {
+  if (images.some((i) => i.type !== MediaType.video && isMadeOnSite(i.meta as ImageMetaProps))) {
     throw throwBadRequestError('Cannot add resources to on-site generations.');
   }
 

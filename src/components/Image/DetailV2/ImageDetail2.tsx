@@ -130,18 +130,17 @@ export function ImageDetail2() {
 
   const image = images[carouselNavigation.index];
 
-  const {
-    collectionItems,
-    post,
-    isLoading: loadingContestCollectionItems,
-  } = useImageContestCollectionDetails({ id: image?.id as number }, { enabled: !!image?.id });
-
-  const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel;
+  const { collectionItems, post } = useImageContestCollectionDetails(
+    { id: image?.id as number },
+    { enabled: !!image?.id }
+  );
 
   if (!image) return <NotFound />;
 
+  const actualCollection = collection || collectionItems[0]?.collection;
+  const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
-  const hasContestCollectionItems = collectionItems.length > 0 && !loadingContestCollectionItems;
+  const hideAds = actualCollection?.metadata?.hideAds ?? false;
 
   const handleSaveClick = () =>
     openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });
@@ -444,7 +443,7 @@ export function ImageDetail2() {
                         </Anchor>
                       </AlertWithIcon>
                     )}
-                    {!hasContestCollectionItems && <AdUnitSide_2 />}
+                    {!hideAds && <AdUnitSide_2 />}
                     <VotableTags
                       entityType="image"
                       entityId={image.id}
@@ -485,7 +484,7 @@ export function ImageDetail2() {
                 </ScrollArea>
               </div>
             </div>
-            {!hasContestCollectionItems && <AdhesiveAd closeable={false} preserveLayout />}
+            {!hideAds && <AdhesiveAd closeable={false} preserveLayout />}
           </div>
         </BrowsingLevelProvider>
       </SensitiveShield>

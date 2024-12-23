@@ -48,6 +48,7 @@ import {
   resourceDataCache,
   tagCache,
   tagIdsForImagesCache,
+  thumbnailCache,
   userContentOverviewCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -66,6 +67,7 @@ import {
   ImageUploadProps,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
+  UpdateImageMinorInput,
   UpdateImageNsfwLevelOutput,
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
@@ -135,6 +137,8 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { ImageResource } from '~/shared/utils/prisma/models';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -392,6 +396,7 @@ export async function updateNsfwLevel(ids: number | number[]) {
   ids = [...new Set(ids)]; // dedupe
   if (!ids.length) return;
   await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${ids.join(',')}]::integer[])`);
+  await thumbnailCache.bust(ids);
 }
 
 export const updateImageReportStatusByReason = ({
@@ -466,6 +471,7 @@ const defaultScanTypes = [
     : [ImageScanType.Moderation, ImageScanType.Label]),
   ImageScanType.WD14,
   ImageScanType.Hash,
+  ImageScanType.MinorDetection,
 ];
 
 export const ingestImage = async ({
@@ -478,7 +484,7 @@ export const ingestImage = async ({
   const scanRequestedAt = new Date();
   const dbClient = tx ?? dbWrite;
 
-  if (!isProd && !env.IMAGE_SCANNING_ENDPOINT) {
+  if (!isProd || !env.IMAGE_SCANNING_ENDPOINT) {
     console.log('skipping image ingestion');
     const updated = await dbClient.image.update({
       where: { id: image.id },
@@ -704,6 +710,7 @@ type GetAllImagesRaw = {
   metadata: ImageMetadata | VideoMetadata | null;
   baseModel?: string;
   availability: Availability;
+  minor: boolean;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1117,6 +1124,8 @@ export const getAllImages = async (
     }
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
+    // Acceptable in collections, need to check for contest collection only
+    if (!collectionId) AND.push(Prisma.sql`i.minor = FALSE`);
     AND.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
@@ -1187,6 +1196,7 @@ export const getAllImages = async (
       u.image "userImage",
       u."deletedAt",
       p."availability",
+      i.minor,
       ${Prisma.raw(
         include.includes('metaSelect')
           ? '(CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta",'
@@ -1292,6 +1302,9 @@ export const getAllImages = async (
     includeCosmetics ? await getCosmeticsForEntity({ ids: imageIds, entity: 'Image' }) : undefined,
   ]);
 
+  const videoIds = rawImages.filter((x) => x.type === MediaType.video).map((x) => x.id);
+  const thumbnails = await getThumbnailsForImages(videoIds);
+
   const now = new Date();
   const filtered = rawImages.filter((x) => {
     if (isModerator) return true;
@@ -1322,13 +1335,16 @@ export const getAllImages = async (
       onSite: boolean;
       modelVersionIds?: number[];
       modelVersionIdsManual?: number[];
+      thumbnailUrl?: string;
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
       const match = imageMetrics[i.id];
+      const thumbnail = thumbnails[i.id];
 
       return {
         ...i,
+        nsfwLevel: Math.max(thumbnail?.nsfwLevel ?? 0, i.nsfwLevel),
         modelVersionIds: [], // TODO doing this basically just for TS
         modelVersionIdsManual: [],
         user: {
@@ -1357,6 +1373,7 @@ export const getAllImages = async (
         tags: tagsVar?.filter((x) => x.imageId === i.id),
         tagIds: tagIdsVar?.[i.id]?.tags,
         cosmetic: cosmetics?.[i.id] ?? null,
+        thumbnailUrl: thumbnail?.url,
       };
     }
   );
@@ -1377,6 +1394,11 @@ const getMetaForImages = async (imageIds: number[]) => {
 const getMetadataForImages = async (imageIds: number[]) => {
   if (imageIds.length === 0) return {};
   return imageMetadataCache.fetch(imageIds);
+};
+
+const getThumbnailsForImages = async (imageIds: number[]) => {
+  if (imageIds.length === 0) return {};
+  return thumbnailCache.fetch(imageIds);
 };
 
 type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
@@ -1435,8 +1457,6 @@ export const getAllImagesIndex = async (
   const offset = isNumber(cursorParsed?.[0]) ? Number(cursorParsed?.[0]) : 0;
   const entry = isNumber(cursorParsed?.[1]) ? Number(cursorParsed?.[1]) : undefined;
 
-  // console.log({ cursor, sort, offset, entry });
-
   const currentUserId = user?.id;
 
   const { data: searchResultsTmp, nextCursor: searchNextCursor } = await getImagesFromSearch({
@@ -1456,12 +1476,9 @@ export const getAllImagesIndex = async (
     };
   }
 
-  const imageIds = searchResults.map((sr) => sr.id).filter(isDefined);
-  const videoIds = searchResults
-    .filter((sr) => sr.type === MediaType.video)
-    .map((sr) => sr.id)
-    .filter(isDefined);
-  const userIds = searchResults.map((sr) => sr.userId).filter(isDefined);
+  const imageIds = searchResults.map((sr) => sr.id);
+  const videoIds = searchResults.filter((sr) => sr.type === MediaType.video).map((sr) => sr.id);
+  const userIds = searchResults.map((sr) => sr.userId);
 
   let userReactions: Record<number, ReviewReactions[]> | undefined;
   if (currentUserId) {
@@ -1476,27 +1493,37 @@ export const getAllImagesIndex = async (
     }, {} as Record<number, ReviewReactions[]>);
   }
 
-  const [userDatas, profilePictures, userCosmetics, imageCosmetics, imageMeta, imageMetadata] =
-    await Promise.all([
-      await getBasicDataForUsers(userIds),
-      include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
-      include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
-      include?.includes('cosmetics')
-        ? await getCosmeticsForEntity({
-            ids: imageIds,
-            entity: 'Image',
-          })
-        : undefined,
-      include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
-      await getMetadataForImages(videoIds), // Only need this for videos
-    ]);
+  const [
+    userDatas,
+    profilePictures,
+    userCosmetics,
+    imageCosmetics,
+    imageMeta,
+    imageMetadata,
+    thumbnails,
+  ] = await Promise.all([
+    await getBasicDataForUsers(userIds),
+    include?.includes('profilePictures') ? await getProfilePicturesForUsers(userIds) : undefined,
+    include?.includes('cosmetics') ? await getCosmeticsForUsers(userIds) : undefined,
+    include?.includes('cosmetics')
+      ? await getCosmeticsForEntity({
+          ids: imageIds,
+          entity: 'Image',
+        })
+      : undefined,
+    include?.includes('metaSelect') ? await getMetaForImages(imageIds) : undefined,
+    await getMetadataForImages(videoIds), // Only need this for videos
+    await getThumbnailsForImages(videoIds), // Only need this for videos
+  ]);
 
   const mergedData = searchResults.map(({ publishedAtUnix, ...sr }) => {
     const thisUser = userDatas[sr.userId] ?? {};
     const reactions =
       userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ?? [];
     const meta = imageMeta?.[sr.id]?.meta ?? null;
-    const metadata = imageMetadata?.[sr.id]?.metadata ?? null;
+    const metadata = imageMetadata[sr.id]?.metadata ?? null;
+    const thumbnail = thumbnails[sr.id] ?? null;
+    const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, sr.nsfwLevel);
 
     return {
       ...sr,
@@ -1523,13 +1550,15 @@ export const getAllImagesIndex = async (
       scannedAt: null, // remove
       mimeType: null, // need?
       ingestion:
-        sr.nsfwLevel === NsfwLevel.Blocked
+        nsfwLevel === NsfwLevel.Blocked
           ? ImageIngestionStatus.Blocked
-          : sr.nsfwLevel === 0
+          : nsfwLevel === 0
           ? ImageIngestionStatus.NotFound
           : ImageIngestionStatus.Scanned, // add? maybe remove
       postTitle: null, // remove
       meta,
+      nsfwLevel,
+      thumbnailUrl: thumbnail?.url,
     };
   });
 
@@ -1695,12 +1724,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     if (!hideAutoResources) {
       versionFilters.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
     }
-    // TODO re-enable after backfilling
-    // if (!hideManualResources) {
-    //   versionFilters.push(
-    //     makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
-    //   );
-    // }
+    if (!hideManualResources) {
+      versionFilters.push(
+        makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
+      );
+    }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
   }
@@ -1848,8 +1876,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     const filteredHits = results.hits.filter((hit) => {
       // check for good data
       if (!hit.url) return false;
+      // filter out items flagged with minor unless it's the owner or moderator
+      if (hit.minor) return hit.userId === currentUserId || isModerator;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
+
       return hit.userId === currentUserId || (isModerator && includesNsfwContent);
     });
 
@@ -2167,6 +2198,7 @@ export const getImage = async ({
       i.type,
       i.metadata,
       i."nsfwLevel",
+      i.minor,
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -2409,7 +2441,7 @@ export const getImagesForModelVersion = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -2593,7 +2625,7 @@ export const getImagesForPosts = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -3017,9 +3049,14 @@ export const createEntityImages = async ({
     },
   });
 
+  const shouldAddImageResources = !!entityType && ['Bounty', 'BountyEntry'].includes(entityType);
   const batches = chunk(imageRecords, 50);
   for (const batch of batches) {
-    await Promise.all(batch.map((image) => ingestImage({ image, tx: dbClient })));
+    if (shouldAddImageResources) {
+      await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
+    }
+
+    await Promise.all(batch.map((image) => ingestImage({ image, tx })));
   }
 
   if (entityType && entityId) {
@@ -3322,8 +3359,13 @@ export const updateEntityImages = async ({
     links.push(...imageRecords.map((i) => i.id));
 
     // Process the new images just in case:
+    const shouldAddImageResources = !!entityType && ['Bounty', 'BountyEntry'].includes(entityType);
     const batches = chunk(imageRecords, 50);
     for (const batch of batches) {
+      if (shouldAddImageResources) {
+        await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
+      }
+
       await Promise.all(batch.map((image) => ingestImage({ image, tx })));
     }
   }
@@ -3424,6 +3466,7 @@ type GetImageModerationReviewQueueRaw = {
   appealUsername?: string;
   moderatorId?: number;
   moderatorUsername?: string;
+  minor: boolean;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3504,6 +3547,7 @@ export const getImageModerationReviewQueue = async ({
       i."postId",
       p."title" "postTitle",
       i."index",
+      i.minor,
       p."publishedAt",
       p."modelVersionId",
       u.username,
@@ -3607,6 +3651,7 @@ export const getImageModerationReviewQueue = async ({
       entityType?: string | null;
       entityId?: number | null;
       metadata?: MixedObject | null;
+      minor: boolean;
     }
   > = rawImages.map(
     ({
@@ -4247,6 +4292,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
       meta: true,
       type: true,
       tools: {
+        orderBy: { tool: { priority: 'asc' } },
         select: {
           notes: true,
           tool: {
@@ -4255,6 +4301,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
               name: true,
               icon: true,
               domain: true,
+              priority: true,
             },
           },
         },
@@ -4510,27 +4557,96 @@ export async function getPostDetailByImageId({ imageId }: { imageId: number }) {
 export async function setVideoThumbnail({
   imageId,
   frame,
+  customThumbnail,
   userId,
   isModerator,
+  postId,
 }: SetVideoThumbnailInput & { userId: number; isModerator?: boolean }) {
-  const image = await dbRead.image.findUnique({
+  const db = await getDbWithoutLag('postImages', postId);
+  const image = await db.image.findUnique({
     where: { id: imageId, userId: !isModerator ? userId : undefined },
-    select: { id: true, type: true, metadata: true },
+    select: { id: true, type: true, metadata: true, userId: true },
   });
   if (!image)
     throw throwAuthorizationError("You don't have permission to set the thumbnail for this video.");
   if (image.type !== MediaType.video) throw throwBadRequestError('This is not a video.');
 
+  let thumbnailId = customThumbnail?.id;
+  if (customThumbnail) {
+    const thumbnail = await createImage({
+      ...customThumbnail,
+      userId: image.userId,
+      metadata: { parentId: image.id },
+    });
+    thumbnailId = thumbnail.id;
+  }
+
   const videoMetadata = image.metadata as VideoMetadata;
   const updated = await dbWrite.image.update({
     where: { id: imageId },
-    data: { metadata: { ...videoMetadata, thumbnailFrame: frame } },
+    data: { metadata: { ...videoMetadata, thumbnailFrame: frame, thumbnailId } },
   });
 
-  await queueImageSearchIndexUpdate({
-    ids: [imageId],
-    action: SearchIndexUpdateQueueAction.Update,
-  });
+  // Clear up the thumbnail cache
+  await Promise.all([
+    preventReplicationLag('postImages', postId),
+    thumbnailCache.bust(imageId),
+    queueImageSearchIndexUpdate({
+      ids: [imageId],
+      action: SearchIndexUpdateQueueAction.Update,
+    }),
+  ]);
 
   return updated;
+}
+
+export async function updateImageMinor({ id, minor }: UpdateImageMinorInput) {
+  const image = await dbWrite.image.update({
+    where: { id },
+    data: { minor },
+  });
+
+  // Remove it from search index if minor is true
+  await queueImageSearchIndexUpdate({
+    ids: [id],
+    action: minor ? SearchIndexUpdateQueueAction.Delete : SearchIndexUpdateQueueAction.Update,
+  });
+
+  return image;
+}
+
+export async function createImageResources({
+  imageId,
+  tx,
+}: {
+  imageId: number;
+  tx?: Prisma.TransactionClient;
+}) {
+  const dbClient = tx ?? dbWrite;
+  // Read the resources based on complex metadata and hash matches
+  const resources = await dbClient.$queryRaw<
+    (ImageResource & { modelversionid?: number })[]
+  >`SELECT * FROM get_image_resources(${imageId}::int)`;
+  if (!resources.length) return null;
+
+  const sql: Prisma.Sql[] = resources.map(
+    (r) => Prisma.sql`
+        (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
+      r.detected
+    })
+      `
+  );
+
+  // Write the resources to the image
+  await dbClient.$executeRaw`
+    INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
+    VALUES ${Prisma.join(sql, ',')}
+    ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
+    SET
+      detected = excluded.detected,
+      hash = excluded.hash,
+      strength = excluded.strength;
+  `;
+
+  return resources;
 }

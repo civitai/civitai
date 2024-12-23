@@ -17,7 +17,7 @@ import {
 import { Flags } from '~/shared/utils';
 import { useImageStore } from '~/store/image.store';
 import classes from './ImageGuard.module.scss';
-import cx from 'clsx';
+import clsx from 'clsx';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type ImageProps = {
@@ -29,7 +29,7 @@ type ImageProps = {
 };
 
 type ConnectId = string | number;
-type ConnectType =
+export type ConnectType =
   | 'model'
   | 'modelVersion'
   | 'review'
@@ -164,7 +164,7 @@ function ImageGuardContentInner({
       {(inView === undefined || inView) && !show && explain && (
         <BlurToggle>
           {(toggle) => (
-            <div className="absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col items-center gap-2 text-white">
+            <div className="pointer-events-none absolute left-1/2 top-1/2 z-20 flex -translate-x-1/2 -translate-y-[60%] flex-col items-center gap-2 text-white">
               <Text size="sm" className="shadow-black/50 text-shadow-sm">
                 This image is rated
               </Text>
@@ -177,6 +177,7 @@ function ImageGuardContentInner({
                 {browsingLevelLabels[browsingLevel as NsfwLevel]}
               </Badge>
               <Button
+                className="pointer-events-auto"
                 onClick={toggle}
                 radius="xl"
                 sx={(theme) => ({
@@ -222,7 +223,7 @@ export function BrowsingLevelBadge({
 } & BadgeProps & { onClick?: () => void; sfwClassName?: string; nsfwClassName?: string }) {
   const nsfw = Flags.hasFlag(nsfwBrowsingLevelsFlag, browsingLevel ?? NsfwLevel.XXX);
 
-  const badgeClass = cx(className, {
+  const badgeClass = clsx(className, {
     [sfwClassName ? sfwClassName : '']: !nsfw,
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
@@ -233,7 +234,7 @@ export function BrowsingLevelBadge({
       className={badgeClass}
       {...badgeProps}
     >
-      {browsingLevelLabels[browsingLevel as NsfwLevel]}
+      {browsingLevelLabels[browsingLevel as NsfwLevel] ?? '?'}
     </Badge>
   );
 }
@@ -265,7 +266,7 @@ function BlurToggle({
 
   if (!browsingLevel) return null;
 
-  const badgeClass = cx(className, {
+  const badgeClass = clsx(className, {
     [sfwClassName ? sfwClassName : '']: !nsfw,
     [nsfwClassName ? nsfwClassName : '']: nsfw,
   });
@@ -297,7 +298,7 @@ function BlurToggle({
     <Badge
       component="button"
       classNames={{ ...classNames, root: getBrowsingLevelClass(classes.root, browsingLevel) }}
-      className={cx(badgeClass, 'cursor-pointer')}
+      className={clsx(badgeClass, 'pointer-events-auto cursor-pointer')}
       {...badgeProps}
       onClick={toggle}
     >
@@ -378,5 +379,5 @@ export function ImageGuardContent({
 }
 
 function getBrowsingLevelClass(className?: string, browsingLevel?: number) {
-  return cx(className, { [classes.red]: !getIsSafeBrowsingLevel(browsingLevel ?? 0) });
+  return clsx(className, { [classes.red]: !getIsSafeBrowsingLevel(browsingLevel ?? 0) });
 }

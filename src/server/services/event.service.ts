@@ -1,7 +1,8 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { profilePictureCache, userBasicCache } from '~/server/redis/caches';
+import { cosmeticCache, profilePictureCache, userBasicCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 import { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
@@ -32,30 +33,39 @@ export function getTeamScoreHistory(input: TeamScoreHistoryInput) {
 }
 
 type EventCosmetic = Awaited<ReturnType<typeof cosmeticStatus>> & {
-  cosmetic: Awaited<ReturnType<typeof getCosmeticDetail>>;
+  cosmetic: Awaited<ReturnType<typeof cosmeticCache.fetch>>[number] | null;
 };
+const noCosmetic = {
+  available: false,
+  obtained: false,
+  equipped: false,
+  data: {},
+  cosmetic: null,
+} as EventCosmetic;
 export async function getEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
+    const key = `packed:event:${event}:cosmetics`;
     // TODO optimize, let's cache this to avoid multiple queries
-    const cacheJson = await redis.packed.hGet<EventCosmetic>(
-      `packed:event:${event}:cosmetic`,
-      userId.toString()
-    );
-    if (cacheJson) return cacheJson;
+    let userStatus = await redis.packed.hGet<
+      Awaited<ReturnType<typeof cosmeticStatus>> & { cosmeticId: number }
+    >(key, userId.toString());
+    if (!userStatus) {
+      const { cosmeticId } = await eventEngine.getUserData({ event, userId });
+      if (!cosmeticId) return noCosmetic;
 
-    const { cosmeticId } = await eventEngine.getUserData({ event, userId });
-    if (!cosmeticId)
-      return { available: false, obtained: false, equipped: false, data: {}, cosmetic: null };
+      const status = await cosmeticStatus({ id: cosmeticId, userId });
+      userStatus = { ...status, cosmeticId };
+      await Promise.all([
+        redis.packed.hSet(key, userId.toString(), userStatus),
+        redis.hExpire(key, userId.toString(), CacheTTL.hour),
+      ]);
+    }
 
-    // TODO.holiday optimization - We should probably store the cosmetic separately so we don't repeat it over and over in the cache
-    const cosmetic = await getCosmeticDetail({ id: cosmeticId });
-    const status = await cosmeticStatus({ id: cosmeticId, userId });
-    // Get the userCosmetic record so we can display the data
+    const { cosmeticId } = userStatus;
+    const cosmetic = (await cosmeticCache.fetch(cosmeticId))[cosmeticId];
+    if (!cosmetic) return noCosmetic;
 
-    const result: EventCosmetic = { ...status, cosmetic };
-    await redis.packed.hSet(`packed:event:${event}:cosmetic`, userId.toString(), result);
-
-    return result;
+    return { ...userStatus, cosmetic } as EventCosmetic;
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
   }
@@ -78,25 +88,24 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
     if (!cosmetic) throw new Error("That cosmetic doesn't exist");
 
     // Update database
-    await dbWrite.$executeRaw`
+    const [{ data }] = (await dbWrite.$queryRaw<{ data: any }[]>`
       INSERT INTO "UserCosmetic" ("userId", "cosmeticId", "claimKey", "obtainedAt")
       VALUES (${userId}, ${cosmeticId}, ${event}, NOW())
       ON CONFLICT ("userId", "cosmeticId", "claimKey") DO UPDATE SET "equippedAt" = NOW()
-    `;
-
-    const { data } = (await dbWrite.userCosmetic.findUnique({
-      where: { userId_cosmeticId_claimKey: { userId, cosmeticId, claimKey: 'claimed' } },
-      select: { data: true },
-    })) ?? { data: {} };
+      RETURNING data;
+    `) ?? [{ data: {} }];
 
     // Update cache
-    await redis.packed.hSet(`packed:event:${event}:cosmetic`, userId.toString(), {
-      equipped: true,
-      available: true,
-      obtained: true,
-      data,
-      cosmetic,
-    });
+    await Promise.all([
+      redis.packed.hSet(`packed:event:${event}:cosmetics`, userId.toString(), {
+        equipped: true,
+        available: true,
+        obtained: true,
+        data,
+        cosmeticId,
+      }),
+      redis.hExpire(`packed:event:${event}:cosmetics`, userId.toString(), CacheTTL.hour),
+    ]);
 
     // Queue adding to role
     await eventEngine.queueAddRole({ event, team, userId });

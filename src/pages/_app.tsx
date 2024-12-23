@@ -11,7 +11,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
 import { registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
-import { getSession, SessionProvider } from 'next-auth/react';
+import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -34,7 +34,6 @@ import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessi
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
-import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
@@ -63,7 +62,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { ModErrorBoundary } from '~/components/ErrorBoundary/ModErrorBoundary';
+import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -140,7 +139,7 @@ function MyApp(props: CustomAppProps) {
                 <GoogleAnalytics />
                 <AccountProvider>
                   <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                    <ModErrorBoundary>
+                    <ErrorBoundary>
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>
                           <SignalProvider>
@@ -156,21 +155,19 @@ function MyApp(props: CustomAppProps) {
                                             zIndex={9999}
                                           >
                                             <BrowserRouterProvider>
-                                              <GenerationProvider>
-                                                <IntersectionObserverProvider>
-                                                  <BaseLayout>
-                                                    {isProd && <TrackPageView />}
-                                                    <ChatContextProvider>
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </ChatContextProvider>
-                                                  </BaseLayout>
-                                                </IntersectionObserverProvider>
-                                              </GenerationProvider>
+                                              <IntersectionObserverProvider>
+                                                <BaseLayout>
+                                                  {isProd && <TrackPageView />}
+                                                  <ChatContextProvider>
+                                                    <CustomModalsProvider>
+                                                      {getLayout(<Component {...pageProps} />)}
+                                                      {/* <StripeSetupSuccessProvider /> */}
+                                                      <DialogProvider />
+                                                      <RoutedDialogProvider />
+                                                    </CustomModalsProvider>
+                                                  </ChatContextProvider>
+                                                </BaseLayout>
+                                              </IntersectionObserverProvider>
                                             </BrowserRouterProvider>
                                           </NotificationsProvider>
                                         </CivitaiLinkProvider>
@@ -183,7 +180,7 @@ function MyApp(props: CustomAppProps) {
                           </SignalProvider>
                         </BrowsingLevelProvider>
                       </BrowserSettingsProvider>
-                    </ModErrorBoundary>
+                    </ErrorBoundary>
                   </CivitaiSessionProvider>
                 </AccountProvider>
               </FeatureFlagsProvider>
@@ -211,15 +208,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const parsedCookies = parseCookies(cookies);
 
   const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
-  const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  // const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
+  // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+  // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+  const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
 
   // Pass this via the request so we can use it in SSR
-  if (session) {
-    (appContext.ctx.req as any)['session'] = session;
-    // (appContext.ctx.req as any)['flags'] = flags;
-  }
+  // if (session) {
+  //   (appContext.ctx.req as any)['session'] = session;
+  //   // (appContext.ctx.req as any)['flags'] = flags;
+  // }
 
   return {
     pageProps: {
@@ -227,7 +224,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       colorScheme,
       cookies: parsedCookies,
       // cookieKeys: Object.keys(cookies),
-      session,
+      // session,
       flags,
       seed: Date.now(),
       hasAuthCookie,

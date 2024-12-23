@@ -2,7 +2,6 @@ import { PrismaClient } from '@prisma/client';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
-import { userCosmeticCache } from '~/server/redis/caches';
 import { redis } from '~/server/redis/client';
 
 // Disable pod memory keeping for now... We might not need it.
@@ -46,7 +45,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
   }
   async function clearKeys() {
     await redis.del(name);
-    await redis.del(`packed:event:${name}:cosmetic`);
+    await redis.del(`packed:event:${name}:cosmetics`);
   }
   async function getUserTeam(userId: number) {
     const manualAssignment = await getManualAssignments(name);
@@ -64,7 +63,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     return getTeamCosmetic(await getUserTeam(userId));
   }
   async function clearUserCosmeticCache(userId: number) {
-    await redis.hDel(`packed:event:${name}:cosmetic`, userId.toString());
+    await redis.hDel(`packed:event:${name}:cosmetics`, userId.toString());
   }
   async function getRewards() {
     const rewards = await dbWrite.cosmetic.findMany({
