@@ -264,9 +264,10 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
         },
         version: {
           ...restVersion,
-          settings: restVersion.settings as RecommendedSettingsSchema,
+          metrics: restVersion.metrics[0],
           hashes: restVersion.hashes.map((hash) => hash.hash),
-          hashData: restVersion.hashes.map((hash) => ({ ...hash, type: hash.hashType })),
+          hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
+          settings: restVersion.settings as RecommendedSettingsSchema,
         },
         versions: modelVersions.map(
           ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({

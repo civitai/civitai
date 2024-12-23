@@ -632,7 +632,7 @@ function ResourceSelectCard({
   const currentUser = useCurrentUser();
 
   const image = data.images[0];
-  const { classes, cx } = useCardStyles({
+  const { classes, cx, theme } = useCardStyles({
     aspectRatio: image && image.width && image.height ? image.width / image.height : 1,
   });
 
@@ -773,7 +773,7 @@ function ResourceSelectCard({
           )}
         </Group>
       ),
-      visible: !!selectedVersion.clipSkip || !!selectedVersion.settings?.strength,
+      visible: isDefined(selectedVersion.clipSkip) || isDefined(selectedVersion.settings?.strength),
     },
     {
       label: 'Trigger Words',
@@ -782,7 +782,7 @@ function ResourceSelectCard({
     },
     {
       label: 'Hash',
-      value: <ModelHash hashes={selectedVersion.hashData ?? []} />,
+      value: <ModelHash hashes={selectedVersion.hashData ?? []} width={80} />,
       visible: !!(selectedVersion.hashData ?? []).length,
     },
     {
@@ -896,7 +896,7 @@ function ResourceSelectCard({
                             color={isFavorite ? 'green' : 'gray'}
                             px={4}
                             size="xs"
-                            variant="light"
+                            variant={theme.colorScheme === 'light' ? undefined : 'light'}
                           >
                             <ThumbsUpIcon color="#fff" filled={isFavorite} size={20} />
                           </Button>
@@ -913,7 +913,7 @@ function ResourceSelectCard({
                 <DescriptionTable
                   title="Model Details"
                   items={modelDetails}
-                  labelWidth="33%"
+                  labelWidth="80px"
                   withBorder
                   fontSize="xs"
                 />
