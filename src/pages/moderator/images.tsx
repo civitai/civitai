@@ -124,7 +124,7 @@ export default function Images() {
   const deselectAll = useStore((state) => state.deselectAll);
   const [type, setType] = useState<ImageReviewType>('minor');
   const [activeTag, setActiveNameTag] = useState<number | null>(null);
-  const { csamReports } = useFeatureFlags();
+  const { csamReports, appealReports } = useFeatureFlags();
 
   const viewingReported = type === 'reported';
 
@@ -152,11 +152,16 @@ export default function Images() {
   useEffect(deselectAll, [type, deselectAll]);
 
   const segments = Object.entries(ImageReviewType)
+    // filter out csam and appeal if not enabled
+    .filter(([key]) => {
+      if (key === 'csam') return csamReports;
+      if (key === 'appeal') return appealReports;
+      return true;
+    })
     .map(([key, value]) => ({
       value: key,
       label: value,
-    }))
-    .filter((x) => (!csamReports ? x.value !== 'csam' : true));
+    }));
 
   return (
     <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
