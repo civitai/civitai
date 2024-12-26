@@ -30,15 +30,16 @@ export const AwardBountyAction = ({
     isLoading: boolean;
   }) => React.ReactElement;
 }) => {
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const currency = getBountyCurrency(bounty);
   const benefactorItem = !currentUser
     ? null
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
-  const { data: bountyEntry } = trpc.bountyEntry.getById.useQuery({
-    id: bountyEntryId,
-  });
+  const { data: bountyEntry } = trpc.bountyEntry.getById.useQuery(
+    { id: bountyEntryId },
+    { enabled: !!benefactorItem && !benefactorItem.awardedToId }
+  );
 
   const { isLoading: isAwardingBountyEntry, mutate: awardBountyEntryMutation } =
     trpc.bountyEntry.award.useMutation({
@@ -83,7 +84,7 @@ export const AwardBountyAction = ({
                 return entries;
               }
 
-              return entries.map((entry) => {
+              return entries.items.map((entry) => {
                 if (entry.id === id) {
                   return {
                     ...entry,

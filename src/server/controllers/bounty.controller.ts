@@ -195,6 +195,7 @@ export const getBountyEntriesHandler = async ({
   ctx: Context;
 }) => {
   try {
+    const limit = input.limit ?? 20;
     const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
       (u) => u.id
     );
@@ -203,6 +204,8 @@ export const getBountyEntriesHandler = async ({
         bountyId: input.id,
         userId: input.owned ? ctx.user?.id : undefined,
         excludedUserIds: blockedByUsers,
+        cursor: input.cursor,
+        limit,
       },
       select: {
         id: true,
@@ -213,7 +216,6 @@ export const getBountyEntriesHandler = async ({
         reactions: {
           select: getReactionsSelectV2,
         },
-
         stats: {
           select: {
             likeCountAllTime: true,
@@ -228,6 +230,12 @@ export const getBountyEntriesHandler = async ({
       },
       sort: 'benefactorCount',
     });
+
+    let nextCursor: number | undefined;
+    if (entries.length > input.limit) {
+      const nextItem = entries.pop();
+      nextCursor = nextItem?.id;
+    }
 
     const images = await getImagesByEntity({
       ids: entries.map((entry) => entry.id),
@@ -249,41 +257,44 @@ export const getBountyEntriesHandler = async ({
       currency: Currency.BUZZ,
     });
 
-    return entries
-      .map((entry) => {
-        const user = entry.user;
-        const awardedUnitAmountTotal = Number(
-          awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0
-        );
-        if (!user) return null;
-        return {
-          ...entry,
-          user,
-          images: images
-            .filter((i) => i.entityId === entry.id)
-            .map((i) => ({
-              ...i,
-              tagIds: i.tags?.map((x) => x.id),
-              metadata: i.metadata as ImageMetaProps,
-            })),
-          // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
-          fileUnlockAmount: Math.max(
-            0,
-            files.reduce(
-              (acc, curr) =>
-                Math.max(
-                  acc,
-                  curr.metadata ? (curr.metadata as BountyEntryFileMeta)?.unlockAmount ?? 0 : 0
-                ),
-              0
-            ) - awardedUnitAmountTotal
-          ),
-          fileCount: files.length,
+    return {
+      nextCursor,
+      items: entries
+        .map((entry) => {
+          const user = entry.user;
+          const awardedUnitAmountTotal = Number(
+            awardedTotal.find((a) => a.id === entry.id)?.awardedUnitAmount ?? 0
+          );
+          if (!user) return null;
+          return {
+            ...entry,
+            user,
+            images: images
+              .filter((i) => i.entityId === entry.id)
+              .map((i) => ({
+                ...i,
+                tagIds: i.tags?.map((x) => x.id),
+                metadata: i.metadata as ImageMetaProps,
+              })),
+            // Returns the amount of buzz required to unlock ALL files accounting for the amount of buzz the entry has earned
+            fileUnlockAmount: Math.max(
+              0,
+              files.reduce(
+                (acc, curr) =>
+                  Math.max(
+                    acc,
+                    curr.metadata ? (curr.metadata as BountyEntryFileMeta)?.unlockAmount ?? 0 : 0
+                  ),
+                0
+              ) - awardedUnitAmountTotal
+            ),
+            fileCount: files.length,
 
-          awardedUnitAmountTotal,
-        };
-      })
-      .filter(isDefined);
+            awardedUnitAmountTotal,
+          };
+        })
+        .filter(isDefined),
+    };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

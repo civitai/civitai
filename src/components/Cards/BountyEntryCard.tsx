@@ -167,6 +167,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             entityId={data.id}
             entityType="bountyEntry"
             reactions={reactions}
+            className="!justify-start"
             metrics={{
               likeCount: stats?.likeCountAllTime,
               dislikeCount: stats?.dislikeCountAllTime,

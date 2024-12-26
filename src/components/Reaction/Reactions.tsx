@@ -40,7 +40,7 @@ const availableReactions: Partial<Record<ToggleReactionInput['entityType'], Revi
   clubPost: ['Like', 'Heart', 'Laugh', 'Cry'],
   commentOld: ['Like', 'Heart', 'Laugh', 'Cry'],
   comment: ['Like', 'Heart', 'Laugh', 'Cry'],
-  article: ['Like', 'Heart', 'Laugh', 'Cry']
+  article: ['Like', 'Heart', 'Laugh', 'Cry'],
 };
 
 export function PostReactions({
