@@ -64,18 +64,18 @@ export default WebhookEndpoint(async (req, res) => {
     //   type: 'bountyEntries',
     //   fn: migrateBountyEntries,
     // },
-    // {
-    //   type: 'modelVersions',
-    //   fn: migrateModelVersions,
-    // },
-    // {
-    //   type: 'models',
-    //   fn: migrateModels,
-    // },
     {
-      type: 'collections',
-      fn: migrateCollections,
+      type: 'modelVersions',
+      fn: migrateModelVersions,
     },
+    {
+      type: 'models',
+      fn: migrateModels,
+    },
+    // {
+    //   type: 'collections',
+    //   fn: migrateCollections,
+    // },
   ];
 
   const migrations = params.type

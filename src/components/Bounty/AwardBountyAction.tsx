@@ -6,7 +6,7 @@ import React from 'react';
 import { trpc } from '~/utils/trpc';
 import produce from 'immer';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { BountyGetById } from '~/types/router';
+import { BountyEntryGetById, BountyGetById } from '~/types/router';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getBountyCurrency } from '~/components/Bounty/bounty.utils';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
@@ -15,12 +15,12 @@ import { useTrackEvent } from '../TrackView/track.utils';
 
 export const AwardBountyAction = ({
   fileUnlockAmount,
-  bountyEntryId,
+  bountyEntry,
   bounty,
   children,
 }: {
   fileUnlockAmount: number;
-  bountyEntryId: number;
+  bountyEntry: Pick<BountyEntryGetById, 'id' | 'createdAt' | 'user'>;
   bounty: BountyGetById;
   children: ({
     onClick,
@@ -36,10 +36,6 @@ export const AwardBountyAction = ({
   const benefactorItem = !currentUser
     ? null
     : bounty.benefactors.find((b) => b.user.id === currentUser.id);
-  const { data: bountyEntry } = trpc.bountyEntry.getById.useQuery(
-    { id: bountyEntryId },
-    { enabled: !!benefactorItem && !benefactorItem.awardedToId }
-  );
 
   const { isLoading: isAwardingBountyEntry, mutate: awardBountyEntryMutation } =
     trpc.bountyEntry.award.useMutation({
@@ -50,7 +46,7 @@ export const AwardBountyAction = ({
 
         const prevEntries = queryUtils.bounty.getEntries.getData({ id: bounty.id });
         const prevBounty = queryUtils.bounty.getById.getData({ id: bounty.id });
-        const prevEntry = queryUtils.bountyEntry.getById.getData({ id: bountyEntryId });
+        const prevEntry = queryUtils.bountyEntry.getById.getData({ id: bountyEntry.id });
 
         const benefactorItem = bounty.benefactors.find((b) => b.user.id === currentUser.id);
 
@@ -127,7 +123,7 @@ export const AwardBountyAction = ({
           message: `Your selected entry has been awarded!`,
         });
 
-        await queryUtils.bountyEntry.getFiles.invalidate({ id: bountyEntryId });
+        await queryUtils.bountyEntry.getFiles.invalidate({ id: bountyEntry.id });
         await queryUtils.bounty.getById.invalidate({ id: bounty.id });
         await queryUtils.bounty.getInfinite.invalidate();
       },
@@ -146,7 +142,7 @@ export const AwardBountyAction = ({
         }
 
         if (context?.prevEntry) {
-          queryUtils.bountyEntry.getById.setData({ id: bountyEntryId }, context.prevEntry);
+          queryUtils.bountyEntry.getById.setData({ id: bountyEntry.id }, context.prevEntry);
         }
       },
     });
@@ -203,7 +199,7 @@ export const AwardBountyAction = ({
       labels: { confirm: 'Award this entry', cancel: 'No, go back' },
       confirmProps: { color: 'yellow.7', rightIcon: <IconAward size={20} /> },
       onConfirm: () => {
-        awardBountyEntryMutation({ id: bountyEntryId });
+        awardBountyEntryMutation({ id: bountyEntry.id });
         trackAction({ type: 'AwardBounty_Confirm' }).catch(() => undefined);
       },
     });

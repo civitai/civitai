@@ -977,7 +977,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
                 <>
                   <AwardBountyAction
                     bounty={bounty}
-                    bountyEntryId={entry.id}
+                    bountyEntry={entry}
                     fileUnlockAmount={entry.fileUnlockAmount}
                   >
                     {({ onClick }) => (

@@ -347,7 +347,7 @@ export default function BountyEntryDetailsPage({
       )}
       <AwardBountyAction
         bounty={bounty}
-        bountyEntryId={bountyEntry.id || entryId}
+        bountyEntry={bountyEntry}
         fileUnlockAmount={bountyEntry.fileUnlockAmount}
       >
         {({ onClick, isLoading }) => (
