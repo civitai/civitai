@@ -59,6 +59,7 @@ export function TagsInput({
   );
 
   const handleClose = useCallback(() => {
+    console.log('blurring');
     close();
     setSearch('');
   }, [close]);
