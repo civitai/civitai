@@ -64,7 +64,7 @@ function AdUnitContent({
     };
   }, []);
 
-  return id ? <div className="notranslate flex items-center justify-center" id={id}></div> : null;
+  return id ? <div className="flex items-center justify-center" id={id}></div> : null;
 }
 
 function SupportUsImage({ sizes }: { sizes?: AdSize[] }) {
