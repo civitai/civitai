@@ -162,7 +162,7 @@ const handleJobQueueCleanIfEmpty = createJob(
 // A more lightweight job to update nsfw levels for collections which runs once a day
 const updateCollectionNsfwLevelsJob = createJob(
   'update-collection-nsfw-levels',
-  '0 0 * * *',
+  '*/5 * * * *',
   async () => {
     const now = new Date();
     const jobQueue = await dbRead.jobQueue.findMany({
