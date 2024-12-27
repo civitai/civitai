@@ -43,6 +43,7 @@ import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuIte
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ImageModerationSchema } from '~/server/schema/image.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { imageStore, useImageStore } from '~/store/image.store';
@@ -283,7 +284,7 @@ function NeedsReviewBadge({
       ids: [imageId],
       needsReview: action === 'accept' ? null : undefined,
       reviewAction: action !== 'accept' ? action : undefined,
-      reviewType: 'minor',
+      reviewType: (needsReview as ImageModerationSchema['reviewType']) ?? 'blocked',
     });
     imageStore.setImage(imageId, { needsReview: null, ingestion: 'Scanned' });
   };

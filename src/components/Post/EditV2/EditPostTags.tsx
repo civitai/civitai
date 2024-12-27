@@ -127,15 +127,6 @@ function TagPicker() {
   const [dropdown, setDropdown] = useState<HTMLDivElement | null>(null);
   const [control, setControl] = useState<HTMLDivElement | null>(null);
 
-  useClickOutside(
-    () => {
-      setQuery('');
-      setEditing(false);
-    },
-    null,
-    [control, dropdown]
-  );
-
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isFetching } = trpc.post.getTags.useQuery(
     { query: debounced, nsfwLevel: browsingLevel },
@@ -194,6 +185,11 @@ function TagPicker() {
     });
   }, [filteredData?.length]);
 
+  const handleClose = useCallback(() => {
+    setEditing(false);
+    setQuery('');
+  }, []);
+
   const handleDown = useCallback(() => {
     if (!filteredData?.length) return;
     setActive((active) => {
@@ -213,18 +209,21 @@ function TagPicker() {
       const exists = tags?.find((x) => x.name === selected.name);
       if (!exists) handleAddTag(selected);
     }
-    setEditing(false);
-    setQuery('');
-  }, [active, filteredData, handleAddTag, query, tags]);
+    handleClose();
+  }, [active, filteredData, handleAddTag, handleClose, query, tags]);
 
-  const handleClick = (index: number) => {
-    if (!filteredData?.length) return;
-    const selected = filteredData[index];
-    const exists = tags?.find((x) => x.name === selected.name);
-    if (!exists) handleAddTag(selected);
-    setEditing(false);
-    setQuery('');
-  };
+  const handleClick = useCallback(
+    (index: number) => {
+      if (!filteredData?.length) return;
+      const selected = filteredData[index];
+      const exists = tags?.find((x) => x.name === selected.name);
+      if (!exists) handleAddTag(selected);
+      handleClose();
+    },
+    [filteredData, handleAddTag, handleClose, tags]
+  );
+
+  useClickOutside(handleClose, null, autosuggest ? [control, dropdown] : [control]);
 
   const target = useMemo(
     () => (
@@ -246,8 +245,8 @@ function TagPicker() {
             ref={setControl}
             variant="unstyled"
             value={query}
-            autoFocus
             onChange={(e) => setQuery(e.target.value)}
+            onBlur={handleClose}
             styles={{
               input: {
                 fontSize: 16,
@@ -264,11 +263,12 @@ function TagPicker() {
               ['ArrowUp', handleUp],
               ['ArrowDown', handleDown],
             ])}
+            autoFocus
           />
         )}
       </Alert>
     ),
-    [editing, handleDown, handleEnter, handleUp, query, theme.colorScheme]
+    [editing, handleClose, handleDown, handleEnter, handleUp, query, theme.colorScheme]
   );
 
   if (!autosuggest) return target;
