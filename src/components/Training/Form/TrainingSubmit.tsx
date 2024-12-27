@@ -17,14 +17,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import {
-  IconAlertTriangle,
-  IconConfetti,
-  IconCopy,
-  IconExclamationMark,
-  IconPlus,
-  IconX,
-} from '@tabler/icons-react';
+import { IconAlertTriangle, IconConfetti, IconCopy, IconPlus, IconX } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
@@ -458,16 +451,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   return (
     <Stack>
-      {!status.available && (
-        <AlertWithIcon
-          icon={<IconExclamationMark size={18} />}
-          iconColor="red"
-          color="red"
-          size="sm"
-        >
-          {status.message ?? 'Training is currently disabled.'}
-        </AlertWithIcon>
-      )}
       {/* {discountInfo.amt !== 0 && ( */}
       {discountEndDate.isAfter(dayjs()) && (
         <DismissibleAlert

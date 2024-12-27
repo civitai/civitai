@@ -21,27 +21,25 @@ import {
 } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
-import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   IconAlertCircle,
   IconCheck,
   IconCircleCheck,
   IconExclamationCircle,
-  IconExclamationMark,
   IconExternalLink,
   IconFileDescription,
   IconSend,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import { TrainStatusMessage } from '~/components/Training/Wizard/TrainWizard';
 import {
   createModelFileDownloadUrl,
   getModelTrainingWizardUrl,
@@ -51,6 +49,7 @@ import {
   TrainingDetailsObj,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { MyTrainingModelGetAll } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
@@ -155,7 +154,6 @@ export default function UserTrainingModels() {
   const [modalData, setModalData] = useState<ModalData>({});
   const [opened, { open, close }] = useDisclosure(false);
 
-  const status = useTrainingServiceStatus();
   const { data, isLoading } = trpc.model.getMyTrainingModels.useQuery({ page, limit: modelsLimit });
   const { items, ...pagination } = data || {
     items: [],
@@ -236,16 +234,7 @@ export default function UserTrainingModels() {
 
   return (
     <Stack>
-      {!status.available && (
-        <AlertWithIcon
-          icon={<IconExclamationMark size={18} />}
-          iconColor="red"
-          color="red"
-          size="sm"
-        >
-          {status.message ?? 'Training is currently disabled.'}
-        </AlertWithIcon>
-      )}
+      <TrainStatusMessage />
       <AlertWithIcon
         icon={<IconExclamationCircle size={16} />}
         iconColor="yellow"

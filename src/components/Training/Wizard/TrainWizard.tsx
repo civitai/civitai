@@ -1,18 +1,48 @@
 import { Container, Group, Stack, Stepper, Title } from '@mantine/core';
+import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { TrainingFormBasic } from '~/components/Training/Form/TrainingBasicInfo';
 import { basePath } from '~/components/Training/Form/TrainingCommon';
 import { TrainingFormImages } from '~/components/Training/Form/TrainingImages';
 import { TrainingFormSubmit } from '~/components/Training/Form/TrainingSubmit';
+import { useTrainingServiceStatus } from '~/components/Training/training.utils';
+import { hashify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 
 type WizardState = {
   step: number;
+};
+
+export const TrainStatusMessage = () => {
+  const status = useTrainingServiceStatus();
+  const messageHash = useMemo(
+    () => (status.message ? hashify(status.message).toString() : null),
+    [status.message]
+  );
+
+  return !status.available ? (
+    <AlertWithIcon color="yellow" icon={<IconAlertTriangle size={20} />} iconColor="yellow">
+      <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
+        {status.message ?? 'Training is currently disabled.'}
+      </CustomMarkdown>
+    </AlertWithIcon>
+  ) : status.available && status.message && messageHash ? (
+    <DismissibleAlert color="yellow" title="Status Alert" id={messageHash}>
+      <CustomMarkdown allowedElements={['a', 'strong']} unwrapDisallowed>
+        {status.message}
+      </CustomMarkdown>
+    </DismissibleAlert>
+  ) : (
+    <></>
+  );
 };
 
 export default function TrainWizard() {
@@ -66,6 +96,7 @@ export default function TrainWizard() {
               contentSlug={['feature-introduction', 'model-training']}
             />
           </Group>
+          <TrainStatusMessage />
           <Stepper
             active={state.step - 1}
             onStepClick={(step) =>
