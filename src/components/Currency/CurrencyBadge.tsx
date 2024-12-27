@@ -110,16 +110,13 @@ export function CurrencyBadge({
             fill={currency === Currency.BUZZ ? 'currentColor' : undefined}
             {...iconProps}
           />
-          {loading && <Loader size="xs" variant="dots" color={colorString} />}
-          {!loading && (
+          {loading ? (
+            <Loader size="xs" variant="dots" color={colorString} />
+          ) : (
             <>
-              {formatter ? (
-                formatter(unitAmount)
-              ) : (
-                <>
-                  {value || 0} {displayCurrency ? currency : ''}
-                </>
-              )}
+              {formatter
+                ? formatter(unitAmount)
+                : `${value || 0} ${displayCurrency ? currency : ''}`}
               {children}
             </>
           )}
