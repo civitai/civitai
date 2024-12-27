@@ -220,7 +220,7 @@ export function ChipRefinementList({ title, ...props }: RefinementListProps & { 
                 checked={item.isRefined}
                 onClick={() => refine(item.value)}
               >
-                {getDisplayName(item.label, { splitNumbers: false })}
+                <span>{getDisplayName(item.label, { splitNumbers: false })}</span>
               </Chip>
             ))}
           </Group>
