@@ -17,10 +17,18 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const currentChallenge = await getCurrentChallenge();
 
   if (currentChallenge) {
-    await endChallenge(currentChallenge);
-    await dbWrite.$executeRaw`
-      DELETE FROM article WHERE id = ${currentChallenge.articleId};
+    const [{ status }] = await dbWrite.$queryRaw<{ status: string }[]>`
+      SELECT
+        (metadata->>'status') as status
+      FROM "Article"
+      WHERE id = ${currentChallenge.articleId}
     `;
+    if (status && status !== 'complete') {
+      await endChallenge(currentChallenge);
+      await dbWrite.$executeRaw`
+        DELETE FROM "Article" WHERE id = ${currentChallenge.articleId}
+      `;
+    }
   }
 
   try {
