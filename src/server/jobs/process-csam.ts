@@ -7,7 +7,7 @@ import {
   getCsamsToReport,
   processCsamReport,
 } from '~/server/services/csam.service';
-import { logToDb } from '~/utils/logging';
+import { logToAxiom } from '~/server/logging/client';
 
 const sendCsamReportsJob = createJob(
   'send-csam-reports',
@@ -20,7 +20,12 @@ const sendCsamReportsJob = createJob(
         await processCsamReport(report);
       } catch (e: any) {
         if (isDev) console.log(e);
-        logToDb('send-csam-reports', { message: e.message, error: e });
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          subType: 'send-report',
+          message: e.message,
+        });
       }
     }
   },
@@ -37,7 +42,12 @@ const archiveCsamReportDataJob = createJob(
       try {
         await archiveCsamDataForReport(report);
       } catch (e: any) {
-        logToDb('archive-csam-reports', { message: e.message, error: e });
+        logToAxiom({
+          name: 'csam-report',
+          type: 'error',
+          subType: 'archive-data',
+          message: e.message,
+        });
       }
     }
   },
