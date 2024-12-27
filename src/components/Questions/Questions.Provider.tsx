@@ -103,7 +103,7 @@ function QuestionsFilter() {
               checked={status === value}
               onChange={(checked) => setStatus({ status: checked ? value : undefined })}
             >
-              {splitUppercase(value)}
+              <span>{splitUppercase(value)}</span>
             </Chip>
           ))}
         </Stack>

@@ -66,7 +66,7 @@ const { openModal, Modal } = createContextModal<{ modelId: number }>({
                     radius="xs"
                     value={String(tag.id)}
                   >
-                    {tag.name}
+                    <span>{tag.name}</span>
                   </Chip>
                 );
               })}

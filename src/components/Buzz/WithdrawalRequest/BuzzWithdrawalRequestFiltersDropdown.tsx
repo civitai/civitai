@@ -100,7 +100,7 @@ export function BuzzWithdrawalRequestFilterDropdown({
         >
           {Object.values(BuzzWithdrawalRequestStatus).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
+              <span>{getDisplayName(type)}</span>
             </Chip>
           ))}
         </Chip.Group>

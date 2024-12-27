@@ -105,7 +105,7 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
         >
           {toolTypes.map((tool, index) => (
             <Chip key={index} value={tool} {...chipProps}>
-              {tool}
+              <span>{tool}</span>
             </Chip>
           ))}
         </Chip.Group>

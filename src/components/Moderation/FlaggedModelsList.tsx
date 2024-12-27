@@ -197,7 +197,7 @@ export function FlaggedModelsList() {
                 : table.resetSorting(true)
             }
           >
-            High Priority
+            <span>High Priority</span>
           </Chip>
         </div>
       )}

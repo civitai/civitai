@@ -54,7 +54,7 @@ export function VotableTagMature({ tags, addTag }: VotableTagMatureProps) {
                         disabled={matureTags[child.value]?.locked ?? false}
                         checked={matureTags[child.value]?.has ?? false}
                       >
-                        {child.label}
+                        <span>{child.label}</span>
                       </Chip>
                     ))}
                 </Group>

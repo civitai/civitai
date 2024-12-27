@@ -216,7 +216,7 @@ export function DumbModelFiltersDropdown({
           >
             {availableStatus.map((status) => (
               <Chip key={status} value={status} {...chipProps}>
-                {status}
+                <span>{status}</span>
               </Chip>
             ))}
           </Chip.Group>
@@ -227,7 +227,7 @@ export function DumbModelFiltersDropdown({
             onChange={(checked) => handleChange({ earlyAccess: checked })}
             {...chipProps}
           >
-            Early Access
+            <span>Early Access</span>
           </Chip>
           {flags.imageGeneration && (
             <Chip
@@ -235,7 +235,7 @@ export function DumbModelFiltersDropdown({
               onChange={(checked) => handleChange({ supportsGeneration: checked })}
               {...chipProps}
             >
-              On-site Generation
+              <span>On-site Generation</span>
             </Chip>
           )}
           <Chip
@@ -243,7 +243,7 @@ export function DumbModelFiltersDropdown({
             onChange={(checked) => handleChange({ fromPlatform: checked })}
             {...chipProps}
           >
-            Made On-site
+            <span>Made On-site</span>
           </Chip>
         </Group>
       </Stack>
@@ -258,7 +258,7 @@ export function DumbModelFiltersDropdown({
         >
           {Object.values(ModelType).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
+              <span>{getDisplayName(type)}</span>
             </Chip>
           ))}
         </Chip.Group>
@@ -277,7 +277,7 @@ export function DumbModelFiltersDropdown({
             >
               {ckptTypeOptions.map((option, index) => (
                 <Chip key={index} value={option.value} {...chipProps}>
-                  {option.label}
+                  <span>{option.label}</span>
                 </Chip>
               ))}
             </Chip.Group>
@@ -293,7 +293,7 @@ export function DumbModelFiltersDropdown({
             >
               {availableFileFormats.map((format, index) => (
                 <Chip key={index} value={format} {...chipProps}>
-                  {format}
+                  <span>{format}</span>
                 </Chip>
               ))}
             </Chip.Group>
@@ -311,7 +311,7 @@ export function DumbModelFiltersDropdown({
         >
           {activeBaseModels.map((baseModel, index) => (
             <Chip key={index} value={baseModel} {...chipProps}>
-              {getDisplayName(baseModel, { splitNumbers: false })}
+              <span>{getDisplayName(baseModel, { splitNumbers: false })}</span>
             </Chip>
           ))}
         </Chip.Group>
@@ -327,7 +327,7 @@ export function DumbModelFiltersDropdown({
                 onChange={(checked) => handleChange({ hidden: checked })}
                 {...chipProps}
               >
-                Hidden
+                <span>Hidden</span>
               </Chip>
             </>
           )}
@@ -336,7 +336,7 @@ export function DumbModelFiltersDropdown({
             onChange={(checked) => handleChange({ archived: checked })}
             {...chipProps}
           >
-            Include Archived
+            <span>Include Archived</span>
           </Chip>
         </Group>
       </Stack>

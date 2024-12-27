@@ -90,7 +90,7 @@ export function CosmeticsFiltersDropdown({ filters, setFilters, ...buttonProps }
         >
           {Object.values(CosmeticType).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
+              <span>{getDisplayName(type)}</span>
             </Chip>
           ))}
         </Chip.Group>

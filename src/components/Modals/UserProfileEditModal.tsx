@@ -458,7 +458,7 @@ const { openModal, Modal } = createContextModal({
                   <InputChipGroup spacing={8} name="creatorCardStatsPreferences" multiple>
                     {Object.values(creatorCardStats).map((type, index) => (
                       <Chip key={index} value={type} {...chipProps}>
-                        {getDisplayName(type)}
+                        <span>{getDisplayName(type)}</span>
                       </Chip>
                     ))}
                   </InputChipGroup>

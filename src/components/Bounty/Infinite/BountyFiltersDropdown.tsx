@@ -124,7 +124,7 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
         >
           {Object.values(BountyType).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
+              <span>{getDisplayName(type)}</span>
             </Chip>
           ))}
         </Chip.Group>
@@ -140,7 +140,7 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
           >
             {activeBaseModels.map((baseModel, index) => (
               <Chip key={index} value={baseModel} {...chipProps}>
-                {baseModel}
+                <span>{baseModel}</span>
               </Chip>
             ))}
           </Chip.Group>
@@ -157,7 +157,7 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
               checked={filters.mode === mode}
               onChange={(checked) => setFilters({ mode: checked ? mode : undefined })}
             >
-              {getDisplayName(mode)}
+              <span>{getDisplayName(mode)}</span>
             </Chip>
           ))}
         </Group>
@@ -172,7 +172,7 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
               checked={filters.status === status}
               onChange={(checked) => setFilters({ status: checked ? status : undefined })}
             >
-              {getDisplayName(status)}
+              <span>{getDisplayName(status)}</span>
             </Chip>
           ))}
         </Group>

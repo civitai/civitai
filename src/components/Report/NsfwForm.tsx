@@ -105,7 +105,7 @@ function ModerationTagsInput({ value = [], onChange, type, ...props }: Moderatio
                           onChange={() => toggleTag(child.value)}
                           checked={value.includes(child.value) ?? false}
                         >
-                          {child.label}
+                          <span>{child.label}</span>
                         </Chip>
                       ))}
                   </Group>

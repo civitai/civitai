@@ -150,7 +150,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
                         radius="sm"
                         size="xs"
                       >
-                        {constants.availableReactions[reaction as ReviewReactions]}
+                        <span>{constants.availableReactions[reaction as ReviewReactions]}</span>
                       </Chip>
                     ))}
                     {/* TODO add "hide owned" */}

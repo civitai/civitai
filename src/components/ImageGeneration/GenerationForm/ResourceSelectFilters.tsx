@@ -162,7 +162,7 @@ export function ResourceSelectFiltersDropdown({
         >
           {resourceTypesList.map((rt, index) => (
             <Chip key={index} value={rt.modelType} {...chipProps}>
-              {getDisplayName(rt.modelType)}
+              <span>{getDisplayName(rt.modelType)}</span>
             </Chip>
           ))}
         </Chip.Group>
@@ -176,7 +176,7 @@ export function ResourceSelectFiltersDropdown({
         >
           {displayedBaseModels.map((baseModel, index) => (
             <Chip key={index} value={baseModel} {...chipProps}>
-              {baseModel}
+              <span>{baseModel}</span>
             </Chip>
           ))}
           {baseModelsList.length > baseModelLimit && (
