@@ -364,7 +364,7 @@ export const moderateImages = async ({
 
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true },
+      data: { disabled: true, disabledAt: new Date() },
     });
 
     // Resolve any pending appeals
@@ -459,7 +459,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 
   await dbWrite.tagsOnImage.updateMany({
     where: { imageId: images[0].id, disabledAt: { not: null } },
-    data: { disabled: false },
+    data: { disabled: false, disabledAt: null },
   });
 
   return await ingestImage({ image: images[0] });
