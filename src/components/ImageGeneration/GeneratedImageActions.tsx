@@ -32,7 +32,7 @@ export function GeneratedImageActions({
   const router = useRouter();
   const { images, steps, data } = useGetTextToImageRequests();
   const selectableImages = images.filter((x) => x.status === 'succeeded');
-  const selectableImageIds = [...new Set(selectableImages.map((x) => x.id))];
+  const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
   const selected = orchestratorImageSelect
     .useSelection()
