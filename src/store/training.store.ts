@@ -16,6 +16,7 @@ export type ImageDataType = {
   type: string;
   label: string;
   // labelType: LabelTypes;
+  invalidLabel: boolean;
 };
 
 type UpdateImageDataType = Partial<ImageDataType> & {
@@ -226,7 +227,7 @@ export const getShortNameFromUrl = (i: ImageDataType) => {
 
 export const useTrainingImageStore = create<TrainingImageStore>()(
   immer((set) => ({
-    updateImage: (modelId, { matcher, url, name, type, label, appendLabel }) => {
+    updateImage: (modelId, { matcher, url, name, type, label, appendLabel, invalidLabel }) => {
       set((state) => {
         if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
         // why is this not understanding the override I just did above?
@@ -251,6 +252,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
               name: name ?? i.name,
               type: type ?? i.type,
               label: newLabel,
+              invalidLabel: invalidLabel ?? i.invalidLabel,
             };
           }
           return i;

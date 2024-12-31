@@ -22,3 +22,5 @@ export const resourceSort = {
   [ModelSearchIndexSortBy[7]]: 'Newest',
 } as const;
 export type ResourceSort = keyof typeof resourceSort;
+
+export type ImageSelectSource = 'generation' | 'training' | 'uploaded';

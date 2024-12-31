@@ -1,4 +1,5 @@
 import {
+  Accordion,
   ActionIcon,
   Anchor,
   Badge,
@@ -7,6 +8,7 @@ import {
   Center,
   Checkbox,
   createStyles,
+  Divider,
   Group,
   Image as MImage,
   List,
@@ -27,10 +29,8 @@ import {
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import type { NotificationProps } from '@mantine/notifications/lib/types';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -41,6 +41,8 @@ import {
   IconTagsOff,
   IconTrash,
   IconX,
+  IconZoomIn,
+  IconZoomOut,
 } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import { capitalize, isEqual } from 'lodash-es';
@@ -50,9 +52,9 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { goBack, goNext, getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
-
+import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
   TrainingImagesSwitchLabel,
   TrainingImagesTags,
@@ -63,6 +65,7 @@ import { BaseModel, constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   defaultTrainingState,
@@ -75,6 +78,7 @@ import {
 import { TrainingModelData } from '~/types/router';
 import { createImageElement } from '~/utils/image-utils';
 import { getJSZip } from '~/utils/lazy';
+import { auditPrompt } from '~/utils/metadata/audit';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -112,6 +116,10 @@ const useStyles = createStyles((theme) => ({
     '&:hover .trashIcon': {
       display: 'flex',
     },
+  },
+  badLabel: {
+    borderColor: 'red',
+    boxShadow: '0 0 10px red',
   },
   trash: {
     display: 'none',
@@ -271,6 +279,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchCaption, setSearchCaption] = useState<string>('');
+  const [isZoomed, setIsZoomed] = useState(false);
+  const [onlyIssues, setOnlyIssues] = useState(false);
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
 
@@ -411,6 +421,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               type: imageExts[fileExt],
               url: scaledUrl,
               label: labelStr,
+              invalidLabel: false,
             });
           } catch {
             showErrorNotification({
@@ -739,8 +750,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLabeling.url]);
 
+  const hasIssues = imageList.some((i) => i.invalidLabel);
+
   const filteredImages = useMemo(() => {
     return imageList.filter((i) => {
+      if (hasIssues && onlyIssues && !i.invalidLabel) return false;
+
       if (labelType === 'caption') {
         if (!searchCaption.length && !selectedTags.length) return true;
         if (selectedTags.includes(blankTagStr) && i.label.length === 0) return true;
@@ -758,7 +773,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return mergedCapts.length > 0;
       }
     });
-  }, [imageList, labelType, selectedTags, searchCaption]);
+  }, [imageList, labelType, selectedTags, searchCaption, onlyIssues, hasIssues]);
 
   useEffect(() => {
     if (page > 1 && filteredImages.length <= (page - 1) * maxImgPerPage) {
@@ -943,6 +958,48 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
+      const issues: string[] = [];
+      imageList.forEach((i) => {
+        if (i.label.length > 0) {
+          const { blockedFor, success } = auditPrompt(i.label);
+          if (!success) {
+            issues.push(...blockedFor);
+            if (!i.invalidLabel) {
+              updateImage(model.id, {
+                matcher: getShortNameFromUrl(i),
+                invalidLabel: true,
+              });
+            }
+          } else {
+            if (i.invalidLabel) {
+              updateImage(model.id, {
+                matcher: getShortNameFromUrl(i),
+                invalidLabel: false,
+              });
+            }
+          }
+        } else {
+          if (i.invalidLabel) {
+            updateImage(model.id, {
+              matcher: getShortNameFromUrl(i),
+              invalidLabel: false,
+            });
+          }
+        }
+      });
+      if (issues.length > 0) {
+        showNotification({
+          icon: <IconX size={18} />,
+          autoClose: false,
+          color: 'red',
+          title: 'Inappropriate labels',
+          message: `One or more image labels have been blocked. Please review these. Reason: ${issues.join(
+            ', '
+          )}`,
+        });
+        return;
+      }
+
       // if no labels, warn
       if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
         return openConfirmModal({
@@ -987,46 +1044,78 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   return (
     <>
       <Stack>
-        <div>
-          <Text>
-            You can add an existing dataset for your model, or create a new one here. Not sure what
-            to do? Read our{' '}
-            <Anchor
-              href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
-              target="_blank"
-              rel="nofollow noreferrer"
-            >
-              Dataset and Training Guidelines
-            </Anchor>{' '}
-            for more info.
-          </Text>
-        </div>
         {attested.status && (
           <>
-            <ImageDropzone
-              mt="md"
-              onDrop={handleDrop}
-              label="Drag images (or a zip file) here or click to select files"
-              description={
-                <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
-                  Changes made here are not permanently saved until you hit &quot;Next&quot;
-                </Text>
-              }
-              max={MAX_FILES_ALLOWED}
-              // loading={isLoading}
-              count={imageList.length}
-              accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
-              onExceedMax={() =>
-                showErrorNotification({
-                  title: 'Too many images',
-                  error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
-                  autoClose: false,
-                })
-              }
-            />
+            <Accordion
+              defaultValue="uploading"
+              styles={(theme) => ({
+                content: {
+                  padding: theme.spacing.xs,
+                },
+                item: {
+                  // overflow: 'hidden',
+                  border: 'none',
+                  background: 'transparent',
+                },
+                control: {
+                  padding: theme.spacing.xs,
+                  lineHeight: 'normal',
+                },
+              })}
+            >
+              <Accordion.Item value="uploading">
+                <Accordion.Control>Upload Images</Accordion.Control>
+                <Accordion.Panel>
+                  <Stack>
+                    <Text size="sm">
+                      You can add an existing dataset for your model, or create a new one here. Not
+                      sure what to do? Read our{' '}
+                      <Anchor
+                        href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
+                        target="_blank"
+                        rel="nofollow noreferrer"
+                      >
+                        Dataset and Training Guidelines
+                      </Anchor>{' '}
+                      for more info.
+                    </Text>
+
+                    <Group mt="xs" position="center" grow>
+                      <Button variant="light">Import from Generator</Button>
+                      <Button variant="light">Add from Uploaded</Button>
+                      <Button variant="light">Re-use a Dataset</Button>
+                    </Group>
+
+                    <Divider label="OR" labelPosition="center" />
+
+                    <ImageDropzone
+                      onDrop={handleDrop}
+                      label="Drag images (or a zip file) here or click to select files"
+                      description={
+                        <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
+                          Changes made here are not permanently saved until you hit &quot;Next&quot;
+                        </Text>
+                      }
+                      max={MAX_FILES_ALLOWED}
+                      // loading={isLoading}
+                      count={imageList.length}
+                      accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
+                      onExceedMax={() =>
+                        showErrorNotification({
+                          title: 'Too many images',
+                          error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+                          autoClose: false,
+                        })
+                      }
+                    />
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
+            <Divider />
 
             {imageList.length > 0 && (
-              <Group my="md">
+              <Group my="md" position="apart">
                 <Paper
                   shadow="xs"
                   radius="sm"
@@ -1050,64 +1139,72 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     {`${totalLabeled} / ${imageList.length} labeled`}
                   </Text>
                 </Paper>
-                <Tooltip
-                  label="Not connected - will not receive updates. Please try refreshing the page."
-                  disabled={connected}
-                >
+                <Group spacing="xs">
+                  <Button compact color="indigo" onClick={() => setIsZoomed((z) => !z)}>
+                    {isZoomed ? <IconZoomOut size={16} /> : <IconZoomIn size={16} />}
+                    <Text inline ml={4}>
+                      Zoom {isZoomed ? 'Out' : 'In'}
+                    </Text>
+                  </Button>
+                  <Tooltip
+                    label="Not connected - will not receive updates. Please try refreshing the page."
+                    disabled={connected}
+                  >
+                    <Button
+                      compact
+                      color="violet"
+                      disabled={autoLabeling.isRunning || !connected}
+                      style={!connected ? { pointerEvents: 'initial' } : undefined}
+                      onClick={() =>
+                        dialogStore.trigger({
+                          component: AutoLabelModal,
+                          props: { modelId: model.id },
+                        })
+                      }
+                    >
+                      <Group spacing={4}>
+                        <IconTags size={16} />
+                        <Text>Auto Label</Text>
+                        {Date.now() < new Date('2024-09-27').getTime() && (
+                          <Badge color="green" variant="filled" size="sm" ml={4}>
+                            NEW
+                          </Badge>
+                        )}
+                      </Group>
+                    </Button>
+                  </Tooltip>
                   <Button
                     compact
-                    color="violet"
-                    disabled={autoLabeling.isRunning || !connected}
-                    style={!connected ? { pointerEvents: 'initial' } : undefined}
-                    onClick={() =>
-                      dialogStore.trigger({
-                        component: AutoLabelModal,
-                        props: { modelId: model.id },
-                      })
-                    }
+                    color="cyan"
+                    loading={zipping}
+                    onClick={() => handleNextAfterCheck(true)}
                   >
-                    <Group spacing={4}>
-                      <IconTags size={16} />
-                      <Text>Auto Label</Text>
-                      {Date.now() < new Date('2024-09-27').getTime() && (
-                        <Badge color="green" variant="filled" size="sm" ml={4}>
-                          NEW
-                        </Badge>
-                      )}
-                    </Group>
+                    <IconFileDownload size={16} />
+                    <Text inline ml={4}>
+                      Download
+                    </Text>
                   </Button>
-                </Tooltip>
-                <Button
-                  compact
-                  color="cyan"
-                  loading={zipping}
-                  onClick={() => handleNextAfterCheck(true)}
-                >
-                  <IconFileDownload size={16} />
-                  <Text inline ml={4}>
-                    Download
-                  </Text>
-                </Button>
 
-                <Button
-                  compact
-                  color="red"
-                  disabled={autoLabeling.isRunning}
-                  onClick={() => {
-                    openConfirmModal({
-                      title: 'Remove all images?',
-                      children: 'This cannot be undone.',
-                      labels: { cancel: 'Cancel', confirm: 'Confirm' },
-                      centered: true,
-                      onConfirm: () => setImageList(model.id, []),
-                    });
-                  }}
-                >
-                  <IconTrash size={16} />
-                  <Text inline ml={4}>
-                    Reset
-                  </Text>
-                </Button>
+                  <Button
+                    compact
+                    color="red"
+                    disabled={autoLabeling.isRunning}
+                    onClick={() => {
+                      openConfirmModal({
+                        title: 'Remove all images?',
+                        children: 'This cannot be undone.',
+                        labels: { cancel: 'Cancel', confirm: 'Confirm' },
+                        centered: true,
+                        onConfirm: () => setImageList(model.id, []),
+                      });
+                    }}
+                  >
+                    <IconTrash size={16} />
+                    <Text inline ml={4}>
+                      Reset
+                    </Text>
+                  </Button>
+                </Group>
               </Group>
             )}
             {filteredImages.length > maxImgPerPage && (
@@ -1210,6 +1307,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             ) : (
               <></>
             )}
+            {hasIssues && (
+              <Checkbox
+                label="Show only inappropriate labels"
+                checked={onlyIssues}
+                onChange={(event) => setOnlyIssues(event.currentTarget.checked)}
+              />
+            )}
             {loadingZip ? (
               <Center mt="md" style={{ flexDirection: 'column' }}>
                 <Loader />
@@ -1226,13 +1330,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               </Stack>
             ) : (
               // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
-              <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
+              <SimpleGrid cols={isZoomed ? 1 : 3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
                 {filteredImages
                   .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
                   .map((imgData, index) => {
                     return (
-                      <Card key={index} shadow="sm" p={4} radius="sm" withBorder>
-                        {/* TODO [bw] probably lightbox here or something similar */}
+                      <Card
+                        key={index}
+                        shadow="sm"
+                        p={4}
+                        radius="sm"
+                        withBorder
+                        className={cx({ [classes.badLabel]: imgData.invalidLabel })}
+                      >
                         <Card.Section mb="xs">
                           <div className={classes.imgOverlay}>
                             <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
@@ -1280,7 +1390,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               src={imgData.url}
                               imageProps={{
                                 style: {
-                                  height: '250px',
+                                  height: isZoomed ? '100%' : '250px',
                                   // if we want to show full image, change objectFit to contain
                                   objectFit: 'cover',
                                   // object-position: top;

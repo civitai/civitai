@@ -122,8 +122,8 @@ export default function ResourceSelectModal({
 
   const {
     data: likedModels,
-    isLoading: isLoadingLikedModels,
-    isError: isErrorLikedModels,
+    // isLoading: isLoadingLikedModels,
+    // isError: isErrorLikedModels,
   } = trpc.user.getBookmarkedModels.useQuery(undefined, {
     enabled: !!currentUser,
   });
@@ -131,13 +131,13 @@ export default function ResourceSelectModal({
   const {
     data: featuredModels,
     isFetching: isLoadingFeatured,
-    isError: isErrorFeatured,
+    // isError: isErrorFeatured,
   } = trpc.model.getFeaturedModels.useQuery({ take }, { enabled: selectedTab === 'featured' });
 
   const {
     steps,
     isFetching: isLoadingGenerations,
-    isError: isErrorGenerations,
+    // isError: isErrorGenerations,
   } = useGetTextToImageRequests(
     { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'generation' }
@@ -146,7 +146,7 @@ export default function ResourceSelectModal({
   const {
     data: trainingModels,
     isFetching: isLoadingTraining,
-    isError: isErrorTraining,
+    // isError: isErrorTraining,
   } = trpc.model.getAvailableTrainingModels.useQuery(
     { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'training' }
@@ -155,7 +155,7 @@ export default function ResourceSelectModal({
   const {
     data: manuallyAdded,
     isFetching: isLoadingManuallyAdded,
-    isError: isErrorManuallyAdded,
+    // isError: isErrorManuallyAdded,
   } = trpc.model.getRecentlyManuallyAdded.useQuery(
     { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'addResource' }
@@ -164,18 +164,21 @@ export default function ResourceSelectModal({
   const {
     data: recommendedModels,
     isFetching: isLoadingRecommendedModels,
-    isError: isErrorRecommendedModels,
+    // isError: isErrorRecommendedModels,
   } = trpc.model.getRecentlyManuallyAdded.useQuery(
     { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'modelVersion' }
   );
 
   const isLoadingExtra =
-    isLoadingTraining ||
-    isLoadingGenerations ||
-    isLoadingManuallyAdded ||
-    isLoadingRecommendedModels ||
-    isLoadingFeatured;
+    (isLoadingFeatured && selectedTab === 'featured') ||
+    ((isLoadingGenerations ||
+      isLoadingTraining ||
+      isLoadingManuallyAdded ||
+      isLoadingRecommendedModels) &&
+      selectedTab === 'recent');
+
+  // TODO handle fetching errors from above
 
   const { resources = [], excludeIds = [], canGenerate } = options;
   const allowedTabs = tabs.filter((t) => {
