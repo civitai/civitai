@@ -143,20 +143,18 @@ function AdWrapper({
             />
           ) : null}
           {withFeedback && !isMember && (
-            <>
-              <div className="flex w-full justify-end">
-                <Text
-                  component={NextLink}
-                  td="underline"
-                  href="/pricing"
-                  color="dimmed"
-                  size="xs"
-                  align="center"
-                >
-                  Remove ads
-                </Text>
-              </div>
-            </>
+            <div className="flex w-full justify-end">
+              <Text
+                component={NextLink}
+                td="underline"
+                href="/pricing"
+                color="dimmed"
+                size="xs"
+                align="center"
+              >
+                Remove ads
+              </Text>
+            </div>
           )}
         </>
       )}

@@ -99,7 +99,9 @@ export function MasonryGrid<TData>({
                       <IconCaretRightFilled size={16} />
                     </Button>
                   </div>
-                  <item.data.AdUnit />
+                  <div>
+                    <item.data.AdUnit />
+                  </div>
                 </TwCard>
               </AdUnitRenderable>
             )}
