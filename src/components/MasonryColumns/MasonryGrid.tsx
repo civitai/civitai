@@ -72,41 +72,79 @@ export function MasonryGrid<TData>({
     >
       {items.map((item, index) => {
         const key = item.type === 'data' ? itemId?.(item.data) ?? index : `ad_${index}`;
-        return (
-          <React.Fragment key={key}>
-            {item.type === 'data' &&
-              createRenderElement(RenderComponent, index, item.data, columnWidth)}
-            {item.type === 'ad' && (
-              <AdUnitRenderable>
-                <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
-                  <div className="flex flex-col items-center  gap-2">
-                    <Image
-                      src={`/images/logo_${theme.colorScheme}_mode.png`}
-                      alt="Civitai logo"
-                      height={30}
-                      width={142}
-                    />
-                    <Text>Become a Member to turn off ads today.</Text>
-                    <Button
-                      component={Link}
-                      href="/pricing"
-                      compact
-                      color="green"
-                      variant="outline"
-                      className="w-24"
-                    >
-                      <Text weight={500}>Do It</Text>
-                      <IconCaretRightFilled size={16} />
-                    </Button>
-                  </div>
-                  <div>
-                    <item.data.AdUnit />
-                  </div>
-                </TwCard>
-              </AdUnitRenderable>
-            )}
-          </React.Fragment>
+
+        return item.type === 'data' ? (
+          <RenderComponent
+            key={key}
+            index={index}
+            data={item.data}
+            width={columnWidth}
+            height={columnWidth}
+          />
+        ) : (
+          <AdUnitRenderable key={key}>
+            <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
+              <div className="flex flex-col items-center  gap-2">
+                <Image
+                  src={`/images/logo_${theme.colorScheme}_mode.png`}
+                  alt="Civitai logo"
+                  height={30}
+                  width={142}
+                />
+                <Text>Become a Member to turn off ads today.</Text>
+                <Button
+                  component={Link}
+                  href="/pricing"
+                  compact
+                  color="green"
+                  variant="outline"
+                  className="w-24"
+                >
+                  <Text weight={500}>Do It</Text>
+                  <IconCaretRightFilled size={16} />
+                </Button>
+              </div>
+              <div>
+                <item.data.AdUnit />
+              </div>
+            </TwCard>
+          </AdUnitRenderable>
         );
+        // return (
+        //   <React.Fragment key={key}>
+        //     {item.type === 'data' &&
+        //       createRenderElement(RenderComponent, index, item.data, columnWidth)}
+        //     {item.type === 'ad' && (
+        //       <AdUnitRenderable>
+        //         <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
+        //           <div className="flex flex-col items-center  gap-2">
+        //             <Image
+        //               src={`/images/logo_${theme.colorScheme}_mode.png`}
+        //               alt="Civitai logo"
+        //               height={30}
+        //               width={142}
+        //             />
+        //             <Text>Become a Member to turn off ads today.</Text>
+        //             <Button
+        //               component={Link}
+        //               href="/pricing"
+        //               compact
+        //               color="green"
+        //               variant="outline"
+        //               className="w-24"
+        //             >
+        //               <Text weight={500}>Do It</Text>
+        //               <IconCaretRightFilled size={16} />
+        //             </Button>
+        //           </div>
+        //           <div>
+        //             <item.data.AdUnit />
+        //           </div>
+        //         </TwCard>
+        //       </AdUnitRenderable>
+        //     )}
+        //   </React.Fragment>
+        // );
       })}
     </div>
   ) : (
