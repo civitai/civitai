@@ -104,7 +104,7 @@ export function CurrencyBadge({
         }}
         {...badgeProps}
       >
-        <Group spacing={4} noWrap>
+        <div className="flex items-center gap-1">
           <Icon
             size={iconSize[badgeProps.size ?? 'sm']}
             fill={currency === Currency.BUZZ ? 'currentColor' : undefined}
@@ -113,14 +113,14 @@ export function CurrencyBadge({
           {loading ? (
             <Loader size="xs" variant="dots" color={colorString} />
           ) : (
-            <>
+            <div className="flex items-center gap-1">
               {formatter
                 ? formatter(unitAmount)
                 : `${value || 0} ${displayCurrency ? currency : ''}`}
               {children}
-            </>
+            </div>
           )}
-        </Group>
+        </div>
       </Badge>
     </Tooltip>
   );
