@@ -113,7 +113,7 @@ export function PostDetailContent({ postId }: Props) {
     images,
     isLoading: imagesLoading,
   } = useQueryImages(
-    { postId, pending: true, browsingLevel: forcedBrowsingLevel },
+    { postId, pending: !!currentUser, browsingLevel: forcedBrowsingLevel },
     {
       applyHiddenPreferences: !requiresCollectionJudgement && !forcedBrowsingLevel,
       enabled: !!post && (!post.collectionId || !isLoadingPostCollection),
@@ -204,6 +204,7 @@ export function PostDetailContent({ postId }: Props) {
                         <Link
                           href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
                           passHref
+                            legacyBehavior
                         >
                           <Anchor>
                             {relatedResource.modelName} - {relatedResource.modelVersionName}

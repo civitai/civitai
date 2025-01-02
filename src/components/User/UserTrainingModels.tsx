@@ -588,7 +588,7 @@ export default function UserTrainingModels() {
                 modalData.baseModel in trainingModelInfo ? (
                   trainingModelInfo[modalData.baseModel as TrainingDetailsBaseModelList].pretty
                 ) : isAir(modalData.baseModel) ? (
-                  <Link href={getAirModelLink(modalData.baseModel)} passHref>
+                  <Link href={getAirModelLink(modalData.baseModel)} passHref legacyBehavior>
                     <Anchor>Custom</Anchor>
                   </Link>
                 ) : (

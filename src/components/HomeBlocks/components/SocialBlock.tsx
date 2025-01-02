@@ -72,6 +72,7 @@ function useTwitchEmbed() {
       const script = document.createElement('script');
       script.src = 'https://embed.twitch.tv/embed/v1.js';
       document.body.appendChild(script);
+      script.onload;
       script.onload = () => {
         setReady(true);
       };
@@ -88,16 +89,20 @@ function TwitchStream({ url }: { url: string }) {
 
   useEffect(() => {
     if (!ready || initialized) return;
-    new window.Twitch.Embed(id, {
-      width: '100%',
-      height: '100%',
-      channel: url,
-      layout: 'video',
-      allowfullscreen: true,
-      muted: true,
-      parent: ['civitai.com'],
-    });
-    setInitialized(true);
+    const interval = setInterval(() => {
+      if (!window.Twitch) return;
+      new window.Twitch.Embed(id, {
+        width: '100%',
+        height: '100%',
+        channel: url,
+        layout: 'video',
+        allowfullscreen: true,
+        muted: true,
+        parent: ['civitai.com'],
+      });
+      setInitialized(true);
+      clearInterval(interval);
+    }, 100);
   }, [ready, id, url, initialized]);
 
   return (

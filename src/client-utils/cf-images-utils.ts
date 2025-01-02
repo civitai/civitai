@@ -87,7 +87,8 @@ export function getEdgeUrl(
 
   const extension = typeExtensions[type ?? MediaType.image];
 
-  name = (name ?? src).replaceAll('%', ''); // % symbol is escape character for url encoding
+  // application-error logs indicate that `src` is sometimes undefined
+  name = (name ?? src ?? '').replaceAll('%', ''); // % symbol is escape character for url encoding
   if (name.includes('.')) name = name.split('.').slice(0, -1).join('.') + extension;
   else name = name + extension;
 
@@ -135,5 +136,5 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
 export function useGetEdgeUrl(src?: string | null, options: Omit<EdgeUrlProps, 'src'> = {}) {
   const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
   if (!options.anim && !autoplayGifs) options.anim = false;
-  return useMemo(() => (src ? getEdgeUrl(src, options) : undefined), [autoplayGifs]);
+  return useMemo(() => (src ? getEdgeUrl(src, options) : undefined), [autoplayGifs, src]);
 }

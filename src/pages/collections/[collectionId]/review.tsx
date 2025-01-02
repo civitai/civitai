@@ -322,7 +322,7 @@ const CollectionItemGridItem = ({
           >
             <Group>
               {reviewData.url && (
-                <Link href={reviewData.url} passHref>
+                <Link href={reviewData.url} passHref legacyBehavior>
                   <ActionIcon
                     component="a"
                     variant="transparent"

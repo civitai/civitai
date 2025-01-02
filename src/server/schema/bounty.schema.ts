@@ -119,7 +119,7 @@ export const addBenefactorUnitAmountInputSchema = z.object({
 });
 
 export type GetBountyEntriesInputSchema = z.infer<typeof getBountyEntriesInputSchema>;
-export const getBountyEntriesInputSchema = z.object({
+export const getBountyEntriesInputSchema = infiniteQuerySchema.extend({
   id: z.number(),
   owned: z.boolean().optional(),
 });

@@ -19,6 +19,7 @@ export function DownloadList({ items, textSize = 'sm', onHideClick }: Props) {
                 download.modelVersion.model.name
               )}`}
               passHref
+              legacyBehavior
             >
               <Text
                 component="a"

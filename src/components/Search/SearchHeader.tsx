@@ -275,22 +275,13 @@ export const SearchHeader = () => {
     const hitsString =
       nbHits === 1000 ? `Over ${numberWithCommas(nbHits)}` : numberWithCommas(nbHits);
 
-    const queryItem = (
-      <Text color="blue" span>
-        &lsquo;{query}&rsquo;
-      </Text>
-    );
-
     return (
-      <Text>
-        {nbHits > 0 ? (
-          <>
-            {hitsString} results for {queryItem}
-          </>
-        ) : (
-          <>No results for {queryItem}</>
-        )}
-      </Text>
+      <>
+        <span>{nbHits > 0 ? `${hitsString} results for ` : `No results for `}</span>
+        <Text color="blue" span>
+          &lsquo;{query}&rsquo;
+        </Text>
+      </>
     );
   })();
 

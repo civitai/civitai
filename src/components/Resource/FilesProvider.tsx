@@ -162,7 +162,11 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
           <Text size="sm" color="dimmed">
             Your version has been published and is now available to the public.
           </Text>
-          <Link legacyBehavior href={`/models/${modelId}?modelVersionId=${modelVersionId}`} passHref>
+          <Link
+            legacyBehavior
+            href={`/models/${modelId}?modelVersionId=${modelVersionId}`}
+            passHref
+          >
             <Anchor size="sm" onClick={() => hideNotification(pubNotificationId)}>
               Go to model
             </Anchor>
@@ -229,6 +233,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                 <Link
                   href={`/models/${model?.id}?modelVersionId=${result.modelVersion.id}`}
                   passHref
+                  legacyBehavior
                 >
                   <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
                     Go to model
@@ -272,6 +277,7 @@ export function FilesProvider({ model, version, children }: FilesProviderProps) 
                 <Link
                   href={`/models/${model?.id}/model-versions/${result.modelVersion.id}/wizard?step=3`}
                   passHref
+                  legacyBehavior
                 >
                   <Anchor size="sm" onClick={() => hideNotification(notificationId)}>
                     Finish setup

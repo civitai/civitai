@@ -90,7 +90,7 @@ export const PostContestCollectionInfoAlert = ({
       <Stack>
         <Text>
           This {itemLabel} is an entry in the{' '}
-          <Link href={`/collections/${collectionItem.collection.id}`} passHref>
+          <Link href={`/collections/${collectionItem.collection.id}`} passHref legacyBehavior>
             <Anchor>{collectionName}</Anchor>
           </Link>{' '}
           contest{tagDisplay}.

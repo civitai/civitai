@@ -288,7 +288,11 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
                   <Collection
                     items={bounty.tags}
                     renderItem={(tag) => (
-                      <Link legacyBehavior href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`} passHref>
+                      <Link
+                        legacyBehavior
+                        href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
+                        passHref
+                      >
                         <Badge
                           component="a"
                           size="sm"
@@ -356,7 +360,7 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
 const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
   const { theme } = useStyles();
   const router = useRouter();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const benefactor = bounty.benefactors.find((b) => b.user.id === currentUser?.id);
   const expired = bounty.expiresAt < new Date();
@@ -545,7 +549,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const files = bounty.files ?? [];
   const filesCount = files.length;
-  const hasEntries = (entries?.length ?? 0) > 0;
+  const hasEntries = (entries?.items.length ?? 0) > 0;
 
   return (
     <Stack spacing="md">
@@ -699,7 +703,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
       </Group>
       {bounty.complete && !loadingEntries && (
         <Alert color="yellow">
-          {(entries?.length ?? 0) > 0 ? (
+          {hasEntries ? (
             <Group spacing={8} align="center" noWrap>
               <ThemeIcon color="yellow.7" variant="light">
                 <IconTrophy size={20} fill="currentColor" />
@@ -847,17 +851,29 @@ const useStyles = createStyles((theme) => ({
 const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const entryCreateUrl = `/bounties/${bounty.id}/entries/create`;
   const currentUser = useCurrentUser();
+  const { theme } = useStyles();
 
-  const { data: entries = [], isLoading } = trpc.bounty.getEntries.useQuery({ id: bounty.id });
-  const { data: ownedEntries = [], isLoading: isLoadingOwnedEntries } =
-    trpc.bounty.getEntries.useQuery({
-      id: bounty.id,
-      owned: true,
-    });
+  const {
+    data: entries,
+    isLoading,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = trpc.bounty.getEntries.useInfiniteQuery(
+    { id: bounty.id },
+    { getNextPageParam: (lastPage) => lastPage.nextCursor }
+  );
+  const { data: ownedEntries, isLoading: isLoadingOwnedEntries } = trpc.bounty.getEntries.useQuery({
+    id: bounty.id,
+    owned: true,
+    limit: bounty.entryLimit,
+  });
+
+  const flatEntries = useMemo(() => entries?.pages.flatMap((p) => p.items) ?? [], [entries]);
 
   const { items: filteredEntries, hiddenCount } = useApplyHiddenPreferences({
     type: 'bounties',
-    data: entries,
+    data: flatEntries,
   });
 
   const currency = getBountyCurrency(bounty);
@@ -868,7 +884,8 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const displaySubmitAction =
     !benefactorItem &&
     !isLoadingOwnedEntries &&
-    ownedEntries.length < bounty.entryLimit &&
+    ownedEntries?.items &&
+    ownedEntries.items.length < bounty.entryLimit &&
     !currentUser?.muted &&
     !bounty.complete &&
     !expired;
@@ -960,7 +977,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
                 <>
                   <AwardBountyAction
                     bounty={bounty}
-                    bountyEntryId={entry.id}
+                    bountyEntry={entry}
                     fileUnlockAmount={entry.fileUnlockAmount}
                   >
                     {({ onClick }) => (
@@ -989,6 +1006,18 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
           />
         ))}
       </SimpleGrid>
+      {hasNextPage && (
+        <Center>
+          <Button
+            onClick={() => fetchNextPage()}
+            loading={isFetchingNextPage}
+            color="gray"
+            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+          >
+            {isFetchingNextPage ? 'Loading more...' : 'Load more'}
+          </Button>
+        </Center>
+      )}
     </Wrapper>
   );
 };

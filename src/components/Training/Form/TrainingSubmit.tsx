@@ -447,7 +447,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   };
 
   // HARD CODED FOR THIS RUN:
-  const discountEndDate = dayjs().month(9).endOf('month');
+  const discountEndDate = dayjs().month(9).year(2024).endOf('month');
 
   return (
     <Stack>
