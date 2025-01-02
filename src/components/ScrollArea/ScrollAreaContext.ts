@@ -13,11 +13,11 @@ export const useScrollAreaRef = (args?: { onScroll?: (node: HTMLDivElement) => v
   useEffect(() => {
     const elem = ref?.current;
     if (!elem) return;
-    function handleScroll() {
-      if (!ref?.current) return;
-      onScrollRef.current?.(ref.current);
+    function handleScroll(e: Event) {
+      const node = e.target as HTMLDivElement;
+      onScrollRef.current?.(node);
     }
-    elem?.addEventListener('scroll', handleScroll);
+    elem?.addEventListener('scroll', handleScroll, { passive: true });
     return () => {
       elem?.removeEventListener('scroll', handleScroll);
     };

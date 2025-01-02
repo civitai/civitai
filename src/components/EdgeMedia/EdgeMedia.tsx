@@ -1,13 +1,13 @@
 import { createStyles, Text } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { IconPlayerPlayFilled } from '@tabler/icons-react';
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import { EdgeUrlProps, getInferredMediaType } from '~/client-utils/cf-images-utils';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { useTimeout } from '@mantine/hooks';
+import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -65,67 +65,44 @@ export function EdgeMedia({
     mediaRef?.[1](imgRef.current);
   }, [mediaRef]);
 
-  const [isPlaying, setIsPlaying] = useState(false);
-
   if (width && typeof width === 'number') width = Math.min(width, 4096);
-  const { url, type: inferredType } = useEdgeUrl(
-    anim === false && thumbnailUrl && !isPlaying ? thumbnailUrl : src,
-    {
-      width,
-      height,
-      fit,
-      anim: type === 'video' && isPlaying ? true : anim,
-      transcode,
-      blur,
-      quality,
-      gravity,
-      name,
-      type,
-      original,
-      skip,
-    }
-  );
 
-  const { start, clear } = useTimeout(() => {
-    setIsPlaying(true);
-  }, 1000);
+  const inferredType = getInferredMediaType(src, { name, type });
 
-  const handleMouseOut = useCallback(() => {
-    if (type !== 'video') return;
-    if (isPlaying && !anim) setIsPlaying(false);
-    clear();
-  }, [anim, isPlaying, clear, type]);
+  const options = {
+    name,
+    width,
+    height,
+    fit,
+    blur,
+    quality,
+    gravity,
+    transcode,
+    type,
+    original,
+    skip,
+    anim,
+  };
 
   switch (inferredType) {
     case 'image': {
-      // TODO: rework video cover logic
-      const img = (
-        // eslint-disable-next-line jsx-a11y/alt-text, @next/next/no-img-element
-        <img
+      return (
+        <EdgeImage
           ref={imgRef}
-          className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
-          onLoad={(e) => (fadeIn ? (e.currentTarget.style.opacity = '1') : undefined)}
-          onError={(e) => e.currentTarget.classList.add('load-error')}
+          src={src}
+          options={options}
+          className={className}
           style={style}
           {...imgProps}
-          src={url}
         />
       );
-      if (type === 'video') {
-        return (
-          <div onMouseOver={start} onMouseOut={handleMouseOut} className={classes.videoThumbRoot}>
-            <IconPlayerPlayFilled className={classes.playButton} />
-            {img}
-          </div>
-        );
-      } else {
-        return img;
-      }
     }
     case 'video':
       return (
         <EdgeVideo
-          src={url}
+          src={src}
+          thumbnailUrl={thumbnailUrl}
+          options={options}
           className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
           style={style}
           controls={controls}
@@ -136,12 +113,10 @@ export function EdgeMedia({
           html5Controls={html5Controls}
           onMutedChange={onMutedChange}
           ref={videoRef}
-          onMouseOut={handleMouseOut}
           youtubeVideoId={youtubeVideoId}
           vimeoVideoId={vimeoVideoId}
         />
       );
-    case 'audio':
     default:
       return <Text align="center">Unsupported media type</Text>;
   }
@@ -163,7 +138,6 @@ export function EdgeMedia2({
 }
 
 const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) => {
-  const ref = getRef('playButton');
   return {
     responsive: {
       width: '100%',
@@ -178,32 +152,12 @@ const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) =>
       height: '100%',
       width: '100%',
       position: 'relative',
-      '&:hover': {
-        [`& .${ref}`]: {
-          backgroundColor: 'rgba(0,0,0,0.8)',
-        },
-      },
+
       img: {
         objectFit: 'cover',
         height: '100%',
         objectPosition: '50% 50%',
       },
-    },
-    playButton: {
-      ref,
-      width: 80,
-      height: 80,
-      color: theme.white,
-      backgroundColor: 'rgba(0,0,0,.6)',
-      padding: 20,
-      borderRadius: '50%',
-      boxShadow: `0 2px 2px 1px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.2)`,
-      transition: 'background-color 200ms ease',
-      position: 'absolute',
-      top: '50%',
-      left: '50%',
-      zIndex: 2,
-      transform: 'translate(-50%, -50%)',
     },
   };
 });
