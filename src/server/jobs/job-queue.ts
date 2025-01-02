@@ -159,7 +159,7 @@ const handleJobQueueCleanIfEmpty = createJob(
   }
 );
 
-// A more lightweight job to update nsfw levels for collections which runs once a day
+// A more lightweight job to update nsfw levels for collections which runs every five minutes
 const updateCollectionNsfwLevelsJob = createJob(
   'update-collection-nsfw-levels',
   '*/5 * * * *',
