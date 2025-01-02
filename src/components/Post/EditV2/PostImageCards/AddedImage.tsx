@@ -1071,6 +1071,8 @@ function PostImage() {
           type={type}
           original={type === 'video' ? true : undefined}
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
+          anim={type === 'video'}
+          html5Controls
         />
       </div>
       <div className="absolute inset-x-0 top-0 z-10 h-12 bg-gradient-to-b from-black opacity-25" />
