@@ -419,30 +419,32 @@ export function ImageDetail2() {
                           : `This image won't be visible to other users until it's reviewed by our moderators.`}
                       </AlertWithIcon>
                     )}
-                    {image.blockedFor && !image.needsReview && isOwner && (
-                      <AlertWithIcon
-                        icon={<IconAlertTriangle />}
-                        color="yellow"
-                        iconColor="yellow"
-                        title="Blocked by moderators"
-                        radius={0}
-                        px="md"
-                      >
-                        This image has been blocked by our moderators. We can make mistakes, if you
-                        believe this was done in error,{' '}
-                        <Anchor
-                          type="button"
-                          onClick={() =>
-                            dialogStore.trigger({
-                              component: AppealDialog,
-                              props: { entityId: image.id, entityType: EntityType.Image },
-                            })
-                          }
+                    {['Moderated', 'moderated'].includes(image.blockedFor ?? '') &&
+                      !image.needsReview &&
+                      isOwner && (
+                        <AlertWithIcon
+                          icon={<IconAlertTriangle />}
+                          color="yellow"
+                          iconColor="yellow"
+                          title="Blocked by moderators"
+                          radius={0}
+                          px="md"
                         >
-                          appeal this removal
-                        </Anchor>
-                      </AlertWithIcon>
-                    )}
+                          This image has been blocked by our moderators. We can make mistakes, if
+                          you believe this was done in error,{' '}
+                          <Anchor
+                            type="button"
+                            onClick={() =>
+                              dialogStore.trigger({
+                                component: AppealDialog,
+                                props: { entityId: image.id, entityType: EntityType.Image },
+                              })
+                            }
+                          >
+                            appeal this removal
+                          </Anchor>
+                        </AlertWithIcon>
+                      )}
                     {!hideAds && <AdUnitSide_2 />}
                     <VotableTags
                       entityType="image"

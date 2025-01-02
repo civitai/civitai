@@ -331,6 +331,7 @@ export const moderateImages = async ({
     const results = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
       UPDATE "Image" SET
         "needsReview" = ${needsReview},
+        "blockedFor" = NULL,
         "ingestion" = 'Scanned',
         -- if image was created within 72 hrs, set scannedAt to now
         "scannedAt" = CASE
