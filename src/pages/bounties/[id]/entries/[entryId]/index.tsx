@@ -67,7 +67,6 @@ import { env } from '~/env/client.mjs';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { Availability, ReviewReactions } from '~/shared/utils/prisma/enums';
 import { ConnectProps, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -173,7 +172,7 @@ export default function BountyEntryDetailsPage({
   entryId,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const router = useRouter();
-  const { classes, theme } = useStyles();
+  const { theme } = useStyles();
   const { data: bounty, isLoading: isLoadingBounty } = trpc.bounty.getById.useQuery({ id });
   const { data: bountyEntry, isLoading: isLoadingEntry } = trpc.bountyEntry.getById.useQuery({
     id: entryId,
@@ -203,7 +202,6 @@ export default function BountyEntryDetailsPage({
       },
     });
   const user = bountyEntry?.user;
-  const mobile = useContainerSmallerThan('md');
   const currentUser = useCurrentUser();
   const benefactor = (bounty?.benefactors ?? []).find((b) => b.user.id === currentUser?.id);
   const isOwner = currentUser && user?.id === currentUser?.id;
@@ -288,7 +286,11 @@ export default function BountyEntryDetailsPage({
   const shareSection = (
     <Group spacing={8} noWrap>
       {(isModerator || (isOwner && bountyEntry.awardedUnitAmountTotal === 0)) && (
-        <Link legacyBehavior href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`} passHref>
+        <Link
+          legacyBehavior
+          href={`/bounties/${bounty.id}/entries/${bountyEntry.id}/edit`}
+          passHref
+        >
           <Button
             size="md"
             radius="xl"
@@ -345,7 +347,7 @@ export default function BountyEntryDetailsPage({
       )}
       <AwardBountyAction
         bounty={bounty}
-        bountyEntryId={bountyEntry.id || entryId}
+        bountyEntry={bountyEntry}
         fileUnlockAmount={bountyEntry.fileUnlockAmount}
       >
         {({ onClick, isLoading }) => (
