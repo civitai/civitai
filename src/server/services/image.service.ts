@@ -4078,6 +4078,7 @@ export async function getImageRatingRequests({
       JOIN "Image" i ON i.id = irr."imageId"
       WHERE irr.total >= 3
       AND i."blockedFor" IS NULL
+      AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
       ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
       ORDER BY irr."createdAt"
       LIMIT ${limit + 1}
