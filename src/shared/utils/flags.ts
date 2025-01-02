@@ -76,4 +76,9 @@ export abstract class Flags {
       return agg + toAdd;
     }, 0);
   }
+
+  /** returns the bitwise difference between two bitwise values */
+  static diff(a: number, b: number) {
+    return b & ~a;
+  }
 }
