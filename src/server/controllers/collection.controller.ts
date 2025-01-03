@@ -1,7 +1,7 @@
-import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
+import { logToAxiom } from '~/server/logging/client';
 import { collectedContentReward } from '~/server/rewards';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -24,7 +24,9 @@ import {
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { UserMeta } from '~/server/schema/user.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   addContributorToCollection,
   bulkSaveItems,
@@ -50,6 +52,7 @@ import {
   updateCollectionItemsStatus,
   upsertCollection,
 } from '~/server/services/collection.service';
+import { setModelShowcaseCollection } from '~/server/services/model.service';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
@@ -58,11 +61,13 @@ import {
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import {
+  CollectionItemStatus,
+  CollectionMode,
+  CollectionReadConfiguration,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { setModelShowcaseCollection } from '~/server/services/model.service';
-import { logToAxiom } from '~/server/logging/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -87,6 +92,8 @@ export const getAllCollectionsInfiniteHandler = async ({
         nsfwLevel: true,
         image: { select: imageSelect },
         mode: true,
+        createdAt: true,
+        metadata: true,
       },
       user: ctx.user,
     });
@@ -212,6 +219,26 @@ export const saveItemHandler = async ({
 }) => {
   const { user, ip, fingerprint } = ctx;
   try {
+    await Promise.all(
+      input.collections.map(async (c) => {
+        const permissions = await getUserCollectionPermissionsById({
+          id: c.collectionId,
+          userId: user.id,
+          isModerator: user.isModerator,
+        });
+
+        const userMeta = ctx.user.meta as UserMeta;
+
+        if (
+          !permissions.isOwner &&
+          permissions.collectionMode === CollectionMode.Contest &&
+          userMeta?.contestsBannedAt
+        ) {
+          throw throwAuthorizationError('You are banned from participating in contests.');
+        }
+      })
+    );
+
     const status = await saveItemInCollections({
       input: { ...input, userId: user.id, isModerator: user.isModerator },
     });
@@ -291,6 +318,16 @@ export const bulkSaveItemsHandler = async ({
       userId,
       isModerator,
     });
+
+    const userMeta = ctx.user.meta as UserMeta;
+
+    if (
+      !permissions.isOwner &&
+      permissions.collectionMode === CollectionMode.Contest &&
+      userMeta?.contestsBannedAt
+    ) {
+      throw throwAuthorizationError('You are banned from participating in contests.');
+    }
 
     const resp = await bulkSaveItems({ input: { ...input, userId, isModerator }, permissions });
 
@@ -505,8 +542,19 @@ export const addSimpleImagePostHandler = async ({
       userId,
       isModerator,
     });
+
     if (!(permissions.write || permissions.writeReview))
       throw throwAuthorizationError('You do not have permission to add items to this collection.');
+
+    const userMeta = ctx.user.meta as UserMeta;
+
+    if (
+      !permissions.isOwner &&
+      permissions.collectionMode === CollectionMode.Contest &&
+      userMeta?.contestsBannedAt
+    ) {
+      throw throwAuthorizationError('You are banned from participating in contests.');
+    }
 
     // create post
     const post = await createPost({

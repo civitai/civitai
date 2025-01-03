@@ -234,6 +234,7 @@ export const getAllCollectionsInfiniteSchema = infiniteQuerySchema
     privacy: z.array(z.nativeEnum(CollectionReadConfiguration)),
     sort: z.nativeEnum(CollectionSort).default(constants.collectionFilterDefaults.sort),
     ids: commaDelimitedNumberArray({ message: 'ids should be a number array' }),
+    modes: z.array(z.nativeEnum(CollectionMode)),
   })
   .merge(userPreferencesSchema)
   .partial();

@@ -1,3 +1,13 @@
+import { z } from 'zod';
+import { constants } from '~/server/common/constants';
+import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
+import { getAllQuerySchema } from '~/server/schema/base.schema';
+import { userSettingsChat } from '~/server/schema/chat.schema';
+import {
+  modelGallerySettingsSchema
+} from '~/server/schema/model.schema';
+import { featureFlagKeys } from '~/server/services/feature-flags.service';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -5,17 +15,6 @@ import {
   ModelEngagementType,
   TagEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { z } from 'zod';
-import { banReasonDetails, constants } from '~/server/common/constants';
-import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
-import { getAllQuerySchema } from '~/server/schema/base.schema';
-import { userSettingsChat } from '~/server/schema/chat.schema';
-import {
-  modelGallerySettingsInput,
-  modelGallerySettingsSchema,
-} from '~/server/schema/model.schema';
-import { featureFlagKeys } from '~/server/services/feature-flags.service';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { zc } from '~/utils/schema-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
@@ -275,6 +274,7 @@ export const userMeta = z.object({
       detailsExternal: z.string().optional(),
     })
     .optional(),
+  contestsBannedAt: z.date().optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 

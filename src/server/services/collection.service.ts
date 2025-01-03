@@ -84,10 +84,11 @@ export type CollectionContributorPermissionFlags = {
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
   collectionType: CollectionType | null;
+  collectionMode: CollectionMode | null;
 };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
-  input: { limit, cursor, privacy, types, userId, sort, ids },
+  input: { limit, cursor, privacy, types, userId, sort, ids, modes },
   user,
   select,
 }: {
@@ -109,12 +110,19 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
       read: privacy && privacy.length > 0 ? { in: privacy } : CollectionReadConfiguration.Public,
       type: types && types.length > 0 ? { in: types } : undefined,
       userId,
+      mode: modes && modes.length > 0 && user?.isModerator ? { in: modes } : undefined,
     },
     select,
     orderBy,
   });
 
-  return collections;
+  return collections.map((c) => ({
+    ...c,
+    metadata: c.hasOwnProperty('metadata')
+      ? // @ts-ignore - We confirmed that c has the metadata property
+        ((c.metadata ?? {}) as CollectionMetadataSchema)
+      : undefined,
+  }));
 };
 
 export const getUserCollectionPermissionsById = async ({
@@ -137,6 +145,7 @@ export const getUserCollectionPermissionsById = async ({
     publicCollection: false,
     followPermissions: [],
     collectionType: null,
+    collectionMode: null,
   };
 
   const collection = await dbRead.collection.findFirst({
@@ -146,6 +155,7 @@ export const getUserCollectionPermissionsById = async ({
       write: true,
       userId: true,
       type: true,
+      mode: true,
       contributors: userId
         ? {
             select: {
@@ -169,6 +179,7 @@ export const getUserCollectionPermissionsById = async ({
   }
 
   permissions.collectionType = collection.type;
+  permissions.collectionMode = collection.mode;
 
   if (
     collection.read === CollectionReadConfiguration.Public ||
