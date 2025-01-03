@@ -116,9 +116,14 @@ export default function ImageSelectModal({
             {/*</div>*/}
 
             <Group position="apart">
-              <Button onClick={handleSelect}>{`Select${
-                selected.length > 0 && ` (${selected.length})`
-              }`}</Button>
+              <Group>
+                <Button onClick={handleSelect} disabled={!selected.length}>{`Select${
+                  selected.length > 0 ? ` (${selected.length})` : ''
+                }`}</Button>
+                <Button variant="light" onClick={() => setSelected([])} disabled={!selected.length}>
+                  Deselect All
+                </Button>
+              </Group>
               {selectSource === 'generation' && (
                 <MarkerFiltersDropdown text="Filters" position="bottom-end" />
               )}
@@ -152,7 +157,7 @@ export default function ImageSelectModal({
 }
 
 const ImageGridGeneration = ({ data }: { data: TextToImageSteps }) => {
-  const { classes, theme } = useSearchLayoutStyles();
+  const { classes, theme, cx } = useSearchLayoutStyles();
 
   const images = data.flatMap((step) =>
     step.images
@@ -181,7 +186,7 @@ const ImageGridGeneration = ({ data }: { data: TextToImageSteps }) => {
           <Title order={4} className="mb-2">
             {date}
           </Title>
-          <div className={classes.grid}>
+          <div className={cx('px-2', classes.grid)}>
             {imgs.map((img) => (
               <ImageGridGenerationImage key={img.id} img={img} />
             ))}
@@ -199,11 +204,14 @@ const ImageGridGenerationImage = ({
 }) => {
   const { selected, setSelected } = useImageSelectContext();
 
+  const isSelected = selected.includes(img.url);
+
   return (
     <div className="relative">
       <MImage
         alt={`Generated Image - ${img.id}`}
         src={img.url}
+        className={`cursor-pointer${isSelected ? ' shadow-[0_0_7px_3px] shadow-blue-8' : ''}`}
         imageProps={{
           style: {
             height: '250px',
@@ -213,14 +221,23 @@ const ImageGridGenerationImage = ({
             // object-position: top;
           },
         }}
+        onClick={() =>
+          setSelected((prev) => {
+            if (!isSelected) {
+              return [...prev, img.url];
+            } else {
+              return prev.filter((x) => x !== img.url);
+            }
+          })
+        }
       />
 
       <div className="absolute left-2 top-2">
         <Checkbox
-          checked={selected.includes(img.url)}
-          onChange={(e) => {
+          checked={isSelected}
+          onChange={() => {
             setSelected((prev) => {
-              if (e.currentTarget.checked) {
+              if (!isSelected) {
                 return [...prev, img.url];
               } else {
                 return prev.filter((x) => x !== img.url);
@@ -230,11 +247,7 @@ const ImageGridGenerationImage = ({
         />
       </div>
       <div className="absolute bottom-2 right-2">
-        <ImageMetaPopover
-          meta={img.params}
-          // zIndex={10}
-          hideSoftware
-        >
+        <ImageMetaPopover meta={img.params} hideSoftware>
           <ActionIcon variant="transparent" size="md">
             <IconInfoCircle
               color="white"

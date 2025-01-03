@@ -119,7 +119,8 @@ const useStyles = createStyles((theme) => ({
     },
   },
   badLabel: {
-    borderColor: 'red',
+    // more border
+    border: '1px solid red',
     boxShadow: '0 0 10px red',
   },
   trash: {
