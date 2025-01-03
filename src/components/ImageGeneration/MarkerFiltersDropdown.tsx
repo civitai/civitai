@@ -1,31 +1,29 @@
 import {
   Button,
+  ButtonProps,
   Chip,
   ChipProps,
   createStyles,
-  Divider,
   Group,
   Indicator,
   Popover,
-  Stack,
-  Drawer,
   PopoverProps,
   ScrollArea,
-  ButtonProps,
+  Stack,
 } from '@mantine/core';
 import {
   IconChevronDown,
   IconFilter,
-  IconThumbUpFilled,
-  IconThumbDownFilled,
   IconHeartFilled,
+  IconThumbDownFilled,
+  IconThumbUpFilled,
 } from '@tabler/icons-react';
-import { useState } from 'react';
+import { ReactNode, useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { MarkerType } from '~/server/common/enums';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -53,6 +51,7 @@ export function DumbMarkerFiltersDropdown({
   filterMode = 'local',
   position = 'bottom-start',
   isFeed,
+  text,
   ...buttonProps
 }: Props & {
   filters: Partial<MarkerFilterSchema>;
@@ -104,6 +103,7 @@ export function DumbMarkerFiltersDropdown({
       >
         <Group spacing={4} noWrap>
           <Icon size={16} />
+          {text}
         </Group>
       </Button>
     </Indicator>
@@ -174,10 +174,7 @@ export function DumbMarkerFiltersDropdown({
       >
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={576} w="100%">
-          <ScrollArea.Autosize
-            maxHeight={'calc(90vh - var(--header-height) - 56px)'}
-            type="hover"
-          >
+          <ScrollArea.Autosize maxHeight={'calc(90vh - var(--header-height) - 56px)'} type="hover">
             {dropdown}
           </ScrollArea.Autosize>
         </Popover.Dropdown>
@@ -190,6 +187,7 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   filterMode?: 'local' | 'query';
   position?: PopoverProps['position'];
   isFeed?: boolean;
+  text?: ReactNode;
 };
 
 const useStyles = createStyles((theme, _params, getRef) => ({

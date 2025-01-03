@@ -48,6 +48,7 @@ import { saveAs } from 'file-saver';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { openImageSelectModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
@@ -1081,7 +1082,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     </Text>
 
                     <Group mt="xs" position="center" grow>
-                      <Button variant="light">Import from Generator</Button>
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          openImageSelectModal({
+                            title: 'Select Images',
+                            selectSource: 'generation',
+                            onSelect: (images) => {},
+                          });
+                        }}
+                      >
+                        Import from Generator
+                      </Button>
                       <Button variant="light">Add from Uploaded</Button>
                       <Button variant="light">Re-use a Dataset</Button>
                     </Group>
@@ -1391,10 +1403,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               imageProps={{
                                 style: {
                                   height: isZoomed ? '100%' : '250px',
+                                  width: '100%',
                                   // if we want to show full image, change objectFit to contain
                                   objectFit: 'cover',
                                   // object-position: top;
-                                  width: '100%',
                                 },
                                 // onLoad: () => URL.revokeObjectURL(imageUrl)
                               }}
