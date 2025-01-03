@@ -3,9 +3,7 @@ import { constants } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
-import {
-  modelGallerySettingsSchema
-} from '~/server/schema/model.schema';
+import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
@@ -60,6 +58,7 @@ export const getAllUsersInput = getAllQuerySchema
     ids: commaDelimitedNumberArray(),
     include: commaDelimitedEnumArray(z.enum(['status', 'avatar'])).default([]),
     excludedUserIds: z.array(z.number()).optional(),
+    contestBanned: z.boolean().optional(),
   })
   .partial();
 export type GetAllUsersInput = z.infer<typeof getAllUsersInput>;
@@ -274,7 +273,12 @@ export const userMeta = z.object({
       detailsExternal: z.string().optional(),
     })
     .optional(),
-  contestsBannedAt: z.date().optional(),
+  contestBanDetails: z
+    .object({
+      bannedAt: z.date().optional(),
+      detailsInternal: z.string().optional(),
+    })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
@@ -297,4 +301,5 @@ export const toggleBanUserSchema = z.object({
   reasonCode: z.nativeEnum(BanReasonCode).optional(),
   detailsInternal: z.string().optional(),
   detailsExternal: z.string().optional(),
+  type: z.enum(['universal', 'contest']).default('universal').optional(),
 });

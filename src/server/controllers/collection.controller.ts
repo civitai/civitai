@@ -24,7 +24,6 @@ import {
   UpsertCollectionInput,
 } from '~/server/schema/collection.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { UserMeta } from '~/server/schema/user.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -61,11 +60,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import {
-  CollectionItemStatus,
-  CollectionMode,
-  CollectionReadConfiguration,
-} from '~/shared/utils/prisma/enums';
+import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 
@@ -146,6 +141,7 @@ export const getAllCollectionsInfiniteHandler = async ({
             : null,
           images: collectionImageItems.map((ci) => ci.image).filter(isDefined) ?? [],
           srcs: collectionImageItems.map((ci) => ci.src).filter(isDefined) ?? [],
+          metadata: (item.metadata ?? {}) as CollectionMetadataSchema,
         };
       }),
     };
@@ -219,26 +215,6 @@ export const saveItemHandler = async ({
 }) => {
   const { user, ip, fingerprint } = ctx;
   try {
-    await Promise.all(
-      input.collections.map(async (c) => {
-        const permissions = await getUserCollectionPermissionsById({
-          id: c.collectionId,
-          userId: user.id,
-          isModerator: user.isModerator,
-        });
-
-        const userMeta = ctx.user.meta as UserMeta;
-
-        if (
-          !permissions.isOwner &&
-          permissions.collectionMode === CollectionMode.Contest &&
-          userMeta?.contestsBannedAt
-        ) {
-          throw throwAuthorizationError('You are banned from participating in contests.');
-        }
-      })
-    );
-
     const status = await saveItemInCollections({
       input: { ...input, userId: user.id, isModerator: user.isModerator },
     });
@@ -318,16 +294,6 @@ export const bulkSaveItemsHandler = async ({
       userId,
       isModerator,
     });
-
-    const userMeta = ctx.user.meta as UserMeta;
-
-    if (
-      !permissions.isOwner &&
-      permissions.collectionMode === CollectionMode.Contest &&
-      userMeta?.contestsBannedAt
-    ) {
-      throw throwAuthorizationError('You are banned from participating in contests.');
-    }
 
     const resp = await bulkSaveItems({ input: { ...input, userId, isModerator }, permissions });
 
@@ -546,16 +512,6 @@ export const addSimpleImagePostHandler = async ({
     if (!(permissions.write || permissions.writeReview))
       throw throwAuthorizationError('You do not have permission to add items to this collection.');
 
-    const userMeta = ctx.user.meta as UserMeta;
-
-    if (
-      !permissions.isOwner &&
-      permissions.collectionMode === CollectionMode.Contest &&
-      userMeta?.contestsBannedAt
-    ) {
-      throw throwAuthorizationError('You are banned from participating in contests.');
-    }
-
     // create post
     const post = await createPost({
       title: `${collection.name} Images`,
@@ -573,7 +529,9 @@ export const addSimpleImagePostHandler = async ({
         })
       )
     );
+
     const imageIds = postImages.map((image) => image.id);
+
     await bulkSaveItems({ input: { collectionId, imageIds, userId, isModerator }, permissions });
 
     return {

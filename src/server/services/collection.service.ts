@@ -38,6 +38,7 @@ import {
 } from '~/server/schema/collection.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { UserMeta } from '~/server/schema/user.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -116,13 +117,7 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
     orderBy,
   });
 
-  return collections.map((c) => ({
-    ...c,
-    metadata: c.hasOwnProperty('metadata')
-      ? // @ts-ignore - We confirmed that c has the metadata property
-        ((c.metadata ?? {}) as CollectionMetadataSchema)
-      : undefined,
-  }));
+  return collections;
 };
 
 export const getUserCollectionPermissionsById = async ({
@@ -1581,6 +1576,20 @@ export const validateContestCollectionEntry = async ({
   imageIds?: number[];
   postIds?: number[];
 }) => {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      meta: true,
+    },
+  });
+
+  const userMeta = (user?.meta ?? {}) as UserMeta;
+
+  if (userMeta?.contestBanDetails) {
+    throw throwBadRequestError('You are banned from participating in contests');
+  }
+
   if (!metadata) {
     return;
   }
