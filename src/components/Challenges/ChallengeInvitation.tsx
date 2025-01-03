@@ -105,7 +105,7 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
             <div className="-mt-6 ml-auto">
               <Text size="sm">
                 Click{' '}
-                <Link href={`/articles/${challenge.articleId}`} passHref>
+                <Link href={`/articles/${challenge.articleId}`} passHref legacyBehavior>
                   <Anchor onClick={handleClose}>here</Anchor>
                 </Link>{' '}
                 to read the full article for rules and prizes.

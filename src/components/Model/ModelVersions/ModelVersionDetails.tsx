@@ -1004,7 +1004,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <Link href={`/collections/${model.meta?.showcaseCollectionId}`} passHref>
+                      <Link
+                        href={`/collections/${model.meta?.showcaseCollectionId}`}
+                        passHref
+                        legacyBehavior
+                      >
                         <Anchor variant="text" onClick={(e) => e.stopPropagation()} inherit>
                           {collection.name}
                         </Anchor>

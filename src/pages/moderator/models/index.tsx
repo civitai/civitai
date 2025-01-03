@@ -191,6 +191,7 @@ export default function ModeratorModels() {
                               model.modelVersion ? `?modelVersionId=${model.modelVersion.id}` : ''
                             }`}
                             passHref
+                            legacyBehavior
                           >
                             <Anchor size="md" target="_blank" lineClamp={1} inline>
                               <div className="flex flex-nowrap gap-1">

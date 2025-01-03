@@ -9,6 +9,7 @@ import {
 } from '@tabler/icons-react';
 import React, {
   forwardRef,
+  MouseEventHandler,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -19,11 +20,15 @@ import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { VimeoEmbed } from '../VimeoEmbed/VimeoEmbed';
 import { fadeInOut } from '~/libs/animations';
 import { useLocalStorage } from '@mantine/hooks';
+import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
-type VideoProps = React.DetailedHTMLProps<
-  React.VideoHTMLAttributes<HTMLVideoElement>,
-  HTMLVideoElement
+type VideoProps = Omit<
+  React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
+  'height' | 'width' | 'src'
 > & {
+  src: string;
+  thumbnailUrl?: string | null;
   wrapperProps?: React.ComponentPropsWithoutRef<'div'>;
   contain?: boolean;
   fadeIn?: boolean;
@@ -31,6 +36,8 @@ type VideoProps = React.DetailedHTMLProps<
   onMutedChange?: (muted: boolean) => void;
   youtubeVideoId?: string;
   vimeoVideoId?: string;
+  options?: Omit<EdgeUrlProps, 'src'>;
+  threshold?: number | null;
 };
 
 export type EdgeVideoRef = {
@@ -48,6 +55,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   (
     {
       src,
+      options,
       muted: initialMuted = true,
       controls,
       style,
@@ -58,11 +66,14 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       onMutedChange,
       youtubeVideoId,
       vimeoVideoId,
+      threshold = 0.25,
+      thumbnailUrl,
       ...props
     },
     forwardedRef
   ) => {
     const ref = useRef<HTMLVideoElement | null>(null);
+
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [state, setState] = useState<State>({
       loaded: false,
@@ -154,11 +165,55 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       if (fadeIn && ref.current?.readyState === 4) ref.current.style.opacity = '1';
     }, [fadeIn, src]);
 
+    const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
+    const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
+      ...options,
+      anim: false,
+      original: false,
+    });
+
+    const node = useScrollAreaRef();
+    const observerRef = useRef<IntersectionObserver>();
+
+    useEffect(() => {
+      const videoElem = ref.current;
+      if (!videoElem || threshold === null) return;
+      if (!observerRef.current) {
+        observerRef.current = new IntersectionObserver(
+          ([{ isIntersecting, intersectionRatio, target }]) => {
+            const elem = target as HTMLVideoElement;
+            if (!options?.anim) return;
+            if (isIntersecting && intersectionRatio >= threshold) {
+              elem.play();
+            } else if (!isIntersecting || (isIntersecting && intersectionRatio < threshold)) {
+              elem.pause();
+            }
+          },
+          { root: node?.current, threshold: [threshold, 1 - threshold] }
+        );
+      }
+      observerRef.current.observe(videoElem);
+      return () => {
+        observerRef.current?.unobserve(videoElem);
+      };
+    }, [threshold, options?.anim]);
+
+    const [mouseOver, setMouseOver] = useState(false);
+    const handleMouseEnter: MouseEventHandler<HTMLVideoElement> = (e) => {
+      e.currentTarget.play();
+      setMouseOver(true);
+    };
+
+    const handleMouseLeave: MouseEventHandler<HTMLVideoElement> = (e) => {
+      e.currentTarget.pause();
+      setMouseOver(false);
+    };
+
     const defaultPlayer = (
       // extra div wrapper to prevent positioning errors of parent components that make their child absolute
       <div
         ref={containerRef}
-        className={cx(classes.iosScroll, wrapperProps?.className)}
+        className={cx(classes.iosScroll, wrapperProps?.className, 'overflow-hidden')}
         {...wrapperProps}
       >
         <div
@@ -174,17 +229,25 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             onClick={handleTogglePlayPause}
             onPlaying={() => setState((current) => ({ ...current, isPlaying: true }))}
             onPause={() => setState((current) => ({ ...current, isPlaying: false }))}
-            onVolumeChange={(e) =>
-              !initialMuted ? handleVolumeChange(e.currentTarget.volume) : undefined
-            }
+            onVolumeChange={(e) => {
+              !initialMuted ? handleVolumeChange(e.currentTarget.volume) : undefined;
+            }}
             playsInline
-            autoPlay
+            onMouseOver={!options?.anim ? handleMouseEnter : undefined}
+            onMouseLeave={!options?.anim ? handleMouseLeave : undefined}
+            autoPlay={options?.anim}
             loop
+            poster={coverUrl}
             {...props}
           >
-            <source src={src?.replace('.mp4', '.webm')} type="video/webm" />
-            <source src={src} type="video/mp4" />
+            <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />
+            <source src={videoUrl} type="video/mp4" />
           </video>
+          {!options?.anim && !showCustomControls && !html5Controls && !mouseOver && (
+            <IconPlayerPlayFilled
+              className={cx(classes.playButton, 'absolute-center pointer-events-none')}
+            />
+          )}
           {showCustomControls && (
             <div className={classes.controls}>
               <ActionIcon
@@ -350,5 +413,19 @@ const useStyles = createStyles((theme, _, getRef) => ({
     left: 0,
     transform: 'translate(-33%, -170%) rotate(270deg)',
     zIndex: 10,
+  },
+  playButton: {
+    width: 80,
+    height: 80,
+    color: theme.white,
+    backgroundColor: 'rgba(0,0,0,.6)',
+    padding: 20,
+    borderRadius: '50%',
+    boxShadow: `0 2px 2px 1px rgba(0,0,0,.4), inset 0 0 0 1px rgba(255,255,255,.2)`,
+    transition: 'background-color 200ms ease',
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    transform: 'translate(-50%, -50%)',
   },
 }));

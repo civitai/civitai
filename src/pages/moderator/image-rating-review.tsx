@@ -11,7 +11,7 @@ import { browsingLevels, getBrowsingLevelLabel } from '~/shared/constants/browsi
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
-import { NextLink as Link } from '~/components/NextLink/NextLink';;
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export default function ImageRatingReview() {
   const [limit, setLimit] = useState<string>('50');
@@ -90,7 +90,7 @@ function ImageRatingCard(item: AsyncReturnType<typeof getImageRatingRequests>['i
   };
 
   return (
-    <div className={clsx(`flex flex-col items-stretch card`, {  [' opacity-50']: updated  })}>
+    <div className={clsx(`flex flex-col items-stretch card`, { [' opacity-50']: updated })}>
       <Link href={`/images/${item.id}`} target="_blank">
         <EdgeMedia src={item.url} type={item.type} width={450} className="w-full" />
       </Link>

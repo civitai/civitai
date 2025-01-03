@@ -17,6 +17,7 @@ export function ToolCard({ data }: Props) {
       href={`/tools/${sluggifiedName}?tools=${data.id}`}
       as={`/tools/${sluggifiedName}`}
       passHref
+      legacyBehavior
     >
       <Card component="a" radius="md" withBorder>
         <Card.Section className="h-48">

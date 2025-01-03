@@ -241,30 +241,37 @@ function TagPicker() {
             <Text>Tag</Text>
           </Group>
         ) : (
-          <TextInput
-            ref={setControl}
-            variant="unstyled"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onBlur={handleClose}
-            styles={{
-              input: {
-                fontSize: 16,
-                padding: 0,
-                lineHeight: 1,
-                height: 'auto',
-                minHeight: 0,
-                minWidth: 42,
-                width: !query.length ? '1ch' : `${query.length}ch`,
-              },
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleEnter();
             }}
-            onKeyDown={getHotkeyHandler([
-              ['Enter', handleEnter],
-              ['ArrowUp', handleUp],
-              ['ArrowDown', handleDown],
-            ])}
-            autoFocus
-          />
+          >
+            <TextInput
+              ref={setControl}
+              variant="unstyled"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onBlur={handleClose}
+              styles={{
+                input: {
+                  fontSize: 16,
+                  padding: 0,
+                  lineHeight: 1,
+                  height: 'auto',
+                  minHeight: 0,
+                  minWidth: 42,
+                  width: !query.length ? '1ch' : `${query.length}ch`,
+                },
+              }}
+              onKeyDown={getHotkeyHandler([
+                ['Enter', handleEnter],
+                ['ArrowUp', handleUp],
+                ['ArrowDown', handleDown],
+              ])}
+              autoFocus
+            />
+          </form>
         )}
       </Alert>
     ),

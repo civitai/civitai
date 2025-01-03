@@ -16,6 +16,7 @@ import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constan
 import { Flags } from '~/shared/utils';
 import { getInitials } from '~/utils/string-helpers';
 import classes from './UserAvatarSimple.module.scss';
+import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 
 export function UserAvatarSimple({
   id,
@@ -23,18 +24,21 @@ export function UserAvatarSimple({
   username,
   deletedAt,
   cosmetics,
+  autoplayAnimations,
 }: {
   id: number;
   profilePicture?: ProfileImage | null;
   username?: string | null;
   deletedAt?: Date | null;
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
+  autoplayAnimations?: boolean;
 }) {
   const { canViewNsfw } = useFeatureFlags();
   const browsingLevel = useBrowsingLevelDebounced();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
   const router = useRouter();
+  const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
 
   if (id === -1) return null;
 
@@ -48,6 +52,8 @@ export function UserAvatarSimple({
     cosmetic ? cosmetic.type === 'ProfileDecoration' : undefined
   )?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt'>;
   const additionalTextProps = nameplate?.data;
+
+  const anim = !autoplayGifs || autoplayAnimations === false ? false : undefined;
 
   return (
     <UnstyledButton
@@ -72,17 +78,15 @@ export function UserAvatarSimple({
           {decoration && decoration.data.url && (
             <EdgeMedia
               src={decoration.data.url}
+              anim={anim}
+              original={anim === false ? false : undefined}
               type="image"
               name="user avatar decoration"
+              className="absolute left-1/2 top-1/2 z-[2] -translate-x-1/2 -translate-y-1/2"
               style={{
-                position: 'absolute',
-                top: '50%',
-                left: '50%',
                 maxWidth: 'none',
-                transform: 'translate(-50%,-50%)',
                 width: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
                 height: decoration.data.offset ? `calc(100% + ${decoration.data.offset})` : '100%',
-                zIndex: 2,
               }}
             />
           )}
@@ -104,15 +108,14 @@ export function UserAvatarSimple({
           </Text>
           {badge?.data.url && (
             <Tooltip color="dark" label={badge.name} withArrow withinPortal>
-              {badge.data.animated ? (
-                <div style={{ display: 'flex', width: 28 }}>
-                  <EdgeMedia src={badge.data.url} alt={badge.name} />
-                </div>
-              ) : (
-                <div style={{ display: 'flex' }}>
-                  <EdgeMedia src={badge.data.url} alt={badge.name} width={28} />
-                </div>
-              )}
+              <div style={{ display: 'flex', width: 28 }}>
+                <EdgeMedia
+                  src={badge.data.url}
+                  anim={badge.data.animated && anim}
+                  original={badge.data.animated && anim === false ? false : undefined}
+                  alt={badge.name}
+                />
+              </div>
             </Tooltip>
           )}
         </>

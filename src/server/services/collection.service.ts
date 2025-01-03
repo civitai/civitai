@@ -1533,7 +1533,8 @@ export function getCollectionItemCount({
   return dbRead.$queryRaw<{ id: number; count: number }[]>`
     SELECT "collectionId" as "id", COUNT(*) as "count"
     FROM "CollectionItem"
-    WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
+    WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`} 
+      AND ("imageId" IS NOT NULL OR "modelId" IS NOT NULL OR "postId" IS NOT NULL OR "articleId" IS NOT NULL)
     GROUP BY "collectionId"
   `;
 }

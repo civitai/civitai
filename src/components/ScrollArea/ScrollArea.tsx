@@ -26,7 +26,7 @@ export function ScrollArea({
       <IntersectionObserverProvider id={props.id ?? key} options={intersectionObserverOptions}>
         <Box
           ref={scrollRef}
-          className={clsx('scroll-area flex-1 @container', className)}
+          className={clsx('scroll-area flex-1 @container ', className)}
           {...props}
         >
           {isMobile && <DragLoader />}
@@ -36,6 +36,7 @@ export function ScrollArea({
     </ScrollAreaContext.Provider>
   );
 }
+// [&_*]:!pointer-events-none
 
 // ScrollArea.displayName = 'ScrollArea';
 

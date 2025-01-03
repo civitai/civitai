@@ -331,6 +331,7 @@ export const moderateImages = async ({
     const results = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
       UPDATE "Image" SET
         "needsReview" = ${needsReview},
+        "blockedFor" = NULL,
         "ingestion" = 'Scanned',
         -- if image was created within 72 hrs, set scannedAt to now
         "scannedAt" = CASE
@@ -364,7 +365,7 @@ export const moderateImages = async ({
 
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true },
+      data: { disabled: true, disabledAt: new Date() },
     });
 
     // Resolve any pending appeals
@@ -459,7 +460,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 
   await dbWrite.tagsOnImage.updateMany({
     where: { imageId: images[0].id, disabledAt: { not: null } },
-    data: { disabled: false },
+    data: { disabled: false, disabledAt: null },
   });
 
   return await ingestImage({ image: images[0] });
@@ -4077,6 +4078,7 @@ export async function getImageRatingRequests({
       JOIN "Image" i ON i.id = irr."imageId"
       WHERE irr.total >= 3
       AND i."blockedFor" IS NULL
+      AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
       ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
       ORDER BY irr."createdAt"
       LIMIT ${limit + 1}

@@ -23,7 +23,7 @@ export function ChallengeHero() {
           <Text size="lg" className="text-shadow-default">
             Introducing Daily Challenges! Compete in daily creative challenges, showcase your
             talent, and earn Buzz! 🏆 Click{' '}
-            <Link href="/articles/9196" passHref>
+            <Link href="/articles/9196" passHref legacyBehavior>
               <Anchor>here</Anchor>
             </Link>{' '}
             to learn more and join the fun! 🎉

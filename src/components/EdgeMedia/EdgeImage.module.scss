@@ -1,0 +1,14 @@
+.image {
+  width: 100%;
+  height: auto;
+}
+
+.loadError {
+  opacity: 1;
+  background: rgba(255, 00, 00, 0.35);
+}
+
+.fadeIn {
+  opacity: 0;
+  transition: transform 400ms ease;
+}
