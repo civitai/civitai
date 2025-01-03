@@ -33,17 +33,12 @@ export function VotableTagAdd({ addTag, autosuggest }: VotableTagAddProps) {
     setSearch('');
   }, [close]);
 
-  const handleKeyDownEventsEvent = getHotkeyHandler([
-    [
-      'Enter',
-      () => {
-        const value = search.trim().toLowerCase();
-        if (value) addTag(value);
+  const handleSubmit = useCallback(() => {
+    const value = search.trim().toLowerCase();
+    if (value) addTag(value);
 
-        handleClose();
-      },
-    ],
-  ]);
+    handleClose();
+  }, [addTag, handleClose, search]);
 
   return (
     <Badge radius="xs" className={classes.badge} px={5} onClick={!adding ? open : undefined}>
@@ -75,16 +70,23 @@ export function VotableTagAdd({ addTag, autosuggest }: VotableTagAddProps) {
             autoFocus
           />
         ) : (
-          <TextInput
-            variant="unstyled"
-            classNames={{ input: classes.input }}
-            value={search}
-            onChange={(e) => setSearch(e.currentTarget.value)}
-            placeholder="Type your tag"
-            onKeyDown={handleKeyDownEventsEvent}
-            onBlur={handleClose}
-            autoFocus
-          />
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handleSubmit();
+            }}
+          >
+            <TextInput
+              variant="unstyled"
+              classNames={{ input: classes.input }}
+              value={search}
+              onChange={(e) => setSearch(e.currentTarget.value)}
+              placeholder="Type your tag"
+              onKeyDown={getHotkeyHandler([['Enter', handleSubmit]])}
+              onBlur={handleClose}
+              autoFocus
+            />
+          </form>
         )}
       </Group>
     </Badge>
