@@ -1,12 +1,11 @@
 import { createStyles, Text } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { EdgeUrlProps, getInferredMediaType } from '~/client-utils/cf-images-utils';
 import { shouldAnimateByDefault } from '~/components/EdgeMedia/EdgeMedia.util';
 import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { useTimeout } from '@mantine/hooks';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 
 export type EdgeMediaProps = EdgeUrlProps &

@@ -73,7 +73,7 @@ export const getPaginatedPurchasableRewards = async (
           meta: item.coverImage.meta as ImageMetaProps,
           metadata: item.coverImage.metadata as MixedObject,
         }
-      : item.coverImage,
+      : null,
   }));
 
   return getPagingData({ items: itemsWithImageMeta, count: (count as number) ?? 0 }, limit, page);
