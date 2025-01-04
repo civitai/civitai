@@ -848,7 +848,7 @@ export const getDailyCompensationRewardByUser = async ({
       JOIN civitai_pg.ModelVersion mv ON mv.modelId = m.id
       WHERE m.userId = ${userId}
     )
-    SELECT
+    SELECT DISTINCT
       date,
       modelVersionId,
       comp,
