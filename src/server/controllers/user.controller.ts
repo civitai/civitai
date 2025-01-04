@@ -1,11 +1,7 @@
-import {
-  CosmeticType,
-  ModelEngagementType,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { isProd } from '~/env/other';
+import { env } from '~/env/server.mjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import {
@@ -32,6 +28,7 @@ import {
   ReportProhibitedRequestInput,
   SetLeaderboardEligibilitySchema,
   SetUserSettingsInput,
+  ToggleBanUser,
   ToggleFavoriteInput,
   ToggleFeatureInput,
   ToggleFollowUserSchema,
@@ -40,7 +37,6 @@ import {
   ToggleUserBountyEngagementsInput,
   UserByReferralCodeSchema,
   UserOnboardingSchema,
-  UserSettingsSchema,
   UserUpdateInput,
 } from '~/server/schema/user.schema';
 import { usersSearchIndex } from '~/server/search-index';
@@ -87,6 +83,7 @@ import {
   setUserSetting,
   toggleBan,
   toggleBookmarked,
+  toggleContestBan,
   toggleFollowUser,
   toggleHideUser,
   toggleModelEngagement,
@@ -111,6 +108,11 @@ import {
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import { Flags } from '~/shared/utils';
+import {
+  CosmeticType,
+  ModelEngagementType,
+  ModelVersionEngagementType,
+} from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { getUserBuzzBonusAmount } from '../common/user-helpers';
@@ -119,7 +121,6 @@ import { TransactionType } from '../schema/buzz.schema';
 import { createBuzzTransaction } from '../services/buzz.service';
 import { FeatureAccess, toggleableFeatures } from '../services/feature-flags.service';
 import { deleteImageById, getEntityCoverImage, ingestImage } from '../services/image.service';
-import { env } from '~/env/server.mjs';
 
 export const getAllUsersHandler = async ({
   input,
@@ -133,11 +134,16 @@ export const getAllUsersHandler = async ({
       BlockedUsers.getCached({ userId: ctx.user?.id }),
       BlockedByUsers.getCached({ userId: ctx.user?.id }),
     ]);
+
     const blockedUsers = [...new Set([...blockedUsersLists.flatMap((x) => x)].map((u) => u.id))];
+
     if (blockedUsers.length)
       input.excludedUserIds = [...(input.excludedUserIds ?? []), ...blockedUsers];
 
-    const users = await getUsersWithSearch({
+    const searchMethod =
+      ctx.user?.isModerator && input.contestBanned ? getUsers : getUsersWithSearch;
+
+    const users = await searchMethod({
       ...input,
       email: ctx.user?.isModerator ? input.email : undefined,
     });
@@ -973,10 +979,16 @@ export const toggleBanHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: ToggleBanUser;
   ctx: DeepNonNullable<Context>;
 }) => {
   if (!ctx.user.isModerator) throw throwAuthorizationError();
+
+  if (input.type === 'contest') {
+    // Only ban the user from contests
+    const updatedUser = await toggleContestBan({ ...input, userId: ctx.user.id });
+    return updatedUser;
+  }
 
   const updatedUser = await toggleBan({ ...input, userId: ctx.user.id, isModerator: true });
 

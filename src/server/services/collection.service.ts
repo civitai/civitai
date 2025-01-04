@@ -38,6 +38,7 @@ import {
 } from '~/server/schema/collection.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
+import { UserMeta } from '~/server/schema/user.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { collectionSelect } from '~/server/selectors/collection.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
@@ -84,10 +85,11 @@ export type CollectionContributorPermissionFlags = {
   followPermissions: CollectionContributorPermission[];
   publicCollection: boolean;
   collectionType: CollectionType | null;
+  collectionMode: CollectionMode | null;
 };
 
 export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>({
-  input: { limit, cursor, privacy, types, userId, sort, ids },
+  input: { limit, cursor, privacy, types, userId, sort, ids, modes },
   user,
   select,
 }: {
@@ -109,6 +111,7 @@ export const getAllCollections = async <TSelect extends Prisma.CollectionSelect>
       read: privacy && privacy.length > 0 ? { in: privacy } : CollectionReadConfiguration.Public,
       type: types && types.length > 0 ? { in: types } : undefined,
       userId,
+      mode: modes && modes.length > 0 && user?.isModerator ? { in: modes } : undefined,
     },
     select,
     orderBy,
@@ -137,6 +140,7 @@ export const getUserCollectionPermissionsById = async ({
     publicCollection: false,
     followPermissions: [],
     collectionType: null,
+    collectionMode: null,
   };
 
   const collection = await dbRead.collection.findFirst({
@@ -146,6 +150,7 @@ export const getUserCollectionPermissionsById = async ({
       write: true,
       userId: true,
       type: true,
+      mode: true,
       contributors: userId
         ? {
             select: {
@@ -169,6 +174,7 @@ export const getUserCollectionPermissionsById = async ({
   }
 
   permissions.collectionType = collection.type;
+  permissions.collectionMode = collection.mode;
 
   if (
     collection.read === CollectionReadConfiguration.Public ||
@@ -1571,6 +1577,20 @@ export const validateContestCollectionEntry = async ({
   imageIds?: number[];
   postIds?: number[];
 }) => {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: {
+      id: true,
+      meta: true,
+    },
+  });
+
+  const userMeta = (user?.meta ?? {}) as UserMeta;
+
+  if (userMeta?.contestBanDetails) {
+    throw throwBadRequestError('You are banned from participating in contests');
+  }
+
   if (!metadata) {
     return;
   }

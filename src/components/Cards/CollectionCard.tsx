@@ -1,21 +1,20 @@
 import { ActionIcon, Badge, Group, Text } from '@mantine/core';
 import { IconDotsVertical, IconLayoutGrid, IconUser } from '@tabler/icons-react';
+import { truncate } from 'lodash-es';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { FeedCard } from '~/components/Cards/FeedCard';
 import { CollectionContextMenu } from '~/components/Collections/components/CollectionContextMenu';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { SimpleUser } from '~/server/selectors/user.selector';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { CollectionGetInfinite } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { SimpleUser } from '~/server/selectors/user.selector';
-import React from 'react';
-import { truncate } from 'lodash-es';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { NsfwLevel } from '~/server/common/enums';
-import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 
 type ImageProps = {
   id: number;

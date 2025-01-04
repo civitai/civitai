@@ -1,24 +1,23 @@
-import { Stack, Text, Box, Center, Loader, Title, ThemeIcon } from '@mantine/core';
+import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 
+import { IconCloudOff } from '@tabler/icons-react';
+import { CollectionCard } from '~/components/Cards/CollectionCard';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { InViewLoader } from '~/components/InView/InViewLoader';
 import {
   BrowsingLevelFilter,
   ChipRefinementList,
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { SearchHeader } from '~/components/Search/SearchHeader';
-import { IconCloudOff } from '@tabler/icons-react';
-import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
-import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
 import { CollectionsSearchIndexSortBy } from '~/components/Search/parsers/collection.parser';
-import { CollectionCard } from '~/components/Cards/CollectionCard';
-import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
-import { NoContent } from '~/components/NoContent/NoContent';
+import { SearchHeader } from '~/components/Search/SearchHeader';
+import { SearchLayout, useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
+import { COLLECTIONS_SEARCH_INDEX } from '~/server/common/constants';
+import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 
 export default function CollectionSearch() {
   return (
@@ -134,6 +133,7 @@ export function CollectionHitList() {
             <CollectionCard
               key={hit.id}
               data={{
+                metadata: {} as CollectionMetadataSchema,
                 ...hit,
                 // Reset values not relevant
                 // Image is filled via images

@@ -1,7 +1,7 @@
 import { ActionIcon, Menu } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { IconBadge } from '@tabler/icons-react';
 import { useMemo } from 'react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 
@@ -38,6 +38,10 @@ export function ModerationNav() {
           label: 'Blocklists',
           href: '/moderator/blocklists',
           hidden: !features.blocklists,
+        },
+        {
+          label: 'Contests',
+          href: '/moderator/contests',
         },
       ]
         .filter((i) => !i.hidden)

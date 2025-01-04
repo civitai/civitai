@@ -1,7 +1,7 @@
 import { ActionIcon, Alert, Box, Button, Center, Divider, Group, Stack, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconCheck, IconX } from '@tabler/icons-react';
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';

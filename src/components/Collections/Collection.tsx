@@ -8,6 +8,7 @@ import {
   createStyles,
   Divider,
   Group,
+  HoverCard,
   Menu,
   Popover,
   Progress,
@@ -475,6 +476,7 @@ export function Collection({
   const { classes } = useStyles({ bannerPosition: collection?.metadata?.bannerPosition });
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
+  const currentUser = useCurrentUser();
 
   if (!isLoading && (!collection || isBlocked)) {
     return (
@@ -649,29 +651,43 @@ export function Collection({
                       [CollectionType.Image, CollectionType.Post].some(
                         (x) => x === collection.type
                       ) ? (
-                        <>
-                          <Button
-                            color="blue"
-                            radius="xl"
-                            onClick={() => {
-                              if (
-                                !!metadata.existingEntriesDisabled ||
-                                collection.type === CollectionType.Post
-                              ) {
-                                router.push(`/posts/create?collectionId=${collection.id}`);
-                              } else {
-                                dialogStore.trigger({
-                                  component: AddUserContentModal,
-                                  props: {
-                                    collectionId: collection.id,
-                                  },
-                                });
-                              }
-                            }}
-                          >
-                            Submit an entry
-                          </Button>
-                        </>
+                        <HoverCard width={300} withArrow withinPortal>
+                          <HoverCard.Target>
+                            <Button
+                              color="blue"
+                              radius="xl"
+                              onClick={() => {
+                                if (currentUser?.meta?.contestBanDetails) {
+                                  return;
+                                }
+
+                                if (
+                                  !!metadata.existingEntriesDisabled ||
+                                  collection.type === CollectionType.Post
+                                ) {
+                                  router.push(`/posts/create?collectionId=${collection.id}`);
+                                } else {
+                                  dialogStore.trigger({
+                                    component: AddUserContentModal,
+                                    props: {
+                                      collectionId: collection.id,
+                                    },
+                                  });
+                                }
+                              }}
+                            >
+                              Submit an entry
+                            </Button>
+                          </HoverCard.Target>
+                          <HoverCard.Dropdown px="md" py={8}>
+                            {currentUser?.meta?.contestBanDetails && (
+                              <Text>
+                                Due to breaking the rules in the past, you are ineligible for
+                                participation in this event.
+                              </Text>
+                            )}
+                          </HoverCard.Dropdown>
+                        </HoverCard>
                       ) : (
                         <>
                           <CollectionFollowAction

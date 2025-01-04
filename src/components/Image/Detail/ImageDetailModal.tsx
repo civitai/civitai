@@ -1,15 +1,14 @@
+import { useMemo } from 'react';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
+import { useCollection } from '~/components/Collections/collection.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
+import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
-import { removeEmpty } from '../../../utils/object-helpers';
-import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
-import { useMemo } from 'react';
-import { useCollection } from '~/components/Collections/collection.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { removeEmpty } from '../../../utils/object-helpers';
 
 export default function ImageDetailModal({
   imageId,
