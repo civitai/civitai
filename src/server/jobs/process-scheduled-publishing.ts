@@ -43,6 +43,11 @@ export const processScheduledPublishing = createJob(
       JOIN "Model" m ON m.id = mv."modelId"
       WHERE mv.status = 'Scheduled'
         AND mv."publishedAt" <= ${now}
+        AND EXISTS (
+          SELECT 1
+          FROM "ModelFile" mf
+          WHERE mf."modelVersionId" = mv.id
+        )
     `;
     const scheduledPosts = await dbWrite.$queryRaw<ScheduledEntity[]>`
       SELECT

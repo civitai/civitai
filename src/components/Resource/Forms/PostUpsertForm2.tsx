@@ -91,7 +91,8 @@ export function PostUpsertForm2({
           modelVersion ? `${modelVersion.model.name} - ${modelVersion.name} Showcase` : undefined
         }
         afterPublish={({ publishedAt }) => {
-          if (canPublish) {
+          // allow scheduled publishing even if files are not uploaded
+          if (canPublish || publishedAt > new Date()) {
             if (modelVersion && modelVersion.model.status !== ModelStatus.Published) {
               publishModelMutation.mutate({
                 id: modelId,
