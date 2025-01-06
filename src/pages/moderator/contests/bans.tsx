@@ -118,7 +118,6 @@ export default function ContestsBans() {
     {
       contestBanned: true,
     },
-    { enabled: true }
   );
 
   const queryUtils = trpc.useContext();
