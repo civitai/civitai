@@ -334,7 +334,7 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
         </ImageGuard2>
       </Card.Section>
       {needsReview && (
-        <VotableTags mt="xs" tags={tags.moderation} entityType="image" entityId={image.id} />
+        <VotableTags mt="xs" tags={tags.moderation} entityType="image" entityId={image.id} highlightContested />
       )}
     </Card>
   );

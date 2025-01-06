@@ -365,7 +365,7 @@ export const moderateImages = async ({
 
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true, disabledAt: new Date() },
+      data: { disabled: true, disabledAt: new Date(), needsReview: false },
     });
 
     // Resolve any pending appeals
@@ -3494,6 +3494,9 @@ export const getImageModerationReviewQueue = async ({
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."needsReview"
     )`);
+    AND.push(Prisma.sql`
+      i."nsfwLevel" < ${NsfwLevel.Blocked}
+    `);
   }
 
   if (tagIds?.length) {
@@ -4077,9 +4080,11 @@ export async function getImageRatingRequests({
       FROM image_rating_requests irr
       JOIN "Image" i ON i.id = irr."imageId"
       WHERE irr.total >= 3
-      AND i."blockedFor" IS NULL
-      AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
-      ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+        AND i."blockedFor" IS NULL
+        AND i."nsfwLevelLocked" = FALSE
+        AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
+        AND i."nsfwLevel" < ${NsfwLevel.Blocked}
+        ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
       ORDER BY irr."createdAt"
       LIMIT ${limit + 1}
   `;
