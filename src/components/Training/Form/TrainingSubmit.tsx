@@ -115,7 +115,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz();
+  const { balance } = useBuzz(currentUser?.id, 'user');
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to train this model. Required Buzz: ${numberWithCommas(

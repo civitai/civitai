@@ -28,7 +28,7 @@ export function UserBuzz({
   withTooltip,
   withAbbreviation = true,
   accountId,
-  accountType,
+  accountType = 'user',
   ...textProps
 }: Props) {
   const { balance, balanceLoading } = useBuzz(accountId, accountType);
