@@ -196,7 +196,7 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
   // handle missing coverage
-  if (!resourceData.resources.every((x) => x.available))
+  if (!resourceData.resources.every((x) => x.available) && params.workflow !== 'img2img-upscale')
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
         .filter((x) => !x.covered)
