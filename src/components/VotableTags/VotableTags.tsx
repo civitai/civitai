@@ -24,6 +24,7 @@ export function VotableTags({
   canAddModerated: _canAddModerated,
   collapsible = false,
   nsfwLevel,
+  highlightContested,
   ...props
 }: GalleryTagProps) {
   const currentUser = useCurrentUser();
@@ -115,6 +116,7 @@ export function VotableTags({
           type={tag.type}
           nsfwLevel={tag.nsfwLevel}
           score={tag.score}
+          highlightContested={highlightContested}
           onChange={({ name, vote }) => {
             handleVote({ tags: [name], vote });
           }}
@@ -138,6 +140,7 @@ type GalleryTagProps = {
   canAddModerated?: boolean;
   collapsible?: boolean;
   nsfwLevel?: number;
+  highlightContested?: boolean;
 } & Omit<GroupProps, 'id'>;
 
 const useStyles = createStyles((theme) => ({
