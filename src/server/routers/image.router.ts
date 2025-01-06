@@ -8,7 +8,7 @@ import {
   updateImageMinorHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
-import { getByIdSchema } from '~/server/schema/base.schema';
+import { getByIdSchema, infiniteQuerySchema } from '~/server/schema/base.schema';
 import {
   addImageTechniques,
   addImageTools,
@@ -20,6 +20,7 @@ import {
   getImagesForModelVersionCache,
   getImagesPendingIngestion,
   getModeratorPOITags,
+  getMyImages,
   ingestArticleCoverImages,
   ingestImageById,
   removeImageResource,
@@ -200,4 +201,7 @@ export const imageRouter = router({
   // #endregion
 
   updateMinor: protectedProcedure.input(updateImageMinorSchema).mutation(updateImageMinorHandler),
+  getMyImages: protectedProcedure
+    .input(infiniteQuerySchema)
+    .query(({ input, ctx }) => getMyImages({ ...input, userId: ctx.user.id })),
 });

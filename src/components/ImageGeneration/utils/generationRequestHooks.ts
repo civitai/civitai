@@ -74,7 +74,14 @@ export function useGetTextToImageRequests(
   }, [filters.marker]);
 
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
-    { ...input, tags: [WORKFLOW_TAGS.GENERATION, ...(options?.includeTags === false ? [] : tags)] },
+    {
+      ...input,
+      tags: [
+        WORKFLOW_TAGS.GENERATION,
+        ...(options?.includeTags === false ? [] : tags),
+        ...(input?.tags ?? []),
+      ],
+    },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       enabled: !!currentUser && options?.enabled,

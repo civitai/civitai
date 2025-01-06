@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { constants } from '~/server/common/constants';
 import type {
@@ -17,6 +18,7 @@ export type ImageDataType = {
   label: string;
   // labelType: LabelTypes;
   invalidLabel: boolean;
+  source: { type: ImageSelectSource; url: string } | null;
 };
 
 type UpdateImageDataType = Partial<ImageDataType> & {
@@ -227,7 +229,10 @@ export const getShortNameFromUrl = (i: ImageDataType) => {
 
 export const useTrainingImageStore = create<TrainingImageStore>()(
   immer((set) => ({
-    updateImage: (modelId, { matcher, url, name, type, label, appendLabel, invalidLabel }) => {
+    updateImage: (
+      modelId,
+      { matcher, url, name, type, label, appendLabel, invalidLabel, source }
+    ) => {
       set((state) => {
         if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
         // why is this not understanding the override I just did above?
@@ -253,6 +258,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
               type: type ?? i.type,
               label: newLabel,
               invalidLabel: invalidLabel ?? i.invalidLabel,
+              source: source ?? i.source,
             };
           }
           return i;

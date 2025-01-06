@@ -47,14 +47,19 @@ import {
 import { saveAs } from 'file-saver';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
+import pLimit from 'p-limit';
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { openImageSelectModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
   TrainingImagesSwitchLabel,
@@ -64,7 +69,7 @@ import {
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { BaseModel, constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, MIME_TYPES, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
@@ -108,6 +113,8 @@ const MAX_FILES_ALLOWED = 1000;
 
 export const blankTagStr = '@@none@@';
 
+const limit = pLimit(10);
+
 const useStyles = createStyles((theme) => ({
   imgOverlay: {
     borderBottom: `1px solid ${
@@ -128,6 +135,14 @@ const useStyles = createStyles((theme) => ({
     position: 'absolute',
     top: 0,
     right: 0,
+    zIndex: 10,
+    margin: 4,
+  },
+  source: {
+    display: 'none',
+    position: 'absolute',
+    top: 0,
+    left: 0,
     zIndex: 10,
     margin: 4,
   },
@@ -283,6 +298,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [searchCaption, setSearchCaption] = useState<string>('');
   const [isZoomed, setIsZoomed] = useState(false);
   const [onlyIssues, setOnlyIssues] = useState(false);
+  const [accordionUpload, setAccordionUpload] = useState<string | null>(
+    imageList.length > 0 ? null : 'uploading'
+  );
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
 
@@ -424,6 +442,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               url: scaledUrl,
               label: labelStr,
               invalidLabel: false,
+              source: null, // TODO
             });
           } catch {
             showErrorNotification({
@@ -457,7 +476,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     return { parsedFiles, hasAnyLabelFiles };
   };
 
-  const handleDrop = async (fileList: FileWithPath[]) => {
+  const handleDrop = async (
+    fileList: FileWithPath[],
+    data?: { [p: string]: Pick<ImageDataType, 'label' | 'source'> }
+  ) => {
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
         if (ZIP_MIME_TYPE.includes(f.type as never)) {
@@ -465,11 +487,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         } else {
           try {
             const scaledUrl = await getResizedImgUrl(f, f.type);
+            const label = data?.[f.name]?.label ?? '';
+            const source = data?.[f.name]?.source ?? null;
+            const parsed: ImageDataType[] = [
+              { name: f.name, type: f.type, url: scaledUrl, invalidLabel: false, label, source },
+            ];
+
             return {
-              parsedFiles: [
-                { name: f.name, type: f.type, url: scaledUrl, label: '' },
-              ] as ImageDataType[],
-              hasAnyLabelFiles: false,
+              parsedFiles: parsed,
+              hasAnyLabelFiles: label !== '',
             };
           } catch {
             showErrorNotification({
@@ -502,6 +528,70 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       dialogStore.trigger({
         component: LabelSelectModal,
         props: { modelId: model.id },
+      });
+    }
+
+    if (filteredFiles.length > 0) {
+      setAccordionUpload(null);
+    }
+  };
+
+  const handleImport = async (images: SelectedImage[], source: ImageSelectSource) => {
+    const importNotifId = `${thisModelVersion.id}-importing-images-${new Date().toISOString()}`;
+    showNotification({
+      id: importNotifId,
+      loading: true,
+      autoClose: false,
+      disallowClose: true,
+      message: `Importing ${images.length} image${images.length !== 1 ? 's' : ''}...`,
+    });
+
+    const files = await Promise.all(
+      images.map((i, idx) =>
+        limit(async () => {
+          try {
+            const result = await fetch(getEdgeUrl(i.url));
+
+            if (!result.ok) {
+              return;
+            }
+            const blob = await result.blob();
+            return {
+              file: new File([blob], `imported_${new Date().toISOString()}_${idx}.jpg`, {
+                type: IMAGE_MIME_TYPE.includes(blob.type as never) ? blob.type : MIME_TYPES.jpeg,
+              }),
+              label: i.label,
+              url: i.url,
+            };
+          } catch (e) {
+            return;
+          }
+        })
+      )
+    );
+
+    const goodFiles = files.filter((f) => !!f);
+    const fileDiff = files.length - goodFiles.length;
+
+    if (goodFiles.length !== 0) {
+      await handleDrop(
+        goodFiles.map((f) => f.file),
+        goodFiles.reduce(
+          (acc, f) => ({
+            ...acc,
+            [f.file.name]: { label: f.label, source: { type: source, url: f.url } },
+          }),
+          {} as Record<string, Pick<ImageDataType, 'label' | 'source'>>
+        )
+      );
+    }
+
+    hideNotification(importNotifId);
+
+    if (fileDiff !== 0) {
+      showWarningNotification({
+        message: `${fileDiff} image${fileDiff === 1 ? '' : 's'} could not be imported`,
+        autoClose: false,
       });
     }
   };
@@ -1033,6 +1123,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const totalLabeled = imageList.filter((i) => i.label && i.label.length > 0).length;
 
+  const importedUrls = useMemo(
+    () => imageList.filter((i) => isDefined(i.source?.url)).map((i) => i.source!.url!),
+    [imageList]
+  );
+
   useCatchNavigation({
     unsavedChanges:
       !isEqual(imageList, initialImageList) ||
@@ -1049,7 +1144,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         {attested.status && (
           <>
             <Accordion
-              defaultValue="uploading"
+              value={accordionUpload}
+              onChange={setAccordionUpload}
               styles={(theme) => ({
                 content: {
                   padding: theme.spacing.xs,
@@ -1089,13 +1185,30 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                           openImageSelectModal({
                             title: 'Select Images',
                             selectSource: 'generation',
-                            onSelect: (images) => {},
+                            onSelect: async (images) => {
+                              await handleImport(images, 'generation');
+                            },
+                            importedUrls,
                           });
                         }}
                       >
                         Import from Generator
                       </Button>
-                      <Button variant="light">Add from Uploaded</Button>
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          openImageSelectModal({
+                            title: 'Select Images',
+                            selectSource: 'uploaded',
+                            onSelect: async (images) => {
+                              await handleImport(images, 'uploaded');
+                            },
+                            importedUrls,
+                          });
+                        }}
+                      >
+                        Add from Uploaded
+                      </Button>
                       <Button variant="light">Re-use a Dataset</Button>
                     </Group>
 
@@ -1398,6 +1511,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                 </ActionIcon>
                               </Tooltip>
                             </Group>
+                            {imgData.source?.type && (
+                              <div className={cx(classes.source, 'trashIcon')}>
+                                <Badge>
+                                  <span>{imgData.source.type}</span>
+                                </Badge>
+                              </div>
+                            )}
                             <MImage
                               alt={imgData.name}
                               src={imgData.url}
@@ -1481,28 +1601,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         <Paper mb="md" radius="md" p="xl" withBorder>
           <div className="flex flex-col gap-4">
             <Title order={4}>Acknowledgement</Title>
-            <div>
-              <Text size="sm" mb={4}>
-                By uploading this training data, I confirm that:
-              </Text>
-              <List size="sm" type="ordered">
-                <List.Item mb={2}>
-                  Consent: If the content depicts the likeness of a real person, who is not a public
-                  figure, I am either that person or have obtained clear, explicit consent from that
-                  person for their likeness to be used in this model.
-                </List.Item>
-                <List.Item mb={2}>
-                  Responsibility: I understand that I am solely responsible for ensuring that all
-                  necessary permissions have been obtained, and I acknowledge that failure to do so
-                  may result in the removal of content, my account or other actions by Civitai.
-                </List.Item>
-                <List.Item mb={2}>
-                  Accuracy: I attest that the likeness depicted in this model aligns with the
-                  consents granted, and I will immediately remove or modify the content if consent
-                  is revoked.
-                </List.Item>
-              </List>
-            </div>
+            {attested.status ? (
+              <ContentClamp maxHeight={30}>
+                <AttestDiv />
+              </ContentClamp>
+            ) : (
+              <div>
+                <AttestDiv />
+              </div>
+            )}
             <Checkbox
               label="By agreeing to this attestation, I acknowledge that I have complied with these conditions and accept full responsibility for any legal or ethical implications that arise from the use of this content."
               checked={attested.status}
@@ -1526,6 +1633,32 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           Next
         </Button>
       </Group>
+    </>
+  );
+};
+
+const AttestDiv = () => {
+  return (
+    <>
+      <Text size="sm" mb={4}>
+        By uploading this training data, I confirm that:
+      </Text>
+      <List size="sm" type="ordered">
+        <List.Item mb={2}>
+          Consent: If the content depicts the likeness of a real person, who is not a public figure,
+          I am either that person or have obtained clear, explicit consent from that person for
+          their likeness to be used in this model.
+        </List.Item>
+        <List.Item mb={2}>
+          Responsibility: I understand that I am solely responsible for ensuring that all necessary
+          permissions have been obtained, and I acknowledge that failure to do so may result in the
+          removal of content, my account or other actions by Civitai.
+        </List.Item>
+        <List.Item mb={2}>
+          Accuracy: I attest that the likeness depicted in this model aligns with the consents
+          granted, and I will immediately remove or modify the content if consent is revoked.
+        </List.Item>
+      </List>
     </>
   );
 };
