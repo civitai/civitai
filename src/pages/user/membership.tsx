@@ -140,8 +140,9 @@ export default function UserMembership() {
     } catch (error: any) {
       console.error('Failed to refresh subscription', error);
       showErrorNotification({
-        title: 'Failed to refresh subscription',
+        title: 'Whoops!',
         error: error?.message ?? 'An error occurred while refreshing your subscription',
+        reason: error?.message ?? 'An error occurred while refreshing your subscription',
       });
     }
   };
