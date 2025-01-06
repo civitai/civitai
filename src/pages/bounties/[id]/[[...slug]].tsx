@@ -371,9 +371,10 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const { trackAction } = useTrackEvent();
 
-  const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useQuery({
+  const { data: entries, isLoading: loadingEntries } = trpc.bounty.getEntries.useInfiniteQuery({
     id: bounty.id,
   });
+  const flatEntries = useMemo(() => entries?.pages.flatMap((p) => p.items) ?? [], [entries]);
 
   const addToBountyEnabled =
     !expired &&
@@ -549,7 +550,7 @@ const BountySidebar = ({ bounty }: { bounty: BountyGetById }) => {
 
   const files = bounty.files ?? [];
   const filesCount = files.length;
-  const hasEntries = (entries?.items.length ?? 0) > 0;
+  const hasEntries = flatEntries.length > 0;
 
   return (
     <Stack spacing="md">
