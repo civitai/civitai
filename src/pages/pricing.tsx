@@ -1,55 +1,44 @@
 import {
-  Card,
-  Container,
-  Title,
-  Text,
-  Button,
-  Stack,
-  Center,
-  Loader,
   Alert,
-  ThemeIcon,
-  Group,
-  createStyles,
   Anchor,
+  Button,
+  Card,
+  Center,
+  Container,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  ThemeIcon,
+  Title,
+  createStyles,
 } from '@mantine/core';
-import { trpc } from '~/utils/trpc';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
-import {
-  IconCalendarDue,
-  IconChristmasBall,
-  IconChristmasTree,
-  IconExclamationMark,
-  IconHeart,
-  IconHeartHandshake,
-  IconInfoCircle,
-  IconInfoTriangle,
-  IconInfoTriangleFilled,
-  IconPhotoPlus,
-} from '@tabler/icons-react';
-import { DonateButton } from '~/components/Stripe/DonateButton';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PlanBenefitList, benefitIconSize } from '~/components/Subscriptions/PlanBenefitList';
-import { joinRedirectReasons, JoinRedirectReason } from '~/utils/join-helpers';
+import { IconExclamationMark, IconInfoCircle, IconInfoTriangleFilled } from '@tabler/icons-react';
+import Image from 'next/image';
 import { useRouter } from 'next/router';
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { constants } from '~/server/common/constants';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { usePaddleSubscriptionRefresh } from '~/components/Paddle/util';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import {
   appliesForFounderDiscount,
   useActiveSubscription,
 } from '~/components/Stripe/memberships.util';
-import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { Meta } from '~/components/Meta/Meta';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
+import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { env } from '~/env/client.mjs';
-import Image from 'next/image';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants } from '~/server/common/constants';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { formatDate, isHolidaysTime } from '~/utils/date-helpers';
+import { JoinRedirectReason, joinRedirectReasons } from '~/utils/join-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { trpc } from '~/utils/trpc';
 
 export default function Pricing() {
   const router = useRouter();
@@ -68,7 +57,10 @@ export default function Pricing() {
       checkWhenInBadState: true,
     });
 
-  const isLoading = productsLoading || subscriptionLoading;
+  const refreshingSubscription = usePaddleSubscriptionRefresh();
+
+  const isLoading = productsLoading || subscriptionLoading || refreshingSubscription;
+
   const currentMembershipUnavailable =
     !!subscription &&
     !productsLoading &&
@@ -85,8 +77,6 @@ export default function Pricing() {
   const activeSubscriptionIsNotDefaultProvider =
     subscription && subscriptionPaymentProvider !== paymentProvider;
 
-  const today = new Date();
-  const month = today.getMonth();
   const isHolidays = isHolidaysTime();
 
   return (

@@ -1,55 +1,59 @@
 import {
-  Container,
-  Stack,
-  Title,
-  createStyles,
-  Grid,
-  Paper,
-  Center,
-  Loader,
-  Text,
-  Group,
-  Button,
-  Menu,
   ActionIcon,
-  Box,
   Alert,
   Anchor,
+  Box,
+  Button,
+  Center,
+  Container,
+  createStyles,
+  Grid,
+  Group,
+  Loader,
+  Menu,
+  Paper,
+  Stack,
+  Text,
+  Title,
   Tooltip,
 } from '@mantine/core';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getLoginLink } from '~/utils/login-helpers';
-import { Meta } from '~/components/Meta/Meta';
-import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import {
   IconDotsVertical,
   IconInfoCircle,
   IconInfoTriangleFilled,
   IconRotateClockwise,
 } from '@tabler/icons-react';
-import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import { capitalize } from 'lodash-es';
+import { useRouter } from 'next/router';
+import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { Meta } from '~/components/Meta/Meta';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import {
+  useMutatePaddle,
+  usePaddleSubscriptionRefresh,
+  useSubscriptionManagementUrls,
+} from '~/components/Paddle/util';
+import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
-import { useRouter } from 'next/router';
-import { userTierSchema } from '~/server/schema/user.schema';
-import { z } from 'zod';
-import { capitalize } from 'lodash-es';
-import { booleanString } from '~/utils/zod-helpers';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { env } from '~/env/client.mjs';
-import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useMutatePaddle, useSubscriptionManagementUrls } from '~/components/Paddle/util';
-import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipMenuItem } from '~/components/Subscriptions/CancelMembershipMenuItem';
+import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { env } from '~/env/client.mjs';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { userTierSchema } from '~/server/schema/user.schema';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
+import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -119,11 +123,13 @@ export default function UserMembership() {
   const features = useFeatureFlags();
   const canUpgrade = useCanUpgrade();
   const router = useRouter();
+  const isCheckingPaddleSubscription = usePaddleSubscriptionRefresh();
   const query = querySchema.safeParse(router.query);
   const isDrowngrade = query.success ? query.data?.downgraded : false;
   const downgradedTier = query.success ? isDrowngrade && query.data?.tier : null;
   const isUpdate = query.success ? query.data?.updated : false;
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
+
   const handleRefreshSubscription = async () => {
     try {
       await refreshSubscription();
@@ -140,7 +146,7 @@ export default function UserMembership() {
     }
   };
 
-  if (subscriptionLoading) {
+  if (subscriptionLoading || isCheckingPaddleSubscription) {
     return (
       <Container size="lg">
         <Center>

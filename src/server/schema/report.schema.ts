@@ -170,6 +170,6 @@ export const resolveAppealSchema = z.object({
   ids: z.number().array().min(1),
   entityType: z.nativeEnum(EntityType),
   status: z.nativeEnum(AppealStatus),
-  resolvedMessage: z.string().trim().min(10).max(MAX_APPEAL_MESSAGE_LENGTH),
+  resolvedMessage: z.string().trim().max(MAX_APPEAL_MESSAGE_LENGTH).optional(),
   internalNotes: z.string().trim().optional(),
 });

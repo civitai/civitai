@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
+import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import {
@@ -116,4 +117,29 @@ export const usePaddleAdjustmentsInfinite = (
     isLoading,
     ...rest,
   };
+};
+
+export const usePaddleSubscriptionRefresh = () => {
+  const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
+  const { hasPaddleSubscription, isLoading: loadingPaddleSubscriptionStatus } =
+    useHasPaddleSubscription();
+
+  const { subscription, subscriptionLoading } = useActiveSubscription({
+    checkWhenInBadState: true,
+  });
+
+  const isLoading =
+    refreshingSubscription || loadingPaddleSubscriptionStatus || subscriptionLoading;
+
+  useEffect(() => {
+    if (isLoading) {
+      return;
+    }
+
+    if (!subscription && hasPaddleSubscription) {
+      refreshSubscription();
+    }
+  }, [hasPaddleSubscription, subscription, refreshSubscription, isLoading]);
+
+  return isLoading;
 };

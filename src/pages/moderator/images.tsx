@@ -851,7 +851,7 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
       resolvedMessage,
     });
     if (!result.success) {
-      setError(result.error.flatten().fieldErrors.resolvedMessage?.[0] ?? 'Message is required');
+      setError(result.error.flatten().fieldErrors.resolvedMessage?.[0]);
     } else {
       setError('');
     }
@@ -933,7 +933,6 @@ function ConfirmResolvedAppeal({
         maxRows={5}
         maxLength={MAX_APPEAL_MESSAGE_LENGTH}
         autosize
-        required
       />
     </Stack>
   );
