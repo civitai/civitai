@@ -1,7 +1,7 @@
-import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
+import { logToAxiom } from '~/server/logging/client';
 import { collectedContentReward } from '~/server/rewards';
 import { GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -25,6 +25,7 @@ import {
 } from '~/server/schema/collection.schema';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { imageSelect } from '~/server/selectors/image.selector';
+import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   addContributorToCollection,
   bulkSaveItems,
@@ -50,6 +51,7 @@ import {
   updateCollectionItemsStatus,
   upsertCollection,
 } from '~/server/services/collection.service';
+import { setModelShowcaseCollection } from '~/server/services/model.service';
 import { addPostImage, createPost } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
@@ -58,11 +60,9 @@ import {
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
+import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { setModelShowcaseCollection } from '~/server/services/model.service';
-import { logToAxiom } from '~/server/logging/client';
 
 export const getAllCollectionsInfiniteHandler = async ({
   input,
@@ -87,6 +87,8 @@ export const getAllCollectionsInfiniteHandler = async ({
         nsfwLevel: true,
         image: { select: imageSelect },
         mode: true,
+        createdAt: true,
+        metadata: true,
       },
       user: ctx.user,
     });
@@ -139,6 +141,7 @@ export const getAllCollectionsInfiniteHandler = async ({
             : null,
           images: collectionImageItems.map((ci) => ci.image).filter(isDefined) ?? [],
           srcs: collectionImageItems.map((ci) => ci.src).filter(isDefined) ?? [],
+          metadata: (item.metadata ?? {}) as CollectionMetadataSchema,
         };
       }),
     };
@@ -505,6 +508,7 @@ export const addSimpleImagePostHandler = async ({
       userId,
       isModerator,
     });
+
     if (!(permissions.write || permissions.writeReview))
       throw throwAuthorizationError('You do not have permission to add items to this collection.');
 
@@ -525,7 +529,9 @@ export const addSimpleImagePostHandler = async ({
         })
       )
     );
+
     const imageIds = postImages.map((image) => image.id);
+
     await bulkSaveItems({ input: { collectionId, imageIds, userId, isModerator }, permissions });
 
     return {

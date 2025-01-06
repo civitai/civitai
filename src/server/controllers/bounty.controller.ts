@@ -228,11 +228,11 @@ export const getBountyEntriesHandler = async ({
           },
         },
       },
-      sort: 'benefactorCount',
+      sort: 'createdAt',
     });
 
     let nextCursor: number | undefined;
-    if (entries.length > input.limit) {
+    if (entries.length > limit) {
       const nextItem = entries.pop();
       nextCursor = nextItem?.id;
     }

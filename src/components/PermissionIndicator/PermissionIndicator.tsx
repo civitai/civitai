@@ -3,10 +3,10 @@ import {
   IconBrushOff,
   IconCheck,
   IconExchangeOff,
-  IconHorseToy,
   IconPhotoOff,
   IconRotate2,
   IconShoppingCartOff,
+  IconSpyOff,
   IconUserCheck,
   IconWorldOff,
   IconX,
@@ -44,7 +44,7 @@ export const PermissionIndicator = ({
   };
   const iconProps = { size, stroke: 1.5 };
   const icons = [
-    isModerator && minor && { label: 'Minor (no NSFW gen)', icon: <IconHorseToy {...iconProps} /> },
+    isModerator && minor && { label: 'No mature content', icon: <IconSpyOff {...iconProps} /> },
     !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
     !canSellImages && { label: 'No selling images', icon: <IconPhotoOff {...iconProps} /> },
     !canRentCivit && { label: 'No Civitai generation', icon: <IconBrushOff {...iconProps} /> },
