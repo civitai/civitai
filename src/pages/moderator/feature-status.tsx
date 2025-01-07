@@ -2,8 +2,9 @@ import { FeatureStatusList } from '~/components/FeatureStatus/FeatureStatusList'
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { trpc } from '~/utils/trpc';
 import { sortBy } from 'lodash-es';
+import { Page } from '~/components/AppLayout/Page';
 
-export default function FeatureStatusPage() {
+function FeatureStatusPage() {
   const { data, isLoading } = trpc.featureStatus.getFeatureStatusesDistinct.useQuery();
 
   if (isLoading) return <PageLoader />;
@@ -14,3 +15,5 @@ export default function FeatureStatusPage() {
     </div>
   );
 }
+
+export default Page(FeatureStatusPage, { features: (features) => features.announcements });

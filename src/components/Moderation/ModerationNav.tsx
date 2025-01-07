@@ -35,6 +35,11 @@ export function ModerationNav() {
           hidden: !features.announcements,
         },
         {
+          label: 'Feature Status',
+          href: '/moderator/feature-status',
+          hidden: !features.announcements,
+        },
+        {
           label: 'Blocklists',
           href: '/moderator/blocklists',
           hidden: !features.blocklists,
