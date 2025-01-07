@@ -6,7 +6,7 @@ import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 export type EdgeImageProps = React.HTMLAttributes<HTMLImageElement> & {
   src: string;
   fadeIn?: boolean;
-  options?: Omit<EdgeUrlProps, 'src'>;
+  options: Omit<EdgeUrlProps, 'src'>;
 };
 
 export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(

@@ -27,7 +27,7 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
 
       image: {
         ref: imageRef,
-        height: '100%',
+        height: '100% !important',
         objectFit: 'cover',
         objectPosition: aspectRatio < 1 ? 'top center' : 'center',
         transition: 'transform 400ms ease',

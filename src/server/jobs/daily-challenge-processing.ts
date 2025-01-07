@@ -39,7 +39,7 @@ const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
 const dailyChallengeSetupJob = createJob(
   'daily-challenge-setup',
-  '45 23 * * *',
+  '0 22 * * *',
   createUpcomingChallenge
 );
 
@@ -624,7 +624,8 @@ ${outcome}
         JSON.stringify(winnerUserIds)
       )} }',
       content = CONCAT(${updateContent}, content),
-      title = CONCAT('Completed: ', title)
+      title = CONCAT('Completed: ', title),
+      "updatedAt" = now()
     WHERE id = ${currentChallenge.articleId};
   `;
   log('Article updated');

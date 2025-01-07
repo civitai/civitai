@@ -143,6 +143,7 @@ export function ProfileHeader({ username }: { username: string }) {
                     alt={image.name ?? undefined}
                     type={image.type}
                     width={Math.min(image.width ?? 1920, 1920)}
+                    style={{ maxWidth: '100%' }}
                     className="w-full max-w-full absolute-center"
                   />
                 )}

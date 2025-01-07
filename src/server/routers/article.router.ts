@@ -29,7 +29,6 @@ import { CacheTTL } from '~/server/common/constants';
 export const articleRouter = router({
   getInfinite: publicProcedure
     .input(getInfiniteArticlesSchema)
-    .use(isFlagProtected('articles'))
     .query(({ input, ctx }) =>
       getArticles({ ...input, sessionUser: ctx?.user, include: ['cosmetics'] })
     ),
@@ -39,7 +38,6 @@ export const articleRouter = router({
   getEvents: publicProcedure.query(() => getCivitaiEvents()),
   getById: publicProcedure
     .input(getByIdSchema)
-    // .use(isFlagProtected('articles'))
     .query(({ input, ctx }) =>
       getArticleById({ ...input, userId: ctx.user?.id, isModerator: ctx.user?.isModerator })
     ),

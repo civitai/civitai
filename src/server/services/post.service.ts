@@ -61,7 +61,6 @@ import {
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
-import { ImageResource } from '~/shared/utils/prisma/models';
 import { PreprocessFileReturnType } from '~/utils/media-preprocessors';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -473,7 +472,7 @@ export const getPostsInfinite = async ({
   };
 };
 
-const getPostCollectionTagId = async ({
+const getPostCollectionCollectionItem = async ({
   postCollectionId,
   postId,
   imageIds,
@@ -499,7 +498,7 @@ const getPostCollectionTagId = async ({
 
   const [item] = collectionItems;
   if (item) {
-    return item.tagId;
+    return item;
   }
 
   return null;
@@ -557,16 +556,22 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
   const images = await getPostEditImages({ id, user });
 
   let collectionTagId: null | number = null;
+  let collectionItemExists = false;
   if (post.collectionId) {
     // get tag Id for the first item
-    collectionTagId = await getPostCollectionTagId({
+    const collectionItem = await getPostCollectionCollectionItem({
       postCollectionId: post.collectionId,
       postId: post.id,
       imageIds: images.map((x) => x.id),
     });
+
+    collectionTagId = collectionItem?.tagId ?? null;
+    collectionItemExists = !!collectionItem;
   }
 
-  return { ...post, collectionTagId, images };
+  console.log(collectionItemExists);
+
+  return { ...post, collectionTagId, images, collectionItemExists };
 };
 
 async function combinePostEditImageData(images: PostImageEditSelect[], user: SessionUser) {
@@ -626,13 +631,17 @@ export const createPost = async ({
   await userContentOverviewCache.bust(userId);
 
   let collectionTagId: null | number = null;
+  let collectionItemExists = false;
   if (post.collectionId) {
     // get tag Id for the first item
-    collectionTagId = await getPostCollectionTagId({
+    const collectionItem = await getPostCollectionCollectionItem({
       postCollectionId: post.collectionId,
       postId: post.id,
       imageIds: [],
     });
+
+    collectionTagId = collectionItem?.tagId ?? null;
+    collectionItemExists = !!collectionItem;
   }
 
   return {
@@ -640,6 +649,7 @@ export const createPost = async ({
     collectionTagId,
     tags: post.tags.flatMap((x) => x.tag),
     images: [] as PostImageEditable[],
+    collectionItemExists,
   };
 };
 

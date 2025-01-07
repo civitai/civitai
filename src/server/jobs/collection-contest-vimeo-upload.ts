@@ -69,7 +69,8 @@ export const contestCollectionVimeoUpload = createJob(
           JOIN "Post" p ON p.id = i."postId"
           JOIN "User" u ON u.id = p."userId"
           WHERE ci."collectionId" = ${collection.id}
-            AND ci."status" = 'ACCEPTED'
+          -- Removed as per Matty's request. We will now upload all videos regardless of approval
+          -- AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
             AND i."ingestion" = 'Scanned'
             AND (i.metadata->'vimeoVideoId') IS NULL
@@ -170,6 +171,7 @@ export const contestCollectionVimeoUpload = createJob(
                 metadata: {
                   ...item.metadata,
                   vimeoUploadAttempt: (item.metadata.vimeoUploadAttempt ?? 0) + 1,
+                  vimeoUploadErrorMsg: (error as Error).message ?? 'N/A',
                 },
               },
             });

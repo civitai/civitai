@@ -365,7 +365,7 @@ export const moderateImages = async ({
 
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true, disabledAt: new Date() },
+      data: { disabled: true, disabledAt: new Date(), needsReview: false },
     });
 
     // Resolve any pending appeals
@@ -3415,6 +3415,7 @@ const imageReviewQueueJoinMap = {
       au.username as "appealUsername",
       mu.id as "moderatorId",
       mu.username as "moderatorUsername",
+      ma."createdAt" as "removedAt",
     `,
     join: `
       JOIN "Appeal" appeal ON appeal."entityId" = i.id AND appeal."entityType" = 'Image'
@@ -3473,6 +3474,7 @@ type GetImageModerationReviewQueueRaw = {
   appealUsername?: string;
   moderatorId?: number;
   moderatorUsername?: string;
+  removedAt?: Date;
   minor: boolean;
 };
 export const getImageModerationReviewQueue = async ({
@@ -3494,6 +3496,9 @@ export const getImageModerationReviewQueue = async ({
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."needsReview"
     )`);
+    AND.push(Prisma.sql`
+      i."nsfwLevel" < ${NsfwLevel.Blocked}
+    `);
   }
 
   if (tagIds?.length) {
@@ -3630,6 +3635,22 @@ export const getImageModerationReviewQueue = async ({
     }
   }
 
+  let tosDetails: Map<number, { tosReason: string }> | undefined;
+  if (clickhouse && needsReview === 'appeal' && imageIds.length > 0) {
+    const tosImages = await clickhouse.$query<{ imageId: number; tosReason: string }>`
+      SELECT imageId, tosReason
+      FROM images
+      WHERE imageId IN (${imageIds})
+        AND type = 'DeleteTOS'
+        AND tosReason IS NOT NULL
+    `;
+
+    for (const image of tosImages) {
+      if (!tosDetails) tosDetails = new Map();
+      tosDetails.set(image.imageId, { tosReason: image.tosReason });
+    }
+  }
+
   const images: Array<
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
       meta: ImageMetaProps | null;
@@ -3659,6 +3680,8 @@ export const getImageModerationReviewQueue = async ({
       entityType?: string | null;
       entityId?: number | null;
       metadata?: MixedObject | null;
+      removedAt?: Date | null;
+      tosReason?: string | null;
       minor: boolean;
     }
   > = rawImages.map(
@@ -3679,6 +3702,7 @@ export const getImageModerationReviewQueue = async ({
       appealCreatedAt,
       appealUserId,
       appealUsername,
+      removedAt,
       moderatorId,
       moderatorUsername,
       ...i
@@ -3716,6 +3740,8 @@ export const getImageModerationReviewQueue = async ({
             moderator: { id: moderatorId as number, username: moderatorUsername },
           }
         : undefined,
+      removedAt,
+      tosReason: tosDetails?.get(i.id)?.tosReason,
     })
   );
 
@@ -4077,9 +4103,11 @@ export async function getImageRatingRequests({
       FROM image_rating_requests irr
       JOIN "Image" i ON i.id = irr."imageId"
       WHERE irr.total >= 3
-      AND i."blockedFor" IS NULL
-      AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
-      ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+        AND i."blockedFor" IS NULL
+        AND i."nsfwLevelLocked" = FALSE
+        AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
+        AND i."nsfwLevel" < ${NsfwLevel.Blocked}
+        ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
       ORDER BY irr."createdAt"
       LIMIT ${limit + 1}
   `;
