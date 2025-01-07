@@ -222,7 +222,7 @@ export async function getUpcomingChallenge() {
 
   return getChallengeDetails(results[0].articleId);
 }
-export async function endChallenge(challenge?: DailyChallengeDetails | null) {
+export async function endChallenge(challenge?: { collectionId: number } | null) {
   challenge ??= await getCurrentChallenge();
   if (!challenge) return;
 
