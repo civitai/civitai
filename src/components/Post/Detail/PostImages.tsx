@@ -1,38 +1,35 @@
 import {
-  Stack,
-  Paper,
-  createStyles,
+  ActionIcon,
+  Badge,
   Button,
   Center,
-  Loader,
-  Alert,
   Group,
-  Text,
-  Badge,
-  Tooltip,
-  ActionIcon,
+  Loader,
+  Paper,
+  Stack,
+  createStyles,
 } from '@mantine/core';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { Reactions } from '~/components/Reaction/Reactions';
-import { useState, Fragment, useRef } from 'react';
-import { ImagesInfiniteModel } from '~/server/services/image.service';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { truncate } from 'lodash-es';
-import { MAX_POST_IMAGES_WIDTH, constants } from '~/server/common/constants';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
-import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
-import { PostContestCollectionItem } from '~/types/router';
-import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
-import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
-import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
-import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { generationPanel } from '~/store/generation.store';
+import { Fragment, useRef, useState } from 'react';
 import { AdUnitTop } from '~/components/Ads/AdUnit';
+import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { shouldDisplayHtmlControls } from '~/components/EdgeMedia/EdgeMedia.util';
+import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
+import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
+import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { PostContestCollectionInfoAlert } from '~/components/Post/Detail/PostContestCollectionInfoAlert';
+import { Reactions } from '~/components/Reaction/Reactions';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { ImagesInfiniteModel } from '~/server/services/image.service';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { generationPanel } from '~/store/generation.store';
+import { PostContestCollectionItem } from '~/types/router';
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
@@ -77,6 +74,7 @@ export function PostImages({
         const showImageCollectionBadge =
           imageCollectionItem?.tag &&
           (isOwner || isModerator || imageCollectionItem.status === CollectionItemStatus.ACCEPTED);
+        const vimeoVideoId = (image.metadata as VideoMetadata)?.vimeoVideoId;
 
         return (
           <Fragment key={image.id}>
@@ -110,7 +108,11 @@ export function PostImages({
                         </Badge>
                       )}
                     </Group>
-                    <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
+                    <div
+                      className={cx('absolute right-2 top-2 z-10 flex flex-col gap-2', {
+                        'right-10 top-2.5': !!vimeoVideoId,
+                      })}
+                    >
                       <ImageContextMenu image={image} />
                       {features.imageGeneration && image.hasMeta && (
                         <HoverActionButton
@@ -165,12 +167,15 @@ export function PostImages({
                           anim={safe}
                           html5Controls={shouldDisplayHtmlControls(image)}
                           videoRef={videoRef}
+                          vimeoVideoId={vimeoVideoId}
                         />
                       )}
                     </RoutedDialogLink>
                     <Reactions
                       className={cx(classes.reactions, {
-                        [classes.reactionsWithControls]: shouldDisplayHtmlControls(image),
+                        [classes.reactionsWithControls]:
+                          !vimeoVideoId && shouldDisplayHtmlControls(image),
+                        [classes.vimeoReactions]: !!vimeoVideoId,
                       })}
                       entityId={image.id}
                       entityType="image"
@@ -233,5 +238,15 @@ const useStyles = createStyles((theme) => ({
     bottom: 'initial',
     top: '32px',
     left: '8px',
+  },
+
+  vimeoReactions: {
+    bottom: '48px',
+    left: '8px',
+  },
+
+  vimeoContextMenu: {
+    right: '40px',
+    top: '10px',
   },
 }));
