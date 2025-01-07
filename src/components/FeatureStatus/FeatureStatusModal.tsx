@@ -5,7 +5,7 @@ import {
   CreateFeatureStatusSchema,
   createFeatureStatusSchema,
 } from '~/server/schema/feature-status.schema';
-import { FeatureStatus } from '~/server/services/feature-status';
+import { FeatureStatus } from '~/server/services/feature-status.service';
 import { trpc } from '~/utils/trpc';
 
 export function FeatureStatusModal(props: Partial<FeatureStatus>) {
@@ -36,7 +36,7 @@ export function FeatureStatusModal(props: Partial<FeatureStatus>) {
 
   function handleSubmit(data: CreateFeatureStatusSchema) {
     if (data.message) createFeatureStatus.mutate(data);
-    else resolveFeatureStatus.mutate({ id: props.id, resolved: true });
+    else if (props.id) resolveFeatureStatus.mutate({ id: props.id, resolved: true });
   }
 
   return (

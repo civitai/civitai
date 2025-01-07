@@ -52,6 +52,8 @@ import { KlingMode } from '@civitai/client';
 import { type OrchestratorEngine } from '~/server/orchestrator/infrastructure/base.enums';
 import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
 import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
+import { HasFeature } from '~/components/FeatureStatus/HasFeature';
+import { FeatureStatus } from '~/components/FeatureStatus/FeatureStatus';
 
 const schema = videoGenerationSchema;
 
@@ -100,55 +102,60 @@ export function VideoGenerationForm() {
           </Text>
         </Alert>
       </div>
-      {isLoading ? (
-        <div className="flex items-center justify-center p-3">
-          <Loader />
-        </div>
-      ) : workflow?.disabled ? (
-        <Alert color="yellow" className="mx-3" title={`${workflow?.engine} generation disabled`}>
-          {workflow?.message && <Text className="mb-2">{workflow?.message}</Text>}
-          {workflows && (
-            <>
-              <Text className="mb-1">Try out another of our generation tools</Text>
-              <div className="flex flex-wrap gap-2">
-                {workflows
-                  .filter((x) => !x.disabled)
-                  .map(({ engine }) => (
-                    <Button
-                      key={engine}
-                      compact
-                      onClick={() => generationFormStore.setEngine(engine)}
-                    >
-                      {engine}
-                    </Button>
-                  ))}
-              </div>
-            </>
-          )}
-        </Alert>
-      ) : workflow ? (
-        <>
-          <div className="flex flex-col gap-2 px-3">
-            <Select
-              label="Tool"
-              value={workflow.engine}
-              description={workflow?.message && !workflow?.disabled ? workflow.message : undefined}
-              onChange={(value) => generationFormStore.setEngine(value!)}
-              data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
-            />
-
-            {workflow?.subType.startsWith('img') && (
-              <ImageUrlInput
-                value={sourceImageUrl}
-                onChange={generationFormStore.setSourceImageUrl}
-              />
-            )}
+      <FeatureStatus feature="video-generation" className="mx-3" />
+      <HasFeature feature="video-generation">
+        {isLoading ? (
+          <div className="flex items-center justify-center p-3">
+            <Loader />
           </div>
-          <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
-            <EngineForm />
-          </WorkflowContext.Provider>
-        </>
-      ) : null}
+        ) : workflow?.disabled ? (
+          <Alert color="yellow" className="mx-3" title={`${workflow?.engine} generation disabled`}>
+            {workflow?.message && <Text className="mb-2">{workflow?.message}</Text>}
+            {workflows && (
+              <>
+                <Text className="mb-1">Try out another of our generation tools</Text>
+                <div className="flex flex-wrap gap-2">
+                  {workflows
+                    .filter((x) => !x.disabled)
+                    .map(({ engine }) => (
+                      <Button
+                        key={engine}
+                        compact
+                        onClick={() => generationFormStore.setEngine(engine)}
+                      >
+                        {engine}
+                      </Button>
+                    ))}
+                </div>
+              </>
+            )}
+          </Alert>
+        ) : workflow ? (
+          <>
+            <div className="flex flex-col gap-2 px-3">
+              <Select
+                label="Tool"
+                value={workflow.engine}
+                description={
+                  workflow?.message && !workflow?.disabled ? workflow.message : undefined
+                }
+                onChange={(value) => generationFormStore.setEngine(value!)}
+                data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
+              />
+
+              {workflow?.subType.startsWith('img') && (
+                <ImageUrlInput
+                  value={sourceImageUrl}
+                  onChange={generationFormStore.setSourceImageUrl}
+                />
+              )}
+            </div>
+            <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
+              <EngineForm />
+            </WorkflowContext.Provider>
+          </>
+        ) : null}
+      </HasFeature>
     </div>
   );
 }

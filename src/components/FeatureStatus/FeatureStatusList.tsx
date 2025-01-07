@@ -1,11 +1,9 @@
-import { FeatureStatus } from '~/server/services/feature-status';
+import { FeatureStatus } from '~/server/services/feature-status.service';
 import styles from './FeatureStatusList.module.scss';
-import { ActionIcon, Badge, Checkbox } from '@mantine/core';
-import { IconCopy, IconPlus } from '@tabler/icons-react';
+import { ActionIcon, Badge } from '@mantine/core';
+import { IconPencil, IconPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { FeatureStatusModal } from '~/components/FeatureStatus/FeatureStatusModal';
-import { trpc } from '~/utils/trpc';
-import clsx from 'clsx';
 
 export function FeatureStatusList({ data }: { data?: FeatureStatus[] }) {
   return (
@@ -13,7 +11,6 @@ export function FeatureStatusList({ data }: { data?: FeatureStatus[] }) {
       <div className={styles.contents}>
         <strong>Feature</strong>
         <strong>Status</strong>
-        {/* <strong>Active</strong> */}
         <strong>Message</strong>
         <div>
           <ActionIcon
@@ -40,36 +37,17 @@ export function FeatureStatusList({ data }: { data?: FeatureStatus[] }) {
 }
 
 function FeatureStatusListItem(item: FeatureStatus) {
-  // const queryUtils = trpc.useUtils();
-  // const { mutate, isLoading } = trpc.featureStatus.resolveFeatureStatus.useMutation({
-  //   onSuccess: () => {
-  //     queryUtils.featureStatus.getFeatureStatusesDistinct.invalidate();
-  //   },
-  // });
-
   return (
     <div className={styles.contents}>
       <div>{item.feature}</div>
       <div>
-        <span className={clsx({ ['opacity-25']: !!item.resolvedAt })}>
-          {item.disabled ? (
-            <Badge color="red">Disabled</Badge>
-          ) : (
-            <Badge color="green">Enabled</Badge>
-          )}
-        </span>
+        {item.disabled && !item.resolvedAt ? (
+          <Badge color="red">Disabled</Badge>
+        ) : (
+          <Badge color="green">Enabled</Badge>
+        )}
       </div>
-      {/* <div className="flex justify-center">
-        <Checkbox
-          key={item.resolvedAt ? item.resolvedAt.toString() : undefined}
-          defaultChecked={!item.resolvedAt}
-          disabled={isLoading}
-          onChange={(e) => mutate({ id: item.id, resolved: !e.currentTarget.checked })}
-        />
-      </div> */}
-      <div>
-        <span className={clsx({ ['opacity-25']: !!item.resolvedAt })}>{item.message}</span>
-      </div>
+      <div>{!item.resolvedAt && item.message}</div>
       <div>
         <ActionIcon
           onClick={() =>
@@ -79,7 +57,7 @@ function FeatureStatusListItem(item: FeatureStatus) {
             })
           }
         >
-          <IconCopy />
+          <IconPencil />
         </ActionIcon>
       </div>
     </div>

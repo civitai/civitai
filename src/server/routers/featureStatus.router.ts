@@ -10,14 +10,12 @@ import {
   getFeatureStatusDistinct,
   getFeatureStatusInfinite,
   resolveFeatureStatus,
-} from '~/server/services/feature-status';
+} from '~/server/services/feature-status.service';
 
 import { router, publicProcedure, moderatorProcedure } from '~/server/trpc';
 
 export const featureStatusRouter = router({
-  getFeatureStatuses: publicProcedure
-    .input(getFeatureStatusSchema)
-    .query(({ input }) => getFeatureStatus(input)),
+  getFeatureStatuses: publicProcedure.query(() => getFeatureStatus()),
   // #region [mod only]
   createFeatureStatus: moderatorProcedure
     .input(createFeatureStatusSchema)
@@ -25,9 +23,7 @@ export const featureStatusRouter = router({
   resolveFeatureStatus: moderatorProcedure
     .input(resolveFeatureStatusSchema)
     .mutation(({ input, ctx }) => resolveFeatureStatus({ ...input, userId: ctx.user.id })),
-  getFeatureStatusesDistinct: moderatorProcedure
-    .input(getFeatureStatusSchema)
-    .query(({ input }) => getFeatureStatusDistinct(input)),
+  getFeatureStatusesDistinct: moderatorProcedure.query(() => getFeatureStatusDistinct()),
   getFeatureStatusesInfinite: moderatorProcedure
     .input(getFeatureStatusPagedSchema)
     .query(({ input }) => getFeatureStatusInfinite(input)),

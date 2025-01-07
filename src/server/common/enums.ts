@@ -132,6 +132,7 @@ export enum SignalMessages {
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   Pong = 'pong',
+  FeatureStatus = 'feature:status',
 }
 
 export enum BountySort {

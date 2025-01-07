@@ -1,5 +1,8 @@
 import { SegmentedControl } from '@mantine/core';
 import { useEffect } from 'react';
+import { FeatureStatus } from '~/components/FeatureStatus/FeatureStatus';
+import { FeatureStatusProvider } from '~/components/FeatureStatus/FeatureStatusProvider';
+import { HasFeature } from '~/components/FeatureStatus/HasFeature';
 import { GenerationFormContent } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { TextToImageWhatIfProvider } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
@@ -30,32 +33,46 @@ export function GenerationForm() {
   if (!isClient) return null;
 
   return (
-    <GenerationProvider>
-      <ScrollArea scrollRestore={{ key: 'generation-form' }} pt={0} className="flex flex-col gap-2">
-        {/* TODO - image remix component */}
-        <div className="flex flex-col gap-2 px-3">
-          {/* <RemixOfControl /> */}
-          <SegmentedControl
-            value={type}
-            onChange={generationFormStore.setType}
-            className="overflow-visible"
-            color="blue"
-            data={[
-              { label: 'Image', value: 'image' },
-              { label: 'Video', value: 'video' },
-            ]}
-          />
-        </div>
-        {type === 'image' && (
-          <GenerationFormProvider>
-            <TextToImageWhatIfProvider>
-              <GenerationFormContent />
-            </TextToImageWhatIfProvider>
-          </GenerationFormProvider>
-        )}
-        {type === 'video' && <VideoGenerationForm />}
-      </ScrollArea>
-    </GenerationProvider>
+    <>
+      <FeatureStatus feature="generation" className="mx-3 mt-3" />
+      <HasFeature feature="generation">
+        <GenerationProvider>
+          <ScrollArea
+            scrollRestore={{ key: 'generation-form' }}
+            pt={0}
+            className="flex flex-col gap-2"
+          >
+            {/* TODO - image remix component */}
+            <div className="flex flex-col gap-2 px-3">
+              {/* <RemixOfControl /> */}
+              <SegmentedControl
+                value={type}
+                onChange={generationFormStore.setType}
+                className="overflow-visible"
+                color="blue"
+                data={[
+                  { label: 'Image', value: 'image' },
+                  { label: 'Video', value: 'video' },
+                ]}
+              />
+            </div>
+            {type === 'image' && (
+              <>
+                <FeatureStatus feature="image-generation" className="mx-3 overflow-visible" />
+                <HasFeature feature="image-generation">
+                  <GenerationFormProvider>
+                    <TextToImageWhatIfProvider>
+                      <GenerationFormContent />
+                    </TextToImageWhatIfProvider>
+                  </GenerationFormProvider>
+                </HasFeature>
+              </>
+            )}
+            {type === 'video' && <VideoGenerationForm />}
+          </ScrollArea>
+        </GenerationProvider>
+      </HasFeature>
+    </>
   );
 }
 

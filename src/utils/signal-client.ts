@@ -18,9 +18,10 @@ class SignalClient {
   }: {
     target: string;
     data: Record<string, unknown>;
-    userId: number;
+    userId?: number;
   }) => {
-    const response = await fetch(`${this._endpoint}/users/${userId}/signals/${target}`, {
+    const url = !userId ? `/signals/${target}` : `/users/${userId}/signals/${target}`;
+    const response = await fetch(`${this._endpoint}${url}`, {
       method: 'POST',
       body: JSON.stringify(data),
       headers: {

@@ -4,9 +4,7 @@ import { trpc } from '~/utils/trpc';
 import { sortBy } from 'lodash-es';
 
 export default function FeatureStatusPage() {
-  const { data, isLoading } = trpc.featureStatus.getFeatureStatusesDistinct.useQuery({
-    feature: [],
-  });
+  const { data, isLoading } = trpc.featureStatus.getFeatureStatusesDistinct.useQuery();
 
   if (isLoading) return <PageLoader />;
 

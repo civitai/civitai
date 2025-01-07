@@ -63,6 +63,7 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
+import { FeatureStatusProvider } from '~/components/FeatureStatus/FeatureStatusProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -143,40 +144,42 @@ function MyApp(props: CustomAppProps) {
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>
                           <SignalProvider>
-                            <ActivityReportingProvider>
-                              <ReferralsProvider {...cookies.referrals}>
-                                <FiltersProvider>
-                                  <AdsProvider>
-                                    <PaddleProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <NotificationsProvider
-                                            className="notifications-container"
-                                            zIndex={9999}
-                                          >
-                                            <BrowserRouterProvider>
-                                              <IntersectionObserverProvider>
-                                                <BaseLayout>
-                                                  {isProd && <TrackPageView />}
-                                                  <ChatContextProvider>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </ChatContextProvider>
-                                                </BaseLayout>
-                                              </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </NotificationsProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </PaddleProvider>
-                                  </AdsProvider>
-                                </FiltersProvider>
-                              </ReferralsProvider>
-                            </ActivityReportingProvider>
+                            <FeatureStatusProvider>
+                              <ActivityReportingProvider>
+                                <ReferralsProvider {...cookies.referrals}>
+                                  <FiltersProvider>
+                                    <AdsProvider>
+                                      <PaddleProvider>
+                                        <HiddenPreferencesProvider>
+                                          <CivitaiLinkProvider>
+                                            <NotificationsProvider
+                                              className="notifications-container"
+                                              zIndex={9999}
+                                            >
+                                              <BrowserRouterProvider>
+                                                <IntersectionObserverProvider>
+                                                  <BaseLayout>
+                                                    {isProd && <TrackPageView />}
+                                                    <ChatContextProvider>
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
+                                                    </ChatContextProvider>
+                                                  </BaseLayout>
+                                                </IntersectionObserverProvider>
+                                              </BrowserRouterProvider>
+                                            </NotificationsProvider>
+                                          </CivitaiLinkProvider>
+                                        </HiddenPreferencesProvider>
+                                      </PaddleProvider>
+                                    </AdsProvider>
+                                  </FiltersProvider>
+                                </ReferralsProvider>
+                              </ActivityReportingProvider>
+                            </FeatureStatusProvider>
                           </SignalProvider>
                         </BrowsingLevelProvider>
                       </BrowserSettingsProvider>
