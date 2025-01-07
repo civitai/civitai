@@ -2,7 +2,6 @@ import { dbWrite } from '~/server/db/client';
 import {
   CreateFeatureStatusSchema,
   GetFeatureStatusPagedSchema,
-  ResolveFeatureStatusSchema,
   featureStatusArray,
 } from '../schema/feature-status.schema';
 import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
@@ -23,46 +22,32 @@ export type FeatureStatus = {
 };
 
 export async function createFeatureStatus({
+  id,
   feature,
   disabled,
   message,
   userId,
 }: CreateFeatureStatusSchema & { userId: number }) {
-  const result = await dbWrite.featureStatus.create({
-    data: { feature, disabled, message, createdBy: userId },
-  });
+  if (!id || message !== null) {
+    await dbWrite.featureStatus.create({
+      data: { feature, disabled, message, createdBy: userId },
+    });
+  } else {
+    await dbWrite.featureStatus.update({
+      where: { id },
+      data: { resolvedAt: new Date(), resolvedBy: userId },
+    });
+  }
+
   await sysRedis.packed.set(
     `${REDIS_KEYS.SYSTEM.FEATURE_STATUS}:${feature}`,
     {
-      disabled: result.disabled,
-      message: result.message,
+      disabled,
+      message,
     },
     { EX: CacheTTL.month }
   );
-  await signalClient.send({ target: SignalMessages.FeatureStatus, data: { feature } });
-}
-
-export async function resolveFeatureStatus({
-  id,
-  resolved,
-  userId,
-}: ResolveFeatureStatusSchema & { userId: number }) {
-  const result = await dbWrite.featureStatus.update({
-    where: { id },
-    data: { resolvedAt: resolved ? new Date() : null, resolvedBy: resolved ? userId : null },
-  });
-  await sysRedis.packed.set(
-    `${REDIS_KEYS.SYSTEM.FEATURE_STATUS}:${result.feature}`,
-    {
-      disabled: result.disabled,
-      message: !resolved ? result.message : null,
-    },
-    { EX: CacheTTL.month }
-  );
-  await signalClient.send({
-    target: SignalMessages.FeatureStatus,
-    data: { feature: result.feature },
-  });
+  await signalClient.send({ target: SignalMessages.FeatureStatus, data: {} });
 }
 
 export async function getFeatureStatus() {

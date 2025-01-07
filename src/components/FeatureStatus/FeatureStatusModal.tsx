@@ -27,16 +27,8 @@ export function FeatureStatusModal(props: Partial<FeatureStatus>) {
     },
   });
 
-  const resolveFeatureStatus = trpc.featureStatus.resolveFeatureStatus.useMutation({
-    onSuccess: () => {
-      dialog.onClose();
-      queryUtils.featureStatus.getFeatureStatusesDistinct.invalidate();
-    },
-  });
-
   function handleSubmit(data: CreateFeatureStatusSchema) {
-    if (data.message) createFeatureStatus.mutate(data);
-    else if (props.id) resolveFeatureStatus.mutate({ id: props.id, resolved: true });
+    createFeatureStatus.mutate({ ...data, id: props.id });
   }
 
   return (
@@ -46,10 +38,7 @@ export function FeatureStatusModal(props: Partial<FeatureStatus>) {
         <InputCheckbox name="disabled" label="Disable this feature" />
         <InputTextArea name="message" label="Feature message" />
         <div className="flex justify-end">
-          <Button
-            type="submit"
-            loading={createFeatureStatus.isLoading || resolveFeatureStatus.isLoading}
-          >
+          <Button type="submit" loading={createFeatureStatus.isLoading}>
             Submit
           </Button>
         </div>
