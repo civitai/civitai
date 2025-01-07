@@ -2505,6 +2505,17 @@ export interface Appeal {
   buzzTransactionId: string | null;
 }
 
+export interface FeatureStatus {
+  id: number;
+  feature: string;
+  disabled: boolean;
+  message: string | null;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  createdAt: Date;
+  createdBy: number;
+}
+
 export interface QuestionRank {
   questionId: number;
   question?: Question;

@@ -3292,6 +3292,20 @@ model Appeal {
   @@index([status])
 }
 
+model FeatureStatus {
+  id         Int       @id @default(autoincrement())
+  feature    String
+  disabled   Boolean   @default(false)
+  message    String?
+  resolvedAt DateTime?
+  resolvedBy Int?
+  createdAt  DateTime  @default(now())
+  createdBy  Int
+
+  @@index([feature])
+  @@index([createdAt])
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id

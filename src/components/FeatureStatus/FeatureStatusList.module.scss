@@ -1,0 +1,28 @@
+.grid {
+  display: grid;
+  grid-template-columns: max-content min-content auto min-content;
+}
+
+.contents {
+  display: contents;
+  & > * {
+    padding: theme('padding.1') theme('padding.2');
+  }
+  &:nth-of-type(2n) > * {
+    background: theme('colors.gray.0');
+  }
+  &:not(:last-child) > * {
+    border-bottom: 1px solid theme('colors.gray.3')
+  }
+}
+
+:global(.dark) {
+  .contents {
+    &:nth-of-type(2n) > * {
+      background: theme('colors.dark.6');
+    }
+    &:not(:last-child) > * {
+      border-bottom: 1px solid theme('colors.dark.4')
+    }
+  }
+}
