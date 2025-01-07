@@ -3415,6 +3415,7 @@ const imageReviewQueueJoinMap = {
       au.username as "appealUsername",
       mu.id as "moderatorId",
       mu.username as "moderatorUsername",
+      ma."createdAt" as "removedAt",
     `,
     join: `
       JOIN "Appeal" appeal ON appeal."entityId" = i.id AND appeal."entityType" = 'Image'
@@ -3473,6 +3474,7 @@ type GetImageModerationReviewQueueRaw = {
   appealUsername?: string;
   moderatorId?: number;
   moderatorUsername?: string;
+  removedAt?: Date;
   minor: boolean;
 };
 export const getImageModerationReviewQueue = async ({
@@ -3633,6 +3635,22 @@ export const getImageModerationReviewQueue = async ({
     }
   }
 
+  let tosDetails: Map<number, { tosReason: string }> | undefined;
+  if (clickhouse && needsReview === 'appeal' && imageIds.length > 0) {
+    const tosImages = await clickhouse.$query<{ imageId: number; tosReason: string }>`
+      SELECT imageId, tosReason
+      FROM images
+      WHERE imageId IN (${imageIds})
+        AND type = 'DeleteTOS'
+        AND tosReason IS NOT NULL
+    `;
+
+    for (const image of tosImages) {
+      if (!tosDetails) tosDetails = new Map();
+      tosDetails.set(image.imageId, { tosReason: image.tosReason });
+    }
+  }
+
   const images: Array<
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
       meta: ImageMetaProps | null;
@@ -3662,6 +3680,8 @@ export const getImageModerationReviewQueue = async ({
       entityType?: string | null;
       entityId?: number | null;
       metadata?: MixedObject | null;
+      removedAt?: Date | null;
+      tosReason?: string | null;
       minor: boolean;
     }
   > = rawImages.map(
@@ -3682,6 +3702,7 @@ export const getImageModerationReviewQueue = async ({
       appealCreatedAt,
       appealUserId,
       appealUsername,
+      removedAt,
       moderatorId,
       moderatorUsername,
       ...i
@@ -3719,6 +3740,8 @@ export const getImageModerationReviewQueue = async ({
             moderator: { id: moderatorId as number, username: moderatorUsername },
           }
         : undefined,
+      removedAt,
+      tosReason: tosDetails?.get(i.id)?.tosReason,
     })
   );
 

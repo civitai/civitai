@@ -67,7 +67,7 @@ import { ImageModerationReviewQueueImage } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type StoreState = {
@@ -482,16 +482,6 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     </Anchor>
                   </Link>
                 </Stack>
-                {image.appeal?.moderator && (
-                  <Stack spacing={2}>
-                    <Text size="xs" color="dimmed" inline>
-                      Moderated by
-                    </Text>
-                    <Text size="xs" lineClamp={1} inline>
-                      {image.appeal?.moderator.username}
-                    </Text>
-                  </Stack>
-                )}
                 <Stack spacing={2} align="flex-end">
                   <Text size="xs" color="dimmed" inline>
                     Created at
@@ -501,6 +491,29 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   ) : null}
                 </Stack>
               </Group>
+              {image.appeal?.moderator && (
+                <Group position="apart" noWrap>
+                  <Stack spacing={2}>
+                    <Text size="xs" color="dimmed" inline>
+                      Moderated by
+                    </Text>
+                    <Text size="xs" lineClamp={1} inline>
+                      {image.appeal?.moderator.username}
+                    </Text>
+                  </Stack>
+                  <Stack spacing={2} align="flex-end">
+                    <Text size="xs" color="dimmed" inline>
+                      Removed at
+                    </Text>
+                    {image.removedAt ? <Text size="xs">{formatDate(image.removedAt)}</Text> : null}
+                  </Stack>
+                </Group>
+              )}
+              {image.tosReason ? (
+                <Badge size="sm" color="pink">
+                  Removed for: {getDisplayName(image.tosReason)}
+                </Badge>
+              ) : null}
               <ContentClamp maxHeight={150}>
                 {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
               </ContentClamp>
