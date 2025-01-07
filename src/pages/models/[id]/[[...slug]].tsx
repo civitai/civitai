@@ -809,11 +809,6 @@ export default function ModelDetailsV2({
                             entityId={model.id}
                           />
                         )}
-                        <ToggleSearchableMenuItem
-                          entityType="Model"
-                          entityId={model.id}
-                          key="toggle-searchable-menu-item"
-                        />
                         {(!currentUser || !isOwner || isModerator) && (
                           <LoginRedirect reason="report-model">
                             <Menu.Item
@@ -845,6 +840,7 @@ export default function ModelDetailsV2({
                         )}
                         {currentUser && (
                           <>
+                            <Menu.Label>Moderation</Menu.Label>
                             <HideUserButton as="menu-item" userId={model.user.id} />
                             <HideModelButton as="menu-item" modelId={model.id} />
                             <Menu.Item
@@ -853,35 +849,43 @@ export default function ModelDetailsV2({
                             >
                               Hide content with these tags
                             </Menu.Item>
+                            {isModerator && (
+                              <>
+                                <ToggleLockModel modelId={model.id} locked={model.locked}>
+                                  {({ onClick }) => (
+                                    <Menu.Item
+                                      icon={
+                                        model.locked ? (
+                                          <IconLockOff size={14} stroke={1.5} />
+                                        ) : (
+                                          <IconLock size={14} stroke={1.5} />
+                                        )
+                                      }
+                                      onClick={onClick}
+                                    >
+                                      {model.locked ? 'Unlock' : 'Lock'} model discussion
+                                    </Menu.Item>
+                                  )}
+                                </ToggleLockModel>
+                                <ToggleSearchableMenuItem
+                                  entityType="Model"
+                                  entityId={model.id}
+                                  key="toggle-searchable-menu-item"
+                                />
+                              </>
+                            )}
                           </>
                         )}
-                        {isModerator && (
+                        {published && (isOwner || isModerator) && (
                           <>
-                            <ToggleLockModel modelId={model.id} locked={model.locked}>
-                              {({ onClick }) => (
-                                <Menu.Item
-                                  icon={
-                                    model.locked ? (
-                                      <IconLockOff size={14} stroke={1.5} />
-                                    ) : (
-                                      <IconLock size={14} stroke={1.5} />
-                                    )
-                                  }
-                                  onClick={onClick}
-                                >
-                                  {model.locked ? 'Unlock' : 'Lock'} model discussion
-                                </Menu.Item>
-                              )}
-                            </ToggleLockModel>
-                            {published && (
-                              <Menu.Item
-                                onClick={() =>
-                                  openMigrateModelToCollectionModal({ modelId: model.id })
-                                }
-                              >
-                                Migrate to Collection
-                              </Menu.Item>
-                            )}
+                            <Menu.Label>Advanced</Menu.Label>
+                            <Menu.Item
+                              onClick={() =>
+                                openMigrateModelToCollectionModal({ modelId: model.id })
+                              }
+                            >
+                              Migrate to Collection
+                            </Menu.Item>
                           </>
                         )}
                       </Menu.Dropdown>
