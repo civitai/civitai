@@ -39,6 +39,7 @@ import {
   IconInfoCircle,
   IconTags,
   IconTagsOff,
+  IconTransferIn,
   IconTrash,
   IconX,
   IconZoomIn,
@@ -407,7 +408,28 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
-  const handleZip = async (f: FileWithPath, showNotif = true) => {
+  const parseExisting = async (mvId: number) => {
+    const url = createModelFileDownloadUrl({
+      versionId: mvId,
+      type: 'Training Data',
+    });
+    const result = await fetch(url);
+    if (!result.ok) {
+      return;
+    }
+    const blob = await result.blob();
+    return new File([blob], `${mvId}_training_data.zip`, {
+      type: blob.type,
+    });
+  };
+
+  const parseExistingAndHandle = async (mvId: number) => {
+    const zipFile = await parseExisting(mvId);
+    if (!zipFile) return;
+    return await handleZip(zipFile, false);
+  };
+
+  const handleZip = async (f: FileWithPath, showNotif = true, source?: ImageDataType['source']) => {
     if (showNotif) setLoadingZip(true);
 
     const parsedFiles: ImageDataType[] = [];
@@ -442,7 +464,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               url: scaledUrl,
               label: labelStr,
               invalidLabel: false,
-              source: null, // TODO
+              source: source ?? null,
             });
           } catch {
             showErrorNotification({
@@ -483,7 +505,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
         if (ZIP_MIME_TYPE.includes(f.type as never)) {
-          return await handleZip(f);
+          const source = data?.[f.name]?.source ?? null;
+          return await handleZip(f, !source, source);
         } else {
           try {
             const scaledUrl = await getResizedImgUrl(f, f.type);
@@ -543,35 +566,54 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       loading: true,
       autoClose: false,
       disallowClose: true,
-      message: `Importing ${images.length} image${images.length !== 1 ? 's' : ''}...`,
+      message: `Importing ${images.length} ${source === 'training' ? 'dataset' : 'image'}${
+        images.length !== 1 ? 's' : ''
+      }...`,
     });
 
-    const files = await Promise.all(
-      images.map((i, idx) =>
-        limit(async () => {
+    let files;
+    if (source === 'training') {
+      files = await Promise.all(
+        images.map(async (i) => {
           try {
-            const result = await fetch(getEdgeUrl(i.url));
+            const file = await parseExisting(Number(i.url));
+            if (!file) return;
 
-            if (!result.ok) {
-              return;
-            }
-            const blob = await result.blob();
             return {
-              file: new File([blob], `imported_${new Date().toISOString()}_${idx}.jpg`, {
-                type: IMAGE_MIME_TYPE.includes(blob.type as never) ? blob.type : MIME_TYPES.jpeg,
-              }),
-              label: i.label,
+              file,
               url: i.url,
+              label: '',
             };
           } catch (e) {
             return;
           }
         })
-      )
-    );
+      );
+    } else {
+      files = await Promise.all(
+        images.map((i, idx) =>
+          limit(async () => {
+            try {
+              const result = await fetch(getEdgeUrl(i.url));
+              if (!result.ok) return;
+
+              const blob = await result.blob();
+              return {
+                file: new File([blob], `imported_${new Date().toISOString()}_${idx}.jpg`, {
+                  type: IMAGE_MIME_TYPE.includes(blob.type as never) ? blob.type : MIME_TYPES.jpeg,
+                }),
+                label: i.label,
+                url: i.url,
+              };
+            } catch (e) {
+              return;
+            }
+          })
+        )
+      );
+    }
 
     const goodFiles = files.filter((f) => !!f);
-    const fileDiff = files.length - goodFiles.length;
 
     if (goodFiles.length !== 0) {
       await handleDrop(
@@ -586,11 +628,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
     }
 
+    const fileDiff = files.length - goodFiles.length;
+
     hideNotification(importNotifId);
 
     if (fileDiff !== 0) {
       showWarningNotification({
-        message: `${fileDiff} image${fileDiff === 1 ? '' : 's'} could not be imported`,
+        message: `${fileDiff} ${source === 'training' ? 'dataset' : 'image'}${
+          fileDiff === 1 ? '' : 's'
+        } could not be imported`,
         autoClose: false,
       });
     }
@@ -762,24 +808,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   });
 
   useEffect(() => {
-    // is there any way to generate a file download url given the one we already have?
-    // async function parseExisting(ef: (typeof thisModelVersion.files)[number]) {
-    async function parseExisting() {
-      const url = createModelFileDownloadUrl({
-        versionId: thisModelVersion.id,
-        type: 'Training Data',
-      });
-      const result = await fetch(url);
-      if (!result.ok) {
-        return;
-      }
-      const blob = await result.blob();
-      const zipFile = new File([blob], `${thisModelVersion.id}_training_data.zip`, {
-        type: blob.type,
-      });
-      return await handleZip(zipFile, false);
-    }
-
     if (existingDataFile) {
       setModelFileId(existingDataFile.id);
       const fileLabelType = existingMetadata?.labelType ?? 'tag';
@@ -802,7 +830,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       if (imageList.length === 0) {
         setLoadingZip(true);
-        parseExisting()
+        parseExistingAndHandle(thisModelVersion.id)
           .then((files) => {
             if (files) {
               const flatFiles = files.parsedFiles.flat();
@@ -1209,7 +1237,21 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       >
                         Add from Uploaded
                       </Button>
-                      <Button variant="light">Re-use a Dataset</Button>
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          openImageSelectModal({
+                            title: 'Select Datasets',
+                            selectSource: 'training',
+                            onSelect: async (datasets) => {
+                              await handleImport(datasets, 'training');
+                            },
+                            importedUrls,
+                          });
+                        }}
+                      >
+                        Re-use a Dataset
+                      </Button>
                     </Group>
 
                     <Divider label="OR" labelPosition="center" />
@@ -1321,7 +1363,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         children: 'This cannot be undone.',
                         labels: { cancel: 'Cancel', confirm: 'Confirm' },
                         centered: true,
-                        onConfirm: () => setImageList(model.id, []),
+                        onConfirm: () => {
+                          setImageList(model.id, []);
+                          setAccordionUpload('uploading');
+                        },
                       });
                     }}
                   >
@@ -1505,6 +1550,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                       newLen % maxImgPerPage === 0
                                     )
                                       setPage(Math.max(page - 1, 1));
+
+                                    if (newLen < 1) {
+                                      setAccordionUpload('uploading');
+                                    }
                                   }}
                                 >
                                   <IconTrash />
@@ -1513,8 +1562,16 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                             </Group>
                             {imgData.source?.type && (
                               <div className={cx(classes.source, 'trashIcon')}>
-                                <Badge>
-                                  <span>{imgData.source.type}</span>
+                                <Badge
+                                  variant="filled"
+                                  className="px-1"
+                                  leftSection={
+                                    // <ThemeIcon color="blue" size="lg" radius="xl" variant="filled">
+                                    <IconTransferIn size={14} />
+                                    // </ThemeIcon>
+                                  }
+                                >
+                                  <Text>{imgData.source.type}</Text>
                                 </Badge>
                               </div>
                             )}

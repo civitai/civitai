@@ -165,7 +165,7 @@ export default function ResourceSelectModal({
     data: recommendedModels,
     isFetching: isLoadingRecommendedModels,
     // isError: isErrorRecommendedModels,
-  } = trpc.model.getRecentlyManuallyAdded.useQuery(
+  } = trpc.model.getRecentlyRecommended.useQuery(
     { take },
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'modelVersion' }
   );

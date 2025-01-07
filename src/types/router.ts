@@ -18,6 +18,9 @@ export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResour
 type ModelVersionRouter = RouterOutput['modelVersion'];
 export type ModelVersionById = ModelVersionRouter['getById'];
 
+type ModelFileRouter = RouterOutput['modelFile'];
+export type RecentTrainingData = ModelFileRouter['getRecentTrainingData']['items'];
+
 type CommentRouter = RouterOutput['comment'];
 export type CommentGetReactions = CommentRouter['getReactions'];
 export type CommentGetAll = CommentRouter['getAll'];
