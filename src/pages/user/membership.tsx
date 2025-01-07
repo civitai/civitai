@@ -40,7 +40,7 @@ import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscr
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { CancelMembershipMenuItem } from '~/components/Subscriptions/CancelMembershipMenuItem';
+import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { env } from '~/env/client.mjs';
@@ -287,7 +287,7 @@ export default function UserMembership() {
                         )}
                       </Stack>
                     </Group>
-                    <Stack>
+                    <Stack className="@sm:items-end">
                       <Group spacing="xs">
                         {subscription.canceledAt && (
                           <>
@@ -316,27 +316,10 @@ export default function UserMembership() {
                             Upgrade
                           </Button>
                         )}
-                        <Menu position="bottom" withinPortal closeOnItemClick={false}>
-                          <Menu.Target>
-                            <ActionIcon
-                              size={30}
-                              radius="xl"
-                              color="gray"
-                              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                              ml="auto"
-                            >
-                              <IconDotsVertical size={16} />
-                            </ActionIcon>
-                          </Menu.Target>
-                          <Menu.Dropdown>
-                            {isStripe && (
-                              <StripeManageSubscriptionButton>
-                                <Menu.Item>View Details</Menu.Item>
-                              </StripeManageSubscriptionButton>
-                            )}
-                            {!subscription?.canceledAt && !isFree && <CancelMembershipMenuItem />}
-                          </Menu.Dropdown>
-                        </Menu>
+                        <CancelMembershipAction
+                          variant="button"
+                          buttonProps={{ radius: 'xl', color: 'red', variant: 'outline' }}
+                        />
                       </Group>
                       {!subscription.cancelAt && isPaddle && managementUrls && (
                         <Anchor
