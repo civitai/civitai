@@ -468,7 +468,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               invalidLabel: false,
               source: source ?? null,
             });
-          } catch {
+          } catch (e) {
+            console.log(e);
             showErrorNotification({
               error: new Error(`An error occurred while parsing "${zname}".`),
             });
@@ -522,7 +523,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               parsedFiles: parsed,
               hasAnyLabelFiles: label !== '',
             };
-          } catch {
+          } catch (e) {
+            console.log(e);
             showErrorNotification({
               error: new Error(`An error occurred while parsing "${f.name}".`),
             });
