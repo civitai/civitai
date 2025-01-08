@@ -1128,7 +1128,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
           color: 'red',
           title: 'Inappropriate labels',
-          message: `One or more labels have been blocked. Please review these. Reason: ${issues.join(
+          message: `One or more labels/trigger words have been blocked. Please review these and resubmit. Reason: ${issues.join(
             ', '
           )}`,
         });
@@ -1457,6 +1457,27 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     placeholder='Add a trigger word, ex. "unique-word" (optional)'
                     value={triggerWord}
                     onChange={(event) => setTriggerWord(model.id, event.currentTarget.value)}
+                    onBlur={() => {
+                      const { blockedFor, success } = auditPrompt(triggerWord);
+                      if (!success) {
+                        if (!triggerWordInvalid) {
+                          setTriggerWordInvalid(model.id, true);
+                          showNotification({
+                            icon: <IconX size={18} />,
+                            autoClose: false,
+                            color: 'red',
+                            title: 'Inappropriate labels',
+                            message: `One or more trigger words have been blocked. Please review. Reason: ${blockedFor.join(
+                              ', '
+                            )}`,
+                          });
+                        }
+                      } else {
+                        if (triggerWordInvalid) {
+                          setTriggerWordInvalid(model.id, false);
+                        }
+                      }
+                    }}
                     style={{ flexGrow: 1 }}
                     className={cx({ [classes.badLabel]: triggerWordInvalid })}
                     rightSection={
