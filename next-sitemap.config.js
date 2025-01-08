@@ -1,10 +1,13 @@
 const exclude = [
   '/*/create',
+  '/**/*/edit',
   '/api/*',
   '/discord/*',
   '/dmca/*',
   '/intent/*',
   '/models/train',
+  '/models/*/wizard',
+  '/models/*/model-versions/*/wizard',
   '/moderator/*',
   '/payment/*',
   '/redirect',
@@ -16,7 +19,19 @@ const exclude = [
   '/user/transactions',
   '/user/buzz-dashboard',
   '/user/vault',
+  '/user/membership',
+  '/user/stipe-connect/onboard',
+  '/user/earn-potential',
+  '/tipalti/*',
+  '/research/*',
+  '/claim/*',
 ];
+
+const allowedDomains = [
+  process.env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
+  process.env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
+  process.env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
+]
 
 const disallow = exclude.filter((path) => !path.includes('sitemap.xml'));
 
@@ -28,12 +43,11 @@ module.exports = {
   changefreq: null,
   priority: null,
   exclude,
-
   robotsTxtOptions: {
     policies: [
       {
         userAgent: '*',
-        [process.env.NODE_ENV === 'prod' ? 'allow' : 'disallow']: '/',
+        [process.env.NODE_ENV === 'prod' && allowedDomains.includes(process.env.NEXT_PUBLIC_BASE_URL) ? 'allow' : 'disallow']: '/',
         disallow,
         allow: ['/api/trpc/*']
       },
