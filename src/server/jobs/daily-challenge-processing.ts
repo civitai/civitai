@@ -830,7 +830,8 @@ export async function startNextChallenge(config: ChallengeConfig) {
     SET
       status = 'Published',
       "publishedAt" = now(),
-      metadata = metadata::jsonb || '{"status": "active"}'
+      metadata = metadata::jsonb || '{"status": "active"}',
+      "updatedAt" = now()
     WHERE id = ${upcomingChallenge.articleId};
   `;
   log('Article published');
