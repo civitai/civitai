@@ -17,6 +17,7 @@ const mochiTxt2ImgConfig = new VideoGenerationConfig({
   engine: 'mochi',
   schema: mochiTxt2VidSchema,
   metadataDisplayProps: [],
+  inputs: [],
 });
 
 export const mochiVideoGenerationConfig = [mochiTxt2ImgConfig];

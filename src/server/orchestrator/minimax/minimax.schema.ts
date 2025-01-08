@@ -30,6 +30,7 @@ const minimaxTxt2ImgConfig = new VideoGenerationConfig({
   engine: 'minimax',
   schema: minimaxTxt2VidSchema,
   metadataDisplayProps: [],
+  inputs: [],
 });
 
 const minimaxImg2VidConfig = new VideoGenerationConfig({
@@ -37,6 +38,7 @@ const minimaxImg2VidConfig = new VideoGenerationConfig({
   engine: 'minimax',
   schema: minimaxImg2VidSchema,
   metadataDisplayProps: [],
+  inputs: [],
 });
 
 export const minimaxVideoGenerationConfig = [minimaxTxt2ImgConfig, minimaxImg2VidConfig];
