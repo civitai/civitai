@@ -250,7 +250,12 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   <Collection
                     items={tags}
                     renderItem={(tag) => (
-                      <Link legacyBehavior key={tag.id} href={`/articles?view=feed&tags=${tag.id}`} passHref>
+                      <Link
+                        legacyBehavior
+                        key={tag.id}
+                        href={`/articles?view=feed&tags=${tag.id}`}
+                        passHref
+                      >
                         <Badge
                           component="a"
                           color="gray"

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   changeModelModifierHandler,
+  copyGalleryBrowsingLevelHandler,
   declineReviewHandler,
   deleteModelHandler,
   findResourcesToAssociateHandler,
@@ -8,9 +9,11 @@ import {
   getAvailableTrainingModelsHandler,
   getDownloadCommandHandler,
   getModelByHashesHandler,
+  getModelCollectionShowcaseHandler,
   getModelDetailsForReviewHandler,
   getModelGallerySettingsHandler,
   getModelHandler,
+  getModelOwnerHandler,
   getModelReportDetailsHandler,
   getModelsInfiniteHandler,
   getModelsPagedSimpleHandler,
@@ -24,15 +27,12 @@ import {
   reorderModelVersionsHandler,
   requestReviewHandler,
   restoreModelHandler,
+  setModelCollectionShowcaseHandler,
   toggleCheckpointCoverageHandler,
   toggleModelLockHandler,
   unpublishModelHandler,
   updateGallerySettingsHandler,
   upsertModelHandler,
-  getModelOwnerHandler,
-  copyGalleryBrowsingLevelHandler,
-  getModelCollectionShowcaseHandler,
-  setModelCollectionShowcaseHandler,
 } from '~/server/controllers/model.controller';
 import { dbRead } from '~/server/db/client';
 import { applyUserPreferences, cacheIt, edgeCacheIt } from '~/server/middleware.trpc';
@@ -50,6 +50,7 @@ import {
   getModelsWithCategoriesSchema,
   getModelVersionsSchema,
   getSimpleModelsInfiniteSchema,
+  limitOnly,
   migrateResourceToCollectionSchema,
   modelByHashesInput,
   modelUpsertSchema,
@@ -66,6 +67,10 @@ import {
 import {
   getAllModelsWithCategories,
   getAssociatedResourcesSimple,
+  getAvailableModelsByUserId,
+  getFeaturedModels,
+  getRecentlyManuallyAdded,
+  getRecentlyRecommended,
   getSimpleModelWithVersions,
   migrateResourceToCollection,
   rescanModel,
@@ -131,7 +136,21 @@ export const modelRouter = router({
   getMyTrainingModels: protectedProcedure
     .input(getAllQuerySchema)
     .query(getMyTrainingModelsHandler),
-  getAvailableTrainingModels: protectedProcedure.query(getAvailableTrainingModelsHandler),
+  getMyAvailableModels: protectedProcedure.query(({ ctx }) =>
+    getAvailableModelsByUserId({ userId: ctx.user.id })
+  ),
+  getAvailableTrainingModels: protectedProcedure
+    .input(limitOnly)
+    .query(getAvailableTrainingModelsHandler),
+  getRecentlyManuallyAdded: protectedProcedure
+    .input(limitOnly)
+    .query(({ ctx, input }) => getRecentlyManuallyAdded({ userId: ctx.user.id, ...input })),
+  getRecentlyRecommended: protectedProcedure
+    .input(limitOnly)
+    .query(({ ctx, input }) => getRecentlyRecommended({ userId: ctx.user.id, ...input })),
+  getFeaturedModels: publicProcedure
+    .input(limitOnly)
+    .query(({ input }) => getFeaturedModels({ ...input })),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)

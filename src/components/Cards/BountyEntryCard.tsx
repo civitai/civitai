@@ -97,15 +97,12 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             ) : (
               <UserAvatar user={user} />
             )}
-
-            <Group>
-              <CurrencyBadge
-                currency={currency}
-                unitAmount={awardedUnitAmountTotal}
-                size="sm"
-                p={0}
-              />
-            </Group>
+            <CurrencyBadge
+              currency={currency}
+              unitAmount={awardedUnitAmountTotal}
+              size="sm"
+              p={0}
+            />
           </Group>
         </Stack>
 
@@ -167,6 +164,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
             entityId={data.id}
             entityType="bountyEntry"
             reactions={reactions}
+            className="!justify-start"
             metrics={{
               likeCount: stats?.likeCountAllTime,
               dislikeCount: stats?.dislikeCountAllTime,

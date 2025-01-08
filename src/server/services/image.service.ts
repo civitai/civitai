@@ -331,6 +331,7 @@ export const moderateImages = async ({
     const results = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
       UPDATE "Image" SET
         "needsReview" = ${needsReview},
+        "blockedFor" = NULL,
         "ingestion" = 'Scanned',
         -- if image was created within 72 hrs, set scannedAt to now
         "scannedAt" = CASE
@@ -364,7 +365,7 @@ export const moderateImages = async ({
 
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true },
+      data: { disabled: true, disabledAt: new Date(), needsReview: false },
     });
 
     // Resolve any pending appeals
@@ -459,7 +460,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 
   await dbWrite.tagsOnImage.updateMany({
     where: { imageId: images[0].id, disabledAt: { not: null } },
-    data: { disabled: false },
+    data: { disabled: false, disabledAt: null },
   });
 
   return await ingestImage({ image: images[0] });
@@ -2246,7 +2247,9 @@ export const getImage = async ({
         : // Now that moderators can review images without post, we need to make this optional
           // in case they land in an image-specific review flow
           `${isModerator ? 'LEFT ' : ''}JOIN "Post" p ON p.id = i."postId" ${
-            !isModerator ? `AND (p."publishedAt" < now() OR p."userId" = ${userId})` : ''
+            !isModerator
+              ? `AND (p."publishedAt" < now()${userId ? ` OR p."userId" = ${userId}` : ''})`
+              : ''
           }`
     )}
     WHERE ${Prisma.join(AND, ' AND ')}
@@ -3412,6 +3415,7 @@ const imageReviewQueueJoinMap = {
       au.username as "appealUsername",
       mu.id as "moderatorId",
       mu.username as "moderatorUsername",
+      ma."createdAt" as "removedAt",
     `,
     join: `
       JOIN "Appeal" appeal ON appeal."entityId" = i.id AND appeal."entityType" = 'Image'
@@ -3470,6 +3474,7 @@ type GetImageModerationReviewQueueRaw = {
   appealUsername?: string;
   moderatorId?: number;
   moderatorUsername?: string;
+  removedAt?: Date;
   minor: boolean;
 };
 export const getImageModerationReviewQueue = async ({
@@ -3491,6 +3496,9 @@ export const getImageModerationReviewQueue = async ({
       SELECT 1 FROM "TagsOnImage" toi
       WHERE toi."imageId" = i.id AND toi."needsReview"
     )`);
+    AND.push(Prisma.sql`
+      i."nsfwLevel" < ${NsfwLevel.Blocked}
+    `);
   }
 
   if (tagIds?.length) {
@@ -3627,6 +3635,22 @@ export const getImageModerationReviewQueue = async ({
     }
   }
 
+  let tosDetails: Map<number, { tosReason: string }> | undefined;
+  if (clickhouse && needsReview === 'appeal' && imageIds.length > 0) {
+    const tosImages = await clickhouse.$query<{ imageId: number; tosReason: string }>`
+      SELECT imageId, tosReason
+      FROM images
+      WHERE imageId IN (${imageIds})
+        AND type = 'DeleteTOS'
+        AND tosReason IS NOT NULL
+    `;
+
+    for (const image of tosImages) {
+      if (!tosDetails) tosDetails = new Map();
+      tosDetails.set(image.imageId, { tosReason: image.tosReason });
+    }
+  }
+
   const images: Array<
     Omit<ImageV2Model, 'stats' | 'metadata'> & {
       meta: ImageMetaProps | null;
@@ -3656,6 +3680,8 @@ export const getImageModerationReviewQueue = async ({
       entityType?: string | null;
       entityId?: number | null;
       metadata?: MixedObject | null;
+      removedAt?: Date | null;
+      tosReason?: string | null;
       minor: boolean;
     }
   > = rawImages.map(
@@ -3676,6 +3702,7 @@ export const getImageModerationReviewQueue = async ({
       appealCreatedAt,
       appealUserId,
       appealUsername,
+      removedAt,
       moderatorId,
       moderatorUsername,
       ...i
@@ -3713,6 +3740,8 @@ export const getImageModerationReviewQueue = async ({
             moderator: { id: moderatorId as number, username: moderatorUsername },
           }
         : undefined,
+      removedAt,
+      tosReason: tosDetails?.get(i.id)?.tosReason,
     })
   );
 
@@ -4074,8 +4103,11 @@ export async function getImageRatingRequests({
       FROM image_rating_requests irr
       JOIN "Image" i ON i.id = irr."imageId"
       WHERE irr.total >= 3
-      AND i."blockedFor" IS NULL
-      ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
+        AND i."blockedFor" IS NULL
+        AND i."nsfwLevelLocked" = FALSE
+        AND i.ingestion != 'PendingManualAssignment'::"ImageIngestionStatus"
+        AND i."nsfwLevel" < ${NsfwLevel.Blocked}
+        ${!!cursor ? Prisma.sql` AND irr."createdAt" >= ${new Date(cursor)}` : Prisma.sql``}
       ORDER BY irr."createdAt"
       LIMIT ${limit + 1}
   `;

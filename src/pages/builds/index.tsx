@@ -145,7 +145,7 @@ export default function BuildPage() {
                       value={budget}
                       variant="filled"
                     >
-                      {budget}
+                      <span>{budget}</span>
                     </Chip>
                   ))}
                 </Chip.Group>
@@ -174,7 +174,7 @@ export default function BuildPage() {
                       value={processor}
                       variant="filled"
                     >
-                      {processor}
+                      <span>{processor}</span>
                     </Chip>
                   ))}
                 </Chip.Group>

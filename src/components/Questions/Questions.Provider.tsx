@@ -103,7 +103,7 @@ function QuestionsFilter() {
               checked={status === value}
               onChange={(checked) => setStatus({ status: checked ? value : undefined })}
             >
-              {splitUppercase(value)}
+              <span>{splitUppercase(value)}</span>
             </Chip>
           ))}
         </Stack>
@@ -130,50 +130,48 @@ function QuestionsList() {
           href={`/questions/${question.id}/${slugit(question.title)}`}
           passHref
         >
-          <a>
-            <Paper withBorder p="sm">
-              <Stack spacing="xs">
-                <Title order={3} className={classes.title}>
-                  {question.title}
-                </Title>
-                <Group position="apart" spacing="sm">
-                  <Group spacing={4}>
-                    {question.tags.map((tag, index) => (
-                      <Badge key={index} size="xs">
-                        {tag.name}
-                      </Badge>
-                    ))}
-                  </Group>
-                  <Group spacing={4}>
-                    <Badge
-                      variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
-                      color={question.rank.heartCount ? 'pink' : 'gray'}
-                      size="xs"
-                      leftSection={
-                        <Center>
-                          <IconHeart size={14} />
-                        </Center>
-                      }
-                    >
-                      {question.rank.heartCount}
+          <Paper withBorder p="sm">
+            <Stack spacing="xs">
+              <Title order={3} className={classes.title}>
+                {question.title}
+              </Title>
+              <Group position="apart" spacing="sm">
+                <Group spacing={4}>
+                  {question.tags.map((tag, index) => (
+                    <Badge key={index} size="xs">
+                      {tag.name}
                     </Badge>
-                    <Badge
-                      variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
-                      color={question.selectedAnswerId ? 'green' : 'gray'}
-                      size="xs"
-                      leftSection={
-                        <Center>
-                          <IconMessageCircle size={14} />
-                        </Center>
-                      }
-                    >
-                      {question.rank.answerCount}
-                    </Badge>
-                  </Group>
+                  ))}
                 </Group>
-              </Stack>
-            </Paper>
-          </a>
+                <Group spacing={4}>
+                  <Badge
+                    variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+                    color={question.rank.heartCount ? 'pink' : 'gray'}
+                    size="xs"
+                    leftSection={
+                      <Center>
+                        <IconHeart size={14} />
+                      </Center>
+                    }
+                  >
+                    {question.rank.heartCount}
+                  </Badge>
+                  <Badge
+                    variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+                    color={question.selectedAnswerId ? 'green' : 'gray'}
+                    size="xs"
+                    leftSection={
+                      <Center>
+                        <IconMessageCircle size={14} />
+                      </Center>
+                    }
+                  >
+                    {question.rank.answerCount}
+                  </Badge>
+                </Group>
+              </Group>
+            </Stack>
+          </Paper>
         </Link>
       ))}
       {questions.totalPages > 1 && (

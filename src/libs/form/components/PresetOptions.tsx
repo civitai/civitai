@@ -40,7 +40,7 @@ export function PresetOptions({ options, disabled, ...chipGroupProps }: Props) {
           variant="filled"
           disabled={disabled}
         >
-          {label}
+          <span>{label}</span>
         </Chip>
       ))}
     </Chip.Group>

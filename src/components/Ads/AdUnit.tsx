@@ -1,5 +1,4 @@
 import { adUnitFactory } from '~/components/Ads/AdUnitFactory';
-import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 
 export const AdUnitIncontent_1 = adUnitFactory({
   adUnit: 'incontent_1',

@@ -1,15 +1,18 @@
-import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
 import {
-  handleLogError,
-  sleep,
-  throwBadRequestError,
-  throwNotFoundError,
-  withRetries,
-} from '~/server/utils/errorHandling';
-import { getBaseUrl } from '~/server/utils/url-helpers';
-import { createLogger } from '~/utils/logging';
-import { invalidateSession } from '~/server/utils/session-helpers';
+  Adjustment,
+  AdjustmentAction,
+  EventName,
+  PriceNotification,
+  ProductNotification,
+  SubscriptionNotification,
+  Transaction,
+  TransactionNotification,
+} from '@paddle/paddle-node-sdk';
+import dayjs from 'dayjs';
+import { env } from '~/env/server.mjs';
+import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import {
   cancelPaddleSubscription,
   createBuzzTransaction as createPaddleBuzzTransaction,
@@ -20,8 +23,8 @@ import {
   getPaddleSubscription,
   subscriptionBuzzOneTimeCharge,
   updatePaddleSubscription,
-  // updateTransaction,
 } from '~/server/paddle/client';
+import { TransactionType } from '~/server/schema/buzz.schema';
 import {
   GetPaddleAdjustmentsSchema,
   TransactionCreateInput,
@@ -30,30 +33,24 @@ import {
   UpdateSubscriptionInputSchema,
 } from '~/server/schema/paddle.schema';
 import {
-  Transaction,
-  ProductNotification,
-  PriceNotification,
-  EventName,
-  SubscriptionNotification,
-  TransactionNotification,
-  Adjustment,
-  AdjustmentAction,
-} from '@paddle/paddle-node-sdk';
-import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { getPlans } from '~/server/services/subscriptions.service';
-import {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
   subscriptionProductMetadataSchema,
 } from '~/server/schema/subscriptions.schema';
+import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
+import { getPlans } from '~/server/services/subscriptions.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
-import { env } from '~/env/server.mjs';
-import dayjs from 'dayjs';
-import { original } from 'immer';
-import { logToAxiom } from '~/server/logging/client';
-import { PaginationInput } from '~/server/schema/base.schema';
-import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
+import {
+  handleLogError,
+  sleep,
+  throwBadRequestError,
+  throwNotFoundError,
+  withRetries,
+} from '~/server/utils/errorHandling';
+import { invalidateSession } from '~/server/utils/session-helpers';
+import { getBaseUrl } from '~/server/utils/url-helpers';
+import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
+import { createLogger } from '~/utils/logging';
 
 const baseUrl = getBaseUrl();
 const log = createLogger('paddle', 'yellow');
@@ -688,8 +685,6 @@ export const updateSubscriptionPlan = async ({
     throw throwNotFoundError('No active subscription found on Paddle');
   }
 
-  console.log('SUBSC', subscription, priceId);
-
   try {
     if (
       subscription.priceId === priceId &&
@@ -726,7 +721,6 @@ export const updateSubscriptionPlan = async ({
           },
         });
       } catch (e) {
-        throw new Error('Failed to update subscription');
         logToAxiom({
           subscriptionId: paddleSubscription.id,
           type: 'error',
@@ -734,6 +728,7 @@ export const updateSubscriptionPlan = async ({
           userId,
           priceId,
         });
+        throw new Error('Failed to update subscription');
       }
     }
 

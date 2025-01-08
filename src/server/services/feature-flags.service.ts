@@ -79,6 +79,7 @@ const featureFlags = createFeatureFlags({
   newsroom: ['public'],
   safety: ['public'],
   csamReports: ['granted'],
+  appealReports: ['granted'],
   reviewTrainingData: ['granted'],
   clubs: ['mod'],
   createClubs: ['mod', 'granted'],

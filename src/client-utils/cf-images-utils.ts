@@ -55,7 +55,7 @@ export function getEdgeUrl(
 ) {
   if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
 
-  if (!width && !height) original = true;
+  if (!width && !height && original === undefined) original = true;
   if (original) {
     width = undefined;
     height = undefined;
@@ -87,7 +87,8 @@ export function getEdgeUrl(
 
   const extension = typeExtensions[type ?? MediaType.image];
 
-  name = (name ?? src).replaceAll('%', ''); // % symbol is escape character for url encoding
+  // application-error logs indicate that `src` is sometimes undefined
+  name = (name ?? src ?? '').replaceAll('%', ''); // % symbol is escape character for url encoding
   if (name.includes('.')) name = name.split('.').slice(0, -1).join('.') + extension;
   else name = name + extension;
 
@@ -96,11 +97,19 @@ export function getEdgeUrl(
 
 const videoTypeExtensions = ['.gif', '.mp4', '.webm'];
 
+export function getInferredMediaType(
+  src: string,
+  options?: { name?: string | null; type?: MediaType | undefined }
+) {
+  return (
+    options?.type ??
+    (videoTypeExtensions.some((ext) => (options?.name || src)?.endsWith(ext)) ? 'video' : 'image')
+  );
+}
+
 export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | undefined) {
   const currentUser = useCurrentUser();
-  const inferredType = videoTypeExtensions.some((ext) => (options?.name || src)?.endsWith(ext))
-    ? 'video'
-    : 'image';
+  const inferredType = getInferredMediaType(src, options);
   let type = options?.type ?? inferredType;
 
   if (!src || src.startsWith('http') || src.startsWith('blob'))
@@ -135,5 +144,5 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
 export function useGetEdgeUrl(src?: string | null, options: Omit<EdgeUrlProps, 'src'> = {}) {
   const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
   if (!options.anim && !autoplayGifs) options.anim = false;
-  return useMemo(() => (src ? getEdgeUrl(src, options) : undefined), [autoplayGifs]);
+  return useMemo(() => (src ? getEdgeUrl(src, options) : undefined), [autoplayGifs, src]);
 }

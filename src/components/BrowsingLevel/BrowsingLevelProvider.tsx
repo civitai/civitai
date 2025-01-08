@@ -1,7 +1,5 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, { createContext, useContext, useState } from 'react';
 import {
-  browsingLevels,
-  nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -9,62 +7,60 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { Flags } from '~/shared/utils';
-import { useRouter } from 'next/router';
 
-const BrowsingModeOverrideCtx = createContext<{
-  browsingLevel: number;
+type BrowsingModeProviderState = {
+  forcedBrowsingLevel?: number;
+  userBrowsingLevel: number;
+  browsingLevelOverride?: number;
+  childBrowsingLevelOverride?: number;
   blurLevels: number;
-  setBrowsingLevelOverride?: React.Dispatch<React.SetStateAction<number | undefined>>;
-}>({ browsingLevel: publicBrowsingLevelsFlag, blurLevels: nsfwBrowsingLevelsFlag });
+};
+
+const BrowsingModeOverrideCtx = createContext<
+  BrowsingModeProviderState & {
+    setBrowsingLevelOverride?: React.Dispatch<React.SetStateAction<number | undefined>>;
+    setForcedBrowsingLevel?: React.Dispatch<React.SetStateAction<number | undefined>>;
+  }
+>({
+  userBrowsingLevel: publicBrowsingLevelsFlag,
+  blurLevels: nsfwBrowsingLevelsFlag,
+});
 
 export const useBrowsingLevelContext = () => useContext(BrowsingModeOverrideCtx);
 
 export function BrowsingLevelProvider({
   children,
   browsingLevel: parentBrowsingLevelOverride,
+  forcedBrowsingLevel: parentForcedBrowsingLevel,
 }: {
   children: React.ReactNode;
   browsingLevel?: number;
+  forcedBrowsingLevel?: number;
 }) {
-  const router = useRouter();
+  const ctx = useBrowsingLevelContext();
   const { canViewNsfw } = useFeatureFlags();
-  const currentBrowsingLevel = useBrowsingSettings((state) => state.browsingLevel);
-  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
+  const userBrowsingLevel = useBrowsingSettings((state) =>
+    state.showNsfw ? state.browsingLevel : publicBrowsingLevelsFlag
+  );
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const [childBrowsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
-
-  const [browsingLevelDebounced] = useDebouncedValue(currentBrowsingLevel, 500);
-  const browsingLevelOverride = useMemo(() => {
-    if (!canViewNsfw) return publicBrowsingLevelsFlag;
-    const override = childBrowsingLevelOverride ?? parentBrowsingLevelOverride;
-    if (override) {
-      const max = Math.max(...Flags.instanceToArray(override));
-      return Flags.arrayToInstance(browsingLevels.filter((level) => level <= max));
-    }
-    if (!showNsfw) return publicBrowsingLevelsFlag;
-  }, [parentBrowsingLevelOverride, childBrowsingLevelOverride, showNsfw, canViewNsfw]);
-
-  const browsingLevel = browsingLevelOverride ?? browsingLevelDebounced ?? currentBrowsingLevel;
-
-  const blurLevels = useMemo(
-    () =>
-      blurNsfw
-        ? nsfwBrowsingLevelsFlag
-        : router.asPath.includes('moderator')
-        ? 0 // allow mods to view all levels unblurred
-        : Flags.arrayToInstance(
-            nsfwBrowsingLevelsArray.filter((level) => !Flags.hasFlag(currentBrowsingLevel, level))
-          ),
-    [browsingLevel, blurNsfw]
-  );
+  const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(parentForcedBrowsingLevel);
 
   return (
     <BrowsingModeOverrideCtx.Provider
       value={{
-        blurLevels,
-        // browsingLevel: currentBrowsingLevel < browsingLevel ? currentBrowsingLevel : browsingLevel,
-        browsingLevel,
+        forcedBrowsingLevel: !canViewNsfw
+          ? publicBrowsingLevelsFlag
+          : forcedBrowsingLevel ?? ctx.forcedBrowsingLevel,
+        userBrowsingLevel: userBrowsingLevel,
+        browsingLevelOverride:
+          childBrowsingLevelOverride ?? parentBrowsingLevelOverride ?? ctx.browsingLevelOverride,
+        childBrowsingLevelOverride: childBrowsingLevelOverride ?? ctx.childBrowsingLevelOverride,
+        blurLevels: blurNsfw
+          ? nsfwBrowsingLevelsFlag
+          : Flags.diff(nsfwBrowsingLevelsFlag, userBrowsingLevel),
         setBrowsingLevelOverride,
+        setForcedBrowsingLevel,
       }}
     >
       {children}
@@ -73,8 +69,11 @@ export function BrowsingLevelProvider({
 }
 
 export function useBrowsingLevelDebounced() {
-  const { browsingLevel: browsingLevelOverride } = useBrowsingLevelContext();
-  return browsingLevelOverride;
+  const { forcedBrowsingLevel, browsingLevelOverride, userBrowsingLevel } =
+    useBrowsingLevelContext();
+  const browsingLevel = forcedBrowsingLevel ?? browsingLevelOverride ?? userBrowsingLevel;
+  const [debounced] = useDebouncedValue(browsingLevel, 500);
+  return debounced;
 }
 
 export function BrowsingLevelProviderOptional({

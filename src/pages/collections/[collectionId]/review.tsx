@@ -203,9 +203,15 @@ const ReviewCollection = () => {
             )}
             <Group position="apart">
               <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-                <Chip value={CollectionItemStatus.REVIEW}>Review</Chip>
-                <Chip value={CollectionItemStatus.REJECTED}>Rejected</Chip>
-                <Chip value={CollectionItemStatus.ACCEPTED}>Accepted</Chip>
+                <Chip value={CollectionItemStatus.REVIEW}>
+                  <span>Review</span>
+                </Chip>
+                <Chip value={CollectionItemStatus.REJECTED}>
+                  <span>Rejected</span>
+                </Chip>
+                <Chip value={CollectionItemStatus.ACCEPTED}>
+                  <span>Accepted</span>
+                </Chip>
               </Chip.Group>
 
               <SelectMenuV2
@@ -316,7 +322,7 @@ const CollectionItemGridItem = ({
           >
             <Group>
               {reviewData.url && (
-                <Link href={reviewData.url} passHref>
+                <Link href={reviewData.url} passHref legacyBehavior>
                   <ActionIcon
                     component="a"
                     variant="transparent"

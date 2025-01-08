@@ -212,7 +212,7 @@ export function MediaFiltersDropdown({
           >
             {displayedBaseModels.map((baseModel, index) => (
               <Chip key={index} value={baseModel} {...chipProps}>
-                {baseModel}
+                <span>{baseModel}</span>
               </Chip>
             ))}
             {activeBaseModels.length > baseModelLimit && (
@@ -244,7 +244,7 @@ export function MediaFiltersDropdown({
             >
               {availableMediaTypes.map((type, index) => (
                 <Chip {...chipProps} key={index} value={type}>
-                  {getDisplayName(type)}
+                  <span>{getDisplayName(type)}</span>
                 </Chip>
               ))}
             </Chip.Group>
@@ -257,7 +257,7 @@ export function MediaFiltersDropdown({
             checked={mergedFilters.withMeta}
             onChange={(checked) => handleChange({ withMeta: checked })}
           >
-            Metadata only
+            <span>Metadata only</span>
           </Chip>
           {isFeed && currentUser && (
             <>
@@ -266,7 +266,7 @@ export function MediaFiltersDropdown({
                 checked={mergedFilters.hidden}
                 onChange={(checked) => handleChange({ hidden: checked })}
               >
-                Hidden
+                <span>Hidden</span>
               </Chip>
             </>
           )}
@@ -275,7 +275,7 @@ export function MediaFiltersDropdown({
             checked={mergedFilters.fromPlatform}
             onChange={(checked) => handleChange({ fromPlatform: checked })}
           >
-            Made On-site
+            <span>Made On-site</span>
           </Chip>
         </div>
 
@@ -288,14 +288,14 @@ export function MediaFiltersDropdown({
                 checked={mergedFilters.hideManualResources}
                 onChange={(checked) => handleChange({ hideManualResources: checked })}
               >
-                Hide manually-added
+                <span>Hide manually-added</span>
               </Chip>
               <Chip
                 {...chipProps}
                 checked={mergedFilters.hideAutoResources}
                 onChange={(checked) => handleChange({ hideAutoResources: checked })}
               >
-                Hide auto-detected
+                <span>Hide auto-detected</span>
               </Chip>
             </div>
           </>
@@ -310,14 +310,14 @@ export function MediaFiltersDropdown({
                 checked={mergedFilters.notPublished}
                 onChange={(checked) => handleChange({ notPublished: checked })}
               >
-                Not Published
+                <span>Not Published</span>
               </Chip>
               <Chip
                 {...chipProps}
                 checked={mergedFilters.scheduled}
                 onChange={(checked) => handleChange({ scheduled: checked })}
               >
-                Scheduled
+                <span>Scheduled</span>
               </Chip>
             </div>
           </>

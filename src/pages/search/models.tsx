@@ -116,27 +116,23 @@ export function ModelsHitList() {
 
   if (hits.length === 0) {
     const NotFound = (
-      <Box>
-        <Center>
-          <Stack spacing="md" align="center" maw={800}>
-            {hiddenCount > 0 && (
-              <Text color="dimmed">
-                {hiddenCount} models have been hidden due to your settings.
-              </Text>
-            )}
-            <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
-              <IconCloudOff size={80} />
-            </ThemeIcon>
-            <Title order={1} inline>
-              No models found
-            </Title>
-            <Text align="center">
-              We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
-              query.
-            </Text>
-          </Stack>
-        </Center>
-      </Box>
+      <div className="flex items-center justify-center">
+        <Stack spacing="md" align="center" maw={800}>
+          {hiddenCount > 0 && (
+            <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
+          )}
+          <ThemeIcon size={128} radius={100} sx={{ opacity: 0.5 }}>
+            <IconCloudOff size={80} />
+          </ThemeIcon>
+          <Title order={1} inline>
+            No models found
+          </Title>
+          <Text align="center">
+            We have a bunch of models, but it looks like we couldn&rsquo;t find any matching your
+            query.
+          </Text>
+        </Stack>
+      </div>
     );
 
     const loading = status === 'loading' || status === 'stalled';

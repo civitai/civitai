@@ -1,10 +1,15 @@
 import { ActionIcon, Badge, CopyButton, Group, MantineColor, Tooltip } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { ModelHashType } from '~/shared/utils/prisma/enums';
 import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
+import { ModelHashType } from '~/shared/utils/prisma/enums';
 
-export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Props) => {
+export const ModelHash = ({
+  hashes,
+  initialType = 'AutoV2',
+  color = 'gray',
+  width = 120,
+}: Props) => {
   const [preferredType, setPreferredType] = useLocalStorage({
     key: 'preferredModelHashType',
     defaultValue: initialType,
@@ -50,7 +55,7 @@ export const ModelHash = ({ hashes, initialType = 'AutoV2', color = 'gray' }: Pr
               sx={{
                 cursor: 'pointer',
                 overflow: 'hidden',
-                width: 120,
+                width,
                 borderTopLeftRadius: 0,
                 borderBottomLeftRadius: 0,
                 borderTopRightRadius: hasMore ? 0 : undefined,
@@ -97,4 +102,5 @@ type Props = {
     type: ModelHashType;
     hash: string;
   }[];
+  width?: number;
 };

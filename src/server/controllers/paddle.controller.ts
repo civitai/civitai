@@ -1,9 +1,19 @@
-import {
-  throwAuthorizationError,
-  throwBadRequestError,
-  throwNotFoundError,
-} from '~/server/utils/errorHandling';
+import { getTRPCErrorFromUnknown } from '@trpc/server';
 import { Context } from '~/server/createContext';
+import {
+  getPaddleCustomerSubscriptions,
+  getPaddleSubscription,
+  getTransactionById,
+} from '~/server/paddle/client';
+import { verifyCaptchaToken } from '~/server/recaptcha/client';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
+import {
+  GetPaddleAdjustmentsSchema,
+  TransactionCreateInput,
+  TransactionWithSubscriptionCreateInput,
+  UpdateSubscriptionInputSchema,
+} from '~/server/schema/paddle.schema';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import {
   cancelSubscriptionPlan,
   createBuzzPurchaseTransaction,
@@ -14,23 +24,13 @@ import {
   refreshSubscription,
   updateSubscriptionPlan,
 } from '~/server/services/paddle.service';
-import {
-  GetPaddleAdjustmentsSchema,
-  TransactionCreateInput,
-  TransactionWithSubscriptionCreateInput,
-  UpdateSubscriptionInputSchema,
-} from '~/server/schema/paddle.schema';
-import { getTRPCErrorFromUnknown } from '@trpc/server';
-import { verifyCaptchaToken } from '~/server/recaptcha/client';
-import {
-  getPaddleCustomerSubscriptions,
-  getPaddleSubscription,
-  getTransactionById,
-} from '~/server/paddle/client';
-import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 
 export const createBuzzPurchaseTransactionHandler = async ({
   ctx,
@@ -211,7 +211,21 @@ export const hasPaddleSubscriptionHandler = async ({ ctx }: { ctx: DeepNonNullab
       customerId,
     });
 
-    return subscriptions.length > 0;
+    const plans = await getPlans({
+      includeFree: true,
+      paymentProvider: PaymentProvider.Paddle,
+    });
+
+    const freePlan = plans.find((p) => {
+      const meta = p.metadata as SubscriptionProductMetadata;
+      return meta?.tier === 'free';
+    });
+
+    const nonFreeSubscriptions = subscriptions.filter(
+      (s) => !freePlan || s.items[0]?.price?.productId !== freePlan.id
+    );
+
+    return nonFreeSubscriptions.length > 0;
   } catch (e) {
     throw getTRPCErrorFromUnknown(e);
   }

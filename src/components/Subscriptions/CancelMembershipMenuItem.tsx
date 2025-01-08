@@ -120,7 +120,7 @@ export const VaultStorageDowngrade = () => {
               You will have a 7 day grace period to download models from your Vault.
             </Text>
           </div>
-          <Link href="/user/vault" passHref>
+          <Link href="/user/vault" passHref legacyBehavior>
             <Button component="a" onClick={handleClose} radius="xl">
               Go to my Vault
             </Button>

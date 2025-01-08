@@ -3,7 +3,12 @@ import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server.mjs';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
-import { BanReasonCode, BlockedReason, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import {
+  BanReasonCode,
+  BlockedReason,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -80,6 +85,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import blockedUsernames from '~/utils/blocklist-username.json';
 import { removeEmpty } from '~/utils/object-helpers';
+import { isDefined } from '~/utils/type-guards';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { simpleCosmeticSelect } from '../selectors/cosmetic.selector';
 import { profileImageSelect } from '../selectors/image.selector';
@@ -211,6 +217,7 @@ export async function getUsersWithSearch({
       ...user,
       avatarUrl: profilePicture?.url ?? image,
       avatarNsfw: profilePicture?.nsfwLevel ?? NsfwLevel.PG,
+      meta: null,
     }))
     .slice(0, limit);
 }
@@ -221,6 +228,7 @@ type GetUsersRow = {
   status: 'active' | 'banned' | 'muted' | 'deleted' | undefined;
   avatarUrl: string | undefined;
   avatarNsfwLevel: number;
+  meta: UserMeta | undefined;
 };
 
 // Caution! this query is exposed to the public API, only non-sensitive data should be returned
@@ -231,6 +239,7 @@ export const getUsers = async ({
   ids,
   include,
   excludedUserIds,
+  contestBanned,
 }: GetAllUsersInput) => {
   const select = ['u.id', 'u.username'];
   if (include?.includes('status'))
@@ -247,6 +256,10 @@ export const getUsers = async ({
       `COALESCE(i.nsfwLevel, 'None') AS "avatarNsfwLevel"`
     );
 
+  if (contestBanned) {
+    select.push(`u."meta"`);
+  }
+
   const result = await dbRead.$queryRaw<GetUsersRow[]>`
     SELECT ${Prisma.raw(select.join(','))}
     FROM "User" u
@@ -262,10 +275,13 @@ export const getUsers = async ({
           : Prisma.sql`TRUE`
       }
       AND u."deletedAt" IS NULL
-      AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')} ${Prisma.raw(
-    limit ? 'LIMIT ' + limit : ''
-  )}
+      AND u."id" != -1 ${Prisma.raw(query ? 'ORDER BY LENGTH(username) ASC' : '')}
+      AND ${
+        contestBanned ? Prisma.sql`u."meta"->>'contestBanDetails' IS NOT NULL` : Prisma.sql`TRUE`
+      }
+      ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
+
   return result.map(({ avatarNsfwLevel, ...user }) => ({
     ...user,
     avatarNsfw: getNsfwLevelDeprecatedReverseMapping(avatarNsfwLevel),
@@ -976,6 +992,24 @@ export const getUserBookmarkedArticles = async ({ userId }: { userId: number }) 
   return bookmarked.map(({ articleId }) => articleId);
 };
 
+export const getUserBookmarkedModels = async ({ userId }: { userId: number }) => {
+  // TODO should we be using resourceReview instead to get versions?
+
+  const collections = await getUserBookmarkCollections({ userId });
+  const collection = collections.find((c) => c.type === CollectionType.Model);
+  if (!collection) {
+    // this should be impossible, but now that I've said that, it'll happen
+    throw throwNotFoundError('Could not find a matching collection.');
+  }
+
+  const bookmarked = await dbRead.collectionItem.findMany({
+    where: { collectionId: collection.id },
+    select: { modelId: true },
+  });
+
+  return bookmarked.map(({ modelId }) => modelId).filter(isDefined);
+};
+
 export const updateLeaderboardRank = async ({
   userIds,
   leaderboardIds,
@@ -1076,6 +1110,7 @@ export const toggleBan = async ({
     id,
     data: { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta },
   });
+
   await invalidateSession(id);
 
   if (!bannedAt) {
@@ -1108,6 +1143,39 @@ export const toggleBan = async ({
       logToAxiom({ name: 'cancel-paddle-subscription', type: 'error', message: error.message })
     );
   }
+
+  return updatedUser;
+};
+
+export const toggleContestBan = async ({
+  id,
+  detailsInternal,
+}: ToggleBanUser & { userId: number; isModerator?: boolean; force?: boolean }) => {
+  const user = await getUserById({ id, select: { meta: true } });
+  if (!user) throw throwNotFoundError(`No user with id ${id}`);
+
+  const userMeta = (user.meta ?? {}) as UserMeta;
+  const bannedAt = userMeta.contestBanDetails?.bannedAt;
+
+  const updatedMeta = bannedAt
+    ? {
+        ...(userMeta ?? {}),
+        contestBanDetails: undefined,
+      }
+    : {
+        ...(userMeta ?? {}),
+        contestBanDetails: {
+          bannedAt: new Date(),
+          detailsInternal,
+        },
+      };
+
+  const updatedUser = await updateUserById({
+    id,
+    data: { meta: updatedMeta },
+  });
+
+  await invalidateSession(id);
 
   return updatedUser;
 };

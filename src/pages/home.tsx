@@ -1,33 +1,33 @@
-import { Box, Button, Center, Group, Loader, Popover, Text, Title } from '@mantine/core';
-import { trpc } from '~/utils/trpc';
-import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
-import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
+import { Box, Button, Group, Popover, Text, Title } from '@mantine/core';
 import { IconArrowRight, IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { useInView } from '~/hooks/useInView';
-import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
-import { IsClient } from '~/components/IsClient/IsClient';
-import { ImageSort, ModelSort } from '~/server/common/enums';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
-import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client.mjs';
-import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { AdUnitTop } from '~/components/Ads/AdUnit';
+import { FeedLayout } from '~/components/AppLayout/FeedLayout';
+import { Page } from '~/components/AppLayout/Page';
+import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
+import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
+import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
+import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
+import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
+import { IsClient } from '~/components/IsClient/IsClient';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { Meta } from '~/components/Meta/Meta';
+import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { env } from '~/env/client.mjs';
+import { isProd } from '~/env/other';
+import { useInView } from '~/hooks/useInView';
+import { ImageSort, ModelSort } from '~/server/common/enums';
 import {
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { isProd } from '~/env/other';
-import { AdUnitTop } from '~/components/Ads/AdUnit';
-import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
-import { Page } from '~/components/AppLayout/Page';
-import { FeedLayout } from '~/components/AppLayout/FeedLayout';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
+import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { trpc } from '~/utils/trpc';
 
 export function Home() {
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
@@ -195,7 +195,7 @@ export function Home() {
                             </Popover.Target>
                             <Popover.Dropdown maw="100%">
                               <Text size="sm" mb="xs">
-                                Pre-filtered list of models upload by the community that are the
+                                Pre-filtered list of models uploaded by the community that are the
                                 highest rated over the last week
                               </Text>
                             </Popover.Dropdown>

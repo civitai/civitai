@@ -24,7 +24,6 @@ import { sortDomainLinks } from '~/utils/domain-link';
 import { trpc } from '~/utils/trpc';
 import { TipBuzzButton } from '../Buzz/TipBuzzButton';
 import { UserStatBadges, UserStatBadgesV2 } from '../UserStatBadges/UserStatBadges';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   BadgeCosmetic,
   ProfileBackgroundCosmetic,

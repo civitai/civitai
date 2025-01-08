@@ -61,12 +61,6 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     rel: 'nofollow noreferrer',
     children: 'Education',
   },
-  {
-    href: 'https://air.civitai.com',
-    target: '_blank',
-    rel: 'nofollow noreferrer',
-    children: 'Residency',
-  },
 ];
 
 export function AppFooter() {

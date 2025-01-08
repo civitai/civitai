@@ -41,6 +41,7 @@ import { ImagesProvider } from '~/components/Image/Providers/ImagesProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const icons = {
   model: IconCategory,
@@ -50,6 +51,10 @@ const icons = {
 };
 
 export const CollectionHomeBlock = ({ showAds, ...props }: Props) => {
+  const features = useFeatureFlags();
+  // No other easy way to hide the block if the feature is disabled
+  if (props.metadata.link?.includes('/articles') && !features.articles) return null;
+
   return (
     <HomeBlockWrapper py={32}>
       <CollectionHomeBlockContent {...props} />

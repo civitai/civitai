@@ -9,6 +9,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isEqual } from 'lodash-es';
 import { devtools } from 'zustand/middleware';
+import { NsfwLevel } from '~/server/common/enums';
 
 const Context = createContext<ContentSettingsStore | null>(null);
 
@@ -108,7 +109,7 @@ function createContentSettingsStore(state: StoreState) {
 
 export function useToggleBrowsingLevel() {
   const setState = useBrowsingSettings((x) => x.setState);
-  return function (level: BrowsingLevel) {
+  return function (level: NsfwLevel) {
     setState((state) => ({
       browsingLevel: Flags.hasFlag(state.browsingLevel, level)
         ? Flags.removeFlag(state.browsingLevel, level)

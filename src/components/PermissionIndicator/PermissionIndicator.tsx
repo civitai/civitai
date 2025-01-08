@@ -3,10 +3,10 @@ import {
   IconBrushOff,
   IconCheck,
   IconExchangeOff,
-  IconHorseToy,
   IconPhotoOff,
   IconRotate2,
   IconShoppingCartOff,
+  IconSpyOff,
   IconUserCheck,
   IconWorldOff,
   IconX,
@@ -15,7 +15,13 @@ import React from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
 
-export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...props }: Props) => {
+export const PermissionIndicator = ({
+  permissions,
+  size = 20,
+  spacing = 2,
+  showNone = false,
+  ...props
+}: Props) => {
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
 
@@ -38,7 +44,7 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
   };
   const iconProps = { size, stroke: 1.5 };
   const icons = [
-    isModerator && minor && { label: 'Minor (no NSFW gen)', icon: <IconHorseToy {...iconProps} /> },
+    isModerator && minor && { label: 'No mature content', icon: <IconSpyOff {...iconProps} /> },
     !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
     !canSellImages && { label: 'No selling images', icon: <IconPhotoOff {...iconProps} /> },
     !canRentCivit && { label: 'No Civitai generation', icon: <IconBrushOff {...iconProps} /> },
@@ -50,8 +56,9 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
       icon: <IconRotate2 {...iconProps} />,
     },
   ].filter(Boolean) as { label: string; icon: React.ReactNode }[];
+
   return (
-    <Popover withArrow>
+    <Popover withArrow withinPortal>
       <Popover.Target>
         <Group spacing={spacing} sx={{ cursor: 'pointer' }} noWrap {...props}>
           {icons.map(({ label, icon }, i) => (
@@ -59,6 +66,11 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
               <Box sx={(theme) => ({ color: theme.colors.gray[5] })}>{icon}</Box>
             </Tooltip>
           ))}
+          {showNone && icons.length === 0 && (
+            <Text fs="italic" size="xs">
+              None
+            </Text>
+          )}
         </Group>
       </Popover.Target>
       <Popover.Dropdown>
@@ -95,6 +107,7 @@ export const PermissionIndicator = ({ permissions, size = 20, spacing = 2, ...pr
 type Props = {
   permissions: Permissions;
   size?: number;
+  showNone?: boolean;
 } & Omit<GroupProps, 'size'>;
 
 type Permissions = {

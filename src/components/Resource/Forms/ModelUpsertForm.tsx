@@ -38,7 +38,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { TagSort } from '~/server/common/enums';
-import { ModelMeta, ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
+import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
@@ -310,7 +310,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               filter={(tag) =>
                 data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
               }
-              autosuggest
             />
             <InputRTE
               name="description"

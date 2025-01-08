@@ -82,7 +82,7 @@ export function ShopFiltersDropdown({ filters, setFilters, ...buttonProps }: Pro
         >
           {Object.values(CosmeticType).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
+              <span>{getDisplayName(type)}</span>
             </Chip>
           ))}
         </Chip.Group>

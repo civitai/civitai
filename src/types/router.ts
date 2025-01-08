@@ -9,6 +9,9 @@ export type ModelGetAll = ModelRouter['getAll'];
 export type ModelGetVersions = ModelRouter['getVersions'];
 export type MyDraftModelGetAll = ModelRouter['getMyDraftModels'];
 export type MyTrainingModelGetAll = ModelRouter['getMyTrainingModels'];
+export type MyAvailTrainingModels = ModelRouter['getAvailableTrainingModels'];
+export type MyRecentlyAddedModels = ModelRouter['getRecentlyManuallyAdded'];
+export type MyRecentlyRecommended = ModelRouter['getRecentlyRecommended'];
 export type ModelGetAllPagedSimple = ModelRouter['getAllPagedSimple'];
 export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResourcesSimple'];
 
@@ -75,7 +78,7 @@ export type TrainingModelData = TrainingRouter['getModelBasic'];
 type BountyRouter = RouterOutput['bounty'];
 export type BountyGetAll = BountyRouter['getInfinite']['items'];
 export type BountyGetById = BountyRouter['getById'];
-export type BountyGetEntries = BountyRouter['getEntries'];
+export type BountyGetEntries = BountyRouter['getEntries']['items'];
 
 type BountyEntryRouter = RouterOutput['bountyEntry'];
 export type BountyEntryGetById = BountyEntryRouter['getById'];

@@ -17,15 +17,7 @@ import {
 import { useDebouncedValue } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import { showNotification } from '@mantine/notifications';
-import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
-import {
-  IconAlertTriangle,
-  IconConfetti,
-  IconCopy,
-  IconExclamationMark,
-  IconPlus,
-  IconX,
-} from '@tabler/icons-react';
+import { IconAlertTriangle, IconConfetti, IconCopy, IconPlus, IconX } from '@tabler/icons-react';
 import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
@@ -62,6 +54,7 @@ import {
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
 import { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
+import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   defaultRun,
   defaultTrainingState,
@@ -122,7 +115,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz();
+  const { balance } = useBuzz(currentUser?.id, 'user');
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to train this model. Required Buzz: ${numberWithCommas(
@@ -226,6 +219,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
         // TODO make this a setInfiniteData, too much work right now
         await queryUtils.model.getMyTrainingModels.invalidate();
+        await queryUtils.model.getAvailableTrainingModels.invalidate();
 
         await router.replace(userTrainingDashboardURL);
         setAwaitInvalidate(false);
@@ -453,20 +447,10 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   };
 
   // HARD CODED FOR THIS RUN:
-  const discountEndDate = dayjs().month(9).endOf('month');
+  const discountEndDate = dayjs().month(9).year(2024).endOf('month');
 
   return (
     <Stack>
-      {!status.available && (
-        <AlertWithIcon
-          icon={<IconExclamationMark size={18} />}
-          iconColor="red"
-          color="red"
-          size="sm"
-        >
-          {status.message ?? 'Training is currently disabled.'}
-        </AlertWithIcon>
-      )}
       {/* {discountInfo.amt !== 0 && ( */}
       {discountEndDate.isAfter(dayjs()) && (
         <DismissibleAlert

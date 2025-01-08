@@ -9,12 +9,14 @@ import { isDefined } from '~/utils/type-guards';
 
 export const useCollectionsForPostEditor = () => {
   const { collections: queryCollectionIds, collectionId: queryCollectionId } = usePostEditParams();
-  const { post, updateCollection, collectionId, collectionTagId } = usePostEditStore((state) => ({
-    post: state.post,
-    updateCollection: state.updateCollection,
-    collectionId: state.collectionId,
-    collectionTagId: state.collectionTagId,
-  }));
+  const { post, updateCollection, collectionId, collectionTagId, collectionItemExists } =
+    usePostEditStore((state) => ({
+      post: state.post,
+      updateCollection: state.updateCollection,
+      collectionId: state.collectionId,
+      collectionTagId: state.collectionTagId,
+      collectionItemExists: state.collectionItemExists,
+    }));
 
   const collectionIds = useMemo(() => {
     return [
@@ -33,7 +35,7 @@ export const useCollectionsForPostEditor = () => {
 
   useEffect(() => {
     if (!collectionId && post?.collectionId) {
-      updateCollection(post.collectionId, post.collectionTagId);
+      updateCollection(post.collectionId, post.collectionTagId, post.collectionItemExists);
     }
   }, [post?.collectionId, collectionId]);
 
@@ -47,12 +49,20 @@ export const useCollectionsForPostEditor = () => {
     collectionTagId,
     collectionIds,
     activeCollection: collections.find((c) => c.id === collectionId),
+    collectionItemExists,
   };
 };
 
 export const CollectionSelectDropdown = () => {
-  const { post, collections, updateCollection, collectionId, collectionTagId, collectionIds } =
-    useCollectionsForPostEditor();
+  const {
+    post,
+    collections,
+    updateCollection,
+    collectionId,
+    collectionTagId,
+    collectionIds,
+    collectionItemExists,
+  } = useCollectionsForPostEditor();
   const { updateCollectionTagId, updatingCollectionTagId } = useMutatePost();
 
   const writeableCollections = useMemo(() => {
@@ -187,7 +197,7 @@ export const CollectionSelectDropdown = () => {
             </Stack>
           </Alert>
 
-          {selectedCollection && selectedCollection.tags.length > 0 && (
+          {selectedCollection && selectedCollection.tags.length > 0 && collectionItemExists && (
             <Select
               label="Update Entry Category"
               data={selectedCollection.tags.map((tag) => ({
@@ -208,6 +218,21 @@ export const CollectionSelectDropdown = () => {
                 },
               }}
             />
+          )}
+
+          {selectedCollection && !collectionItemExists && (
+            <Alert color="red">
+              <Stack spacing={0}>
+                <Text size="sm">
+                  We could not find a link to the entry record for this post. This post might have
+                  been removed from the{' '}
+                  <Text weight="bold" component="span">
+                    {selectedCollection.name}
+                  </Text>{' '}
+                  collection.
+                </Text>
+              </Stack>
+            </Alert>
           )}
         </Stack>
       ) : null}

@@ -26,14 +26,21 @@ export const getAllEntriesByBountyId = <TSelect extends Prisma.BountyEntrySelect
   select,
   sort = 'createdAt',
 }: {
-  input: { bountyId: number; userId?: number; excludedUserIds?: number[] };
+  input: {
+    bountyId: number;
+    userId?: number;
+    excludedUserIds?: number[];
+    limit?: number;
+    cursor?: number;
+  };
   select: TSelect;
   sort?: 'createdAt' | 'benefactorCount';
 }) => {
   let orderBy: Prisma.BountyEntryOrderByWithRelationInput | undefined;
+  const take = (input.limit ?? 20) + 1;
 
   if (sort === 'createdAt') {
-    orderBy = { createdAt: 'desc' };
+    orderBy = { id: 'desc' };
   } else if (sort === 'benefactorCount') {
     orderBy = {
       benefactors: {
@@ -50,6 +57,8 @@ export const getAllEntriesByBountyId = <TSelect extends Prisma.BountyEntrySelect
       userId: input.userId,
       AND: input.excludedUserIds ? [{ userId: { notIn: input.excludedUserIds } }] : undefined,
     },
+    cursor: input.cursor ? { id: input.cursor } : undefined,
+    take,
     select,
     orderBy,
   });

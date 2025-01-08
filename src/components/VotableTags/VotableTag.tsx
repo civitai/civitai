@@ -48,6 +48,7 @@ type VotableTagProps = VotableTagConnectorInput & {
   concrete?: boolean;
   lastUpvote?: Date | null;
   onChange: (changed: { name: string; vote: number }) => void;
+  highlightContested?: boolean;
 };
 
 type VotableTagStore = {
@@ -91,19 +92,21 @@ export function VotableTag({
   concrete = false,
   lastUpvote,
   onChange,
+  highlightContested,
 }: VotableTagProps) {
   const currentUser = useCurrentUser();
   const clickedRef = useRef(false);
   const key = getKey({ entityType, entityId, name });
   const vote = useVotableTagStore(useCallback((state) => state.votes[key] ?? initialVote, [key])); //eslint-disable-line
   const upvoteDate = useVotableTagStore(useCallback((state) => state.upvoteDates[key], [key]));
+  const moderatorVariant = highlightContested && needsReview
 
   const theme = useMantineTheme();
   const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);
   const { color, shade } = votableTagColors[nsfwLevel][theme.colorScheme];
   const voteColor = isNsfw ? theme.colors[color][shade] : theme.colors.blue[5];
   const badgeColor = theme.fn.variant({
-    color: color,
+    color: moderatorVariant ? 'grape' : color,
     variant: theme.colorScheme === 'dark' ? (isNsfw ? 'light' : 'filled') : 'light',
   });
   const badgeBorder = theme.fn.lighten(
@@ -172,6 +175,7 @@ export function VotableTag({
         position: 'relative',
         background: badgeBg,
         borderColor: badgeBorder,
+        borderWidth: moderatorVariant ? 3 : 1,
         color: badgeColor.color,
         userSelect: 'none',
 
@@ -188,7 +192,7 @@ export function VotableTag({
       pl={canVote ? 3 : 4}
       pr={!!currentUser ? 0 : undefined}
     >
-      <Group spacing={0}>
+      <Group spacing={0} noWrap>
         {canVote && (
           <LoginPopover>
             <UnstyledButton onClick={handleUpvote} className="z-10">

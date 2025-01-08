@@ -49,7 +49,7 @@ export function TagsInput({
       limit: 20,
       entityType: target,
       categories: false,
-      query: trimmedSearch,
+      query: debouncedSearch.trim().toLowerCase(),
     },
     { enabled: autosuggest && debouncedSearch.trim().length > 0 }
   );
@@ -58,16 +58,25 @@ export function TagsInput({
     [data?.items, filter]
   );
 
+  const selectedTags = useMemo(() => value.map((tag) => tag.name), [value]);
+  const isNewTag =
+    !!trimmedSearch &&
+    !selectedTags.includes(trimmedSearch) &&
+    (filter?.({ name: trimmedSearch }) ?? true);
+
   const handleClose = useCallback(() => {
     close();
     setSearch('');
   }, [close]);
 
-  const handleAddTag = (item: { id?: number; value: string }) => {
-    const updated = [...value, { id: item.id, name: item.value.trim().toLowerCase() }];
-    onChange?.(updated);
-    handleClose();
-  };
+  const handleAddTag = useCallback(
+    (item: { id?: number; value: string }) => {
+      const updated = [...value, { id: item.id, name: item.value.trim().toLowerCase() }];
+      onChange?.(updated);
+      handleClose();
+    },
+    [handleClose, onChange, value]
+  );
 
   const handleRemoveTag = (index: number) => {
     const updated = [...value];
@@ -75,11 +84,14 @@ export function TagsInput({
     onChange?.(updated);
   };
 
-  const selectedTags = useMemo(() => value.map((tag) => tag.name), [value]);
-  const isNewTag =
-    !!trimmedSearch &&
-    !selectedTags.includes(trimmedSearch) &&
-    (filter?.({ name: trimmedSearch }) ?? true);
+  const handleSubmit = useCallback(() => {
+    if (!isNewTag) {
+      handleClose();
+      return;
+    }
+
+    if (trimmedSearch) handleAddTag({ value: trimmedSearch });
+  }, [handleAddTag, handleClose, isNewTag, trimmedSearch]);
 
   return (
     <Input.Wrapper {...props}>
@@ -176,21 +188,9 @@ export function TagsInput({
               <TextInput
                 variant="unstyled"
                 onChange={(e) => setSearch(e.currentTarget.value)}
-                onKeyDown={getHotkeyHandler([
-                  [
-                    'Enter',
-                    () => {
-                      if (!isNewTag) {
-                        handleClose();
-                        return;
-                      }
-
-                      if (trimmedSearch) handleAddTag({ value: trimmedSearch });
-                    },
-                  ],
-                ])}
+                onKeyDown={getHotkeyHandler([['Enter', handleSubmit]])}
                 placeholder="Type your tag"
-                onBlur={handleClose}
+                onBlur={handleSubmit}
                 autoFocus
               />
             )

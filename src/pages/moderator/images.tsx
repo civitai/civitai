@@ -67,7 +67,7 @@ import { ImageModerationReviewQueueImage } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { splitUppercase } from '~/utils/string-helpers';
+import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 type StoreState = {
@@ -124,7 +124,7 @@ export default function Images() {
   const deselectAll = useStore((state) => state.deselectAll);
   const [type, setType] = useState<ImageReviewType>('minor');
   const [activeTag, setActiveNameTag] = useState<number | null>(null);
-  const { csamReports } = useFeatureFlags();
+  const { csamReports, appealReports } = useFeatureFlags();
 
   const viewingReported = type === 'reported';
 
@@ -152,11 +152,16 @@ export default function Images() {
   useEffect(deselectAll, [type, deselectAll]);
 
   const segments = Object.entries(ImageReviewType)
+    // filter out csam and appeal if not enabled
+    .filter(([key]) => {
+      if (key === 'csam') return csamReports;
+      if (key === 'appeal') return appealReports;
+      return true;
+    })
     .map(([key, value]) => ({
       value: key,
       label: value,
-    }))
-    .filter((x) => (!csamReports ? x.value !== 'csam' : true));
+    }));
 
   return (
     <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
@@ -477,16 +482,6 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                     </Anchor>
                   </Link>
                 </Stack>
-                {image.appeal?.moderator && (
-                  <Stack spacing={2}>
-                    <Text size="xs" color="dimmed" inline>
-                      Moderated by
-                    </Text>
-                    <Text size="xs" lineClamp={1} inline>
-                      {image.appeal?.moderator.username}
-                    </Text>
-                  </Stack>
-                )}
                 <Stack spacing={2} align="flex-end">
                   <Text size="xs" color="dimmed" inline>
                     Created at
@@ -496,6 +491,29 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                   ) : null}
                 </Stack>
               </Group>
+              {image.appeal?.moderator && (
+                <Group position="apart" noWrap>
+                  <Stack spacing={2}>
+                    <Text size="xs" color="dimmed" inline>
+                      Moderated by
+                    </Text>
+                    <Text size="xs" lineClamp={1} inline>
+                      {image.appeal?.moderator.username}
+                    </Text>
+                  </Stack>
+                  <Stack spacing={2} align="flex-end">
+                    <Text size="xs" color="dimmed" inline>
+                      Removed at
+                    </Text>
+                    {image.removedAt ? <Text size="xs">{formatDate(image.removedAt)}</Text> : null}
+                  </Stack>
+                </Group>
+              )}
+              {image.tosReason ? (
+                <Badge size="sm" color="pink">
+                  Removed for: {getDisplayName(image.tosReason)}
+                </Badge>
+              ) : null}
               <ContentClamp maxHeight={150}>
                 {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
               </ContentClamp>
@@ -846,7 +864,7 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
       resolvedMessage,
     });
     if (!result.success) {
-      setError(result.error.flatten().fieldErrors.resolvedMessage?.[0] ?? 'Message is required');
+      setError(result.error.flatten().fieldErrors.resolvedMessage?.[0]);
     } else {
       setError('');
     }
@@ -928,7 +946,6 @@ function ConfirmResolvedAppeal({
         maxRows={5}
         maxLength={MAX_APPEAL_MESSAGE_LENGTH}
         autosize
-        required
       />
     </Stack>
   );

@@ -1,12 +1,12 @@
 import { ActionIcon, Code, Group, Popover, Stack, Text, Tooltip } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconCheck, IconCopy, IconInfoSquareRounded } from '@tabler/icons-react';
 import { useMemo } from 'react';
-import { BaseModel, baseModelSets } from '~/server/common/constants';
+import { BaseModel } from '~/server/common/constants';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/utils/string-helpers';
 
-export const ModelURN = ({ baseModel, type, modelId, modelVersionId }: Props) => {
+export const ModelURN = ({ baseModel, type, modelId, modelVersionId, withCopy = true }: Props) => {
   const { copied, copy } = useClipboard();
   const urn = useMemo(
     () => stringifyAIR({ baseModel, type, modelId, id: modelVersionId }),
@@ -24,32 +24,47 @@ export const ModelURN = ({ baseModel, type, modelId, modelVersionId }: Props) =>
             lineHeight: 1.2,
             paddingLeft: 4,
             paddingRight: 4,
-            cursor: 'pointer',
+            cursor: withCopy ? 'pointer' : undefined,
           },
         }}
       >
         <Code>civitai:</Code>
-        <CopyTooltip copied={copied} label="Model ID">
-          <Code color="blue" onClick={() => copy(modelId)}>
-            {modelId}
-          </Code>
-        </CopyTooltip>
+
+        {withCopy ? (
+          <CopyTooltip copied={copied} label="Model ID">
+            <Code color="blue" onClick={() => copy(modelId)}>
+              {modelId}
+            </Code>
+          </CopyTooltip>
+        ) : (
+          <Tooltip label="Model ID">
+            <Code color="blue">{modelId}</Code>
+          </Tooltip>
+        )}
         <Code>@</Code>
-        <CopyTooltip copied={copied} label=" Version ID">
-          <Code color="blue" onClick={() => copy(modelVersionId)}>
-            {modelVersionId}
-          </Code>
-        </CopyTooltip>
+        {withCopy ? (
+          <CopyTooltip copied={copied} label="Version ID">
+            <Code color="blue" onClick={() => copy(modelVersionId)}>
+              {modelVersionId}
+            </Code>
+          </CopyTooltip>
+        ) : (
+          <Tooltip label="Version ID">
+            <Code color="blue">{modelVersionId}</Code>
+          </Tooltip>
+        )}
       </Group>
-      <ActionIcon
-        size="xs"
-        onClick={(e) => {
-          e.stopPropagation();
-          copy(urn);
-        }}
-      >
-        {copied ? <IconCheck size="20" /> : <IconCopy size="20" />}
-      </ActionIcon>
+      {withCopy && (
+        <ActionIcon
+          size="xs"
+          onClick={(e) => {
+            e.stopPropagation();
+            copy(urn);
+          }}
+        >
+          {copied ? <IconCheck size="20" /> : <IconCopy size="20" />}
+        </ActionIcon>
+      )}
     </Group>
   );
 };
@@ -74,6 +89,7 @@ const urnParts = [
   { name: 'source', description: 'The resource source' },
   { name: 'id', description: 'The resource id at the source' },
 ];
+
 export function URNExplanation({ size }: { size?: number }) {
   return (
     <Popover width={300} withArrow withinPortal shadow="sm">
@@ -119,4 +135,5 @@ type Props = {
   type: ModelType;
   modelId: number;
   modelVersionId: number;
+  withCopy?: boolean;
 };

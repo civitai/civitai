@@ -4,28 +4,20 @@ import {
   ChipProps,
   createStyles,
   Divider,
-  Group,
   Indicator,
   Popover,
   Stack,
-  Drawer,
   PopoverProps,
   ScrollArea,
   ButtonProps,
 } from '@mantine/core';
-import {
-  IconChevronDown,
-  IconFilter,
-  IconThumbUpFilled,
-  IconThumbDownFilled,
-  IconHeartFilled,
-} from '@tabler/icons-react';
+import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { MarkerType } from '~/server/common/enums';
+import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -36,16 +28,16 @@ export function MarkerFiltersDropdown(props: Props) {
   return <DumbMarkerFiltersDropdown {...props} filters={filters} setFilters={setFilters} />;
 }
 
-const ICONS = {
-  default: IconFilter,
-  liked: IconThumbUpFilled,
-  disliked: IconThumbDownFilled,
-  favorited: IconHeartFilled,
-};
+// const ICONS = {
+//   default: IconFilter,
+//   liked: IconThumbUpFilled,
+//   disliked: IconThumbDownFilled,
+//   favorited: IconHeartFilled,
+// };
 
-function getIcon(type: MarkerType | undefined) {
-  return ICONS[type || 'default'];
-}
+// function getIcon(type: MarkerType | undefined) {
+//   return ICONS[type || 'default'];
+// }
 
 export function DumbMarkerFiltersDropdown({
   filters,
@@ -59,7 +51,6 @@ export function DumbMarkerFiltersDropdown({
   setFilters: (filters: Partial<MarkerFilterSchema>) => void;
 }) {
   const { classes, cx, theme } = useStyles();
-  const mobile = useIsMobile({ breakpoint: 'xs' });
 
   const [opened, setOpened] = useState(false);
 
@@ -69,7 +60,9 @@ export function DumbMarkerFiltersDropdown({
     setMarker(filters.marker);
   }
 
-  const filterLength = 0;
+  let filterLength = 0;
+  if (filters.marker) filterLength += 1;
+  if (filters.tags) filterLength += filters.tags.length;
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -78,8 +71,6 @@ export function DumbMarkerFiltersDropdown({
     classNames: classes,
     tt: 'capitalize',
   };
-
-  const Icon = getIcon(filters.marker);
 
   const target = (
     <Indicator
@@ -102,64 +93,57 @@ export function DumbMarkerFiltersDropdown({
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
-        <Group spacing={4} noWrap>
-          <Icon size={16} />
-        </Group>
+        <IconFilter size={16} />
       </Button>
     </Indicator>
   );
 
   const dropdown = (
     <Stack spacing={8}>
-      <Stack spacing={0}>
-        <Group spacing={8} mb={4}>
-          {Object.values(MarkerType).map((marker) => {
-            const Icon = getIcon(marker);
-
-            return (
-              <Chip
-                key={marker}
-                checked={marker === filters.marker}
-                onChange={(checked) => {
-                  setMarker(checked ? marker : undefined);
-                  setFilters({ marker: checked ? marker : undefined });
-                }}
-                {...chipProps}
-              >
-                <Group spacing={4} noWrap>
-                  <Icon size={16} /> {marker}
-                </Group>
-              </Chip>
-            );
-          })}
-        </Group>
-      </Stack>
+      <Divider label="Generation Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+      <div className="flex gap-2">
+        <Chip
+          checked={!filters.tags?.length}
+          onChange={() => setFilters({ tags: [] })}
+          {...chipProps}
+        >
+          All
+        </Chip>
+        <Chip
+          checked={filters.tags?.includes(WORKFLOW_TAGS.IMAGE) ?? false}
+          onChange={() => setFilters({ tags: [WORKFLOW_TAGS.IMAGE] })}
+          {...chipProps}
+        >
+          Images
+        </Chip>
+        <Chip
+          checked={filters.tags?.includes(WORKFLOW_TAGS.VIDEO) ?? false}
+          onChange={() => setFilters({ tags: [WORKFLOW_TAGS.VIDEO] })}
+          {...chipProps}
+        >
+          Videos
+        </Chip>
+      </div>
+      <Divider label="Reactions" labelProps={{ weight: 'bold', size: 'sm' }} />
+      <div className="flex gap-2">
+        {Object.values(MarkerType).map((marker) => {
+          return (
+            <Chip
+              key={marker}
+              checked={marker === filters.marker}
+              onChange={(checked) => {
+                setMarker(checked ? marker : undefined);
+                setFilters({ marker: checked ? marker : undefined });
+              }}
+              {...chipProps}
+            >
+              <span>{marker}</span>
+            </Chip>
+          );
+        })}
+      </div>
     </Stack>
   );
-
-  // if (mobile)
-  //   return (
-  //     <IsClient>
-  //       {target}
-  //       <Drawer
-  //         opened={opened}
-  //         onClose={() => setOpened(false)}
-  //         size="90%"
-  //         position="bottom"
-  //         styles={{
-  //           drawer: {
-  //             height: 'auto',
-  //             maxHeight: 'calc(100dvh - var(--header-height))',
-  //           },
-  //           body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
-  //           header: { padding: '4px 8px' },
-  //           closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
-  //         }}
-  //       >
-  //         {dropdown}
-  //       </Drawer>
-  //     </IsClient>
-  //   );
 
   return (
     <IsClient>
@@ -168,16 +152,11 @@ export function DumbMarkerFiltersDropdown({
         position={position}
         shadow="md"
         onClose={() => setOpened(false)}
-        // middlewares={{ flip: true, shift: true }}
         withinPortal
-        // withArrow
       >
         <Popover.Target>{target}</Popover.Target>
         <Popover.Dropdown maw={576} w="100%">
-          <ScrollArea.Autosize
-            maxHeight={'calc(90vh - var(--header-height) - 56px)'}
-            type="hover"
-          >
+          <ScrollArea.Autosize maxHeight={'calc(90vh - var(--header-height) - 56px)'} type="hover">
             {dropdown}
           </ScrollArea.Autosize>
         </Popover.Dropdown>
@@ -209,10 +188,10 @@ const useStyles = createStyles((theme, _params, getRef) => ({
     },
   },
 
-  iconWrapper: {
-    ref: getRef('iconWrapper'),
-    display: 'none',
-  },
+  // iconWrapper: {
+  //   ref: getRef('iconWrapper'),
+  //   display: 'none',
+  // },
   opened: {
     transform: 'rotate(180deg)',
     transition: 'transform 200ms ease',

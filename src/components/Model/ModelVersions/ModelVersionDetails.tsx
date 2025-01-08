@@ -113,14 +113,12 @@ import { trpc } from '~/utils/trpc';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { TwCard } from '~/components/TwCard/TwCard';
 import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
 import {
   openCollectionSelectModal,
   openResourceReviewEditModal,
 } from '~/components/Dialog/dialog-registry';
-import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -1006,7 +1004,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 >
                   <div className="flex items-center justify-between">
                     <div>
-                      <Link href={`/collections/${model.meta?.showcaseCollectionId}`} passHref>
+                      <Link
+                        href={`/collections/${model.meta?.showcaseCollectionId}`}
+                        passHref
+                        legacyBehavior
+                      >
                         <Anchor variant="text" onClick={(e) => e.stopPropagation()} inherit>
                           {collection.name}
                         </Anchor>

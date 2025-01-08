@@ -1,5 +1,4 @@
 import { Air } from '@civitai/client';
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 import {
@@ -8,6 +7,7 @@ import {
   baseModelSets,
   BaseModelSetType,
 } from '~/server/common/constants';
+import { ModelType } from '~/shared/utils/prisma/enums';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
 import { toJson } from '~/utils/json-helpers';
@@ -194,7 +194,8 @@ export function parseAIR(identifier: string) {
   return { ...value, model: Number(id), version: Number(version) };
 }
 
-export function parseAIRSafe(identifier: string) {
+export function parseAIRSafe(identifier: string | undefined) {
+  if (identifier === undefined) return identifier;
   const match = Air.parseSafe(identifier);
   if (!match) return match;
 

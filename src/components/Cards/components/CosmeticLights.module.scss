@@ -4,6 +4,7 @@ $width: 18px;
 $height: 14px;
 $bulbEndRadius: 6px;
 $baseGlowOffset: -3px;
+$zIndex: 10;
 
 $yellow: rgb(255, 255, 0);
 $red: rgb(255, 0, 0);
@@ -16,7 +17,7 @@ $blue: rgb(0, 200, 255);
   left: $offset;
   right: $offset;
   bottom: $padding-y;
-  z-index: 1001;
+  z-index: $zIndex;
   pointer-events: none;
 
   span {

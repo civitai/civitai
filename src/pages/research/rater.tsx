@@ -578,7 +578,7 @@ function Rater() {
                   onChange={() => changeLevel(value)}
                   key={key}
                 >
-                  {key}
+                  <span>{key}</span>
                 </Chip>
               ))}
           </Group>

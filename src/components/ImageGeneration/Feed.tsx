@@ -5,39 +5,15 @@ import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/ut
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
-import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
-import { MarkerType } from '~/server/common/enums';
 
 export function Feed() {
   const { classes } = useStyles();
 
-  const { filters } = useFiltersContext((state) => ({
-    filters: state.markers,
-    setFilters: state.setMarkerFilters,
-  }));
-
-  let workflowTagsFilter = undefined;
-
-  switch (filters.marker) {
-    case MarkerType.Favorited:
-      workflowTagsFilter = [WORKFLOW_TAGS.FAVORITE];
-      break;
-
-    case MarkerType.Liked:
-      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.LIKED];
-      break;
-
-    case MarkerType.Disliked:
-      workflowTagsFilter = [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
-      break;
-  }
+  const filters = useFiltersContext((state) => state.markers);
 
   const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
-    useGetTextToImageRequestsImages({
-      tags: workflowTagsFilter,
-    });
+    useGetTextToImageRequestsImages();
 
   if (isError)
     return (

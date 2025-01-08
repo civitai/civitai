@@ -1,14 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  BountyType,
-  CollectionItemStatus,
-  MetricTimeframe,
-  ModelHashType,
-  ModelModifier,
-  ModelStatus,
-  ModelType,
-  ModelUploadType,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { CommandResourcesAdd, ResourceType } from '~/components/CivitaiLink/shared-types';
 import { BaseModel, BaseModelType, constants, ModelFileType } from '~/server/common/constants';
@@ -18,7 +8,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
@@ -41,6 +31,7 @@ import {
   GetDownloadSchema,
   GetModelVersionsSchema,
   GetSimpleModelsInfiniteSchema,
+  LimitOnly,
   ModelByHashesInput,
   ModelGallerySettingsSchema,
   ModelMeta,
@@ -63,6 +54,7 @@ import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getArticles } from '~/server/services/article.service';
 import { getCollectionById, getCollectionItemCount } from '~/server/services/collection.service';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { addUserDownload } from '~/server/services/download.service';
 import { getDownloadFilename, getFilesByEntity } from '~/server/services/file.service';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { bustMvCache } from '~/server/services/model-version.service';
@@ -111,12 +103,21 @@ import {
   getIsSafeBrowsingLevel,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
+import {
+  BountyType,
+  CollectionItemStatus,
+  MetricTimeframe,
+  ModelHashType,
+  ModelModifier,
+  ModelStatus,
+  ModelType,
+  ModelUploadType,
+} from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
 import { redis } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { getUnavailableResources } from '../services/generation/generation.service';
-import { addUserDownload } from '~/server/services/download.service';
 
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
@@ -974,11 +975,12 @@ export const getMyTrainingModelsHandler = async ({
 };
 
 export const getAvailableTrainingModelsHandler = async ({
+  input: { take },
   ctx,
 }: {
+  input: LimitOnly;
   ctx: DeepNonNullable<Context>;
 }) => {
-  // TODO not in use yet, but should probably alter this query
   try {
     return await dbRead.model.findMany({
       where: {
@@ -998,6 +1000,7 @@ export const getAvailableTrainingModelsHandler = async ({
         },
       },
       orderBy: { updatedAt: 'desc' },
+      take,
     });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

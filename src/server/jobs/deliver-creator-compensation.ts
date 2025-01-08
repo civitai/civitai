@@ -97,10 +97,11 @@ export async function runPayout(lastUpdate: Date) {
   const compensations = await clickhouse.$query<Compensation>`
     SELECT
       modelVersionId,
-      comp,
-      tip
+      MAX(comp) as comp,
+      MAX(tip) as tip
     FROM buzz_resource_compensation
-    WHERE date = ${date};
+    WHERE date = ${date}
+    GROUP BY modelVersionId;
   `;
   if (!compensations.length) return;
 

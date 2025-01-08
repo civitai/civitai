@@ -59,12 +59,17 @@ type State = {
   isReordering: boolean;
   collectionId?: number | null;
   collectionTagId: number | null;
+  collectionItemExists?: boolean;
   setPost: (data: PostParams) => void;
   updatePost: (cb: (data: PostParams) => void) => void;
   setImages: (cb: (images: ControlledImage[]) => ControlledImage[]) => void;
   updateImage: (id: number, cb: (image: PostEditImageDetail) => void) => void;
   toggleReordering: () => void;
-  updateCollection: (collectionId: number | null, tagId?: number | null) => void;
+  updateCollection: (
+    collectionId: number | null,
+    tagId?: number | null,
+    collectionItemExists?: boolean
+  ) => void;
 };
 // #endregion
 
@@ -83,6 +88,7 @@ const createContextStore = (post?: PostDetailEditable) =>
         isReordering: false,
         collectionId: post?.collectionId,
         collectionTagId: post?.collectionTagId ?? null,
+        collectionItemExists: post?.collectionItemExists,
         /**
          * @deprecated
          */
@@ -105,7 +111,13 @@ const createContextStore = (post?: PostDetailEditable) =>
           set((state) => {
             state.isReordering = !state.isReordering;
           }),
-        updateCollection: (collectionId, tagId) => set({ collectionId, collectionTagId: tagId }),
+        updateCollection: (collectionId, tagId, collectionItemExists) =>
+          set({
+            collectionId,
+            collectionTagId: tagId,
+            // Generally speaking we are sure it exists/will exist. However, if it's forcefully set as false, then we should respect that.
+            collectionItemExists: collectionItemExists ?? true,
+          }),
       })),
       { name: 'PostDetailEditable' }
     )

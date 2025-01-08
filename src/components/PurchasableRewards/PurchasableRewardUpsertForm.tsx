@@ -224,7 +224,7 @@ export function PurchasableRewardUpsertForm({
                           form.setValue('usage', type);
                         }}
                       >
-                        {getDisplayName(type)}
+                        <span>{getDisplayName(type)}</span>
                       </Chip>
                     ))}
                   </Group>

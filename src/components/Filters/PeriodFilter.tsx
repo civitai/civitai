@@ -86,7 +86,7 @@ function DumbPeriodFilter({
               variant="filled"
               tt="capitalize"
             >
-              {x.label}
+              <span>{x.label}</span>
             </Chip>
           ))}
         </Chip.Group>

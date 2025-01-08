@@ -14,12 +14,9 @@ export function shouldAnimateByDefault({
   if (forceDisabled) return false;
 
   const parsed = videoMetadataSchema.safeParse(metadata);
-  if (!parsed.success) return undefined;
+  if (!parsed.success || !parsed.data.duration) return type === MediaType.video;
 
-  const meta = parsed.data;
-  if (type !== MediaType.video || !meta || !meta.duration) return undefined;
-
-  return meta.duration <= MAX_ANIMATION_DURATION_SECONDS;
+  return parsed.data.duration <= MAX_ANIMATION_DURATION_SECONDS;
 }
 
 export function getSkipValue({

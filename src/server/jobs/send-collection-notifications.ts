@@ -1,8 +1,8 @@
 import { uniq } from 'lodash-es';
-import { dbRead } from '~/server/db/client';
-import { createJob, getJobDate } from './job';
-import { createNotification } from '~/server/services/notification.service';
 import { NotificationCategory } from '~/server/common/enums';
+import { dbRead } from '~/server/db/client';
+import { createNotification } from '~/server/services/notification.service';
+import { createJob, getJobDate } from './job';
 
 const CUTOFF_DATE = '2024-09-25';
 
@@ -24,7 +24,7 @@ export const sendCollectionNotifications = createJob(
       JOIN "CollectionContributor" cc ON c.id = cc."collectionId" AND cc."userId" != c."userId"
       WHERE ci."createdAt" >= ${lastRun}
         AND ci."status" = 'ACCEPTED'
-        AND c.mode != 'Contest'
+        AND c.mode IS DISTINCT FROM 'Contest'
       GROUP BY ci."collectionId", c.name
     `;
 

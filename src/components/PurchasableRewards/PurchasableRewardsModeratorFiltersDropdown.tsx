@@ -95,7 +95,7 @@ export function PurchasableRewardsFiltersModeratorDropdown({
         >
           {Object.values(PurchasableRewardModeratorViewMode).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
+              <span>{getDisplayName(type)}</span>
             </Chip>
           ))}
         </Chip.Group>
@@ -112,10 +112,10 @@ export function PurchasableRewardsFiltersModeratorDropdown({
           }}
         >
           <Chip value="true" {...chipProps}>
-            Yes
+            <span>Yes</span>
           </Chip>
           <Chip value="false" {...chipProps}>
-            No
+            <span>No</span>
           </Chip>
         </Chip.Group>
         <Divider label="Usage" labelProps={{ weight: 'bold', size: 'sm' }} />
@@ -131,7 +131,7 @@ export function PurchasableRewardsFiltersModeratorDropdown({
         >
           {Object.values(PurchasableRewardUsage).map((type, index) => (
             <Chip key={index} value={type} {...chipProps}>
-              {getDisplayName(type)}
+              <span>{getDisplayName(type)}</span>
             </Chip>
           ))}
         </Chip.Group>
