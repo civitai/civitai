@@ -158,14 +158,14 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     if (!initialMuted && state.loaded && ref.current) ref.current.volume = volume;
 
     useEffect(() => {
-      // Hard set the src for Safari because it doesn't support autoplay webm
+      // Hard set the width to 100% for Safari because it doesn't render in full size otherwise ¯\_(ツ)_/¯ -Manuel
       const inSafari =
         typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
-      if (inSafari && ref.current && src) {
-        ref.current.src = src;
+      if (inSafari && ref.current) {
+        ref.current.classList.add('w-full');
       }
       if (fadeIn && ref.current?.readyState === 4) ref.current.style.opacity = '1';
-    }, [fadeIn, src]);
+    }, [fadeIn]);
 
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
@@ -186,7 +186,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             const elem = target as HTMLVideoElement;
             if (!options?.anim) return;
             if (isIntersecting && intersectionRatio >= threshold) {
-              elem.play();
+              elem.play().catch(console.error);
             } else if (!isIntersecting || (isIntersecting && intersectionRatio < threshold)) {
               elem.pause();
             }

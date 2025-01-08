@@ -35,7 +35,7 @@ const allowedDomains = [
 ].map((domain) => domain.includes('http') ? domain : 'https://' + domain);
 
 const disallow = exclude.filter((path) => !path.includes('sitemap.xml'));
-const isProdDomain = process.env.NODE_ENV === 'prod' && allowedDomains.includes(process.env.NEXT_PUBLIC_BASE_URL);
+const isProdDomain = allowedDomains.includes(process.env.NEXT_PUBLIC_BASE_URL);
 
 /** @type {import('next-sitemap').IConfig} */
 module.exports = {

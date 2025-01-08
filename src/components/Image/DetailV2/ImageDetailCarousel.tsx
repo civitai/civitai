@@ -182,7 +182,9 @@ function ImageContent({
               type={image.type}
               className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
               wrapperProps={{
-                className: `max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`,
+                className: `flex items-center justify-center max-h-full w-auto max-w-full ${
+                  !safe ? 'invisible' : ''
+                }`,
                 style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
               }}
               width={!isVideo || isClient ? undefined : 450} // Leave as undefined to get original size
@@ -206,7 +208,6 @@ function ImageContent({
                   : undefined
               }
               controls
-              contain
             />
           )}
         </div>
