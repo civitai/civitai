@@ -286,6 +286,7 @@ export function GeneratedImage({
               alt=""
               wrapperProps={{ style: { height: '100%' } }}
               className="max-h-full w-auto max-w-full"
+              disableWebm
               // onDragStart={(e) => {
               //   if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
               // }}

@@ -38,6 +38,7 @@ type VideoProps = Omit<
   vimeoVideoId?: string;
   options?: Omit<EdgeUrlProps, 'src'>;
   threshold?: number | null;
+  disableWebm?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -68,6 +69,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       vimeoVideoId,
       threshold = 0.25,
       thumbnailUrl,
+      disableWebm,
       ...props
     },
     forwardedRef
@@ -240,7 +242,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             poster={coverUrl}
             {...props}
           >
-            <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />
+            {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}
             <source src={videoUrl} type="video/mp4" />
           </video>
           {!options?.anim && !showCustomControls && !html5Controls && !mouseOver && (
