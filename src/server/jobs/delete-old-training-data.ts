@@ -1,11 +1,8 @@
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { deleteAssets } from '~/server/services/training.service';
+import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { deleteObject, parseKey } from '~/utils/s3-utils';
 import { createJob } from './job';
-
-//  TODO [bw] delete this file and stop the job ~11/15/24
 
 const logJob = (data: MixedObject) => {
   logToAxiom({ name: 'delete-old-training-data', type: 'error', ...data }, 'webhooks').catch();
@@ -60,33 +57,33 @@ export const deleteOldTrainingData = createJob(
     for (const { mf_id, job_id, submitted_at, visibility, url } of oldTraining) {
       let hasError = false;
 
-      if (!!job_id) {
-        try {
-          const result = await deleteAssets(job_id, submitted_at);
-          if (!result) {
-            hasError = true;
-            logJob({
-              message: `Delete assets result blank`,
-              data: {
-                jobId: job_id,
-                modelFileId: mf_id,
-                result: result,
-              },
-            });
-          }
-        } catch (e) {
-          hasError = true;
-          logJob({
-            message: `Delete assets error`,
-            data: {
-              error: (e as Error)?.message,
-              cause: (e as Error)?.cause,
-              jobId: job_id,
-              modelFileId: mf_id,
-            },
-          });
-        }
-      }
+      // if (!!job_id) {
+      //   try {
+      //     const result = await deleteAssets(job_id, submitted_at);
+      //     if (!result) {
+      //       hasError = true;
+      //       logJob({
+      //         message: `Delete assets result blank`,
+      //         data: {
+      //           jobId: job_id,
+      //           modelFileId: mf_id,
+      //           result: result,
+      //         },
+      //       });
+      //     }
+      //   } catch (e) {
+      //     hasError = true;
+      //     logJob({
+      //       message: `Delete assets error`,
+      //       data: {
+      //         error: (e as Error)?.message,
+      //         cause: (e as Error)?.cause,
+      //         jobId: job_id,
+      //         modelFileId: mf_id,
+      //       },
+      //     });
+      //   }
+      // }
 
       if (visibility !== ModelFileVisibility.Public) {
         const { key, bucket } = parseKey(url);
@@ -111,17 +108,31 @@ export const deleteOldTrainingData = createJob(
       }
 
       if (!hasError) {
-        await dbWrite.modelFile.update({
-          where: { id: mf_id },
-          data: {
-            dataPurged: true,
-          },
-        });
-        goodJobs += 1;
+        try {
+          await dbWrite.modelFile.update({
+            where: { id: mf_id },
+            data: {
+              dataPurged: true,
+            },
+          });
+          goodJobs += 1;
+        } catch (e) {
+          errorJobs += 1;
+          logJob({
+            message: `Update model file error`,
+            data: {
+              error: (e as Error)?.message,
+              cause: (e as Error)?.cause,
+              jobId: job_id,
+              modelFileId: mf_id,
+            },
+          });
+        }
       } else {
         errorJobs += 1;
       }
     }
+
     logJob({
       type: 'info',
       message: `Finished`,

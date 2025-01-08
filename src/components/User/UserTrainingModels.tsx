@@ -98,7 +98,7 @@ type ModalData = {
   params?: TrainingDetailsParams;
 };
 
-const trainingStatusFields: {
+export const trainingStatusFields: {
   [key in TrainingStatus]: { color: MantineColor; description: string };
 } = {
   [TrainingStatus.Pending]: {

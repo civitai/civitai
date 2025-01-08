@@ -1,4 +1,4 @@
-import { JsonPatchFactory, WorkflowEvent, WorkflowStepJobEvent, applyPatch } from '@civitai/client';
+import { applyPatch, JsonPatchFactory, WorkflowEvent, WorkflowStepJobEvent } from '@civitai/client';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
@@ -22,8 +22,8 @@ import {
 } from '~/server/schema/orchestrator/workflows.schema';
 import { NormalizedGeneratedImageStep } from '~/server/services/orchestrator';
 import {
-  WorkflowStepFormatted,
   queryGeneratedImageWorkflows,
+  WorkflowStepFormatted,
 } from '~/server/services/orchestrator/common';
 import { IWorkflow, IWorkflowsInfinite } from '~/server/services/orchestrator/orchestrator.schema';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
@@ -35,6 +35,7 @@ import { queryClient, trpc } from '~/utils/trpc';
 type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
 >;
+export type TextToImageSteps = ReturnType<typeof useGetTextToImageRequests>['steps'];
 
 function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?: string[] }) {
   return step.images.filter(({ id }) => {
@@ -78,6 +79,7 @@ export function useGetTextToImageRequests(
       tags: [
         WORKFLOW_TAGS.GENERATION,
         ...(options?.includeTags === false ? [] : [...tags, ...(filters.tags ?? [])]),
+        ...(input?.tags ?? []),
       ],
     },
     {

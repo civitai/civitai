@@ -18,6 +18,9 @@ export type ModelGetAssociatedResourcesSimple = ModelRouter['getAssociatedResour
 type ModelVersionRouter = RouterOutput['modelVersion'];
 export type ModelVersionById = ModelVersionRouter['getById'];
 
+type ModelFileRouter = RouterOutput['modelFile'];
+export type RecentTrainingData = ModelFileRouter['getRecentTrainingData']['items'];
+
 type CommentRouter = RouterOutput['comment'];
 export type CommentGetReactions = CommentRouter['getReactions'];
 export type CommentGetAll = CommentRouter['getAll'];
@@ -42,6 +45,7 @@ export type UsersGetCosmetics = UserRouter['getCosmetics'];
 type ImageRouter = RouterOutput['image'];
 export type ImageGetInfinite = ImageRouter['getInfinite']['items'];
 export type ImageGetById = ImageRouter['get'];
+export type ImageGetMyInfinite = ImageRouter['getMyImages']['items'];
 
 type TagRouter = RouterOutput['tag'];
 export type TagGetAll = TagRouter['getAll']['items'];

@@ -1,23 +1,24 @@
 import {
   Button,
+  ButtonProps,
   Chip,
   ChipProps,
   createStyles,
   Divider,
+  Group,
   Indicator,
   Popover,
-  Stack,
   PopoverProps,
   ScrollArea,
-  ButtonProps,
+  Stack,
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
-import { useState } from 'react';
+import { ReactNode, useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { MarkerType } from '~/server/common/enums';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -45,6 +46,8 @@ export function DumbMarkerFiltersDropdown({
   filterMode = 'local',
   position = 'bottom-start',
   isFeed,
+  text,
+  hideMediaTypes = false,
   ...buttonProps
 }: Props & {
   filters: Partial<MarkerFilterSchema>;
@@ -93,37 +96,44 @@ export function DumbMarkerFiltersDropdown({
         onClick={() => setOpened((o) => !o)}
         data-expanded={opened}
       >
-        <IconFilter size={16} />
+        <Group spacing={4} noWrap>
+          <IconFilter size={16} />
+          {text}
+        </Group>
       </Button>
     </Indicator>
   );
 
   const dropdown = (
     <Stack spacing={8}>
-      <Divider label="Generation Type" labelProps={{ weight: 'bold', size: 'sm' }} />
-      <div className="flex gap-2">
-        <Chip
-          checked={!filters.tags?.length}
-          onChange={() => setFilters({ tags: [] })}
-          {...chipProps}
-        >
-          All
-        </Chip>
-        <Chip
-          checked={filters.tags?.includes(WORKFLOW_TAGS.IMAGE) ?? false}
-          onChange={() => setFilters({ tags: [WORKFLOW_TAGS.IMAGE] })}
-          {...chipProps}
-        >
-          Images
-        </Chip>
-        <Chip
-          checked={filters.tags?.includes(WORKFLOW_TAGS.VIDEO) ?? false}
-          onChange={() => setFilters({ tags: [WORKFLOW_TAGS.VIDEO] })}
-          {...chipProps}
-        >
-          Videos
-        </Chip>
-      </div>
+      {!hideMediaTypes && (
+        <>
+          <Divider label="Generation Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+          <div className="flex gap-2">
+            <Chip
+              checked={!filters.tags?.length}
+              onChange={() => setFilters({ tags: [] })}
+              {...chipProps}
+            >
+              All
+            </Chip>
+            <Chip
+              checked={filters.tags?.includes(WORKFLOW_TAGS.IMAGE) ?? false}
+              onChange={() => setFilters({ tags: [WORKFLOW_TAGS.IMAGE] })}
+              {...chipProps}
+            >
+              Images
+            </Chip>
+            <Chip
+              checked={filters.tags?.includes(WORKFLOW_TAGS.VIDEO) ?? false}
+              onChange={() => setFilters({ tags: [WORKFLOW_TAGS.VIDEO] })}
+              {...chipProps}
+            >
+              Videos
+            </Chip>
+          </div>
+        </>
+      )}
       <Divider label="Reactions" labelProps={{ weight: 'bold', size: 'sm' }} />
       <div className="flex gap-2">
         {Object.values(MarkerType).map((marker) => {
@@ -169,6 +179,8 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   filterMode?: 'local' | 'query';
   position?: PopoverProps['position'];
   isFeed?: boolean;
+  text?: ReactNode;
+  hideMediaTypes?: boolean;
 };
 
 const useStyles = createStyles((theme, _params, getRef) => ({
