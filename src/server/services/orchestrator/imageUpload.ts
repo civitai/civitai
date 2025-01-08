@@ -22,11 +22,6 @@ export async function imageUpload({ sourceImage, token }: { sourceImage: string;
       default:
         throw new Error(messages ?? error.detail);
     }
-
-    // if (error.status === 400) {
-    //   const messages = (error as any).error.messages;
-    //   throw throwBadRequestError(messages.join('\n'));
-    // } else throw throwBadRequestError(error.title);
   }
 
   return data;
