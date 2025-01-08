@@ -136,18 +136,69 @@ const klingImg2VidConfig = new VideoGenerationConfig({
 
 export const klingVideoGenerationConfig = [klingTxt2ImgConfig, klingImg2VidConfig];
 
-// class ServerGenerationConfig<
-//   TInputSchema extends z.AnyZodObject,
-//   TOutput extends { [x: string]: any }
-// > {
-//   toStep(input: z.infer<TInputSchema>): TOutput {
-//     return input as TOutput;
-//   }
-// }
+type OrchestratorSchemaResult<
+  OrchestratorInputType,
+  DefaultSchema extends z.AnyZodObject = z.AnyZodObject,
+  ValidateSchema extends z.AnyZodObject = DefaultSchema
+> = {
+  defaultSchema: DefaultSchema;
+  validateSchema: ValidateSchema;
+  transformToInput: (data: z.infer<ValidateSchema>) => OrchestratorInputType;
+  transformFromInput: (data: z.infer<ValidateSchema>) => z.infer<DefaultSchema>;
+};
 
-// const klingServerConfig = new ServerGenerationConfig<
-//   (typeof klingVideoGenerationConfig)[number]['schema'],
-//   KlingVideoGenInput
-// >();
+class OrchestratorSchema<
+  OrchestratorInputType = any,
+  T extends OrchestratorSchemaResult<OrchestratorInputType> = OrchestratorSchemaResult<OrchestratorInputType>
+> {
+  result = {
+    defaultSchema: z.object({}).passthrough(),
+    validateSchema: z.object({}).passthrough(),
+    transformToInput: (data: z.infer<T['validateSchema']>) => data as OrchestratorInputType,
+    transformFromInput: (data: z.infer<T['validateSchema']>) => data as z.infer<T['defaultSchema']>,
+  } as T;
 
-// const test = klingServerConfig.toStep({})
+  constructor(args?: T) {
+    if (args?.defaultSchema) this.result.defaultSchema = args.defaultSchema;
+    if (args?.validateSchema) this.result.validateSchema = args.validateSchema;
+  }
+
+  defaultSchema<TSchema extends z.AnyZodObject>(schema: TSchema) {
+    const { defaultSchema, ...rest } = this.result;
+    const args = { ...rest, defaultSchema: schema };
+    return new OrchestratorSchema<OrchestratorInputType, typeof args>(args);
+  }
+
+  validateSchema<TSchema extends z.AnyZodObject>(schema: TSchema) {
+    const { validateSchema, ...rest } = this.result;
+    const args = { ...rest, validateSchema: schema };
+    return new OrchestratorSchema<OrchestratorInputType, typeof args>(args);
+  }
+
+  transformToInput(fn: (data: z.infer<T['validateSchema']>) => OrchestratorInputType) {
+    const { transformToInput, ...rest } = this.result;
+    const args = { ...rest, transformToInput: fn };
+    return new OrchestratorSchema<OrchestratorInputType, typeof args>(args);
+  }
+
+  transformFromInput(fn: (data: z.infer<T['validateSchema']>) => z.infer<T['defaultSchema']>) {
+    const { transformFromInput, ...rest } = this.result;
+    const args = { ...rest, transformFromInput: fn };
+    return new OrchestratorSchema<OrchestratorInputType, typeof args>(args);
+  }
+}
+
+const test = new OrchestratorSchema<KlingVideoGenInput>()
+  .defaultSchema(klingTxt2VidSchema)
+  .validateSchema(klingTxt2VidSchema)
+  .transformToInput((data) => {
+    return data;
+  })
+  .transformFromInput((data) => {
+    return data;
+  }).result;
+
+test.defaultSchema;
+test.validateSchema;
+const toInput = test.transformToInput({} as any);
+const fromInput = test.transformFromInput({});
