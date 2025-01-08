@@ -125,7 +125,7 @@ export function GenerationFormContent() {
   const { data: workflowDefinitions, isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
 
-  const [workflow] = form.watch(['workflow']) ?? 'txt2img';
+  const [workflow, image] = form.watch(['workflow', 'image']) ?? 'txt2img';
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -201,15 +201,15 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
-    const {
-      sourceImage,
-      width = params.width,
-      height = params.height,
-    } = useGenerationFormStore.getState();
+    // const {
+    //   sourceImage,
+    //   width = params.width,
+    //   height = params.height,
+    // } = useGenerationFormStore.getState();
 
-    const imageDetails = data.workflow.includes('img2img')
-      ? { image: sourceImage, width, height }
-      : { width, height };
+    // const imageDetails = data.workflow.includes('img2img')
+    //   ? { image: sourceImage, width, height }
+    //   : { width, height };
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
@@ -244,7 +244,7 @@ export function GenerationFormContent() {
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-            ...imageDetails,
+            // ...imageDetails,
           },
           tips: featureFlags.creatorComp
             ? { creators: creatorTip, civitai: civitaiTip }
@@ -346,6 +346,26 @@ export function GenerationFormContent() {
                 {!isFlux && !isSD3 && (
                   <>
                     <div className="flex items-start justify-start gap-3">
+                      {features.image && image && (
+                        <div className="relative mt-3">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={image}
+                            alt="image to refine"
+                            className="max-w-16 rounded-md shadow-sm shadow-black"
+                          />
+                          <ActionIcon
+                            variant="light"
+                            size="sm"
+                            color="red"
+                            radius="xl"
+                            className="absolute -right-2 -top-2"
+                            onClick={() => form.setValue('image', undefined)}
+                          >
+                            <IconX size={16} strokeWidth={2.5} />
+                          </ActionIcon>
+                        </div>
+                      )}
                       <div className="flex-1">
                         <InputSelect
                           label={
@@ -365,8 +385,13 @@ export function GenerationFormContent() {
                           className="flex-1"
                           name="workflow"
                           data={[
-                            ...workflowOptions.filter((x) => x.value.startsWith('txt')),
-                            ...workflowOptions.filter((x) => x.value.startsWith('img')),
+                            // ...workflowOptions.filter((x) => x.value.startsWith('txt')),
+                            // ...workflowOptions.filter((x) => x.value.startsWith('img')),
+                            ...(workflowDefinitions
+                              ?.filter(
+                                (x) => x.type === workflowDefinition?.type && x.selectable !== false
+                              )
+                              .map(({ key, label }) => ({ label, value: key })) ?? []),
                           ]}
                           loading={loadingWorkflows}
                         />
@@ -377,7 +402,7 @@ export function GenerationFormContent() {
                         )}
                       </div>
                     </div>
-                    {features.image && <GenerationImage />}
+                    {/* {features.image && <GenerationImage />} */}
                   </>
                 )}
 
