@@ -46,7 +46,7 @@ import {
   IconZoomOut,
 } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
-import { capitalize, isEqual } from 'lodash-es';
+import { capitalize, isEqual, uniq } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import pLimit from 'p-limit';
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
@@ -1128,9 +1128,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
           color: 'red',
           title: 'Inappropriate labels',
-          message: `One or more labels/trigger words have been blocked. Please review these and resubmit. Reason: ${issues.join(
-            ', '
-          )}`,
+          message: `One or more labels/trigger words have been blocked. Please review these and resubmit. Reason: ${uniq(
+            issues
+          ).join(', ')}`,
         });
         return;
       }
