@@ -23,7 +23,6 @@ const baseHaiperSchema = z.object({
     .nativeEnum(HaiperVideoGenModel)
     .default(HaiperVideoGenModel.V2)
     .catch(HaiperVideoGenModel.V2),
-  prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),
   duration: numberEnum(haiperDuration).default(4).catch(4),
   seed: seedSchema,
@@ -35,7 +34,9 @@ const haiperTxt2VidSchema = textEnhancementSchema.merge(baseHaiperSchema).extend
   aspectRatio: z.enum(haiperAspectRatios).default('1:1').catch('1:1'),
 });
 
-const haiperImg2VidSchema = imageEnhancementSchema.merge(baseHaiperSchema);
+const haiperImg2VidSchema = imageEnhancementSchema
+  .merge(baseHaiperSchema)
+  .extend({ prompt: promptSchema });
 
 const haiperTxt2ImgConfig = new VideoGenerationConfig({
   subType: 'txt2vid',

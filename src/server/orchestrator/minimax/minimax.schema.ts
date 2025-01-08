@@ -14,7 +14,6 @@ const baseMinimaxSchema = z.object({
     .nativeEnum(MiniMaxVideoGenModel)
     .default(MiniMaxVideoGenModel.HAILOU)
     .catch(MiniMaxVideoGenModel.HAILOU),
-  prompt: promptSchema,
 });
 
 const minRatio = 2 / 5;
@@ -22,7 +21,9 @@ const maxRatio = 5 / 2;
 const minSize = 300;
 
 const minimaxTxt2VidSchema = textEnhancementSchema.merge(baseMinimaxSchema);
-const minimaxImg2VidSchema = imageEnhancementSchema.merge(baseMinimaxSchema);
+const minimaxImg2VidSchema = imageEnhancementSchema
+  .merge(baseMinimaxSchema)
+  .extend({ prompt: promptSchema });
 
 const minimaxTxt2ImgConfig = new VideoGenerationConfig({
   subType: 'txt2vid',

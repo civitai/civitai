@@ -1,7 +1,6 @@
 import z from 'zod';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
-  promptSchema,
   seedSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
@@ -9,7 +8,6 @@ import {
 const mochiTxt2VidSchema = textEnhancementSchema.extend({
   engine: z.literal('mochi'),
   workflow: z.string(),
-  prompt: promptSchema,
   seed: seedSchema,
   enablePromptEnhancer: z.boolean().default(true),
 });

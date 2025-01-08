@@ -16,7 +16,6 @@ const baseKlingSchema = z.object({
   engine: z.literal('kling'),
   workflow: z.string(),
   model: z.nativeEnum(KlingModel).default(KlingModel.V1_5).catch(KlingModel.V1_5),
-  prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),
   mode: z.nativeEnum(KlingMode).catch(KlingMode.STANDARD),
   duration: z.enum(klingDuration).default('5').catch('5'),
@@ -29,7 +28,9 @@ const klingTxt2VidSchema = textEnhancementSchema.merge(baseKlingSchema).extend({
   aspectRatio: z.enum(klingAspectRatios).default('1:1').catch('1:1'),
 });
 
-const klingImg2VidSchema = imageEnhancementSchema.merge(baseKlingSchema);
+const klingImg2VidSchema = imageEnhancementSchema
+  .merge(baseKlingSchema)
+  .extend({ prompt: promptSchema });
 
 const klingTxt2ImgConfig = new VideoGenerationConfig({
   subType: 'txt2vid',
