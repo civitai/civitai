@@ -701,8 +701,12 @@ export const joinCollectionAsManagerHandler = async ({
     throw throwNotFoundError('Collection not found');
   }
 
-  if (collection.metadata.inviteUrlEnabled) {
-    throw throwAuthorizationError('Invite URL is enabled for this collection');
+  if (ctx.user.id === collection.userId) {
+    return true;
+  }
+
+  if (!collection.metadata.inviteUrlEnabled) {
+    throw throwAuthorizationError('You cannot join this collection via URL');
   }
 
   if (collection.mode !== CollectionMode.Contest) {

@@ -6,7 +6,7 @@ import { getCollectionById } from '~/server/services/collection.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { useDebouncer } from '~/utils/debouncer';
 import { getLoginLink } from '~/utils/login-helpers';
-import { showErrorNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -52,12 +52,17 @@ export default function JoinCollection({ collectionId }: { collectionId: number 
     try {
       const success = await joinCollectionAsManager({ id: collectionId });
       if (success) {
+        showSuccessNotification({
+          title: 'You have successfully joined this collection',
+          message: 'You can now manage this collection and its resources.',
+        });
+
         router.replace(`/collections/${collectionId}`);
       }
     } catch (error: any) {
       showErrorNotification({
         title: 'Error while trying to join this collection',
-        error:
+        reason:
           error?.message ?? 'We were unable to add you to this collection. Please try again later.',
       });
 
