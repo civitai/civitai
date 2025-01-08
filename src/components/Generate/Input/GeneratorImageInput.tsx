@@ -1,5 +1,5 @@
 import { CloseButton, Divider, LoadingOverlay, TextInput, Input } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { maxOrchestratorImageFileSize, isOrchestratorUrl } from '~/server/common/constants';
@@ -18,6 +18,7 @@ export function GeneratorImageInput({
   value?: string;
   onChange?: (value?: string) => void;
 }) {
+  const textInputRef = useRef<HTMLInputElement>(null);
   const [imageError, setImageError] = useState<string | undefined>();
   const [inputError, setInputError] = useState<string | undefined>();
   const { mutate, isLoading } = trpc.orchestrator.imageUpload.useMutation({
@@ -31,24 +32,26 @@ export function GeneratorImageInput({
   });
 
   useEffect(() => {
-    if (value)
+    if (value) {
       getImageData(value).then(({ width, height }) => {
         useGenerationFormStore.setState({ width, height });
       });
-    else {
+    } else {
       useGenerationFormStore.setState({ width: undefined, height: undefined });
+      if (textInputRef.current) textInputRef.current.value = '';
     }
   }, [value]);
 
   async function handleChange(value?: string) {
+    // checking if the url comes from the orchestrator prevents us from having to upload images that the orchestrator already has
     if (!value || isOrchestratorUrl(value)) {
       onChange?.(value);
       setImageError(undefined);
     } else mutate({ sourceImage: value });
   }
 
-  async function handleTextChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const result = z.string().url().safeParse(e.target.value);
+  async function handleTextChange(value: string) {
+    const result = z.string().url().safeParse(value.trim());
     if (inputError) setInputError(undefined);
     if (!result.success) return;
     const resolved = await isImage(result.data);
@@ -62,9 +65,7 @@ export function GeneratorImageInput({
   }
 
   async function handleDropCapture(url: string) {
-    if (isOrchestratorUrl(url)) {
-      handleChange(url);
-    }
+    handleChange(url);
   }
 
   return (
@@ -73,10 +74,16 @@ export function GeneratorImageInput({
         <div className={clsx('relative flex w-full flex-col gap-2', { ['invisible']: value })}>
           <LoadingOverlay visible={isLoading} />
           <TextInput
+            ref={textInputRef}
             label="Add an image"
             placeholder="Enter image url here"
-            onChange={handleTextChange}
+            onChange={(e) => handleTextChange(e.target.value)}
             error={inputError}
+            onDrop={(e) => {
+              e.preventDefault();
+              e.currentTarget.value = e.dataTransfer.getData('text/uri-list');
+              handleTextChange(e.currentTarget.value);
+            }}
           />
           <Divider label="OR" labelPosition="center" />
           <ImageDropzone
