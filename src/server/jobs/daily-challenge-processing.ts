@@ -326,7 +326,7 @@ async function reviewEntries() {
     await createNotification({
       type: 'challenge-rejection',
       category: NotificationCategory.System,
-      key: `challenge-rejection:${currentChallenge.articleId}:${processingDateStr}`,
+      key: `challenge-rejection:${currentChallenge.articleId}:${processingDateStr}:${userId}`,
       userId,
       details: {
         articleId: currentChallenge.articleId,
@@ -635,7 +635,7 @@ ${outcome}
     await createNotification({
       type: 'challenge-winner',
       category: NotificationCategory.System,
-      key: `challenge-winner:${currentChallenge.articleId}`,
+      key: `challenge-winner:${currentChallenge.articleId}:${entry.position}`,
       userId: entry.userId,
       details: {
         articleId: currentChallenge.articleId,
@@ -830,7 +830,8 @@ export async function startNextChallenge(config: ChallengeConfig) {
     SET
       status = 'Published',
       "publishedAt" = now(),
-      metadata = metadata::jsonb || '{"status": "active"}'
+      metadata = metadata::jsonb || '{"status": "active"}',
+      "updatedAt" = now()
     WHERE id = ${upcomingChallenge.articleId};
   `;
   log('Article published');

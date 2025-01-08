@@ -681,7 +681,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       modelVersionId={version.id}
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
-                      disabled={isLoadingAccess}
+                      disabled={isLoadingAccess || !!model.mode}
                       generationPrice={
                         !hasGeneratePermissions &&
                         !isLoadingAccess &&
@@ -799,7 +799,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 </Group>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
                   {!displayCivitaiLink && !isEarlyAccess && (
-                    <RunButton variant="light" modelVersionId={version.id} />
+                    <RunButton
+                      variant="light"
+                      modelVersionId={version.id}
+                      disabled={!!model.mode}
+                    />
                   )}
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
