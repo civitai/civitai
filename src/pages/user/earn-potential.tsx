@@ -13,6 +13,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { abbreviateNumber, formatToLeastDecimals, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { Meta } from '~/components/Meta/Meta';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -160,65 +161,68 @@ export default function EarnPotential() {
   ];
 
   return (
-    <Container size="md">
-      <Stack>
-        <Stack spacing={0}>
-          <Title mb={0}>Your Monthly Generation Earning Potential</Title>
-          <Text color="dimmed">
-            This is an estimate of your potential earnings based on the use of your resources in the
-            Civitai generator over the last 30 days.
-          </Text>
+    <>
+      <Meta deIndex />
+      <Container size="md">
+        <Stack>
+          <Stack spacing={0}>
+            <Title mb={0}>Your Monthly Generation Earning Potential</Title>
+            <Text color="dimmed">
+              This is an estimate of your potential earnings based on the use of your resources in
+              the Civitai generator over the last 30 days.
+            </Text>
+          </Stack>
+          <Card p={0} withBorder shadow="xs">
+            <Card.Section withBorder p="xs">
+              <Text weight={500} size="lg">
+                Generation Earning Potential
+              </Text>
+            </Card.Section>
+            <DescriptionTable
+              items={generationDetails}
+              labelWidth="30%"
+              paperProps={{
+                sx: {
+                  borderLeft: 0,
+                  borderRight: 0,
+                  borderBottom: 0,
+                },
+                radius: 0,
+              }}
+            />
+          </Card>
+          <Card p={0} withBorder shadow="xs">
+            <Card.Section withBorder p="xs">
+              <Text weight={500} size="lg">
+                Early Access Earning Potential
+              </Text>
+            </Card.Section>
+            <DescriptionTable
+              items={earlyAccessDetails}
+              labelWidth="30%"
+              paperProps={{
+                sx: {
+                  borderLeft: 0,
+                  borderRight: 0,
+                  borderBottom: 0,
+                },
+                radius: 0,
+              }}
+            />
+          </Card>
+          <Group>
+            <Text size="xl" weight={900}>
+              Total Potential Earnings:
+            </Text>
+            <CurrencyBadge
+              unitAmount={earlyAccessPotential + (potential?.total ?? 0)}
+              {...currencyBadgeProps}
+              size="xl"
+              sx={{ fontWeight: 900, fontSize: 24 }}
+            />
+          </Group>
         </Stack>
-        <Card p={0} withBorder shadow="xs">
-          <Card.Section withBorder p="xs">
-            <Text weight={500} size="lg">
-              Generation Earning Potential
-            </Text>
-          </Card.Section>
-          <DescriptionTable
-            items={generationDetails}
-            labelWidth="30%"
-            paperProps={{
-              sx: {
-                borderLeft: 0,
-                borderRight: 0,
-                borderBottom: 0,
-              },
-              radius: 0,
-            }}
-          />
-        </Card>
-        <Card p={0} withBorder shadow="xs">
-          <Card.Section withBorder p="xs">
-            <Text weight={500} size="lg">
-              Early Access Earning Potential
-            </Text>
-          </Card.Section>
-          <DescriptionTable
-            items={earlyAccessDetails}
-            labelWidth="30%"
-            paperProps={{
-              sx: {
-                borderLeft: 0,
-                borderRight: 0,
-                borderBottom: 0,
-              },
-              radius: 0,
-            }}
-          />
-        </Card>
-        <Group>
-          <Text size="xl" weight={900}>
-            Total Potential Earnings:
-          </Text>
-          <CurrencyBadge
-            unitAmount={earlyAccessPotential + (potential?.total ?? 0)}
-            {...currencyBadgeProps}
-            size="xl"
-            sx={{ fontWeight: 900, fontSize: 24 }}
-          />
-        </Group>
-      </Stack>
-    </Container>
+      </Container>
+    </>
   );
 }

@@ -197,7 +197,7 @@ export default function UserMembership() {
 
   return (
     <>
-      <Meta title="My Membership" deIndex={true} />
+      <Meta title="My Membership" deIndex />
       <Container size="md">
         <Grid>
           <Grid.Col span={12}>
