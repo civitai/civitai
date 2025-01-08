@@ -13,9 +13,11 @@ import { useRouter } from 'next/router';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { ProfileNavigation } from '~/components/Profile/ProfileNavigation';
 import { ProfileHeader } from '~/components/Profile/ProfileHeader';
+import { usePathname } from 'next/navigation';
 
 export function ProfileLayout2({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const pathname = usePathname();
   const { username } = router.query as { username: string };
 
   const enabled = username.toLowerCase() !== 'civitai';
@@ -39,12 +41,13 @@ export function ProfileLayout2({ children }: { children: React.ReactNode }) {
             stats.thumbsUpCountAllTime
           )}, Total Downloads Received: ${abbreviateNumber(stats.downloadCountAllTime)}. `}
           images={user.profilePicture}
-          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/user/${username}`, rel: 'canonical' }]}
+          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
         />
       ) : (
         <Meta
           title="Creator Profile | Civitai"
           description="Learn more about this awesome creator on Civitai."
+          links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
         />
       )}
       {user && <TrackView entityId={user.id} entityType="User" type="ProfileView" />}

@@ -204,7 +204,7 @@ export function PostDetailContent({ postId }: Props) {
                         <Link
                           href={`/models/${relatedResource.modelId}?modelVersionId=${relatedResource.modelVersionId}`}
                           passHref
-                            legacyBehavior
+                          legacyBehavior
                         >
                           <Anchor>
                             {relatedResource.modelName} - {relatedResource.modelVersionName}

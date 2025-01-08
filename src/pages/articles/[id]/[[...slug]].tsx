@@ -205,6 +205,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}/${slugit(article.title)}`,
             rel: 'canonical',
           },
+          {
+            href: `${env.NEXT_PUBLIC_BASE_URL}/articles/${article.id}`,
+            rel: 'alternate',
+          },
         ]}
         deIndex={!article?.publishedAt || article?.availability === Availability.Unsearchable}
       />
