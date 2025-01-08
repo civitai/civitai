@@ -250,15 +250,6 @@ export default function ImageSelectModal({
               <CloseButton onClick={handleClose} />
             </div>
 
-            {/*<div className="flex flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between sm:gap-10">*/}
-            {/*    <ResourceSelectSort />*/}
-            {/*    <ResourceSelectFiltersDropdown*/}
-            {/*      options={options}*/}
-            {/*      selectFilters={selectFilters}*/}
-            {/*      setSelectFilters={setSelectFilters}*/}
-            {/*    />*/}
-            {/*</div>*/}
-
             <Group position="apart">
               <Group>
                 <Button onClick={handleSelect} disabled={!selected.length}>{`Import${
@@ -269,7 +260,7 @@ export default function ImageSelectModal({
                 </Button>
               </Group>
               {selectSource === 'generation' && (
-                <MarkerFiltersDropdown text="Filters" position="bottom-end" />
+                <MarkerFiltersDropdown text="Filters" position="bottom-end" hideMediaTypes={true} />
               )}
               {selectSource === 'training' && (
                 <ImageSelectFiltersTrainingDropdown

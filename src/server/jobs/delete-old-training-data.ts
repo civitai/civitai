@@ -1,6 +1,7 @@
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
+import { deleteObject, parseKey } from '~/utils/s3-utils';
 import { createJob } from './job';
 
 const logJob = (data: MixedObject) => {
@@ -84,27 +85,27 @@ export const deleteOldTrainingData = createJob(
       //   }
       // }
 
-      // if (visibility !== ModelFileVisibility.Public) {
-      //   const { key, bucket } = parseKey(url);
-      //   if (bucket) {
-      //     try {
-      //       await deleteObject(bucket, key);
-      //     } catch (e) {
-      //       hasError = true;
-      //       logJob({
-      //         message: `Delete object error`,
-      //         data: {
-      //           error: (e as Error)?.message,
-      //           cause: (e as Error)?.cause,
-      //           jobId: job_id,
-      //           modelFileId: mf_id,
-      //           key,
-      //           bucket,
-      //         },
-      //       });
-      //     }
-      //   }
-      // }
+      if (visibility !== ModelFileVisibility.Public) {
+        const { key, bucket } = parseKey(url);
+        if (bucket) {
+          try {
+            await deleteObject(bucket, key);
+          } catch (e) {
+            hasError = true;
+            logJob({
+              message: `Delete object error`,
+              data: {
+                error: (e as Error)?.message,
+                cause: (e as Error)?.cause,
+                jobId: job_id,
+                modelFileId: mf_id,
+                key,
+                bucket,
+              },
+            });
+          }
+        }
+      }
 
       if (!hasError) {
         try {
