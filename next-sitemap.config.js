@@ -1,6 +1,5 @@
 const exclude = [
   '/*/create',
-  '/**/*/edit',
   '/api/*',
   '/discord/*',
   '/dmca/*',
@@ -42,7 +41,7 @@ const isProdDomain = process.env.NODE_ENV === 'prod' && allowedDomains.includes(
 module.exports = {
   siteUrl: process.env.NEXTAUTH_URL || 'http://localhost:3000',
   generateRobotsTxt: true,
-  sitemapSize: 1000,
+  sitemapSize: 5000,
   changefreq: null,
   priority: null,
   exclude,
