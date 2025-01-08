@@ -1,19 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  AppealStatus,
-  Availability,
-  BlockImageReason,
-  CollectionMode,
-  EntityMetric_EntityType_Type,
-  EntityMetric_MetricType_Type,
-  EntityType,
-  ImageIngestionStatus,
-  MediaType,
-  ModelType,
-  ReportReason,
-  ReportStatus,
-  ReviewReactions,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
@@ -36,6 +21,7 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -52,7 +38,7 @@ import {
   userContentOverviewCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
+import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
   AddOrRemoveImageTechniquesOutput,
@@ -125,6 +111,22 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { Flags } from '~/shared/utils';
+import {
+  AppealStatus,
+  Availability,
+  BlockImageReason,
+  CollectionMode,
+  EntityMetric_EntityType_Type,
+  EntityMetric_MetricType_Type,
+  EntityType,
+  ImageIngestionStatus,
+  MediaType,
+  ModelType,
+  ReportReason,
+  ReportStatus,
+  ReviewReactions,
+} from '~/shared/utils/prisma/enums';
+import { ImageResource } from '~/shared/utils/prisma/models';
 import { logToDb } from '~/utils/logging';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -137,8 +139,6 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import { ImageResource } from '~/shared/utils/prisma/models';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -4687,3 +4687,38 @@ export async function createImageResources({
 
   return resources;
 }
+
+export const getMyImages = async ({
+  userId,
+  limit,
+  cursor = 0,
+}: InfiniteQueryInput & { userId: number }) => {
+  try {
+    const images = await dbRead.image.findMany({
+      select: { id: true, url: true, meta: true, createdAt: true },
+      where: {
+        userId,
+        type: MediaType.image,
+        postId: { not: null },
+        ingestion: ImageIngestionStatus.Scanned,
+      },
+      take: limit + 1,
+      cursor: cursor ? { id: cursor } : undefined,
+      orderBy: { id: 'desc' },
+    });
+
+    let nextCursor: number | undefined;
+    if (images.length > limit) {
+      const nextItem = images.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    return {
+      items: images,
+      nextCursor,
+    };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};

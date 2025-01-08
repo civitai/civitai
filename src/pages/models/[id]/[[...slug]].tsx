@@ -546,6 +546,10 @@ export default function ModelDetailsV2({
             href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}/${slugit(model.name)}`,
             rel: 'canonical',
           },
+          {
+            href: `${env.NEXT_PUBLIC_BASE_URL}/models/${model.id}`,
+            rel: 'alternate',
+          },
         ]}
         schema={metaSchema}
         deIndex={

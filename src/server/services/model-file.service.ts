@@ -1,9 +1,15 @@
 import { Prisma } from '@prisma/client';
-import { dbWrite } from '~/server/db/client';
+import { TRPCError } from '@trpc/server';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { filesForModelVersionCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { ModelFileCreateInput, ModelFileUpdateInput } from '~/server/schema/model-file.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  ModelFileCreateInput,
+  ModelFileUpdateInput,
+  RecentTrainingDataInput,
+} from '~/server/schema/model-file.schema';
+import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { ModelUploadType } from '~/shared/utils/prisma/enums';
 import { prepareFile } from '~/utils/file-helpers';
 
 export function reduceToBasicFileMetadata(
@@ -101,3 +107,80 @@ export async function deleteFile({
 
   return modelVersionId;
 }
+
+export const getRecentTrainingData = async ({
+  userId,
+  limit,
+  cursor = 0,
+  ...filters
+}: RecentTrainingDataInput & { userId: number }) => {
+  const where: Prisma.ModelFileWhereInput[] = [
+    { type: 'Training Data' },
+    { dataPurged: false },
+    { modelVersion: { uploadType: ModelUploadType.Trained, model: { userId } } },
+  ];
+
+  if (filters.hasLabels === true || filters.labelType !== null) {
+    where.push({ metadata: { path: ['numCaptions'], gt: 0 } });
+  }
+  if (filters.labelType !== null) {
+    where.push({ metadata: { path: ['labelType'], equals: filters.labelType } });
+  }
+  if (filters.statuses?.length) {
+    where.push({ modelVersion: { trainingStatus: { in: filters.statuses } } });
+  }
+  if (filters.types?.length) {
+    where.push({
+      OR: filters.types.map((type) => ({
+        modelVersion: { trainingDetails: { path: ['type'], equals: type } },
+      })),
+    });
+  }
+  if (filters.baseModels?.length) {
+    where.push({ modelVersion: { baseModel: { in: filters.baseModels } } });
+  }
+
+  try {
+    const data = await dbRead.modelFile.findMany({
+      where: { AND: where },
+      select: {
+        id: true,
+        metadata: true,
+        url: true,
+        sizeKB: true,
+        createdAt: true,
+        modelVersion: {
+          select: {
+            id: true,
+            name: true,
+            trainingStatus: true,
+            trainingDetails: true,
+            model: {
+              select: {
+                id: true,
+                name: true,
+              },
+            },
+          },
+        },
+      },
+      take: limit + 1,
+      cursor: cursor ? { id: cursor } : undefined,
+      orderBy: { id: 'desc' },
+    });
+
+    let nextCursor: number | undefined;
+    if (data.length > limit) {
+      const nextItem = data.pop();
+      nextCursor = nextItem?.id;
+    }
+
+    return {
+      items: data,
+      nextCursor,
+    };
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
