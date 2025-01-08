@@ -326,7 +326,7 @@ async function reviewEntries() {
     await createNotification({
       type: 'challenge-rejection',
       category: NotificationCategory.System,
-      key: `challenge-rejection:${currentChallenge.articleId}:${processingDateStr}`,
+      key: `challenge-rejection:${currentChallenge.articleId}:${processingDateStr}:${userId}`,
       userId,
       details: {
         articleId: currentChallenge.articleId,
@@ -635,7 +635,7 @@ ${outcome}
     await createNotification({
       type: 'challenge-winner',
       category: NotificationCategory.System,
-      key: `challenge-winner:${currentChallenge.articleId}`,
+      key: `challenge-winner:${currentChallenge.articleId}:${entry.position}`,
       userId: entry.userId,
       details: {
         articleId: currentChallenge.articleId,
