@@ -78,7 +78,7 @@ export function useGetTextToImageRequests(
       ...input,
       tags: [
         WORKFLOW_TAGS.GENERATION,
-        ...(options?.includeTags === false ? [] : tags),
+        ...(options?.includeTags === false ? [] : [...tags, ...(filters.tags ?? [])]),
         ...(input?.tags ?? []),
       ],
     },

@@ -1,4 +1,4 @@
-import { KlingMode, WorkflowStatus } from '@civitai/client';
+import { WorkflowStatus } from '@civitai/client';
 import { MantineColor } from '@mantine/core';
 import {
   baseModelSets,

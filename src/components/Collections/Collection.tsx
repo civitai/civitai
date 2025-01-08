@@ -147,7 +147,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
           currentUser?.isModerator;
 
         if (isOwnerOrMod) {
-          items.unshift({
+          items.push({
             key: 'remove-from-collection',
             component: (
               <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={data.id} />

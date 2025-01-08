@@ -48,10 +48,14 @@ export function GeneratedImageActions({
 
   function getSelectedImages() {
     const selectedIds = selected.map((x) => x.imageId);
-    return uniqBy(
-      images.filter((x) => x.status === 'succeeded' && selectedIds.includes(x.id)),
-      'id'
+    const grouped = data.flatMap((workflow) =>
+      workflow.steps.flatMap((step) =>
+        step.images
+          .filter((x) => x.status === 'succeeded' && selectedIds.includes(x.id))
+          .map((image, index) => ({ ...image, createdAt: workflow.createdAt, index: index + 1 }))
+      )
     );
+    return uniqBy(grouped, 'id');
   }
 
   const deleteSelectedImages = () => {
@@ -123,8 +127,16 @@ export function GeneratedImageActions({
           if (!image.url) return;
           const blob = await fetchBlob(image.url);
           if (!blob) return;
-          const file = new File([blob], image.id);
-          zip.file(image.type === 'video' ? `${image.id}.mp4` : `${image.id}.jpg`, file);
+          let name = image.id;
+          if (image.createdAt) {
+            const dateString = image.createdAt.toISOString().replaceAll(':', '.').split('.');
+            dateString.pop();
+            name = `${dateString.join('.')}_${image.index}`;
+            console.log({ dateString, name });
+          }
+
+          const file = new File([blob], name);
+          zip.file(image.type === 'video' ? `${name}.mp4` : `${name}.jpg`, file);
         })
       )
     );
