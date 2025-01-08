@@ -34,7 +34,10 @@ import {
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import {
+  ImageSelectFilter,
+  ImageSelectSource,
+} from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
 import {
   TextToImageSteps,
@@ -44,6 +47,7 @@ import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
+import { ImageSelectFiltersTrainingDropdown } from '~/components/Training/Form/ImageSelectFilters';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -109,7 +113,13 @@ export default function ImageSelectModal({
   const currentUser = useCurrentUser();
 
   const [selected, setSelected] = useState<SelectedImage[]>([]);
-  // const [selectFilters, setSelectFilters] = useState<ResourceFilter>({ types: [], baseModels: [] });
+  const [selectFilters, setSelectFilters] = useState<ImageSelectFilter>({
+    hasLabels: null,
+    labelType: null,
+    statuses: [],
+    types: [],
+    baseModels: [],
+  });
 
   const {
     steps,
@@ -145,13 +155,10 @@ export default function ImageSelectModal({
     hasNextPage: hasNextPageTraining,
     fetchNextPage: fetchNextPageTraining,
     // isError: isErrorTraining,
-  } = trpc.modelFile.getRecentTrainingData.useInfiniteQuery(
-    {},
-    {
-      enabled: !!currentUser && selectSource === 'training',
-      getNextPageParam: (lastPage) => lastPage.nextCursor,
-    }
-  );
+  } = trpc.modelFile.getRecentTrainingData.useInfiniteQuery(selectFilters, {
+    enabled: !!currentUser && selectSource === 'training',
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+  });
 
   const generatedImages = useMemo(
     () =>
@@ -254,7 +261,7 @@ export default function ImageSelectModal({
 
             <Group position="apart">
               <Group>
-                <Button onClick={handleSelect} disabled={!selected.length}>{`Select${
+                <Button onClick={handleSelect} disabled={!selected.length}>{`Import${
                   selected.length > 0 ? ` (${selected.length})` : ''
                 }`}</Button>
                 <Button variant="light" onClick={() => setSelected([])} disabled={!selected.length}>
@@ -263,6 +270,12 @@ export default function ImageSelectModal({
               </Group>
               {selectSource === 'generation' && (
                 <MarkerFiltersDropdown text="Filters" position="bottom-end" />
+              )}
+              {selectSource === 'training' && (
+                <ImageSelectFiltersTrainingDropdown
+                  selectFilters={selectFilters}
+                  setSelectFilters={setSelectFilters}
+                />
               )}
             </Group>
 
@@ -318,11 +331,7 @@ const ImageGrid = ({
 
   const grouped =
     type === 'generation'
-      ? groupBy(data, ({ completed }) =>
-          !!completed
-            ? completed.toLocaleString(undefined, { month: 'short', year: 'numeric' })
-            : 'Unknown Date'
-        )
+      ? groupBy(data, ({ workflowId }) => workflowId)
       : type === 'uploaded'
       ? groupBy(data, ({ createdAt }) =>
           !!createdAt
@@ -340,7 +349,20 @@ const ImageGrid = ({
       {Object.entries(grouped).map(([date, imgs], index) => (
         <Stack key={index}>
           <Title order={4} className="mb-2">
-            {date}
+            {type === 'generation'
+              ? formatDate(
+                  new Date(
+                    Math.max(
+                      ...imgs
+                        .map((i: GennedImage) =>
+                          i.completed ? new Date(i.completed).getTime() : null
+                        )
+                        .filter(isDefined)
+                    )
+                  ),
+                  'MMM D, YYYY h:mm:ss A'
+                )
+              : date}
           </Title>
           <div
             className={cx('p-2', classes.grid)}
@@ -404,7 +426,7 @@ const ImageGridImage = ({
           },
         ];
       } else {
-        return prev.filter((x) => x.url !== img.url);
+        return prev.filter((x) => x.url !== compareKey);
       }
     });
   };

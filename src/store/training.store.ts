@@ -123,6 +123,7 @@ type TrainingDataState = {
   initialImageList: ImageDataType[];
   labelType: LabelTypes;
   triggerWord: string;
+  triggerWordInvalid: boolean;
   ownRights: boolean;
   shareDataset: boolean;
   attested: Attest;
@@ -148,6 +149,7 @@ type TrainingImageStore = {
   setInitialImageList: (modelId: number, data: ImageDataType[]) => void;
   setLabelType: (modelId: number, data: LabelTypes) => void;
   setTriggerWord: (modelId: number, data: string) => void;
+  setTriggerWordInvalid: (modelId: number, data: boolean) => void;
   setOwnRights: (modelId: number, data: boolean) => void;
   setShareDataset: (modelId: number, data: boolean) => void;
   setAttest: (modelId: number, data: Attest) => void;
@@ -193,6 +195,7 @@ export const defaultTrainingState: TrainingDataState = {
   initialImageList: [] as ImageDataType[],
   labelType: 'tag',
   triggerWord: '',
+  triggerWordInvalid: false,
   ownRights: false,
   shareDataset: false,
   attested: { status: false, error: '' },
@@ -287,6 +290,12 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
       set((state) => {
         if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
         state[modelId]!.triggerWord = v;
+      });
+    },
+    setTriggerWordInvalid: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        state[modelId]!.triggerWordInvalid = v;
       });
     },
     setOwnRights: (modelId, v) => {
@@ -407,6 +416,7 @@ export const trainingStore = {
   setInitialImageList: store.setInitialImageList,
   setLabelType: store.setLabelType,
   setTriggerWord: store.setTriggerWord,
+  setTriggerWordInvalid: store.setTriggerWordInvalid,
   setOwnRights: store.setOwnRights,
   setShareDataset: store.setShareDataset,
   setAttest: store.setAttest,

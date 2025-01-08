@@ -4696,7 +4696,12 @@ export const getMyImages = async ({
   try {
     const images = await dbRead.image.findMany({
       select: { id: true, url: true, meta: true, createdAt: true },
-      where: { userId, type: MediaType.image },
+      where: {
+        userId,
+        type: MediaType.image,
+        postId: { not: null },
+        ingestion: ImageIngestionStatus.Scanned,
+      },
       take: limit + 1,
       cursor: cursor ? { id: cursor } : undefined,
       orderBy: { id: 'desc' },

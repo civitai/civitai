@@ -112,7 +112,7 @@ export function DumbMarkerFiltersDropdown({
   const dropdown = (
     <Stack spacing={8}>
       <Stack spacing={0}>
-        <Group spacing={8} mb={4}>
+        <Group spacing={8} my={4}>
           {Object.values(MarkerType).map((marker) => {
             const Icon = getIcon(marker);
 

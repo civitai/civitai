@@ -5,11 +5,12 @@ import {
   updateFileHandler,
   upsertFileHandler,
 } from '~/server/controllers/model-file.controller';
-import { getByIdSchema, infiniteQuerySchema } from '~/server/schema/base.schema';
+import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   modelFileCreateSchema,
   modelFileUpdateSchema,
   modelFileUpsertSchema,
+  recentTrainingDataSchema,
 } from '~/server/schema/model-file.schema';
 import { getRecentTrainingData } from '~/server/services/model-file.service';
 import { protectedProcedure, publicProcedure, router } from '~/server/trpc';
@@ -22,6 +23,6 @@ export const modelFileRouter = router({
   delete: protectedProcedure.input(getByIdSchema).mutation(deleteFileHandler),
   // deleteMany: protectedProcedure.input(deleteApiKeyInputSchema).mutation(deleteApiKeyHandler),
   getRecentTrainingData: protectedProcedure
-    .input(infiniteQuerySchema)
+    .input(recentTrainingDataSchema)
     .query(({ input, ctx }) => getRecentTrainingData({ ...input, userId: ctx.user.id })),
 });

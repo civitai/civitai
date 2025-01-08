@@ -265,6 +265,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setInitialImageList,
     setLabelType,
     setTriggerWord,
+    setTriggerWordInvalid,
     setOwnRights,
     setShareDataset,
     setAttest,
@@ -280,6 +281,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     initialImageList,
     labelType,
     triggerWord,
+    triggerWordInvalid,
     ownRights,
     shareDataset,
     attested,
@@ -1079,6 +1081,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
     if (imageList.length) {
       const issues: string[] = [];
+
+      const { blockedFor, success } = auditPrompt(triggerWord);
+      if (!success) {
+        issues.push(...blockedFor);
+        if (!triggerWordInvalid) {
+          setTriggerWordInvalid(model.id, true);
+        }
+      } else {
+        if (triggerWordInvalid) {
+          setTriggerWordInvalid(model.id, false);
+        }
+      }
+
       imageList.forEach((i) => {
         if (i.label.length > 0) {
           const { blockedFor, success } = auditPrompt(i.label);
@@ -1113,7 +1128,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           autoClose: false,
           color: 'red',
           title: 'Inappropriate labels',
-          message: `One or more image labels have been blocked. Please review these. Reason: ${issues.join(
+          message: `One or more labels have been blocked. Please review these. Reason: ${issues.join(
             ', '
           )}`,
         });
@@ -1235,7 +1250,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                           });
                         }}
                       >
-                        Add from Uploaded
+                        Add from Profile
                       </Button>
                       <Button
                         variant="light"
@@ -1443,6 +1458,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     value={triggerWord}
                     onChange={(event) => setTriggerWord(model.id, event.currentTarget.value)}
                     style={{ flexGrow: 1 }}
+                    className={cx({ [classes.badLabel]: triggerWordInvalid })}
                     rightSection={
                       <ActionIcon
                         onClick={() => {

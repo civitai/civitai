@@ -2,8 +2,12 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { filesForModelVersionCache } from '~/server/redis/caches';
-import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
-import { ModelFileCreateInput, ModelFileUpdateInput } from '~/server/schema/model-file.schema';
+import { GetByIdInput } from '~/server/schema/base.schema';
+import {
+  ModelFileCreateInput,
+  ModelFileUpdateInput,
+  RecentTrainingDataInput,
+} from '~/server/schema/model-file.schema';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ModelUploadType } from '~/shared/utils/prisma/enums';
 import { prepareFile } from '~/utils/file-helpers';
@@ -108,14 +112,37 @@ export const getRecentTrainingData = async ({
   userId,
   limit,
   cursor = 0,
-}: InfiniteQueryInput & { userId: number }) => {
+  ...filters
+}: RecentTrainingDataInput & { userId: number }) => {
+  const where: Prisma.ModelFileWhereInput[] = [
+    { type: 'Training Data' },
+    { dataPurged: false },
+    { modelVersion: { uploadType: ModelUploadType.Trained, model: { userId } } },
+  ];
+
+  if (filters.hasLabels === true || filters.labelType !== null) {
+    where.push({ metadata: { path: ['numCaptions'], gt: 0 } });
+  }
+  if (filters.labelType !== null) {
+    where.push({ metadata: { path: ['labelType'], equals: filters.labelType } });
+  }
+  if (filters.statuses?.length) {
+    where.push({ modelVersion: { trainingStatus: { in: filters.statuses } } });
+  }
+  if (filters.types?.length) {
+    where.push({
+      OR: filters.types.map((type) => ({
+        modelVersion: { trainingDetails: { path: ['type'], equals: type } },
+      })),
+    });
+  }
+  if (filters.baseModels?.length) {
+    where.push({ modelVersion: { baseModel: { in: filters.baseModels } } });
+  }
+
   try {
     const data = await dbRead.modelFile.findMany({
-      where: {
-        type: 'Training Data',
-        // dataPurged: false, // TODO check
-        modelVersion: { uploadType: ModelUploadType.Trained, model: { userId } },
-      },
+      where: { AND: where },
       select: {
         id: true,
         metadata: true,

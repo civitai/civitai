@@ -1,6 +1,7 @@
+import { z } from 'zod';
 import { ModelSearchIndexSortBy } from '~/components/Search/parsers/model.parser';
-import { BaseModel } from '~/server/common/constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { BaseModel, constants } from '~/server/common/constants';
+import { ModelType, TrainingStatus } from '~/shared/utils/prisma/enums';
 
 export type ResourceSelectOptions = {
   canGenerate?: boolean;
@@ -24,3 +25,12 @@ export const resourceSort = {
 export type ResourceSort = keyof typeof resourceSort;
 
 export type ImageSelectSource = 'generation' | 'training' | 'uploaded';
+
+export const imageSelectFilterSchema = z.object({
+  hasLabels: z.boolean().nullable(),
+  labelType: z.enum(constants.autoLabel.labelTypes).nullable(),
+  statuses: z.array(z.nativeEnum(TrainingStatus)),
+  types: z.array(z.enum(constants.trainingModelTypes)),
+  baseModels: z.array(z.enum(constants.baseModels)),
+});
+export type ImageSelectFilter = z.infer<typeof imageSelectFilterSchema>;

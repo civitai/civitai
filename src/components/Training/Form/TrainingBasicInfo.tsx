@@ -1,22 +1,22 @@
 import { Button, createStyles, Group, Image, Radio, Stack, Text } from '@mantine/core';
-import {
-  ModelStatus,
-  ModelType,
-  ModelUploadType,
-  TrainingStatus,
-} from '~/shared/utils/prisma/enums';
 import React, { useState } from 'react';
 import { z } from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
 import { Form, InputRadioGroup, InputText, useForm } from '~/libs/form';
 import { BaseModel, constants } from '~/server/common/constants';
 import { ModelVersionUpsertInput, TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import {
+  ModelStatus,
+  ModelType,
+  ModelUploadType,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import { TrainingModelData } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
-type tmTypes = (typeof constants.trainingModelTypes)[number];
+export type tmTypes = (typeof constants.trainingModelTypes)[number];
 
 const useStyles = createStyles((theme) => ({
   centerRadio: {
