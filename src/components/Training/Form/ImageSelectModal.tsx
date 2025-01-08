@@ -148,6 +148,7 @@ export default function ImageSelectModal({
     }
   );
 
+  // TODO debounce filters
   const {
     data: dataTraining,
     isFetching: isLoadingTraining,

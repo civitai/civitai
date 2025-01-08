@@ -40,7 +40,7 @@ export function ImageSelectFiltersTrainingDropdown({
   const baseModelsList = uniq(Object.values(trainingModelInfo).map((v) => v.baseModel));
 
   const filterLength =
-    +(selectFilters.hasLabels === true ? 1 : 0) +
+    (selectFilters.hasLabels === true ? 1 : 0) +
     (isDefined(selectFilters.labelType) ? 1 : 0) +
     ((selectFilters.statuses?.length ?? 0) > 0 ? 1 : 0) +
     ((selectFilters.types?.length ?? 0) > 0 ? 1 : 0) +
