@@ -62,8 +62,9 @@ export default function JoinCollection({ collectionId }: { collectionId: number 
     } catch (error: any) {
       showErrorNotification({
         title: 'Error while trying to join this collection',
-        reason:
-          error?.message ?? 'We were unable to add you to this collection. Please try again later.',
+        reason: (error?.message ??
+          'We were unable to add you to this collection. Please try again later.') as string,
+        error,
       });
 
       router.replace(`/collections/${collectionId}`);
