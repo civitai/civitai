@@ -161,6 +161,8 @@ class OrchestratorSchema<
   constructor(args?: T) {
     if (args?.defaultSchema) this.result.defaultSchema = args.defaultSchema;
     if (args?.validateSchema) this.result.validateSchema = args.validateSchema;
+    if (args?.transformToInput) this.result.transformToInput = args.transformToInput;
+    if (args?.transformFromInput) this.result.transformFromInput = args.transformFromInput;
   }
 
   defaultSchema<TSchema extends z.AnyZodObject>(schema: TSchema) {
