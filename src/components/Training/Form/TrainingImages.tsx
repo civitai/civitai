@@ -1,4 +1,5 @@
 import {
+  Accordion,
   ActionIcon,
   Anchor,
   Badge,
@@ -7,6 +8,7 @@ import {
   Center,
   Checkbox,
   createStyles,
+  Divider,
   Group,
   Image as MImage,
   List,
@@ -27,10 +29,8 @@ import {
 } from '@mantine/core';
 import { FileWithPath } from '@mantine/dropzone';
 import { openConfirmModal } from '@mantine/modals';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { hideNotification, showNotification, updateNotification } from '@mantine/notifications';
 import type { NotificationProps } from '@mantine/notifications/lib/types';
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import {
   IconAlertTriangle,
   IconCheck,
@@ -39,20 +39,29 @@ import {
   IconInfoCircle,
   IconTags,
   IconTagsOff,
+  IconTransferIn,
   IconTrash,
   IconX,
+  IconZoomIn,
+  IconZoomOut,
 } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
-import { capitalize, isEqual } from 'lodash-es';
+import { capitalize, isEqual, uniq } from 'lodash-es';
 import dynamic from 'next/dynamic';
+import pLimit from 'p-limit';
 import React, { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
+import { openImageSelectModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
-import { goBack, goNext, getTextTagsAsList } from '~/components/Training/Form/TrainingCommon';
-
+import { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
+import { getTextTagsAsList, goBack, goNext } from '~/components/Training/Form/TrainingCommon';
 import {
   TrainingImagesSwitchLabel,
   TrainingImagesTags,
@@ -61,8 +70,9 @@ import {
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { BaseModel, constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE, ZIP_MIME_TYPE } from '~/server/common/mime-types';
+import { IMAGE_MIME_TYPE, MIME_TYPES, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   defaultTrainingState,
@@ -75,6 +85,7 @@ import {
 import { TrainingModelData } from '~/types/router';
 import { createImageElement } from '~/utils/image-utils';
 import { getJSZip } from '~/utils/lazy';
+import { auditPrompt } from '~/utils/metadata/audit';
 import {
   showErrorNotification,
   showSuccessNotification,
@@ -103,6 +114,8 @@ const MAX_FILES_ALLOWED = 1000;
 
 export const blankTagStr = '@@none@@';
 
+const limit = pLimit(10);
+
 const useStyles = createStyles((theme) => ({
   imgOverlay: {
     borderBottom: `1px solid ${
@@ -113,11 +126,24 @@ const useStyles = createStyles((theme) => ({
       display: 'flex',
     },
   },
+  badLabel: {
+    // more border
+    border: '1px solid red',
+    boxShadow: '0 0 10px red',
+  },
   trash: {
     display: 'none',
     position: 'absolute',
     top: 0,
     right: 0,
+    zIndex: 10,
+    margin: 4,
+  },
+  source: {
+    display: 'none',
+    position: 'absolute',
+    top: 0,
+    left: 0,
     zIndex: 10,
     margin: 4,
   },
@@ -239,6 +265,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     setInitialImageList,
     setLabelType,
     setTriggerWord,
+    setTriggerWordInvalid,
     setOwnRights,
     setShareDataset,
     setAttest,
@@ -254,6 +281,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     initialImageList,
     labelType,
     triggerWord,
+    triggerWordInvalid,
     ownRights,
     shareDataset,
     attested,
@@ -271,6 +299,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const [modelFileId, setModelFileId] = useState<number | undefined>(undefined);
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [searchCaption, setSearchCaption] = useState<string>('');
+  const [isZoomed, setIsZoomed] = useState(false);
+  const [onlyIssues, setOnlyIssues] = useState(false);
+  const [accordionUpload, setAccordionUpload] = useState<string | null>(
+    imageList.length > 0 ? null : 'uploading'
+  );
   const showImgResizeDown = useRef<number>(0);
   const showImgResizeUp = useRef<number>(0);
 
@@ -377,7 +410,28 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
   };
 
-  const handleZip = async (f: FileWithPath, showNotif = true) => {
+  const parseExisting = async (mvId: number) => {
+    const url = createModelFileDownloadUrl({
+      versionId: mvId,
+      type: 'Training Data',
+    });
+    const result = await fetch(url);
+    if (!result.ok) {
+      return;
+    }
+    const blob = await result.blob();
+    return new File([blob], `${mvId}_training_data.zip`, {
+      type: blob.type,
+    });
+  };
+
+  const parseExistingAndHandle = async (mvId: number) => {
+    const zipFile = await parseExisting(mvId);
+    if (!zipFile) return;
+    return await handleZip(zipFile, false);
+  };
+
+  const handleZip = async (f: FileWithPath, showNotif = true, source?: ImageDataType['source']) => {
     if (showNotif) setLoadingZip(true);
 
     const parsedFiles: ImageDataType[] = [];
@@ -411,8 +465,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               type: imageExts[fileExt],
               url: scaledUrl,
               label: labelStr,
+              invalidLabel: false,
+              source: source ?? null,
             });
-          } catch {
+          } catch (e) {
             showErrorNotification({
               error: new Error(`An error occurred while parsing "${zname}".`),
             });
@@ -444,21 +500,29 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     return { parsedFiles, hasAnyLabelFiles };
   };
 
-  const handleDrop = async (fileList: FileWithPath[]) => {
+  const handleDrop = async (
+    fileList: FileWithPath[],
+    data?: { [p: string]: Pick<ImageDataType, 'label' | 'source'> }
+  ) => {
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
-        if (ZIP_MIME_TYPE.includes(f.type as never)) {
-          return await handleZip(f);
+        if (ZIP_MIME_TYPE.includes(f.type as never) || f.name.endsWith('.zip')) {
+          const source = data?.[f.name]?.source ?? null;
+          return await handleZip(f, !source, source);
         } else {
           try {
             const scaledUrl = await getResizedImgUrl(f, f.type);
+            const label = data?.[f.name]?.label ?? '';
+            const source = data?.[f.name]?.source ?? null;
+            const parsed: ImageDataType[] = [
+              { name: f.name, type: f.type, url: scaledUrl, invalidLabel: false, label, source },
+            ];
+
             return {
-              parsedFiles: [
-                { name: f.name, type: f.type, url: scaledUrl, label: '' },
-              ] as ImageDataType[],
-              hasAnyLabelFiles: false,
+              parsedFiles: parsed,
+              hasAnyLabelFiles: label !== '',
             };
-          } catch {
+          } catch (e) {
             showErrorNotification({
               error: new Error(`An error occurred while parsing "${f.name}".`),
             });
@@ -489,6 +553,93 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       dialogStore.trigger({
         component: LabelSelectModal,
         props: { modelId: model.id },
+      });
+    }
+
+    if (filteredFiles.length > 0) {
+      setAccordionUpload(null);
+    }
+  };
+
+  const handleImport = async (images: SelectedImage[], source: ImageSelectSource) => {
+    const importNotifId = `${thisModelVersion.id}-importing-images-${new Date().toISOString()}`;
+    showNotification({
+      id: importNotifId,
+      loading: true,
+      autoClose: false,
+      disallowClose: true,
+      message: `Importing ${images.length} ${source === 'training' ? 'dataset' : 'image'}${
+        images.length !== 1 ? 's' : ''
+      }...`,
+    });
+
+    let files;
+    if (source === 'training') {
+      files = await Promise.all(
+        images.map(async (i) => {
+          try {
+            const file = await parseExisting(Number(i.url));
+            if (!file) return;
+
+            return {
+              file,
+              url: i.url,
+              label: '',
+            };
+          } catch (e) {
+            return;
+          }
+        })
+      );
+    } else {
+      files = await Promise.all(
+        images.map((i, idx) =>
+          limit(async () => {
+            try {
+              const result = await fetch(getEdgeUrl(i.url));
+              if (!result.ok) return;
+
+              const blob = await result.blob();
+              return {
+                file: new File([blob], `imported_${new Date().toISOString()}_${idx}.jpg`, {
+                  type: IMAGE_MIME_TYPE.includes(blob.type as never) ? blob.type : MIME_TYPES.jpeg,
+                }),
+                label: i.label,
+                url: i.url,
+              };
+            } catch (e) {
+              return;
+            }
+          })
+        )
+      );
+    }
+
+    const goodFiles = files.filter((f) => !!f);
+
+    if (goodFiles.length !== 0) {
+      await handleDrop(
+        goodFiles.map((f) => f.file),
+        goodFiles.reduce(
+          (acc, f) => ({
+            ...acc,
+            [f.file.name]: { label: f.label, source: { type: source, url: f.url } },
+          }),
+          {} as Record<string, Pick<ImageDataType, 'label' | 'source'>>
+        )
+      );
+    }
+
+    const fileDiff = files.length - goodFiles.length;
+
+    hideNotification(importNotifId);
+
+    if (fileDiff !== 0) {
+      showWarningNotification({
+        message: `${fileDiff} ${source === 'training' ? 'dataset' : 'image'}${
+          fileDiff === 1 ? '' : 's'
+        } could not be imported`,
+        autoClose: false,
       });
     }
   };
@@ -659,24 +810,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   });
 
   useEffect(() => {
-    // is there any way to generate a file download url given the one we already have?
-    // async function parseExisting(ef: (typeof thisModelVersion.files)[number]) {
-    async function parseExisting() {
-      const url = createModelFileDownloadUrl({
-        versionId: thisModelVersion.id,
-        type: 'Training Data',
-      });
-      const result = await fetch(url);
-      if (!result.ok) {
-        return;
-      }
-      const blob = await result.blob();
-      const zipFile = new File([blob], `${thisModelVersion.id}_training_data.zip`, {
-        type: blob.type,
-      });
-      return await handleZip(zipFile, false);
-    }
-
     if (existingDataFile) {
       setModelFileId(existingDataFile.id);
       const fileLabelType = existingMetadata?.labelType ?? 'tag';
@@ -699,7 +832,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
       if (imageList.length === 0) {
         setLoadingZip(true);
-        parseExisting()
+        parseExistingAndHandle(thisModelVersion.id)
           .then((files) => {
             if (files) {
               const flatFiles = files.parsedFiles.flat();
@@ -739,8 +872,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoLabeling.url]);
 
+  const hasIssues = imageList.some((i) => i.invalidLabel);
+
   const filteredImages = useMemo(() => {
     return imageList.filter((i) => {
+      if (hasIssues && onlyIssues && !i.invalidLabel) return false;
+
       if (labelType === 'caption') {
         if (!searchCaption.length && !selectedTags.length) return true;
         if (selectedTags.includes(blankTagStr) && i.label.length === 0) return true;
@@ -758,7 +895,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         return mergedCapts.length > 0;
       }
     });
-  }, [imageList, labelType, selectedTags, searchCaption]);
+  }, [imageList, labelType, selectedTags, searchCaption, onlyIssues, hasIssues]);
 
   useEffect(() => {
     if (page > 1 && filteredImages.length <= (page - 1) * maxImgPerPage) {
@@ -943,6 +1080,61 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
+      const issues: string[] = [];
+
+      const { blockedFor, success } = auditPrompt(triggerWord);
+      if (!success) {
+        issues.push(...blockedFor);
+        if (!triggerWordInvalid) {
+          setTriggerWordInvalid(model.id, true);
+        }
+      } else {
+        if (triggerWordInvalid) {
+          setTriggerWordInvalid(model.id, false);
+        }
+      }
+
+      imageList.forEach((i) => {
+        if (i.label.length > 0) {
+          const { blockedFor, success } = auditPrompt(i.label);
+          if (!success) {
+            issues.push(...blockedFor);
+            if (!i.invalidLabel) {
+              updateImage(model.id, {
+                matcher: getShortNameFromUrl(i),
+                invalidLabel: true,
+              });
+            }
+          } else {
+            if (i.invalidLabel) {
+              updateImage(model.id, {
+                matcher: getShortNameFromUrl(i),
+                invalidLabel: false,
+              });
+            }
+          }
+        } else {
+          if (i.invalidLabel) {
+            updateImage(model.id, {
+              matcher: getShortNameFromUrl(i),
+              invalidLabel: false,
+            });
+          }
+        }
+      });
+      if (issues.length > 0) {
+        showNotification({
+          icon: <IconX size={18} />,
+          autoClose: false,
+          color: 'red',
+          title: 'Inappropriate labels',
+          message: `One or more labels/trigger words have been blocked. Please review these and resubmit. Reason: ${uniq(
+            issues
+          ).join(', ')}`,
+        });
+        return;
+      }
+
       // if no labels, warn
       if (imageList.filter((i) => i.label.length > 0).length === 0 && !triggerWord.length) {
         return openConfirmModal({
@@ -974,6 +1166,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const totalLabeled = imageList.filter((i) => i.label && i.label.length > 0).length;
 
+  const importedUrls = useMemo(
+    () => imageList.filter((i) => isDefined(i.source?.url)).map((i) => i.source!.url!),
+    [imageList]
+  );
+
   useCatchNavigation({
     unsavedChanges:
       !isEqual(imageList, initialImageList) ||
@@ -987,46 +1184,121 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   return (
     <>
       <Stack>
-        <div>
-          <Text>
-            You can add an existing dataset for your model, or create a new one here. Not sure what
-            to do? Read our{' '}
-            <Anchor
-              href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
-              target="_blank"
-              rel="nofollow noreferrer"
-            >
-              Dataset and Training Guidelines
-            </Anchor>{' '}
-            for more info.
-          </Text>
-        </div>
         {attested.status && (
           <>
-            <ImageDropzone
-              mt="md"
-              onDrop={handleDrop}
-              label="Drag images (or a zip file) here or click to select files"
-              description={
-                <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
-                  Changes made here are not permanently saved until you hit &quot;Next&quot;
-                </Text>
-              }
-              max={MAX_FILES_ALLOWED}
-              // loading={isLoading}
-              count={imageList.length}
-              accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
-              onExceedMax={() =>
-                showErrorNotification({
-                  title: 'Too many images',
-                  error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
-                  autoClose: false,
-                })
-              }
-            />
+            <Accordion
+              value={accordionUpload}
+              onChange={setAccordionUpload}
+              styles={(theme) => ({
+                content: {
+                  padding: theme.spacing.xs,
+                },
+                item: {
+                  // overflow: 'hidden',
+                  border: 'none',
+                  background: 'transparent',
+                },
+                control: {
+                  padding: theme.spacing.xs,
+                  lineHeight: 'normal',
+                },
+              })}
+            >
+              <Accordion.Item value="uploading">
+                <Accordion.Control>Upload Images</Accordion.Control>
+                <Accordion.Panel>
+                  <Stack>
+                    <Text size="sm">
+                      You can add an existing dataset for your model, or create a new one here. Not
+                      sure what to do? Read our{' '}
+                      <Anchor
+                        href="https://education.civitai.com/using-civitai-the-on-site-lora-trainer"
+                        target="_blank"
+                        rel="nofollow noreferrer"
+                      >
+                        Dataset and Training Guidelines
+                      </Anchor>{' '}
+                      for more info.
+                    </Text>
+
+                    <Group mt="xs" position="center" grow>
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          openImageSelectModal({
+                            title: 'Select Images',
+                            selectSource: 'generation',
+                            onSelect: async (images) => {
+                              await handleImport(images, 'generation');
+                            },
+                            importedUrls,
+                          });
+                        }}
+                      >
+                        Import from Generator
+                      </Button>
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          openImageSelectModal({
+                            title: 'Select Images',
+                            selectSource: 'uploaded',
+                            onSelect: async (images) => {
+                              await handleImport(images, 'uploaded');
+                            },
+                            importedUrls,
+                          });
+                        }}
+                      >
+                        Add from Profile
+                      </Button>
+                      <Button
+                        variant="light"
+                        onClick={() => {
+                          openImageSelectModal({
+                            title: 'Select Datasets',
+                            selectSource: 'training',
+                            onSelect: async (datasets) => {
+                              await handleImport(datasets, 'training');
+                            },
+                            importedUrls,
+                          });
+                        }}
+                      >
+                        Re-use a Dataset
+                      </Button>
+                    </Group>
+
+                    <Divider label="OR" labelPosition="center" />
+
+                    <ImageDropzone
+                      onDrop={handleDrop}
+                      label="Drag images (or a zip file) here or click to select files"
+                      description={
+                        <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
+                          Changes made here are not permanently saved until you hit &quot;Next&quot;
+                        </Text>
+                      }
+                      max={MAX_FILES_ALLOWED}
+                      // loading={isLoading}
+                      count={imageList.length}
+                      accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
+                      onExceedMax={() =>
+                        showErrorNotification({
+                          title: 'Too many images',
+                          error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
+                          autoClose: false,
+                        })
+                      }
+                    />
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            </Accordion>
+            <Divider />
 
             {imageList.length > 0 && (
-              <Group my="md">
+              <Group my="md" position="apart">
                 <Paper
                   shadow="xs"
                   radius="sm"
@@ -1050,64 +1322,75 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     {`${totalLabeled} / ${imageList.length} labeled`}
                   </Text>
                 </Paper>
-                <Tooltip
-                  label="Not connected - will not receive updates. Please try refreshing the page."
-                  disabled={connected}
-                >
+                <Group spacing="xs">
+                  <Button compact color="indigo" onClick={() => setIsZoomed((z) => !z)}>
+                    {isZoomed ? <IconZoomOut size={16} /> : <IconZoomIn size={16} />}
+                    <Text inline ml={4}>
+                      Zoom {isZoomed ? 'Out' : 'In'}
+                    </Text>
+                  </Button>
+                  <Tooltip
+                    label="Not connected - will not receive updates. Please try refreshing the page."
+                    disabled={connected}
+                  >
+                    <Button
+                      compact
+                      color="violet"
+                      disabled={autoLabeling.isRunning || !connected}
+                      style={!connected ? { pointerEvents: 'initial' } : undefined}
+                      onClick={() =>
+                        dialogStore.trigger({
+                          component: AutoLabelModal,
+                          props: { modelId: model.id },
+                        })
+                      }
+                    >
+                      <Group spacing={4}>
+                        <IconTags size={16} />
+                        <Text>Auto Label</Text>
+                        {Date.now() < new Date('2024-09-27').getTime() && (
+                          <Badge color="green" variant="filled" size="sm" ml={4}>
+                            NEW
+                          </Badge>
+                        )}
+                      </Group>
+                    </Button>
+                  </Tooltip>
                   <Button
                     compact
-                    color="violet"
-                    disabled={autoLabeling.isRunning || !connected}
-                    style={!connected ? { pointerEvents: 'initial' } : undefined}
-                    onClick={() =>
-                      dialogStore.trigger({
-                        component: AutoLabelModal,
-                        props: { modelId: model.id },
-                      })
-                    }
+                    color="cyan"
+                    loading={zipping}
+                    onClick={() => handleNextAfterCheck(true)}
                   >
-                    <Group spacing={4}>
-                      <IconTags size={16} />
-                      <Text>Auto Label</Text>
-                      {Date.now() < new Date('2024-09-27').getTime() && (
-                        <Badge color="green" variant="filled" size="sm" ml={4}>
-                          NEW
-                        </Badge>
-                      )}
-                    </Group>
+                    <IconFileDownload size={16} />
+                    <Text inline ml={4}>
+                      Download
+                    </Text>
                   </Button>
-                </Tooltip>
-                <Button
-                  compact
-                  color="cyan"
-                  loading={zipping}
-                  onClick={() => handleNextAfterCheck(true)}
-                >
-                  <IconFileDownload size={16} />
-                  <Text inline ml={4}>
-                    Download
-                  </Text>
-                </Button>
 
-                <Button
-                  compact
-                  color="red"
-                  disabled={autoLabeling.isRunning}
-                  onClick={() => {
-                    openConfirmModal({
-                      title: 'Remove all images?',
-                      children: 'This cannot be undone.',
-                      labels: { cancel: 'Cancel', confirm: 'Confirm' },
-                      centered: true,
-                      onConfirm: () => setImageList(model.id, []),
-                    });
-                  }}
-                >
-                  <IconTrash size={16} />
-                  <Text inline ml={4}>
-                    Reset
-                  </Text>
-                </Button>
+                  <Button
+                    compact
+                    color="red"
+                    disabled={autoLabeling.isRunning}
+                    onClick={() => {
+                      openConfirmModal({
+                        title: 'Remove all images?',
+                        children: 'This cannot be undone.',
+                        labels: { cancel: 'Cancel', confirm: 'Confirm' },
+                        centered: true,
+                        onConfirm: () => {
+                          setImageList(model.id, []);
+                          setAccordionUpload('uploading');
+                        },
+                      });
+                    }}
+                  >
+                    <IconTrash size={16} />
+                    <Text inline ml={4}>
+                      Reset
+                    </Text>
+                  </Button>
+                </Group>
               </Group>
             )}
             {filteredImages.length > maxImgPerPage && (
@@ -1174,7 +1457,29 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     placeholder='Add a trigger word, ex. "unique-word" (optional)'
                     value={triggerWord}
                     onChange={(event) => setTriggerWord(model.id, event.currentTarget.value)}
+                    onBlur={() => {
+                      const { blockedFor, success } = auditPrompt(triggerWord);
+                      if (!success) {
+                        if (!triggerWordInvalid) {
+                          setTriggerWordInvalid(model.id, true);
+                          showNotification({
+                            icon: <IconX size={18} />,
+                            autoClose: false,
+                            color: 'red',
+                            title: 'Inappropriate labels',
+                            message: `One or more trigger words have been blocked. Please review. Reason: ${blockedFor.join(
+                              ', '
+                            )}`,
+                          });
+                        }
+                      } else {
+                        if (triggerWordInvalid) {
+                          setTriggerWordInvalid(model.id, false);
+                        }
+                      }
+                    }}
                     style={{ flexGrow: 1 }}
+                    className={cx({ [classes.badLabel]: triggerWordInvalid })}
                     rightSection={
                       <ActionIcon
                         onClick={() => {
@@ -1210,6 +1515,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
             ) : (
               <></>
             )}
+            {hasIssues && (
+              <Checkbox
+                label="Show only inappropriate labels"
+                checked={onlyIssues}
+                onChange={(event) => setOnlyIssues(event.currentTarget.checked)}
+              />
+            )}
             {loadingZip ? (
               <Center mt="md" style={{ flexDirection: 'column' }}>
                 <Loader />
@@ -1226,13 +1538,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               </Stack>
             ) : (
               // nb: if we want to break out of container, add margin: 0 calc(50% - 45vw);
-              <SimpleGrid cols={3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
+              <SimpleGrid cols={isZoomed ? 1 : 3} breakpoints={[{ maxWidth: 'sm', cols: 1 }]}>
                 {filteredImages
                   .slice((page - 1) * maxImgPerPage, (page - 1) * maxImgPerPage + maxImgPerPage)
                   .map((imgData, index) => {
                     return (
-                      <Card key={index} shadow="sm" p={4} radius="sm" withBorder>
-                        {/* TODO [bw] probably lightbox here or something similar */}
+                      <Card
+                        key={index}
+                        shadow="sm"
+                        p={4}
+                        radius="sm"
+                        withBorder
+                        className={cx({ [classes.badLabel]: imgData.invalidLabel })}
+                      >
                         <Card.Section mb="xs">
                           <div className={classes.imgOverlay}>
                             <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
@@ -1269,22 +1587,41 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                       newLen % maxImgPerPage === 0
                                     )
                                       setPage(Math.max(page - 1, 1));
+
+                                    if (newLen < 1) {
+                                      setAccordionUpload('uploading');
+                                    }
                                   }}
                                 >
                                   <IconTrash />
                                 </ActionIcon>
                               </Tooltip>
                             </Group>
+                            {imgData.source?.type && (
+                              <div className={cx(classes.source, 'trashIcon')}>
+                                <Badge
+                                  variant="filled"
+                                  className="px-1"
+                                  leftSection={
+                                    // <ThemeIcon color="blue" size="lg" radius="xl" variant="filled">
+                                    <IconTransferIn size={14} />
+                                    // </ThemeIcon>
+                                  }
+                                >
+                                  <Text>{imgData.source.type}</Text>
+                                </Badge>
+                              </div>
+                            )}
                             <MImage
                               alt={imgData.name}
                               src={imgData.url}
                               imageProps={{
                                 style: {
-                                  height: '250px',
+                                  height: isZoomed ? '100%' : '250px',
+                                  width: '100%',
                                   // if we want to show full image, change objectFit to contain
                                   objectFit: 'cover',
                                   // object-position: top;
-                                  width: '100%',
                                 },
                                 // onLoad: () => URL.revokeObjectURL(imageUrl)
                               }}
@@ -1358,28 +1695,15 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         <Paper mb="md" radius="md" p="xl" withBorder>
           <div className="flex flex-col gap-4">
             <Title order={4}>Acknowledgement</Title>
-            <div>
-              <Text size="sm" mb={4}>
-                By uploading this training data, I confirm that:
-              </Text>
-              <List size="sm" type="ordered">
-                <List.Item mb={2}>
-                  Consent: If the content depicts the likeness of a real person, who is not a public
-                  figure, I am either that person or have obtained clear, explicit consent from that
-                  person for their likeness to be used in this model.
-                </List.Item>
-                <List.Item mb={2}>
-                  Responsibility: I understand that I am solely responsible for ensuring that all
-                  necessary permissions have been obtained, and I acknowledge that failure to do so
-                  may result in the removal of content, my account or other actions by Civitai.
-                </List.Item>
-                <List.Item mb={2}>
-                  Accuracy: I attest that the likeness depicted in this model aligns with the
-                  consents granted, and I will immediately remove or modify the content if consent
-                  is revoked.
-                </List.Item>
-              </List>
-            </div>
+            {attested.status ? (
+              <ContentClamp maxHeight={30}>
+                <AttestDiv />
+              </ContentClamp>
+            ) : (
+              <div>
+                <AttestDiv />
+              </div>
+            )}
             <Checkbox
               label="By agreeing to this attestation, I acknowledge that I have complied with these conditions and accept full responsibility for any legal or ethical implications that arise from the use of this content."
               checked={attested.status}
@@ -1403,6 +1727,32 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           Next
         </Button>
       </Group>
+    </>
+  );
+};
+
+const AttestDiv = () => {
+  return (
+    <>
+      <Text size="sm" mb={4}>
+        By uploading this training data, I confirm that:
+      </Text>
+      <List size="sm" type="ordered">
+        <List.Item mb={2}>
+          Consent: If the content depicts the likeness of a real person, who is not a public figure,
+          I am either that person or have obtained clear, explicit consent from that person for
+          their likeness to be used in this model.
+        </List.Item>
+        <List.Item mb={2}>
+          Responsibility: I understand that I am solely responsible for ensuring that all necessary
+          permissions have been obtained, and I acknowledge that failure to do so may result in the
+          removal of content, my account or other actions by Civitai.
+        </List.Item>
+        <List.Item mb={2}>
+          Accuracy: I attest that the likeness depicted in this model aligns with the consents
+          granted, and I will immediately remove or modify the content if consent is revoked.
+        </List.Item>
+      </List>
     </>
   );
 };

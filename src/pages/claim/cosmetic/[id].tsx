@@ -154,6 +154,7 @@ export default function ClaimCosmeticPage({ id }: { id: number }) {
         title={`Claim ${cosmetic.name} | Civitai`}
         description={`Claim the ${cosmetic.name}. Awarded for ${cosmetic.description} while you can`}
         imageUrl={getEdgeUrl(cosmeticImage, { width: 256 })}
+        deIndex
       />
       <Container size="xs" mb="lg">
         <Stack spacing={0}>

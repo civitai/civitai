@@ -1,11 +1,7 @@
-import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { deleteAssets } from '~/server/services/training.service';
 import { deleteObject, parseKey } from '~/utils/s3-utils';
 import { createJob } from './job';
-
-//  TODO [bw] delete this file and stop the job ~11/15/24
 
 const logJob = (data: MixedObject) => {
   logToAxiom({ name: 'delete-old-training-data', type: 'error', ...data }, 'webhooks').catch();
@@ -14,8 +10,6 @@ const logJob = (data: MixedObject) => {
 type OldTrainingRow = {
   mf_id: number;
   job_id: string | null;
-  submitted_at: Date;
-  visibility: ModelFileVisibility;
   url: string;
 };
 
@@ -26,19 +20,15 @@ export const deleteOldTrainingData = createJob(
     const oldTraining = await dbWrite.$queryRaw<OldTrainingRow[]>`
       SELECT mf.id                                        as mf_id,
              mf.metadata -> 'trainingResults' ->> 'jobId' as job_id,
-             COALESCE(
-               (mf.metadata -> 'trainingResults' ->> 'submittedAt')::timestamp,
-               mv."updatedAt"
-             )                                            as submitted_at,
-             mf.visibility,
              mf.url
       FROM "ModelVersion" mv
              JOIN "ModelFile" mf ON mf."modelVersionId" = mv.id AND mf.type = 'Training Data'
       WHERE mv."uploadType" = 'Trained'
         AND mv."trainingStatus" in ('InReview', 'Approved')
         AND (timezone('utc', current_timestamp) -
-             (mf.metadata -> 'trainingResults' ->> 'end_time')::timestamp) > '30 days'
+             (mf.metadata -> 'trainingResults' ->> 'completedAt')::timestamp) > '30 days'
         AND mf."dataPurged" is not true
+        AND mf.visibility != 'Public'
     `;
 
     if (oldTraining.length === 0) {
@@ -57,71 +47,60 @@ export const deleteOldTrainingData = createJob(
 
     let goodJobs = 0;
     let errorJobs = 0;
-    for (const { mf_id, job_id, submitted_at, visibility, url } of oldTraining) {
-      let hasError = false;
 
-      if (!!job_id) {
+    for (const { mf_id, job_id, url } of oldTraining) {
+      const { key, bucket } = parseKey(url);
+      if (bucket) {
         try {
-          const result = await deleteAssets(job_id, submitted_at);
-          if (!result) {
-            hasError = true;
-            logJob({
-              message: `Delete assets result blank`,
+          await deleteObject(bucket, key);
+
+          try {
+            await dbWrite.modelFile.update({
+              where: { id: mf_id },
               data: {
-                jobId: job_id,
-                modelFileId: mf_id,
-                result: result,
+                dataPurged: true,
               },
             });
-          }
-        } catch (e) {
-          hasError = true;
-          logJob({
-            message: `Delete assets error`,
-            data: {
-              error: (e as Error)?.message,
-              cause: (e as Error)?.cause,
-              jobId: job_id,
-              modelFileId: mf_id,
-            },
-          });
-        }
-      }
-
-      if (visibility !== ModelFileVisibility.Public) {
-        const { key, bucket } = parseKey(url);
-        if (bucket) {
-          try {
-            await deleteObject(bucket, key);
+            goodJobs += 1;
           } catch (e) {
-            hasError = true;
+            errorJobs += 1;
             logJob({
-              message: `Delete object error`,
+              message: `Update model file error`,
               data: {
                 error: (e as Error)?.message,
                 cause: (e as Error)?.cause,
                 jobId: job_id,
                 modelFileId: mf_id,
-                key,
-                bucket,
               },
             });
           }
+        } catch (e) {
+          logJob({
+            message: `Delete object error`,
+            data: {
+              error: (e as Error)?.message,
+              cause: (e as Error)?.cause,
+              jobId: job_id,
+              modelFileId: mf_id,
+              key,
+              bucket,
+            },
+          });
+          errorJobs += 1;
         }
-      }
-
-      if (!hasError) {
-        await dbWrite.modelFile.update({
-          where: { id: mf_id },
+      } else {
+        logJob({
+          message: `Missing bucket`,
           data: {
-            dataPurged: true,
+            jobId: job_id,
+            modelFileId: mf_id,
+            key,
           },
         });
-        goodJobs += 1;
-      } else {
         errorJobs += 1;
       }
     }
+
     logJob({
       type: 'info',
       message: `Finished`,

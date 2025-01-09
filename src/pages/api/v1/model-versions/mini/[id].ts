@@ -3,15 +3,15 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
 import { Session } from 'next-auth';
+import { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
+import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { stringifyAIR } from '~/utils/string-helpers';
-import { BaseModel } from '~/server/common/constants';
-import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 const schema = z.object({ id: z.coerce.number() });
 type VersionRow = {
@@ -28,6 +28,7 @@ type VersionRow = {
   checkPermission: boolean;
   covered?: boolean;
   freeTrialLimit?: number;
+  minor: boolean;
 };
 type FileRow = {
   id: number;
@@ -64,6 +65,7 @@ export default MixedAuthEndpoint(async function handler(
       mv.status,
       mv.availability,
       m.type,
+      m.minor,
       mv."earlyAccessEndsAt",
       mv."requireAuth",
       (
@@ -135,6 +137,7 @@ export default MixedAuthEndpoint(async function handler(
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    minor: modelVersion.minor,
   };
   res.status(200).json(data);
 });

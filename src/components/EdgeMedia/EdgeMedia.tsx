@@ -23,6 +23,7 @@ export type EdgeMediaProps = EdgeUrlProps &
     youtubeVideoId?: string;
     vimeoVideoId?: string;
     thumbnailUrl?: string | null;
+    disableWebm?: boolean;
   };
 
 export function EdgeMedia({
@@ -54,6 +55,7 @@ export function EdgeMedia({
   youtubeVideoId,
   vimeoVideoId,
   thumbnailUrl,
+  disableWebm,
   ...imgProps
 }: EdgeMediaProps) {
   const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
@@ -114,6 +116,7 @@ export function EdgeMedia({
           ref={videoRef}
           youtubeVideoId={youtubeVideoId}
           vimeoVideoId={vimeoVideoId}
+          disableWebm={disableWebm}
         />
       );
     default:
