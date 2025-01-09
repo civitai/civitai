@@ -317,6 +317,7 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
       minor: resource.model.minor,
       available: resource.available,
       fileSizeKB: resource.fileSizeKB,
+      additionalResourceCharge: resource.additionalResourceCharge,
     };
   });
 }

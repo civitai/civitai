@@ -14,7 +14,7 @@ import {
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { uniqBy } from 'lodash-es';
@@ -38,6 +38,7 @@ import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.sche
 import { getGenerationConfig } from '~/server/common/constants';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { getImageGenerationResources } from '~/server/services/image.service';
+import { getFeaturedModels } from '~/server/services/model.service';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -415,4 +416,26 @@ export async function toggleUnavailableResource({
       .catch(handleLogError);
 
   return unavailableResources;
+}
+
+const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
+export async function getShouldChargeForResources(
+  args: {
+    modelType: ModelType;
+    modelId: number;
+    fileSizeKB?: number;
+  }[]
+) {
+  const featuredModels = await getFeaturedModels();
+  return args.reduce<Record<string, boolean>>(
+    (acc, { modelType, modelId, fileSizeKB }) => ({
+      ...acc,
+      [modelId]: fileSizeKB
+        ? !FREE_RESOURCE_TYPES.includes(modelType) &&
+          !featuredModels.includes(modelId) &&
+          fileSizeKB > 10 * 1024
+        : false,
+    }),
+    {}
+  );
 }

@@ -29,6 +29,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { fluxUltraAir } from '~/shared/constants/generation.constants';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { getShouldChargeForResources } from '~/server/services/generation/generation.service';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -426,6 +427,7 @@ export const resourceDataCache = createCachedArray({
         ...result,
         settings: settings as RecommendedSettingsSchema,
         covered,
+        additionalResourceCharge: false,
         fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile.sizeKB) : undefined,
         available:
           covered &&
@@ -441,6 +443,21 @@ export const resourceDataCache = createCachedArray({
       return acc;
     }, {});
     return results;
+  },
+  appendFn: async (results) => {
+    const resources = [...results];
+    // Check if should charge
+    const shouldChargeResult = await getShouldChargeForResources(
+      resources.map((resource) => ({
+        modelType: resource.model.type,
+        modelId: resource.model.id,
+        fileSizeKB: resource.fileSizeKB,
+      }))
+    );
+
+    for (const resource of resources) {
+      resource.additionalResourceCharge = shouldChargeResult[resource.model.id];
+    }
   },
   idKey: 'id',
   dontCacheFn: (data) => !data.available,

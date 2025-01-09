@@ -196,6 +196,7 @@ export const orchestratorRouter = router({
           body: {
             steps: [step],
             tips: args.tips,
+            experimental: true,
           },
           query: {
             whatif: true,
