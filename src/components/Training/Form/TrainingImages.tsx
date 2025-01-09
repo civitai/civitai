@@ -506,7 +506,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   ) => {
     const newFiles = await Promise.all(
       fileList.map(async (f) => {
-        console.log(f.type, f.name); // TODO remove
         if (ZIP_MIME_TYPE.includes(f.type as never) || f.name.endsWith('.zip')) {
           const source = data?.[f.name]?.source ?? null;
           return await handleZip(f, !source, source);
@@ -524,7 +523,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               hasAnyLabelFiles: label !== '',
             };
           } catch (e) {
-            console.log(e); // TODO remove
             showErrorNotification({
               error: new Error(`An error occurred while parsing "${f.name}".`),
             });
