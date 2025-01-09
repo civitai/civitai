@@ -1,16 +1,14 @@
 import { Button, Card, Stack, Center, Loader, Title, Text, Group, Box } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconRotateClockwise, IconSettings } from '@tabler/icons-react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
+import { IconSettings } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { CancelMembershipFeedbackModal } from '~/components/Stripe/MembershipChangePrevention';
 import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
-import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate } from '~/utils/date-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 
 export function SubscriptionCard() {
   const { subscription, subscriptionLoading } = useActiveSubscription();
@@ -44,33 +42,39 @@ export function SubscriptionCard() {
             <Loader />
           </Center>
         ) : subscription ? (
-          <Group position="apart">
-            <Group noWrap>
-              {image && (
-                <Center>
-                  <Box w={40}>
-                    <EdgeMedia src={image} />
-                  </Box>
-                </Center>
-              )}
-              {product && <Text>{product.name}</Text>}
-            </Group>
-            <Stack spacing={0}>
-              {price && (
-                <Text>
-                  {getStripeCurrencyDisplay(price.unitAmount, price.currency) +
-                    ' ' +
-                    price.currency.toUpperCase() +
-                    '/' +
-                    shortenPlanInterval(price.interval)}
+          <>
+            <Group position="apart">
+              <Group noWrap>
+                {image && (
+                  <Center>
+                    <Box w={40}>
+                      <EdgeMedia src={image} />
+                    </Box>
+                  </Center>
+                )}
+                {product && <Text>{product.name}</Text>}
+              </Group>
+              <Stack spacing={0}>
+                {price && (
+                  <Text>
+                    {getStripeCurrencyDisplay(price.unitAmount, price.currency) +
+                      ' ' +
+                      price.currency.toUpperCase() +
+                      '/' +
+                      shortenPlanInterval(price.interval)}
+                  </Text>
+                )}
+                <Text size="sm" color="dimmed">
+                  {subscription.cancelAtPeriodEnd ? 'Ends' : 'Renews'}{' '}
+                  {formatDate(subscription.currentPeriodEnd)}
                 </Text>
-              )}
-              <Text size="sm" color="dimmed">
-                {subscription.cancelAtPeriodEnd ? 'Ends' : 'Renews'}{' '}
-                {formatDate(subscription.currentPeriodEnd)}
-              </Text>
-            </Stack>
-          </Group>
+              </Stack>
+            </Group>
+            <CancelMembershipAction
+              variant="button"
+              buttonProps={{ color: 'red', variant: 'outline', fullWidth: true }}
+            />
+          </>
         ) : null}
       </Stack>
     </Card>

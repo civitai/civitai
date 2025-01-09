@@ -46,6 +46,7 @@ import { getRandomBool } from '~/utils/boolean-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { Meta } from '~/components/Meta/Meta';
 
 const LevelAnimation = dynamic(
   () => import('~/components/Animations/LevelAnimation').then((mod) => mod.LevelAnimation),
@@ -394,280 +395,288 @@ function Rater() {
   const loading = isLoading ?? restartMutation.isLoading;
 
   return (
-    <Box className={classes.container}>
-      {isLevelingUp && (
-        <Card
-          p="md"
-          radius="lg"
-          shadow="xl"
-          withBorder
-          style={{
-            position: 'fixed',
-            top: 200,
-            left: '50%',
-            transform: 'translate(-50%, -50%)',
-            zIndex: 1000,
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            overflow: 'visible',
-            animation: 'fadeOut 500ms ease-in 2s forwards',
-          }}
-        >
-          <LevelAnimation
-            lottieProps={{
-              height: 300,
-              style: { marginTop: -210 },
+    <>
+      <Meta deIndex />
+      <Box className={classes.container}>
+        {isLevelingUp && (
+          <Card
+            p="md"
+            radius="lg"
+            shadow="xl"
+            withBorder
+            style={{
+              position: 'fixed',
+              top: 200,
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              zIndex: 1000,
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              overflow: 'visible',
+              animation: 'fadeOut 500ms ease-in 2s forwards',
             }}
-          />
-          <Text size={48} ta="center" weight={500} mt={-90} mb={10} lh={1}>
-            Level up!
-          </Text>
-        </Card>
-      )}
-      <Box className={classes.image}>
-        {!isSane ? (
-          <Card withBorder shadow="sm" radius="sm" className={classes.gameover}>
-            <Text color="orange" weight={500} size={36}>
-              Game Over
+          >
+            <LevelAnimation
+              lottieProps={{
+                height: 300,
+                style: { marginTop: -210 },
+              }}
+            />
+            <Text size={48} ta="center" weight={500} mt={-90} mb={10} lh={1}>
+              Level up!
             </Text>
-            <Text>You failed 3 rating challenges.</Text>
-            <Text mt="sm">
-              You made it to{' '}
-              <Text component="span" color="blue.4">
-                Level {progression?.level}
-              </Text>{' '}
-              and rated{' '}
-              <Text component="span" color="blue.4">
-                {numberWithCommas(totalRated)} images
-              </Text>
-              .
-            </Text>
-            <Button.Group mt="sm">
-              <Button variant="default" leftIcon={<IconRotate />} onClick={handleRestart} fullWidth>
-                Restart
-              </Button>
-              <Button
-                component={Link}
-                color="yellow"
-                variant="light"
-                rightIcon={<IconCrown />}
-                href="/leaderboard/rater"
-              >
-                Check the Leaderboard
-              </Button>
-            </Button.Group>
           </Card>
-        ) : sanityStatus === 'assessing' ? (
-          <Loader size="xl" color="yellow" />
-        ) : image ? (
-          <EdgeMedia src={image.url} width={700} mediaRef={imageRef} />
-        ) : (
-          <Loader size="xl" />
         )}
-        <Card
-          id="rating"
-          withBorder
-          shadow="sm"
-          radius="sm"
-          className={classes.levelNotice}
-          style={{ display: 'none' }}
-        >
-          PG
-        </Card>
-        {!loading && image && sanityStatus !== 'assessing' && (
+        <Box className={classes.image}>
+          {!isSane ? (
+            <Card withBorder shadow="sm" radius="sm" className={classes.gameover}>
+              <Text color="orange" weight={500} size={36}>
+                Game Over
+              </Text>
+              <Text>You failed 3 rating challenges.</Text>
+              <Text mt="sm">
+                You made it to{' '}
+                <Text component="span" color="blue.4">
+                  Level {progression?.level}
+                </Text>{' '}
+                and rated{' '}
+                <Text component="span" color="blue.4">
+                  {numberWithCommas(totalRated)} images
+                </Text>
+                .
+              </Text>
+              <Button.Group mt="sm">
+                <Button
+                  variant="default"
+                  leftIcon={<IconRotate />}
+                  onClick={handleRestart}
+                  fullWidth
+                >
+                  Restart
+                </Button>
+                <Button
+                  component={Link}
+                  color="yellow"
+                  variant="light"
+                  rightIcon={<IconCrown />}
+                  href="/leaderboard/rater"
+                >
+                  Check the Leaderboard
+                </Button>
+              </Button.Group>
+            </Card>
+          ) : sanityStatus === 'assessing' ? (
+            <Loader size="xl" color="yellow" />
+          ) : image ? (
+            <EdgeMedia src={image.url} width={700} mediaRef={imageRef} />
+          ) : (
+            <Loader size="xl" />
+          )}
+          <Card
+            id="rating"
+            withBorder
+            shadow="sm"
+            radius="sm"
+            className={classes.levelNotice}
+            style={{ display: 'none' }}
+          >
+            PG
+          </Card>
+          {!loading && image && sanityStatus !== 'assessing' && (
+            <>
+              <ActionIcon
+                className={classes.link}
+                component={Link}
+                target="_blank"
+                href={`/images/${image?.id}`}
+                variant="transparent"
+              >
+                <IconExternalLink />
+              </ActionIcon>
+            </>
+          )}
+        </Box>
+        <Group align="flex-end" className={classes.rater}>
+          <Title order={1} lh={1}>
+            Rater
+          </Title>
+          {progression && (
+            <HoverCard withArrow>
+              <HoverCard.Target>
+                <Badge size="lg" className={classes.raterBadge}>
+                  <IconStarFilled strokeWidth={2.5} size={15} />
+                  Level {progression.level}
+                  <Box style={{ width: progression.progress + '%' }} />
+                </Badge>
+              </HoverCard.Target>
+              <HoverCard.Dropdown px="xs" py={3} color="gray">
+                <Stack spacing={0}>
+                  <Group spacing={4}>
+                    <Text size="xs" color="blue.4" weight="bold" tt="uppercase">
+                      next level
+                    </Text>
+                    <Text size="xs" weight={500}>
+                      {progression.ratingsInLevel} / {progression.ratingsForNextLevel}
+                    </Text>
+                  </Group>
+                  <Group spacing={4}>
+                    <Text size="xs" color="blue.4" weight="bold" tt="uppercase">
+                      Total ratings
+                    </Text>
+                    <Text size="xs" weight={500}>
+                      {totalRated}
+                    </Text>
+                  </Group>
+                </Stack>
+              </HoverCard.Dropdown>
+            </HoverCard>
+          )}
+          {!loading && (
+            <HoverCard withArrow>
+              <HoverCard.Target>
+                <Group spacing={4}>
+                  {Array.from({ length: 3 }).map((_, i) => (
+                    <ThemeIcon
+                      key={i}
+                      color={strikes > i ? 'red' : 'gray'}
+                      variant={strikes > i ? 'filled' : 'outline'}
+                    >
+                      <IconX strokeWidth={2.5} />
+                    </ThemeIcon>
+                  ))}
+                </Group>
+              </HoverCard.Target>
+              <HoverCard.Dropdown px="xs" py={3} color="gray">
+                <Text size="xs">
+                  {3 - strikes} {`more strikes and it's game over!`}
+                </Text>
+              </HoverCard.Dropdown>
+            </HoverCard>
+          )}
+
+          {(progression?.level ?? 0) > 20 && (
+            <Tooltip label="View Leaderboard">
+              <ActionIcon
+                size="md"
+                component={Link}
+                href="/leaderboard/rater"
+                target="_blank"
+                color="yellow"
+              >
+                <IconCrown />
+              </ActionIcon>
+            </Tooltip>
+          )}
+        </Group>
+
+        {isSane && !loading && (
           <>
-            <ActionIcon
-              className={classes.link}
-              component={Link}
-              target="_blank"
-              href={`/images/${image?.id}`}
-              variant="transparent"
-            >
-              <IconExternalLink />
-            </ActionIcon>
+            <Group ml="auto" spacing={4} className={classes.browsing}>
+              <Text weight="bold" size="xs">
+                Show:{' '}
+              </Text>
+              {Object.entries(NsfwLevel)
+                .filter(([key]) => key !== 'Blocked' && key !== 'PG')
+                .map(([key, value]) => (
+                  <Chip
+                    size="xs"
+                    radius="xs"
+                    checked={!!level && (level & value) !== 0}
+                    onChange={() => changeLevel(value)}
+                    key={key}
+                  >
+                    <span>{key}</span>
+                  </Chip>
+                ))}
+            </Group>
+            <Stack spacing="xs" align="center" className={classes.actionBar}>
+              <Card
+                id="waitIndicator"
+                withBorder
+                shadow="sm"
+                radius="sm"
+                className={classes.waitNotice}
+                style={{ display: 'none' }}
+              >
+                Wait...
+              </Card>
+              <Group spacing={4}>
+                <Tooltip label="Undo" position="top" withArrow>
+                  <Button
+                    onClick={undoRating}
+                    variant="default"
+                    px="xs"
+                    disabled={!prevImages.length}
+                  >
+                    <IconArrowBackUp />
+                  </Button>
+                </Tooltip>
+                <Button.Group>
+                  {Object.entries(NsfwLevel).map(([key, value]) => (
+                    <Tooltip
+                      key={key}
+                      label={explanationMap[key]}
+                      position="top"
+                      withArrow
+                      openDelay={1000}
+                      maw={300}
+                      multiline
+                    >
+                      <Button
+                        key={key}
+                        variant={key === 'Blocked' ? 'filled' : 'default'}
+                        color={key === 'Blocked' ? 'red' : undefined}
+                        onClick={() => handleSetLevel(value)}
+                      >
+                        {key === 'Blocked' ? <IconFlag size={18} /> : key}
+                      </Button>
+                    </Tooltip>
+                  ))}
+                </Button.Group>
+                <Button onClick={skipImage} variant="default">
+                  Skip
+                </Button>
+              </Group>
+              <Group w="100%" spacing={5}>
+                <Text size="xs" mr="auto">
+                  <Kbd>1-6</Kbd> to rate, <Kbd>Space</Kbd> to skip, <Kbd>Ctrl</Kbd>+<Kbd>Z</Kbd> to
+                  undo
+                </Text>
+                <ActionIcon size="xs" onClick={() => setMuted((x) => !x)} color="dark">
+                  {muted ? <IconVolumeOff strokeWidth={2.5} /> : <IconVolume strokeWidth={2.5} />}
+                </ActionIcon>
+                <Popover width={300} withArrow>
+                  <Popover.Target>
+                    <ActionIcon size="xs" color="dark">
+                      <IconHelpHexagon strokeWidth={2.5} />
+                    </ActionIcon>
+                  </Popover.Target>
+                  <Popover.Dropdown>
+                    <Text color="orange" weight={500}>
+                      What is this?
+                    </Text>
+                    <Text
+                      size="sm"
+                      lh={1.3}
+                    >{`We're working on improving our automated content moderation system. We need your help to improve our data! Please assign the rating you think best fits the content`}</Text>
+                    <Text
+                      size="xs"
+                      td="underline"
+                      color="blue.4"
+                      style={{ cursor: 'pointer' }}
+                      onClick={() => openBrowsingLevelGuide()}
+                    >
+                      What do the ratings mean?
+                    </Text>
+                  </Popover.Dropdown>
+                </Popover>
+              </Group>
+            </Stack>
           </>
         )}
       </Box>
-      <Group align="flex-end" className={classes.rater}>
-        <Title order={1} lh={1}>
-          Rater
-        </Title>
-        {progression && (
-          <HoverCard withArrow>
-            <HoverCard.Target>
-              <Badge size="lg" className={classes.raterBadge}>
-                <IconStarFilled strokeWidth={2.5} size={15} />
-                Level {progression.level}
-                <Box style={{ width: progression.progress + '%' }} />
-              </Badge>
-            </HoverCard.Target>
-            <HoverCard.Dropdown px="xs" py={3} color="gray">
-              <Stack spacing={0}>
-                <Group spacing={4}>
-                  <Text size="xs" color="blue.4" weight="bold" tt="uppercase">
-                    next level
-                  </Text>
-                  <Text size="xs" weight={500}>
-                    {progression.ratingsInLevel} / {progression.ratingsForNextLevel}
-                  </Text>
-                </Group>
-                <Group spacing={4}>
-                  <Text size="xs" color="blue.4" weight="bold" tt="uppercase">
-                    Total ratings
-                  </Text>
-                  <Text size="xs" weight={500}>
-                    {totalRated}
-                  </Text>
-                </Group>
-              </Stack>
-            </HoverCard.Dropdown>
-          </HoverCard>
-        )}
-        {!loading && (
-          <HoverCard withArrow>
-            <HoverCard.Target>
-              <Group spacing={4}>
-                {Array.from({ length: 3 }).map((_, i) => (
-                  <ThemeIcon
-                    key={i}
-                    color={strikes > i ? 'red' : 'gray'}
-                    variant={strikes > i ? 'filled' : 'outline'}
-                  >
-                    <IconX strokeWidth={2.5} />
-                  </ThemeIcon>
-                ))}
-              </Group>
-            </HoverCard.Target>
-            <HoverCard.Dropdown px="xs" py={3} color="gray">
-              <Text size="xs">
-                {3 - strikes} {`more strikes and it's game over!`}
-              </Text>
-            </HoverCard.Dropdown>
-          </HoverCard>
-        )}
-
-        {(progression?.level ?? 0) > 20 && (
-          <Tooltip label="View Leaderboard">
-            <ActionIcon
-              size="md"
-              component={Link}
-              href="/leaderboard/rater"
-              target="_blank"
-              color="yellow"
-            >
-              <IconCrown />
-            </ActionIcon>
-          </Tooltip>
-        )}
-      </Group>
-
-      {isSane && !loading && (
-        <>
-          <Group ml="auto" spacing={4} className={classes.browsing}>
-            <Text weight="bold" size="xs">
-              Show:{' '}
-            </Text>
-            {Object.entries(NsfwLevel)
-              .filter(([key]) => key !== 'Blocked' && key !== 'PG')
-              .map(([key, value]) => (
-                <Chip
-                  size="xs"
-                  radius="xs"
-                  checked={!!level && (level & value) !== 0}
-                  onChange={() => changeLevel(value)}
-                  key={key}
-                >
-                  <span>{key}</span>
-                </Chip>
-              ))}
-          </Group>
-          <Stack spacing="xs" align="center" className={classes.actionBar}>
-            <Card
-              id="waitIndicator"
-              withBorder
-              shadow="sm"
-              radius="sm"
-              className={classes.waitNotice}
-              style={{ display: 'none' }}
-            >
-              Wait...
-            </Card>
-            <Group spacing={4}>
-              <Tooltip label="Undo" position="top" withArrow>
-                <Button
-                  onClick={undoRating}
-                  variant="default"
-                  px="xs"
-                  disabled={!prevImages.length}
-                >
-                  <IconArrowBackUp />
-                </Button>
-              </Tooltip>
-              <Button.Group>
-                {Object.entries(NsfwLevel).map(([key, value]) => (
-                  <Tooltip
-                    key={key}
-                    label={explanationMap[key]}
-                    position="top"
-                    withArrow
-                    openDelay={1000}
-                    maw={300}
-                    multiline
-                  >
-                    <Button
-                      key={key}
-                      variant={key === 'Blocked' ? 'filled' : 'default'}
-                      color={key === 'Blocked' ? 'red' : undefined}
-                      onClick={() => handleSetLevel(value)}
-                    >
-                      {key === 'Blocked' ? <IconFlag size={18} /> : key}
-                    </Button>
-                  </Tooltip>
-                ))}
-              </Button.Group>
-              <Button onClick={skipImage} variant="default">
-                Skip
-              </Button>
-            </Group>
-            <Group w="100%" spacing={5}>
-              <Text size="xs" mr="auto">
-                <Kbd>1-6</Kbd> to rate, <Kbd>Space</Kbd> to skip, <Kbd>Ctrl</Kbd>+<Kbd>Z</Kbd> to
-                undo
-              </Text>
-              <ActionIcon size="xs" onClick={() => setMuted((x) => !x)} color="dark">
-                {muted ? <IconVolumeOff strokeWidth={2.5} /> : <IconVolume strokeWidth={2.5} />}
-              </ActionIcon>
-              <Popover width={300} withArrow>
-                <Popover.Target>
-                  <ActionIcon size="xs" color="dark">
-                    <IconHelpHexagon strokeWidth={2.5} />
-                  </ActionIcon>
-                </Popover.Target>
-                <Popover.Dropdown>
-                  <Text color="orange" weight={500}>
-                    What is this?
-                  </Text>
-                  <Text
-                    size="sm"
-                    lh={1.3}
-                  >{`We're working on improving our automated content moderation system. We need your help to improve our data! Please assign the rating you think best fits the content`}</Text>
-                  <Text
-                    size="xs"
-                    td="underline"
-                    color="blue.4"
-                    style={{ cursor: 'pointer' }}
-                    onClick={() => openBrowsingLevelGuide()}
-                  >
-                    What do the ratings mean?
-                  </Text>
-                </Popover.Dropdown>
-              </Popover>
-            </Group>
-          </Stack>
-        </>
-      )}
-    </Box>
+    </>
   );
 }
 

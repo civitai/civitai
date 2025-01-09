@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
+import { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { constants } from '~/server/common/constants';
 import type {
@@ -16,6 +17,8 @@ export type ImageDataType = {
   type: string;
   label: string;
   // labelType: LabelTypes;
+  invalidLabel: boolean;
+  source: { type: ImageSelectSource; url: string } | null;
 };
 
 type UpdateImageDataType = Partial<ImageDataType> & {
@@ -120,6 +123,7 @@ type TrainingDataState = {
   initialImageList: ImageDataType[];
   labelType: LabelTypes;
   triggerWord: string;
+  triggerWordInvalid: boolean;
   ownRights: boolean;
   shareDataset: boolean;
   attested: Attest;
@@ -145,6 +149,7 @@ type TrainingImageStore = {
   setInitialImageList: (modelId: number, data: ImageDataType[]) => void;
   setLabelType: (modelId: number, data: LabelTypes) => void;
   setTriggerWord: (modelId: number, data: string) => void;
+  setTriggerWordInvalid: (modelId: number, data: boolean) => void;
   setOwnRights: (modelId: number, data: boolean) => void;
   setShareDataset: (modelId: number, data: boolean) => void;
   setAttest: (modelId: number, data: Attest) => void;
@@ -190,6 +195,7 @@ export const defaultTrainingState: TrainingDataState = {
   initialImageList: [] as ImageDataType[],
   labelType: 'tag',
   triggerWord: '',
+  triggerWordInvalid: false,
   ownRights: false,
   shareDataset: false,
   attested: { status: false, error: '' },
@@ -226,7 +232,10 @@ export const getShortNameFromUrl = (i: ImageDataType) => {
 
 export const useTrainingImageStore = create<TrainingImageStore>()(
   immer((set) => ({
-    updateImage: (modelId, { matcher, url, name, type, label, appendLabel }) => {
+    updateImage: (
+      modelId,
+      { matcher, url, name, type, label, appendLabel, invalidLabel, source }
+    ) => {
       set((state) => {
         if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
         // why is this not understanding the override I just did above?
@@ -251,6 +260,8 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
               name: name ?? i.name,
               type: type ?? i.type,
               label: newLabel,
+              invalidLabel: invalidLabel ?? i.invalidLabel,
+              source: source ?? i.source,
             };
           }
           return i;
@@ -279,6 +290,12 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
       set((state) => {
         if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
         state[modelId]!.triggerWord = v;
+      });
+    },
+    setTriggerWordInvalid: (modelId, v) => {
+      set((state) => {
+        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        state[modelId]!.triggerWordInvalid = v;
       });
     },
     setOwnRights: (modelId, v) => {
@@ -399,6 +416,7 @@ export const trainingStore = {
   setInitialImageList: store.setInitialImageList,
   setLabelType: store.setLabelType,
   setTriggerWord: store.setTriggerWord,
+  setTriggerWordInvalid: store.setTriggerWordInvalid,
   setOwnRights: store.setOwnRights,
   setShareDataset: store.setShareDataset,
   setAttest: store.setAttest,

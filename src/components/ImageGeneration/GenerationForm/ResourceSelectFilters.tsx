@@ -33,7 +33,7 @@ import { sortByModelTypes } from '~/utils/array-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
-const useStyles = createStyles((theme) => ({
+export const useFilterStyles = createStyles((theme) => ({
   label: {
     fontSize: 12,
     fontWeight: 600,
@@ -76,7 +76,7 @@ export function ResourceSelectFiltersDropdown({
   selectFilters: ResourceFilter;
   setSelectFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
 }) {
-  const { classes, theme, cx } = useStyles();
+  const { classes, theme, cx } = useFilterStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
 
@@ -109,7 +109,11 @@ export function ResourceSelectFiltersDropdown({
     (selectFilters.types.length > 0 ? 1 : 0) + (selectFilters.baseModels.length > 0 ? 1 : 0);
 
   const clearFilters = () => {
-    setSelectFilters({ types: [], baseModels: [] });
+    const reset: Required<ResourceFilter> = {
+      types: [],
+      baseModels: [],
+    };
+    setSelectFilters(reset);
   };
 
   const chipProps: Partial<ChipProps> = {
@@ -256,7 +260,7 @@ export function ResourceSelectFiltersDropdown({
   );
 }
 
-export function ResourceSelectSort({}: {}) {
+export function ResourceSelectSort() {
   const { canViewNsfw } = useFeatureFlags();
   const { currentRefinement, options, refine } = useSortBy({
     items: Object.entries(resourceSort)

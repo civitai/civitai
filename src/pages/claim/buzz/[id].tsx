@@ -88,7 +88,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
 
   return (
     <>
-      <Meta title={`Claim Buzz | Civitai`} />
+      <Meta title={`Claim Buzz | Civitai`} deIndex />
       <Container size="xs" mb="lg">
         <Stack spacing={0}>
           {claim.status !== 'unavailable' && (

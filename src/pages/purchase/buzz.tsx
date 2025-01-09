@@ -23,10 +23,19 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { env } from '~/env/client.mjs';
+import { getLoginLink } from '~/utils/login-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ features }) => {
+  resolver: async ({ features, session, ctx }) => {
+    if (!session)
+      return {
+        redirect: {
+          destination: getLoginLink({ returnUrl: ctx.resolvedUrl, reason: 'purchase-buzz' }),
+          permanent: false,
+        },
+      };
+
     if (!features?.canBuyBuzz)
       return {
         redirect: {

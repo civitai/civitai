@@ -188,6 +188,10 @@ function BountyDetailsPage({ id }: InferGetServerSidePropsType<typeof getServerS
             href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}/${slugit(bounty.name)}`,
             rel: 'canonical',
           },
+          {
+            href: `${env.NEXT_PUBLIC_BASE_URL}/bounties/${bounty.id}`,
+            rel: 'alternate',
+          },
         ]}
         deIndex={bounty?.availability === Availability.Unsearchable}
       />

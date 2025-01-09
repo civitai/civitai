@@ -1,4 +1,4 @@
-import { Container, Stack, Title, Text, Button, Group, Divider } from '@mantine/core';
+import { Container, Stack, Title, Text } from '@mantine/core';
 import { getProviders } from 'next-auth/react';
 import React from 'react';
 
@@ -15,14 +15,13 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ModerationCard } from '~/components/Account/ModerationCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { UserReferralCodesCard } from '~/components/Account/UserReferralCodesCard';
 import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
 
 export default function Account({ providers }: Props) {
-  const { apiKeys, buzz, canViewNsfw } = useFeatureFlags();
+  const { apiKeys, canViewNsfw } = useFeatureFlags();
   const currentUser = useCurrentUser();
 
   return (

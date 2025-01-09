@@ -179,7 +179,8 @@ export async function generateArticle({
     )} (23:59 UTC).
     2. All submitted images must be SFW (PG) and adhere to our **Terms of Service**.
     3. Participants can submit up to ${entryPrizeRequirement * 2} images.
-    4. Entries must use the provided model.
+    4. Low-effort entries are not allowed. Submitting entries with no relevance to the current contest, with the intention of farming Participation Reward Buzz, may result in a Contest Ban. Contest-banned users will be prohibited from participating in all future Civitai contests!
+    5. Entries must use the provided model.
   `);
   const content = await markdownToHtml(markdownContent);
 

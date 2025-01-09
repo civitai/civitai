@@ -7,7 +7,7 @@ import { NotificationsComposed } from '~/components/Notifications/NotificationsC
 export default function Notifications() {
   return (
     <>
-      <Meta title="Notifications | Civitai" />
+      <Meta title="Notifications | Civitai" deIndex />
       <Container size="sm">
         <NotificationsComposed />
       </Container>
