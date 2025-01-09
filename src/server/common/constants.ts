@@ -670,52 +670,6 @@ export const samplerOffsets = {
   undefined: 4,
 } as const;
 
-export const generation = {
-  formStoreKey: 'generation-form',
-  samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
-  lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
-  defaultValues: {
-    workflow: 'txt2img',
-    cfgScale: 7,
-    steps: 25,
-    sampler: 'DPM++ 2M Karras',
-    seed: undefined,
-    clipSkip: 2,
-    quantity: 4,
-    aspectRatio: '0',
-    prompt: '',
-    negativePrompt: '',
-    nsfw: false,
-    baseModel: 'SD1',
-    denoise: 0.4,
-    upscale: 1.5,
-    civitaiTip: 0,
-    creatorTip: 0.25,
-    fluxUltraAspectRatio: '4',
-    model: {
-      id: 128713,
-      name: '8',
-      modelId: 4384,
-      modelName: 'DreamShaper',
-      modelType: 'Checkpoint',
-      baseModel: 'SD 1.5',
-      strength: 1,
-      trainedWords: [],
-      minStrength: -1,
-      maxStrength: 2,
-      covered: true,
-      // image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
-      minor: false,
-      available: true,
-    } as GenerationResource,
-  },
-  maxValues: {
-    seed: 4294967295,
-    clipSkip: 3,
-  },
-} as const;
-export const maxRandomSeed = 2147483647;
-
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -890,6 +844,38 @@ export const generationConfig = {
     } as GenerationResource,
   },
 };
+
+export const generation = {
+  formStoreKey: 'generation-form',
+  samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
+  lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
+  defaultValues: {
+    workflow: 'txt2img',
+    cfgScale: 7,
+    steps: 25,
+    sampler: 'DPM++ 2M Karras',
+    seed: undefined,
+    clipSkip: 2,
+    quantity: 2,
+    aspectRatio: '0',
+    prompt: '',
+    negativePrompt: '',
+    nsfw: false,
+    baseModel: 'Flux1',
+    denoise: 0.4,
+    upscale: 1.5,
+    civitaiTip: 0,
+    creatorTip: 0.25,
+    fluxUltraAspectRatio: '4',
+    fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
+    model: generationConfig.Flux1.checkpoint,
+  },
+  maxValues: {
+    seed: 4294967295,
+    clipSkip: 3,
+  },
+} as const;
+export const maxRandomSeed = 2147483647;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
