@@ -29,6 +29,8 @@ export interface CustomRedisClient extends RedisClientType {
 declare global {
   // eslint-disable-next-line no-var, vars-on-top
   var globalRedis: CustomRedisClient | undefined;
+  // eslint-disable-next-line no-var, vars-on-top
+  var globalSysRedis: CustomRedisClient | undefined;
 }
 
 const log = createLogger('redis', 'green');
@@ -153,6 +155,14 @@ if (isProd) {
   redis = global.globalRedis;
 }
 
+export let sysRedis: CustomRedisClient;
+if (isProd) {
+  sysRedis = getCache();
+} else {
+  if (!global.globalSysRedis) global.globalSysRedis = getCache();
+  sysRedis = global.globalSysRedis;
+}
+
 export const REDIS_KEYS = {
   DOWNLOAD: {
     COUNT: 'download:count',
@@ -190,6 +200,7 @@ export const REDIS_KEYS = {
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
     DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
     BLOCKLIST: 'system:blocklist',
+    FEATURE_STATUS: 'system:feature-status',
   },
   CACHES: {
     FILES_FOR_MODEL_VERSION: 'packed:caches:files-for-model-version',
