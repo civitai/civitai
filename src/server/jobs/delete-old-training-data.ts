@@ -26,7 +26,7 @@ export const deleteOldTrainingData = createJob(
       WHERE mv."uploadType" = 'Trained'
         AND mv."trainingStatus" in ('InReview', 'Approved')
         AND (timezone('utc', current_timestamp) -
-             (mf.metadata -> 'trainingResults' ->> 'end_time')::timestamp) > '30 days'
+             (mf.metadata -> 'trainingResults' ->> 'completedAt')::timestamp) > '30 days'
         AND mf."dataPurged" is not true
         AND mf.visibility != 'Public'
     `;
