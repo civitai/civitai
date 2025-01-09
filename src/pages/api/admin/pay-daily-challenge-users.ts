@@ -19,6 +19,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   if (!result.success) return res.status(400).json(result.error);
 
   const challenge = await getChallengeDetails(result.data.challengeId);
+  if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
 
   const earnedPrizes = await dbWrite.$queryRaw<{ userId: number; count: number }[]>`
     SELECT

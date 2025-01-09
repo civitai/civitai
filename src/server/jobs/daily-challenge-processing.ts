@@ -269,6 +269,7 @@ export async function createUpcomingChallenge() {
   `);
 
   const challenge = await getChallengeDetails(article.id);
+  if (!challenge) throw new Error('Failed to create challenge');
   return challenge;
 }
 
