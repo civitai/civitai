@@ -234,10 +234,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                               </Code>
                             </Box>
                           )}
-                        </CopyButton>
-                        <Text size="xs" color="dimmed">
-                          {`Be sure to save this, you won't be able to see it again.`}
-                        </Text>
+                        </CopyButton> 
                       </Stack>
                     )}
 
