@@ -212,7 +212,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       rel: 'nofollow',
       icon: IconBrush,
       color: theme.colors.blue[theme.fn.primaryShade()],
-      label: 'Generate Images',
+      label: 'Generate',
     },
     {
       href: '/posts/create',

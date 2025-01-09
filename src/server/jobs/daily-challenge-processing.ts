@@ -520,10 +520,11 @@ async function reviewEntries() {
       log('Prizes sent');
 
       // Notify them
+      const notifyDate = dayjs(currentChallenge.date).format('HH-mm');
       await createNotification({
         type: 'challenge-participation',
         category: NotificationCategory.System,
-        key: `challenge-participation:${currentChallenge.articleId}`,
+        key: `challenge-participation:${currentChallenge.articleId}:${notifyDate}`,
         userIds: earnedPrizes.map((entry) => entry.userId),
         details: {
           articleId: currentChallenge.articleId,

@@ -26,7 +26,7 @@ export const loginRedirectReasons = {
   'create-bounty': 'You need to be logged in to create a new bounty',
   'perform-action': 'You need to be logged in to perform this action',
   'purchase-buzz': 'You need to be logged in to purchase Buzz',
-  'image-gen': 'You need to be logged in to generate images',
+  'image-gen': 'You need to be logged in to generate',
   'blur-toggle': 'Displaying NSFW content requires you to be logged in',
   'create-club': 'You need to be logged in to create a club',
   'join-club': 'You need to be logged in to join a club',

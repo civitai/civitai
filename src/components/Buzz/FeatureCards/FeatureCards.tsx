@@ -147,7 +147,7 @@ const getSpendings = ({ userId }: { userId?: number }): (FeatureCardProps & { ke
   {
     key: 'generate',
     icon: <IconBrush size={32} />,
-    title: 'Generate Images',
+    title: 'Generate',
     description: 'Create using thousands of community resources.',
     btnProps: {
       component: 'button',
