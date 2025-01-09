@@ -131,6 +131,8 @@ export const collectionMetadataSchema = z
     rulesUrl: z.string().optional(),
     hideAds: z.boolean().optional(),
     includeContestCallouts: z.boolean().optional(),
+    // Invite URL will make it so that users with the URL can join the collection as managers / admins.
+    inviteUrlEnabled: z.boolean().optional(),
   })
   .refine(
     ({ submissionStartDate, submissionEndDate }) => {

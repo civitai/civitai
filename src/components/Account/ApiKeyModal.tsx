@@ -1,20 +1,20 @@
 import {
+  ActionIcon,
+  Box,
   Button,
-  Text,
+  Code,
+  CopyButton,
   Group,
   Modal,
   ModalProps,
   Stack,
-  Code,
-  Box,
-  CopyButton,
-  ActionIcon,
+  Text,
 } from '@mantine/core';
-import { KeyScope } from '~/shared/utils/prisma/enums';
 import { IconClipboard } from '@tabler/icons-react';
 import { TypeOf } from 'zod';
 import { Form, InputText, useForm } from '~/libs/form';
 import { addApiKeyInputSchema } from '~/server/schema/api-key.schema';
+import { KeyScope } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

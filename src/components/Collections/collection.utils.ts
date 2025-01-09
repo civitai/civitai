@@ -1,5 +1,4 @@
 import { Icon, IconEyeOff, IconLock, IconWorld } from '@tabler/icons-react';
-import produce from 'immer';
 import { useRouter } from 'next/router';
 import { useMemo } from 'react';
 import { z } from 'zod';
@@ -24,10 +23,8 @@ import {
 import { CollectionByIdModel } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { MutateOptions } from '@tanstack/react-query';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
-import { GetByIdInput } from '~/server/schema/base.schema';
 
 const collectionQueryParamSchema = z
   .object({
@@ -342,6 +339,8 @@ export const useMutateCollection = () => {
       },
     });
 
+  const joinCollectionAsManagerMutation = trpc.collection.joinCollectionAsManager.useMutation();
+
   const getYoutubeAuthUrlMutation = trpc.collection.getYoutubeAuthUrl.useMutation();
   const enableYoutubeSupportMutation = trpc.collection.enableYoutubeSupport.useMutation();
 
@@ -362,6 +361,9 @@ export const useMutateCollection = () => {
   const enableYoutubeSupportHandler = async (data: EnableCollectionYoutubeSupportInput) => {
     return enableYoutubeSupportMutation.mutateAsync(data);
   };
+  const joinCollectionAsManagerHandler = async (data: { id: number }) => {
+    return joinCollectionAsManagerMutation.mutateAsync(data);
+  };
 
   return {
     removeCollectionItem: removeCollectionItemHandler,
@@ -373,6 +375,8 @@ export const useMutateCollection = () => {
     getYoutubeAuthUrlLoading: getYoutubeAuthUrlMutation.isLoading,
     enableYoutubeSupport: enableYoutubeSupportHandler,
     enableYoutubeSupportLoading: enableYoutubeSupportMutation.isLoading,
+    joinCollectionAsManager: joinCollectionAsManagerHandler,
+    joinCollectionAsManagerLoading: joinCollectionAsManagerMutation.isLoading,
   };
 };
 
