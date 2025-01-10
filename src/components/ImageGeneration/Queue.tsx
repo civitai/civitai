@@ -71,7 +71,7 @@ export function Queue() {
     <div className="flex flex-col gap-2 px-3">
       <Text size="xs" color="dimmed" mt="xs">
         <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
-        Images are kept in the generator for 30 days.
+        Creations are kept in the Generator for 30 days. Download or Post them to your Profile to save them!
       </Text>
       <div className="flex flex-col gap-2">
         {data.map((request) =>
