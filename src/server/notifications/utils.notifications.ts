@@ -2,6 +2,7 @@ import { articleNotifications } from '~/server/notifications/article.notificatio
 import { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
+import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 import { clubNotifications } from '~/server/notifications/club.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
@@ -39,6 +40,7 @@ export const notificationProcessors = {
   ...creatorsProgramNotifications,
   ...followNotifications,
   ...cosmeticShopNotifications,
+  ...challengeNotifications,
 };
 
 // Sort notifications by priority and group them by priority

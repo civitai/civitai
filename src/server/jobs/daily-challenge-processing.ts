@@ -71,8 +71,8 @@ export async function createUpcomingChallenge() {
   const config = await getChallengeConfig();
   const challengeTypeConfig = await getChallengeTypeConfig(config.challengeType);
 
-  // Get date of the challenge (should be the next day if it's past 11pm UTC)
-  const addDays = dayjs().utc().hour() >= 23 ? 1 : 0;
+  // Get date of the challenge (should be the next day if it's past 1pm UTC)
+  const addDays = dayjs().utc().hour() >= 13 ? 1 : 0;
   const challengeDate = dayjs().utc().add(addDays, 'day').startOf('day').toDate();
 
   // Pick Resource
@@ -269,12 +269,14 @@ export async function createUpcomingChallenge() {
   `);
 
   const challenge = await getChallengeDetails(article.id);
+  if (!challenge) throw new Error('Failed to create challenge');
   return challenge;
 }
 
 async function reviewEntries() {
   // Get current challenge
   const currentChallenge = await getCurrentChallenge();
+  console.log('currentChallenge', currentChallenge);
   if (!currentChallenge) return;
   log('Processing entries for challenge:', currentChallenge);
   const config = await getChallengeConfig();
@@ -520,10 +522,11 @@ async function reviewEntries() {
       log('Prizes sent');
 
       // Notify them
+      const notifyDate = dayjs(currentChallenge.date).format('HH-mm');
       await createNotification({
         type: 'challenge-participation',
         category: NotificationCategory.System,
-        key: `challenge-participation:${currentChallenge.articleId}`,
+        key: `challenge-participation:${currentChallenge.articleId}:${notifyDate}`,
         userIds: earnedPrizes.map((entry) => entry.userId),
         details: {
           articleId: currentChallenge.articleId,

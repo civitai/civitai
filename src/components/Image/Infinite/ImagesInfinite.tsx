@@ -128,7 +128,7 @@ export function ImagesInfiniteContent({
                 </Button>
               </Link>
               <Link href="/generate">
-                <Button radius="xl">Generate Images</Button>
+                <Button radius="xl">Generate</Button>
               </Link>
             </Group>
           )}

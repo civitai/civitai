@@ -10,6 +10,7 @@ import {
   getCollectionByIdHandler,
   getPermissionDetailsHandler,
   getUserCollectionItemsByItemHandler,
+  joinCollectionAsManagerHandler,
   removeCollectionItemHandler,
   saveItemHandler,
   setCollectionItemNsfwLevelHandler,
@@ -165,4 +166,7 @@ export const collectionRouter = router({
     .query(({ input, ctx }: { input: GetByIdInput; ctx: { user: { id: number } } }) => {
       return getCollectionEntryCount({ collectionId: input.id, userId: ctx.user.id });
     }),
+  joinCollectionAsManager: protectedProcedure
+    .input(getByIdSchema)
+    .mutation(joinCollectionAsManagerHandler),
 });

@@ -60,7 +60,12 @@ import {
 } from '~/server/utils/errorHandling';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
-import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/utils/prisma/enums';
+import {
+  CollectionContributorPermission,
+  CollectionItemStatus,
+  CollectionMode,
+  CollectionReadConfiguration,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 
@@ -682,4 +687,44 @@ export const enableCollectionYoutubeSupportHandler = async ({
   } catch (error) {
     throw throwDbError(error);
   }
+};
+
+export const joinCollectionAsManagerHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  const collection = await getCollectionById({ input });
+  if (!collection) {
+    throw throwNotFoundError('Collection not found');
+  }
+
+  if (ctx.user.id === collection.userId) {
+    return true;
+  }
+
+  if (!collection.metadata.inviteUrlEnabled) {
+    throw throwAuthorizationError('You cannot join this collection via URL');
+  }
+
+  if (collection.mode !== CollectionMode.Contest) {
+    throw throwAuthorizationError('This collection is not a contest');
+  }
+
+  await addContributorToCollection({
+    targetUserId: ctx.user.id,
+    // We'll do this as a system action on the meantime.
+    // In the future, invites might be a thing.
+    userId: collection.userId, // Collection owner
+    collectionId: collection.id,
+    permissions: [
+      CollectionContributorPermission.ADD,
+      CollectionContributorPermission.MANAGE,
+      CollectionContributorPermission.VIEW,
+    ],
+  });
+
+  return true;
 };

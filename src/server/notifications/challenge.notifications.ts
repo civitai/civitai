@@ -2,7 +2,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { asOrdinal, numberWithCommas } from '~/utils/number-helpers';
 
-export const systemNotifications = createNotificationProcessor({
+export const challengeNotifications = createNotificationProcessor({
   'challenge-winner': {
     displayName: 'Challenge Winner',
     category: NotificationCategory.System,

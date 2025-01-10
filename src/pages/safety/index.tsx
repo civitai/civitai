@@ -55,7 +55,7 @@ const headings = [
   },
   {
     id: 'generator',
-    title: 'Using Civitai to Generate Images',
+    title: 'Using Civitai to Generate',
     level: 1,
   },
   {
@@ -228,7 +228,7 @@ export default function Safety({ content }: InferGetServerSidePropsType<typeof g
                   </li>
                 </ul>
                 <Title order={2} id="generator">
-                  Using Civitai to Generate Images
+                  Using Civitai to Generate
                 </Title>
                 <p>
                   When using our onsite image generating services, all prompts and resulting images
@@ -241,7 +241,7 @@ export default function Safety({ content }: InferGetServerSidePropsType<typeof g
                 </p>
                 <Title order={3}>Prohibited Image Generation Attempts</Title>
                 <p>
-                  Attempts to generate images that violate our content policies are strictly
+                  Attempts to generate content that violate our content policies are strictly
                   prohibited.
                 </p>
                 <Title order={3}>Moderation and Enforcement</Title>

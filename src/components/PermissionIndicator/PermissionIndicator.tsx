@@ -35,7 +35,7 @@ export const PermissionIndicator = ({
   const explanation = {
     'Use the model without crediting the creator': allowNoCredit,
     'Sell images they generate': canSellImages,
-    'Run on services that generate images for money': canRent,
+    'Run on services that generate for money': canRent,
     'Run on Civitai': canRentCivit,
     'Share merges using this model': allowDerivatives,
     'Sell this model or merges using this model': canSell,
@@ -46,7 +46,7 @@ export const PermissionIndicator = ({
   const icons = [
     isModerator && minor && { label: 'No mature content', icon: <IconSpyOff {...iconProps} /> },
     !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
-    !canSellImages && { label: 'No selling images', icon: <IconPhotoOff {...iconProps} /> },
+    !canSellImages && { label: 'No selling generated content', icon: <IconPhotoOff {...iconProps} /> },
     !canRentCivit && { label: 'No Civitai generation', icon: <IconBrushOff {...iconProps} /> },
     !canRent && { label: 'No generation services', icon: <IconWorldOff {...iconProps} /> },
     !canSell && { label: 'No selling models', icon: <IconShoppingCartOff {...iconProps} /> },

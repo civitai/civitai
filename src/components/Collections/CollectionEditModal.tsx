@@ -1,7 +1,22 @@
-import { Button, Center, Divider, Group, Input, Loader, Modal, Stack, Text } from '@mantine/core';
+import {
+  ActionIcon,
+  Box,
+  Button,
+  Center,
+  Code,
+  CopyButton,
+  Divider,
+  Group,
+  Input,
+  Loader,
+  Modal,
+  Stack,
+  Text,
+} from '@mantine/core';
 
-import { IconCalendar } from '@tabler/icons-react';
+import { IconCalendar, IconClipboard } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { env } from 'process';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import {
@@ -121,6 +136,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const isCreate = !collectionId;
   const isImageCollection = collection?.type === CollectionType.Image;
   const isContestMode = collection?.mode === CollectionMode.Contest;
+  const joinUrl = `${env.NEXT_PUBLIC_BASE_URL}/collections/${collectionId}/join`;
 
   return (
     <Modal {...dialog} size="lg" title={isCreate ? 'Create collection' : 'Edit collection'}>
@@ -191,11 +207,43 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                 {isContestMode && (
                   <>
                     <Divider label="Contest Details" />
+                    <InputCheckbox
+                      name="metadata.inviteUrlEnabled"
+                      label="Enable users to manage this collection by invite link"
+                      description="Makes it so that you can add managers to the collection by sharing a link with them."
+                    />
+                    {metadata?.inviteUrlEnabled && (
+                      <Stack spacing={4}>
+                        <Text weight={500} size="sm">
+                          Here is your Invite Link:
+                        </Text>
+                        <CopyButton value={joinUrl}>
+                          {({ copied, copy }) => (
+                            <Box pos="relative" onClick={copy} sx={{ cursor: 'pointer' }}>
+                              <ActionIcon
+                                pos="absolute"
+                                top="50%"
+                                right={10}
+                                variant="transparent"
+                                sx={{ transform: 'translateY(-50%) !important' }}
+                              >
+                                <IconClipboard />
+                              </ActionIcon>
+                              <Code block color={copied ? 'green' : undefined}>
+                                {copied ? 'Copied' : joinUrl}
+                              </Code>
+                            </Box>
+                          )}
+                        </CopyButton> 
+                      </Stack>
+                    )}
+
                     <InputText
                       name="metadata.termsOfServicesUrl"
                       label="Terms of Service"
                       description="If added, an alert will be shown when creating an entry for this contest mentioning the user agrees to the terms of service."
                     />
+
                     <InputDatePicker
                       name="metadata.endsAt"
                       label="End Date"

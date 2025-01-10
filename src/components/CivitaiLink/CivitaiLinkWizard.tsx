@@ -123,12 +123,7 @@ const { openModal, Modal } = createContextModal({
                     content: <>Download resources from {vaultLink}</>,
                     icon: <IconCircleCheck size={18} />,
                     iconColor: 'green',
-                  },
-                  {
-                    content: 'Generate images (coming soon)',
-                    icon: <IconClock size={18} />,
-                    iconColor: 'yellow',
-                  },
+                  }
                 ]}
               />
               <Divider
