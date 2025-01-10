@@ -179,7 +179,13 @@ function EngineForm() {
 function KlingTextToVideoForm() {
   return (
     <FormWrapper engine="kling">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <InputAspectRatioColonDelimited
         name="aspectRatio"
@@ -307,7 +313,13 @@ function KlingImageToVideoForm() {
 function HaiperTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="haiper">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />
@@ -344,7 +356,13 @@ function HaiperImg2VidGenerationForm() {
 function MochiGenerationForm() {
   return (
     <FormWrapper engine="mochi">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <DescriptionTable
         items={[
@@ -361,7 +379,13 @@ function MochiGenerationForm() {
 function MinimaxTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="minimax">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
     </FormWrapper>
   );
