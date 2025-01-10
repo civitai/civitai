@@ -214,9 +214,9 @@ export default function UserMembership() {
               {isUpdate && (
                 <Alert>
                   Your membership has been successfully updated. It may take a few minutes for your
-                  update to take effect. Your membership bonus buzz may take up to 1 hour to be
-                  delivered. If you don&rsquo;t see the changes after refreshing the page in a few
-                  minutes, please contact support.
+                  update to take effect. If you don&rsquo;t see the changes after refreshing the
+                  page in a few minutes, please contact support. Please note: Your membership bonus
+                  buzz may take up to 1 hour to be delivered.
                 </Alert>
               )}
               {subscription?.isBadState && (
