@@ -31,6 +31,7 @@ export const contestCollectionVimeoUpload = createJob(
     }
 
     const [lastRun, setLastRun] = await getJobDate('collection-contest-vimeo-upload');
+    const start = new Date();
 
     const contestColletionsWithVimeo = await dbRead.collection.findMany({
       where: {
@@ -194,6 +195,6 @@ export const contestCollectionVimeoUpload = createJob(
       }
     }
 
-    await setLastRun();
+    await setLastRun(start);
   }
 );
