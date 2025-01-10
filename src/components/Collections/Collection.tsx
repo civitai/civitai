@@ -468,15 +468,15 @@ export function Collection({
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
   const router = useRouter();
 
+  const currentUser = useCurrentUser();
   const { collection, permissions, isLoading } = useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
-    enabled: collection?.mode === CollectionMode.Contest && !!collection?.metadata?.maxItemsPerUser,
+    enabled: !!currentUser?.id && collection?.mode === CollectionMode.Contest && !!collection?.metadata?.maxItemsPerUser,
   });
 
   const { classes } = useStyles({ bannerPosition: collection?.metadata?.bannerPosition });
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
-  const currentUser = useCurrentUser();
 
   if (!isLoading && (!collection || isBlocked)) {
     return (
