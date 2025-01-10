@@ -10,19 +10,13 @@ import {
   Grid,
   Group,
   Loader,
-  Menu,
   Paper,
   Stack,
   Text,
   Title,
   Tooltip,
 } from '@mantine/core';
-import {
-  IconDotsVertical,
-  IconInfoCircle,
-  IconInfoTriangleFilled,
-  IconRotateClockwise,
-} from '@tabler/icons-react';
+import { IconInfoCircle, IconInfoTriangleFilled, IconRotateClockwise } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
@@ -36,7 +30,6 @@ import {
   useSubscriptionManagementUrls,
 } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
@@ -221,8 +214,9 @@ export default function UserMembership() {
               {isUpdate && (
                 <Alert>
                   Your membership has been successfully updated. It may take a few minutes for your
-                  update to take effect. If you don&rsquo;t see the changes after refreshing the
-                  page in a few minutes, please contact support.
+                  update to take effect. Your membership bonus buzz may take up to 1 hour to be
+                  delivered. If you don&rsquo;t see the changes after refreshing the page in a few
+                  minutes, please contact support.
                 </Alert>
               )}
               {subscription?.isBadState && (

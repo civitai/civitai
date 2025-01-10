@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
@@ -123,6 +123,8 @@ export const usePaddleSubscriptionRefresh = () => {
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
   const { hasPaddleSubscription, isLoading: loadingPaddleSubscriptionStatus } =
     useHasPaddleSubscription();
+  // Avoids getting stuck in a loop
+  const [refreshed, setRefreshed] = useState(false);
 
   const { subscription, subscriptionLoading } = useActiveSubscription({
     checkWhenInBadState: true,
@@ -131,15 +133,20 @@ export const usePaddleSubscriptionRefresh = () => {
   const isLoading =
     refreshingSubscription || loadingPaddleSubscriptionStatus || subscriptionLoading;
 
+  const handleRefresh = async () => {
+    await refreshSubscription();
+    setRefreshed(true);
+  };
+
   useEffect(() => {
-    if (isLoading) {
+    if (isLoading || refreshed) {
       return;
     }
 
     if (!subscription && hasPaddleSubscription) {
-      refreshSubscription();
+      handleRefresh();
     }
-  }, [hasPaddleSubscription, subscription, refreshSubscription, isLoading]);
+  }, [hasPaddleSubscription, subscription, refreshSubscription, isLoading, refreshed]);
 
   return isLoading;
 };
