@@ -1,5 +1,6 @@
-import { Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
+import { Anchor, Center, Loader, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCloudOff } from '@tabler/icons-react';
+import Link from 'next/link';
 import { useRouter } from 'next/router';
 import React, { useMemo } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -81,8 +82,22 @@ function ProfileOverview() {
               <IconCloudOff size={80} />
             </ThemeIcon>
             <Text size="lg" maw={600} align="center">
-              Whoops! Looks like this user doesn&rsquo;t have any content yet or has chosen not to
-              display anything. Check back later!
+              {user.bannedAt ? (
+                <Text span>
+                  This user account has been banned due to a violation of Civitai&apos;s Terms of
+                  Service. For more details on our policies, please refer to the{' '}
+                  <Link href="/content/tos" legacyBehavior passHref>
+                    <Anchor>Terms of Service</Anchor>
+                  </Link>{' '}
+                  and{' '}
+                  <Link href="/safety" legacyBehavior passHref>
+                    <Anchor>Safety Center</Anchor>
+                  </Link>{' '}
+                  pages.
+                </Text>
+              ) : (
+                'Whoops! Looks like this user doesn&rsquo;t have any content yet or has chosen not to display anything. Check back later!'
+              )}
             </Text>
           </Stack>
         </Stack>

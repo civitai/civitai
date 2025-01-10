@@ -98,7 +98,7 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
     },
   } = useImageQueryParams();
 
-  const { data: user, isLoading: userLoading } = trpc.user.getCreator.useQuery(
+  const { data: user, isLoading: userLoading } = trpc.userProfile.get.useQuery(
     { username },
     { enabled: username !== constants.system.user.username }
   );
