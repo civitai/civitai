@@ -72,7 +72,8 @@ export const contestCollectionVimeoUpload = createJob(
           -- Removed as per Matty's request. We will now upload all videos regardless of approval
           -- AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
-            AND i."ingestion" = 'Scanned'
+          -- Removed as per Matty's request. We will now upload all videos regardless of ingestion status
+          -- AND i."ingestion" = 'Scanned'
             AND (i.metadata->'vimeoVideoId') IS NULL
             AND ci."updatedAt" > ${lastRun}
           -- Ensures that we try to upload smaller videos first as a safeguard.
