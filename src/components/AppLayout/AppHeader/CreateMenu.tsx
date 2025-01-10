@@ -27,7 +27,7 @@ export function CreateMenu() {
     >
       <Menu.Target>
         {features.imageGeneration ? (
-          <div className="flex items-center">
+          <div className="flex items-center" data-tour="1">
             <GenerateButton
               variant="light"
               py={8}
