@@ -7,7 +7,7 @@ import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 function VideosPage() {
   const { hidden, ...filters } = useImageFilters('videos');

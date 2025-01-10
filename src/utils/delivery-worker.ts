@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { parseKey } from './s3-utils';
 
 const deliveryWorkerEndpoint = `${env.DELIVERY_WORKER_ENDPOINT}?token=${env.DELIVERY_WORKER_TOKEN}`;

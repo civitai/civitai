@@ -6,7 +6,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 

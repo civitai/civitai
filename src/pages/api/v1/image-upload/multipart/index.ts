@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { getMimeTypeFromExt } from '~/server/common/mime-types';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getMultipartPutUrl, getS3Client } from '~/utils/s3-utils';
@@ -19,31 +19,31 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
       return;
     }
 
-  const imageKey = randomUUID();
+    const imageKey = randomUUID();
 
-  const imageMime: string | undefined = req.body.mimeType;
-  const fileExt: string | undefined = req.body.filename?.split('.').pop();
+    const imageMime: string | undefined = req.body.mimeType;
+    const fileExt: string | undefined = req.body.filename?.split('.').pop();
 
-  const mimeType = imageMime ?? (fileExt ? getMimeTypeFromExt(fileExt) : undefined);
+    const mimeType = imageMime ?? (fileExt ? getMimeTypeFromExt(fileExt) : undefined);
 
-  const s3 = getS3Client('image');
-  const result = await getMultipartPutUrl(
-    imageKey,
-    req.body.size,
-    s3,
-    env.S3_IMAGE_UPLOAD_BUCKET,
-    mimeType
-  );
+    const s3 = getS3Client('image');
+    const result = await getMultipartPutUrl(
+      imageKey,
+      req.body.size,
+      s3,
+      env.S3_IMAGE_UPLOAD_BUCKET,
+      mimeType
+    );
 
-  if (env.S3_IMAGE_UPLOAD_OVERRIDE) {
-    result.urls = result.urls.map((item) => ({
-      ...item,
-      url: item.url.replace(
-        `${env.S3_IMAGE_UPLOAD_BUCKET}.${s3Domain}`,
-        env.S3_IMAGE_UPLOAD_OVERRIDE as string
-      ),
-    }));
-  }
+    if (env.S3_IMAGE_UPLOAD_OVERRIDE) {
+      result.urls = result.urls.map((item) => ({
+        ...item,
+        url: item.url.replace(
+          `${env.S3_IMAGE_UPLOAD_BUCKET}.${s3Domain}`,
+          env.S3_IMAGE_UPLOAD_OVERRIDE as string
+        ),
+      }));
+    }
 
     res.status(200).json(result);
   } catch (error) {

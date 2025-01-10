@@ -1,5 +1,5 @@
 import { useCallback, useContext, useEffect, useState } from 'react';
-import { env } from '../../env/client.mjs';
+import { env } from '../../env/client';
 import { RecaptchaContext } from './RecaptchaWidget';
 import { RecaptchaAction } from '../../server/common/constants';
 import { useDebouncer } from '../../utils/debouncer';

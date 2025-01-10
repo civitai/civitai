@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { ModelStatus, VaultItemStatus } from '~/shared/utils/prisma/enums';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission, VaultSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -41,7 +41,7 @@ export const getVaultWithStorage = async ({ userId }: { userId: number }) => {
     FROM "Vault" v
     LEFT JOIN "VaultItem" vi ON v."userId" = vi."vaultId"
     WHERE v."userId" = ${userId}
-    GROUP BY 
+    GROUP BY
       v."userId",
       v."storageKb",
       v."meta",

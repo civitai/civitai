@@ -1,5 +1,5 @@
 import { PayPalScriptProvider } from '@paypal/react-paypal-js';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 const initialOptions = {
   clientId: env.NEXT_PUBLIC_PAYPAL_CLIENT_ID ?? '',

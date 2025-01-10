@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { decryptText } from '~/server/utils/key-generator';
 import { isNumber } from '~/utils/type-guards';
 

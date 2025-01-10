@@ -4,7 +4,7 @@ import { find as findLinks } from 'linkifyjs';
 import { unfurl } from 'unfurl.js';
 // I don't think the server should rely on FE code, but it's a bit too much to refactor right now.
 import { linkifyOptions } from '~/components/Chat/util';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';

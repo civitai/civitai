@@ -6,7 +6,7 @@ import { ArticleCategories } from '~/components/Article/Infinite/ArticleCategori
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 
 export const getServerSideProps = createServerSideProps({

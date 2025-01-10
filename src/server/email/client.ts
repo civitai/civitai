@@ -1,5 +1,5 @@
 import nodemailer from 'nodemailer';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { removeTags } from '~/utils/string-helpers';
 
 const shouldConnect =

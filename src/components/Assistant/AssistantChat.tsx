@@ -1,6 +1,6 @@
 import { CardProps, Card, Loader, Center, Text } from '@mantine/core';
 import { CSSProperties } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { trpc } from '~/utils/trpc';
 import { isProd } from '~/env/other';
 

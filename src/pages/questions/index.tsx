@@ -5,7 +5,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { Questions } from '~/components/Questions/Questions.Provider';
 import { openContextModal } from '@mantine/modals';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { NotFound } from '~/components/AppLayout/NotFound';
 
 // export const getServerSideProps = createServerSideProps({

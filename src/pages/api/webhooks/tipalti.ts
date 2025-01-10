@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { Readable } from 'node:stream';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import { dbRead } from '~/server/db/client';

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { VaultItemStatus } from '~/shared/utils/prisma/enums';
 import JSZip from 'jszip';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

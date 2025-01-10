@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { updateRecords } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { logToAxiom } from '~/server/logging/client';
 import { getWorkflowIdFromModelVersion } from '~/server/services/model-version.service';

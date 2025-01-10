@@ -13,7 +13,7 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { isDefined } from '~/utils/type-guards';
 import { fetchBlob } from '~/utils/file-utils';
 import { S3Client } from '@aws-sdk/client-s3';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import fsAsync from 'fs/promises';
 import fs from 'fs';
 import archiver from 'archiver';

@@ -1,4 +1,4 @@
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 export const useSecureCookies = env.NEXT_PUBLIC_BASE_URL?.startsWith('https://');
 const cookiePrefix = useSecureCookies ? '__Secure-' : '';

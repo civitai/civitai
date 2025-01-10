@@ -6,7 +6,7 @@ import {
   STRIPE_PROCESSING_AWAIT_TIME,
   STRIPE_PROCESSING_CHECK_INTERVAL,
 } from '~/server/common/constants';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 const MAX_RETRIES = Math.floor(STRIPE_PROCESSING_AWAIT_TIME / STRIPE_PROCESSING_CHECK_INTERVAL);
 const CHECK_INTERVAL = STRIPE_PROCESSING_CHECK_INTERVAL;

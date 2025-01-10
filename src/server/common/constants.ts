@@ -10,7 +10,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { BanReasonCode, ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import type { GenerationResource } from '~/shared/constants/generation.constants';

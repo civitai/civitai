@@ -40,7 +40,7 @@ import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { Meta } from '~/components/Meta/Meta';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { constants } from '~/server/common/constants';

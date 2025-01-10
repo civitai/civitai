@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';

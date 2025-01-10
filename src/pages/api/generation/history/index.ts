@@ -1,7 +1,7 @@
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import dayjs from 'dayjs';
 import fetch from 'node-fetch';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { CacheTTL, downloadGeneratedImagesByDate } from '~/server/common/constants';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { createLimiter } from '~/server/utils/rate-limiting';

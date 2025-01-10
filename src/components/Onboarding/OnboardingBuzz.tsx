@@ -37,7 +37,7 @@ import {
   TurnstileWidget,
 } from '~/components/TurnstileWidget/TurnstileWidget';
 import { showErrorNotification } from '~/utils/notifications';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 const referralSchema = z.object({
   code: z

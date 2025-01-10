@@ -1,6 +1,6 @@
 import { REST } from '@discordjs/rest';
 import { Routes } from 'discord-api-types/v10';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { createLogger } from '~/utils/logging';
 
