@@ -4,8 +4,8 @@
  * It has to be a `.mjs`-file to be imported there.
  */
 import * as dotenv from 'dotenv';
-import { env as clientEnv, formatErrors } from './client.mjs';
-import { serverSchema } from './schema.mjs';
+import { env as clientEnv, formatErrors } from './client';
+import { serverSchema } from './schema';
 
 if (process.env.NODE_ENV === 'development') {
   dotenv.config({

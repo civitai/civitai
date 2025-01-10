@@ -8,7 +8,7 @@ import {
   ResponseStatus,
   ActivitiesResponse,
 } from '~/components/CivitaiLink/shared-types';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { v4 as uuid } from 'uuid';
 import {
   CivitaiLinkInstance,

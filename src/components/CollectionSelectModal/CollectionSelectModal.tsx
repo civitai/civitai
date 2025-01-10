@@ -26,7 +26,7 @@ import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import { searchIndexMap } from '~/components/Search/search.types';
 import { SearchIndexDataMap, useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { ImageCover, ImageSrcCover } from '~/components/Cards/CollectionCard';

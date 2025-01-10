@@ -1,5 +1,5 @@
 import dayjs from 'dayjs';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants, maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { ModelFile } from '~/shared/utils/prisma/models';
 import { ModelHashType, ModelStatus, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { ScannerTasks } from '~/server/jobs/scan-files';

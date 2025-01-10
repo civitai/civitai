@@ -43,7 +43,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';

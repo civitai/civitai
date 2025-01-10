@@ -33,7 +33,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { trpc } from '~/utils/trpc';
 import { numericString, stringDate } from '~/utils/zod-helpers';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { removeEmpty } from '~/utils/object-helpers';
 import { constants } from '~/server/common/constants';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';

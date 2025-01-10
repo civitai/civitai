@@ -85,7 +85,7 @@ import { Collection } from '~/components/Collection/Collection';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';

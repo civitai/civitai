@@ -1,7 +1,7 @@
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { BlockedReason } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';

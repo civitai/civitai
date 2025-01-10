@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { Readable } from 'node:stream';
 import { getPaddle } from '~/server/paddle/client';
 import {

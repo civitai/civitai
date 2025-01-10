@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getCustomPutUrl, getS3Client } from '~/utils/s3-utils';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 
 const s3Domain = (env.S3_IMAGE_UPLOAD_ENDPOINT ?? env.S3_UPLOAD_ENDPOINT).replace(

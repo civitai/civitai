@@ -5,7 +5,7 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { addGenerationEngine } from '~/server/services/generation/engines';
 import { dbWrite } from '~/server/db/client';

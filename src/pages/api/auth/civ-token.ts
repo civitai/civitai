@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { EncryptedDataSchema } from '~/server/schema/civToken.schema';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 

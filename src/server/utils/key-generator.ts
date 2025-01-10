@@ -1,5 +1,5 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'crypto';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 /**
  * Generates a random public key. Can be send to user.

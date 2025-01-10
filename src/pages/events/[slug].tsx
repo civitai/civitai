@@ -52,7 +52,7 @@ import { HeroCard } from '~/components/HeroCard/HeroCard';
 import { Meta } from '~/components/Meta/Meta';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import { eventSchema } from '~/server/schema/event.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';

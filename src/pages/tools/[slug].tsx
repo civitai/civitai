@@ -14,7 +14,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { ToolBanner } from '~/components/Tool/ToolBanner';
 import { useQueryTools } from '~/components/Tool/tools.utils';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { ImageSort } from '~/server/common/enums';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';

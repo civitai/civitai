@@ -3,7 +3,7 @@ import { google, youtube_v3 } from 'googleapis';
 import { Readable } from 'node:stream';
 import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { fetchBlob } from '~/utils/file-utils';
 
 const OAuth2 = google.auth.OAuth2;

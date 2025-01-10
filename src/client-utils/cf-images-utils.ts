@@ -1,6 +1,6 @@
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 

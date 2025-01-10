@@ -36,7 +36,7 @@ import { PurchasableRewards } from '~/components/PurchasableRewards/PurchasableR
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { WatchAdButton } from '~/components/WatchAdButton/WatchAdButton';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';

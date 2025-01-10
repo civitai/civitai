@@ -16,7 +16,7 @@ import { useState } from 'react';
 import { isEmpty } from 'lodash-es';
 import { Meta } from '~/components/Meta/Meta';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import {
   useCosmeticShopQueryParams,

@@ -1,6 +1,6 @@
 import cloudflare from 'cloudflare';
 import { chunk } from 'lodash-es';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { limitConcurrency, sleep } from '~/server/utils/concurrency-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';

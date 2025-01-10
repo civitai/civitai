@@ -1,7 +1,7 @@
 import { Anchor, Text, TextProps } from '@mantine/core';
 import { Turnstile, TurnstileProps, TurnstileInstance } from '@marsidev/react-turnstile';
 import { useRef } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { showExpiredCaptchaTokenNotification } from '~/utils/notifications';
 
 export type CaptchaState = {

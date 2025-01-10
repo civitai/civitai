@@ -3,7 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { chunk } from 'lodash-es';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 

@@ -22,7 +22,7 @@ import React, { useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { getLoginLink } from '~/utils/login-helpers';
 
 export const getServerSideProps = createServerSideProps({

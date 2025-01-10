@@ -1,5 +1,5 @@
 import Stripe from 'stripe';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 let stripe: Stripe;
 export const getServerStripe = async () => {
