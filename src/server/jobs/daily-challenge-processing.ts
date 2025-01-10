@@ -34,6 +34,7 @@ import { asOrdinal, getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { createJob } from './job';
 import { eventEngine } from '~/server/events';
+import { randomizeCollectionItems } from '~/server/services/collection.service';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -346,6 +347,9 @@ async function reviewEntries() {
     WHERE "collectionId" = ${currentChallenge.collectionId}
     AND status = 'REJECTED';
   `;
+
+  // Randomize entries to get them visible
+  await randomizeCollectionItems(currentChallenge.collectionId);
 
   // TEMP: Remove judged tag from unjudged entries
   // Doing this because users can still manually add it

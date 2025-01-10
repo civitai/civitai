@@ -66,6 +66,7 @@ export const shouldDisplayUserNullState = ({
   overview?: Partial<UserOverview>;
   userWithProfile: UserWithProfile;
 }) => {
+  if (userWithProfile.bannedAt) return true;
   const userSections = (userWithProfile?.profile?.profileSectionsSettings ??
     []) as ProfileSectionSchema[];
 

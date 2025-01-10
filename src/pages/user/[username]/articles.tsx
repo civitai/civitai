@@ -1,7 +1,7 @@
-import { Box, Group, Stack, Tabs } from '@mantine/core';
+import { Box, Group, Stack } from '@mantine/core';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { useRouter } from 'next/router';
-import React, { useMemo, useState } from 'react';
+import React, { useState } from 'react';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ArticlesInfinite } from '~/components/Article/Infinite/ArticlesInfinite';
@@ -17,19 +17,25 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { Page } from '~/components/AppLayout/Page';
+import { dbRead } from '~/server/db/client';
 
 export const getServerSideProps = createServerSideProps({
-  useSession: true,
   resolver: async ({ ctx, features }) => {
+    const username = ctx.query.username as string;
     if (!features?.articles)
       return {
         redirect: {
-          destination: `/user/${ctx.query.username}`,
+          destination: `/user/${username}`,
           permanent: false,
         },
+      };
+
+    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    if (user?.bannedAt)
+      return {
+        redirect: { destination: `/user/${username}`, permanent: true },
       };
   },
 });

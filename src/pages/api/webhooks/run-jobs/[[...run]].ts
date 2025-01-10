@@ -62,6 +62,7 @@ import { booleanString } from '~/utils/zod-helpers';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
 import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
+import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -79,6 +80,7 @@ export const jobs: Job[] = [
   applyContestTags,
   ...applyDiscordRoles,
   applyNsfwBaseline,
+  userDeletedCleanup,
   ...leaderboardJobs,
   ingestImages,
   removeBlockedImages,

@@ -27,6 +27,8 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { Page } from '~/components/AppLayout/Page';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { dbRead } from '~/server/db/client';
 
 type SectionTypes = 'published' | 'draft' | 'training';
 
@@ -39,6 +41,18 @@ const useStyles = createStyles(() => ({
     },
   },
 }));
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ ctx }) => {
+    const username = ctx.query.username as string;
+    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+
+    if (user?.bannedAt)
+      return {
+        redirect: { destination: `/user/${username}`, permanent: true },
+      };
+  },
+});
 
 function UserModelsPage() {
   const currentUser = useCurrentUser();

@@ -17,6 +17,20 @@ import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentTog
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
 import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
 import { Page } from '~/components/AppLayout/Page';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { dbRead } from '~/server/db/client';
+
+export const getServerSideProps = createServerSideProps({
+  resolver: async ({ ctx }) => {
+    const username = ctx.query.username as string;
+    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+
+    if (user?.bannedAt)
+      return {
+        redirect: { destination: `/user/${username}`, permanent: true },
+      };
+  },
+});
 
 function UserPostsPage() {
   const currentUser = useCurrentUser();
