@@ -96,7 +96,7 @@ import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrackView } from '~/components/TrackView/TrackView';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';

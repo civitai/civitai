@@ -16,7 +16,7 @@ import React from 'react';
 import { QuestionDetails } from '~/components/Questions/QuestionDetails';
 import { truncate } from 'lodash-es';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 export const getServerSideProps = createServerSideProps<{
   id: number;

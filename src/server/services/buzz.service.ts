@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { v4 as uuid } from 'uuid';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';

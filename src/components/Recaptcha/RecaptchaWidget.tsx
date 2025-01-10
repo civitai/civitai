@@ -1,6 +1,6 @@
 import { createContext, useState, useEffect } from 'react';
 import Script from 'next/script';
-import { env } from '../../env/client.mjs';
+import { env } from '../../env/client';
 import { Anchor, Text, TextProps } from '@mantine/core';
 import { RecaptchaAction } from '../../server/common/constants';
 

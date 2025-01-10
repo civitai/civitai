@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { Tracker } from './clickhouse/client';
 import requestIp from 'request-ip';

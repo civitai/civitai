@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { QS } from '~/utils/qs';

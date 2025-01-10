@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import client from 'prom-client';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';

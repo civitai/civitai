@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { v4 as uuid } from 'uuid';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 export function createFeaturebaseToken(user: { username: string; email: string }) {
   if (!env.FEATUREBASE_JWT_SECRET) return;

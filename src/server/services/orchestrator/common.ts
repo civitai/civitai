@@ -38,7 +38,7 @@ import {
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
 import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { isDefined } from '~/utils/type-guards';
 import {
   generateImageSchema,

@@ -1,5 +1,5 @@
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { Context } from '~/server/createContext';
 import { GetPlansSchema } from '~/server/schema/subscriptions.schema';
 import { getPlans, getUserSubscription } from '~/server/services/subscriptions.service';

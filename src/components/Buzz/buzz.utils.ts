@@ -1,7 +1,7 @@
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CreateBuzzSessionInput } from '~/server/schema/stripe.schema';

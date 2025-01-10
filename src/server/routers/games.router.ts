@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { ComputeCost, GAME_TOKEN_LENGTH } from '~/components/Chopped/chopped.utils';
-import { env as clientEnv } from '~/env/client.mjs';
-import { env } from '~/env/server.mjs';
+import { env as clientEnv } from '~/env/client';
+import { env } from '~/env/server';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { protectedProcedure, router } from '~/server/trpc';
@@ -44,8 +44,9 @@ export const gamesRouter = router({
       toAccountId: 0,
       amount: cost,
       type: TransactionType.Purchase,
-      description: `Chopped game (${code}): ${input.themeIds.length} rounds + ${input.includeAudio ? 'audio' : 'no audio'
-        }`,
+      description: `Chopped game (${code}): ${input.themeIds.length} rounds + ${
+        input.includeAudio ? 'audio' : 'no audio'
+      }`,
       externalTransactionId: 'chopped-' + code,
     });
 

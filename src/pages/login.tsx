@@ -23,7 +23,7 @@ import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';

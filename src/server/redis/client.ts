@@ -2,7 +2,7 @@ import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
 import { commandOptions, createClient } from 'redis';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { slugit } from '~/utils/string-helpers';
 

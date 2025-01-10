@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { addOnDemandRunStrategiesJob } from '~/server/jobs/add-on-demand-run-strategies';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';

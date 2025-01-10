@@ -9,7 +9,7 @@ import {
   TransactionNotification,
 } from '@paddle/paddle-node-sdk';
 import dayjs from 'dayjs';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

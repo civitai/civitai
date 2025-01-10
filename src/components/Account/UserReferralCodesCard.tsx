@@ -18,7 +18,7 @@ import { showSuccessNotification } from '~/utils/notifications';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useClipboard } from '@mantine/hooks';
 import { IconClipboardCopy, IconTrash } from '@tabler/icons-react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyBadge } from '../Currency/CurrencyBadge';

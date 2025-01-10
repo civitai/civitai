@@ -4,7 +4,7 @@ import {
   ImageResourceTrainingStepTemplate,
   KohyaImageResourceTrainingInput,
 } from '@civitai/client';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import {

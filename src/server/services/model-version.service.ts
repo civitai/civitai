@@ -8,7 +8,7 @@ import {
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import {

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 class SignalClient {
   private _endpoint: string;

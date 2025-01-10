@@ -1,7 +1,7 @@
 import { CollectionMode, CollectionType } from '@prisma/client';
 import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
@@ -56,7 +56,7 @@ export const contestCollectionVimeoUpload = createJob(
             username: string;
           }[]
         >`
-          SELECT 
+          SELECT
             i.id as "imageId",
             i.url as "imageUrl",
             p.title,

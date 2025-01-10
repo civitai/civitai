@@ -74,7 +74,7 @@ import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';

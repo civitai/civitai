@@ -6,7 +6,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { PeriodMode } from '~/server/schema/base.schema';
 
 function ModelsPage() {
