@@ -458,9 +458,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-            reason: (output as HaiperVideoGenOutput).externalTOSViolation
-              ? `The content may violate our usage policy`
-              : undefined,
+            reason: (output as HaiperVideoGenOutput).message ?? undefined,
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
