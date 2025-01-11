@@ -239,8 +239,6 @@ const ImageCollection = ({
   return (
     <ImageContextMenuProvider
       additionalMenuItemsBefore={(image) => {
-        const isOwnerOrMod =
-          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
         const canUpdateCover = !permissions || !permissions.manage || !image.id;
 
         return (
@@ -276,6 +274,13 @@ const ImageCollection = ({
                 Use as cover image
               </Menu.Item>
             )}
+          </>
+        );
+      }}
+      additionalMenuItemsAfter={(image) => {
+        const isOwnerOrMod = permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
+        return (
+          <>
             {isOwnerOrMod && (
               <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={image.id} />
             )}
