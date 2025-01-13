@@ -1,6 +1,6 @@
 import { dbWrite } from '~/server/db/client';
 import chalk from 'chalk';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { isDev } from '~/env/other';
 
 export async function logToDb(event: string, details: object) {
@@ -39,7 +39,8 @@ export function createLogger(name: string, color: ChalkColor = 'green') {
   const shouldLog = env.LOGGING.includes(name);
   if (!shouldLog) return () => {}; //eslint-disable-line
 
-  return (...args: any[]) => { //eslint-disable-line
+  return (...args: any[]) => {
+    //eslint-disable-line
     console.log(chalk[color](name), ...args);
   };
 }

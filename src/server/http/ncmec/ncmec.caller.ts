@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { Ncmec } from '~/server/http/ncmec/ncmec.schema';
 import { parseStringPromise, Builder } from 'xml2js';

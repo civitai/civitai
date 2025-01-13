@@ -52,7 +52,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetaProps, imageMetaSchema } from '~/server/schema/image.schema';
 import {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -633,7 +633,10 @@ const ImageGridImage = ({
       </div>
       {type === 'generation' || !!img.meta ? (
         <div className="absolute bottom-2 right-2">
-          <ImageMetaPopover meta={type === 'generation' ? img.params : img.meta!} hideSoftware>
+          <ImageMetaPopover
+            meta={type === 'generation' ? imageMetaSchema.parse(img.params) : img.meta!}
+            hideSoftware
+          >
             <ActionIcon variant="transparent" size="md">
               <IconInfoCircle
                 color="white"

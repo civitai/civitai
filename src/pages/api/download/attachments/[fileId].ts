@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
 
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 import { getDownloadUrl } from '~/utils/delivery-worker';

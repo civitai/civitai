@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { Pool, QueryResult, QueryResultRow } from 'pg';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';

@@ -8,7 +8,7 @@ import {
   UpdateSubscriptionRequestBody,
 } from '@paddle/paddle-node-sdk';
 import { isDev } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
 

@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { firstDailyPostReward, imagePostedToModelReward } from '~/server/rewards';

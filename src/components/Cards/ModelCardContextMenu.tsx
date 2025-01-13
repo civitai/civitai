@@ -11,7 +11,7 @@ import { ToggleSearchableMenuItem } from '~/components/MenuItems/ToggleSearchabl
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { AddToShowcaseMenuItem } from '~/components/Profile/AddToShowcaseMenuItem';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';

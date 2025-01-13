@@ -9,7 +9,7 @@ import {
   Pagination,
   Table,
   Text,
-  Tooltip
+  Tooltip,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { IconPencil, IconTrash } from '@tabler/icons-react';
@@ -23,7 +23,7 @@ import { getDisplayName } from '../../../utils/string-helpers';
 // import { ClubAdminInviteUpsertModal } from '../ClubAdminInviteUpsertForm';
 import { openConfirmModal } from '@mantine/modals';
 import { IconCheck, IconClipboard } from '@tabler/icons-react';
-import { env } from '../../../env/client.mjs';
+import { env } from '../../../env/client';
 import { showSuccessNotification } from '../../../utils/notifications';
 
 export function ClubAdminInvitesPaged({ clubId }: Props) {

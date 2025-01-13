@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { constants } from '../common/constants';
 import { createBuzzTransaction } from './buzz.service';
 import { TransactionType } from '../schema/buzz.schema';

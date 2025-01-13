@@ -11,6 +11,7 @@ export function GenerateButton({
   children = 'Generate',
   error,
   onClick,
+  disabled,
   ...buttonProps
 }: { cost?: number; loading?: boolean; error?: string; onClick?: () => void } & ButtonProps) {
   const currentUser = useCurrentUser();
@@ -25,7 +26,7 @@ export function GenerateButton({
         {...buttonProps}
         size={size}
         loading={loading}
-        disabled={!canGenerate}
+        disabled={!canGenerate || disabled}
         onClick={onClick}
       >
         <Text ta="center">{children}</Text>
@@ -37,7 +38,7 @@ export function GenerateButton({
       size={size}
       label={children}
       loading={loading}
-      disabled={!canGenerate || !cost}
+      disabled={!canGenerate || !cost || disabled}
       buzzAmount={cost}
       onPerformTransaction={onClick}
       error={error}

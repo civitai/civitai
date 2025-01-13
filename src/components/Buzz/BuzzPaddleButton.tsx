@@ -1,7 +1,7 @@
 import { Box, useMantineTheme } from '@mantine/core';
 import { PayPalButtons, FUNDING } from '@paypal/react-paypal-js';
 import { useCallback, useRef } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 

@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { addCorsHeaders, TokenSecuredEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({

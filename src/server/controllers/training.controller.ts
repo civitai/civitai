@@ -1,6 +1,6 @@
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { CustomImageResourceTrainingStep } from '~/pages/api/webhooks/resource-training-v2/[modelVersionId]';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';

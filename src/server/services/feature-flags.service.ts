@@ -1,7 +1,7 @@
 import { IncomingHttpHeaders } from 'http';
 import { camelCase } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import { getDisplayName } from '~/utils/string-helpers';
 

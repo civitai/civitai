@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { createLogger } from '~/utils/logging';

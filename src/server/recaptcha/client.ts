@@ -1,5 +1,5 @@
 import { RecaptchaEnterpriseServiceClient, v1 } from '@google-cloud/recaptcha-enterprise';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { isDev } from '../../env/other';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';

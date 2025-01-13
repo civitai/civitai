@@ -355,7 +355,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: { 'x-flux': { default: 'cosine', disabled: true } },
     },
   },
-  // TODO add warmup if constant_with_warmup
   {
     // TODO [bw] actually conditional on lrScheduler, cosine_with_restarts/polynomial
     name: 'lrSchedulerNumCycles',

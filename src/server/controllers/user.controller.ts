@@ -1,7 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import { orderBy } from 'lodash-es';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import {

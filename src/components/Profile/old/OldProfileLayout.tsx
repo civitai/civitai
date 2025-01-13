@@ -26,7 +26,7 @@ import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 // import ProfileLayout from '~/components/Profile/ProfileLayout';
 import { ProfileLayout2 } from '~/components/Profile/ProfileLayout2';
 import UserBanModal from '~/components/Profile/UserBanModal';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';

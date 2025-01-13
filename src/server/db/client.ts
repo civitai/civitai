@@ -1,7 +1,7 @@
 // src/server/db/client.ts
 import { Prisma, PrismaClient } from '@prisma/client';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 
 declare global {

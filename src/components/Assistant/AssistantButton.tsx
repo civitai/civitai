@@ -1,7 +1,7 @@
 import { Button, ButtonProps } from '@mantine/core';
 import { IconMessageChatbot, IconX } from '@tabler/icons-react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { isProd } from '~/env/other';
 import { useState } from 'react';
 

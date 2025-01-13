@@ -1,7 +1,7 @@
 import { createJob } from './job';
 import { dbWrite } from '~/server/db/client';
 import { discord, DiscordRole } from '~/server/integrations/discord';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import dayjs from 'dayjs';
 
 const ENTHUSIAST_ROLE_CUTOFF = 7; // days

@@ -1,6 +1,6 @@
 import process from 'node:process';
 import format from 'pg-format';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { pgDbWrite } from '~/server/db/pgDb';
 
 export const checkLocalDb = () => {

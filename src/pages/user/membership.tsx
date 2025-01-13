@@ -10,19 +10,13 @@ import {
   Grid,
   Group,
   Loader,
-  Menu,
   Paper,
   Stack,
   Text,
   Title,
   Tooltip,
 } from '@mantine/core';
-import {
-  IconDotsVertical,
-  IconInfoCircle,
-  IconInfoTriangleFilled,
-  IconRotateClockwise,
-} from '@tabler/icons-react';
+import { IconInfoCircle, IconInfoTriangleFilled, IconRotateClockwise } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
@@ -36,14 +30,13 @@ import {
   useSubscriptionManagementUrls,
 } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import { StripeManageSubscriptionButton } from '~/components/Stripe/ManageSubscriptionButton';
 import { useActiveSubscription, useCanUpgrade } from '~/components/Stripe/memberships.util';
 import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { CancelMembershipAction } from '~/components/Subscriptions/CancelMembershipAction';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
@@ -222,7 +215,8 @@ export default function UserMembership() {
                 <Alert>
                   Your membership has been successfully updated. It may take a few minutes for your
                   update to take effect. If you don&rsquo;t see the changes after refreshing the
-                  page in a few minutes, please contact support.
+                  page in a few minutes, please contact support. Please note: Your membership bonus
+                  buzz may take up to 1 hour to be delivered.
                 </Alert>
               )}
               {subscription?.isBadState && (

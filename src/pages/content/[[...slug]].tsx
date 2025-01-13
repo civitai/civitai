@@ -13,7 +13,7 @@ import { getFilesWithExtension } from '~/utils/fs-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 

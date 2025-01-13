@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 import fetch from 'node-fetch';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';

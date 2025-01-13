@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import {
   BanReasonCode,

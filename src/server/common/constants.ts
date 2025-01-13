@@ -10,7 +10,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { BanReasonCode, ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import type { GenerationResource } from '~/shared/constants/generation.constants';
@@ -226,6 +226,7 @@ export const constants = {
   },
   maxTrainingRetries: 2,
   mediaUpload: {
+    maxOrchestratorImageFileSize: 60 * 1024 ** 2, // 16MB
     maxImageFileSize: 50 * 1024 ** 2, // 50MB
     maxVideoFileSize: 750 * 1024 ** 2, // 750MB
     maxVideoDimension: 3840,
@@ -403,6 +404,19 @@ export const constants = {
 export const activeBaseModels = constants.baseModels.filter(
   (model) => !constants.hiddenBaseModels.includes(model)
 );
+
+export const maxOrchestratorImageFileSize = 16 * 1024 ** 2; // 16MB
+export const maxImageFileSize = 50 * 1024 ** 2; // 50MB
+export const maxVideoFileSize = 750 * 1024 ** 2; // 750MB
+export const maxVideoDimension = 3840;
+export const maxVideoDurationSeconds = 245;
+export const orchestratorUrls = [
+  'https://orchestration.civitai.com',
+  'https://orchestration-dev.civitai.com',
+];
+export function isOrchestratorUrl(url: string) {
+  return orchestratorUrls.some((orchestratorUrl) => url.startsWith(orchestratorUrl));
+}
 
 export const zipModelFileTypes: ModelFileFormat[] = ['Core ML', 'Diffusers', 'ONNX'];
 export type ZipModelFileType = (typeof zipModelFileTypes)[number];
@@ -670,52 +684,6 @@ export const samplerOffsets = {
   undefined: 4,
 } as const;
 
-export const generation = {
-  formStoreKey: 'generation-form',
-  samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
-  lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
-  defaultValues: {
-    workflow: 'txt2img',
-    cfgScale: 7,
-    steps: 25,
-    sampler: 'DPM++ 2M Karras',
-    seed: undefined,
-    clipSkip: 2,
-    quantity: 4,
-    aspectRatio: '0',
-    prompt: '',
-    negativePrompt: '',
-    nsfw: false,
-    baseModel: 'SD1',
-    denoise: 0.4,
-    upscale: 1.5,
-    civitaiTip: 0,
-    creatorTip: 0.25,
-    fluxUltraAspectRatio: '4',
-    model: {
-      id: 128713,
-      name: '8',
-      modelId: 4384,
-      modelName: 'DreamShaper',
-      modelType: 'Checkpoint',
-      baseModel: 'SD 1.5',
-      strength: 1,
-      trainedWords: [],
-      minStrength: -1,
-      maxStrength: 2,
-      covered: true,
-      // image: { url: 'dd9b038c-bd15-43ab-86ab-66e145ad7ff2' },
-      minor: false,
-      available: true,
-    } as GenerationResource,
-  },
-  maxValues: {
-    seed: 4294967295,
-    clipSkip: 3,
-  },
-} as const;
-export const maxRandomSeed = 2147483647;
-
 export const generationConfig = {
   SD1: {
     aspectRatios: [
@@ -890,6 +858,38 @@ export const generationConfig = {
     } as GenerationResource,
   },
 };
+
+export const generation = {
+  formStoreKey: 'generation-form',
+  samplers: Object.keys(samplerOffsets) as (keyof typeof samplerOffsets)[],
+  lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
+  defaultValues: {
+    workflow: 'txt2img',
+    cfgScale: 7,
+    steps: 25,
+    sampler: 'DPM++ 2M Karras',
+    seed: undefined,
+    clipSkip: 2,
+    quantity: 2,
+    aspectRatio: '0',
+    prompt: '',
+    negativePrompt: '',
+    nsfw: false,
+    baseModel: 'Flux1',
+    denoise: 0.4,
+    upscale: 1.5,
+    civitaiTip: 0,
+    creatorTip: 0.25,
+    fluxUltraAspectRatio: '4',
+    fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
+    model: generationConfig.Flux1.checkpoint,
+  },
+  maxValues: {
+    seed: 4294967295,
+    clipSkip: 3,
+  },
+} as const;
+export const maxRandomSeed = 2147483647;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
