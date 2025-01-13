@@ -115,9 +115,11 @@ export async function parseGenerateImageInput({
   params: originalParams,
   resources: originalResources,
   workflowDefinition,
+  whatIf,
 }: z.infer<typeof generateImageSchema> & {
   user: SessionUser;
   workflowDefinition: WorkflowDefinition;
+  whatIf?: boolean;
 }) {
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
@@ -264,24 +266,26 @@ export async function parseGenerateImageInput({
   const positivePrompts = [params.prompt];
   const negativePrompts = [params.negativePrompt];
   const resourcesToInject: typeof resourceData.injectable = [];
-  for (const item of injectable) {
-    const resource = resourceData.injectable.find((x) => x.id === item.id);
-    if (!resource) continue;
-    resourcesToInject.push(resource);
+  if (!whatIf) {
+    for (const item of injectable) {
+      const resource = resourceData.injectable.find((x) => x.id === item.id);
+      if (!resource) continue;
+      resourcesToInject.push(resource);
 
-    const triggerWord = resource.trainedWords?.[0];
-    if (triggerWord) {
-      if (item.triggerType === 'negative') negativePrompts.unshift(triggerWord);
-      if (item.triggerType === 'positive') positivePrompts.unshift(triggerWord);
-    }
+      const triggerWord = resource.trainedWords?.[0];
+      if (triggerWord) {
+        if (item.triggerType === 'negative') negativePrompts.unshift(triggerWord);
+        if (item.triggerType === 'positive') positivePrompts.unshift(triggerWord);
+      }
 
-    if (item.sanitize) {
-      const sanitized = item.sanitize(params);
-      for (const key in sanitized) {
-        // only assign to step metadata if no value has already been assigned
-        Object.assign(params, {
-          [key as keyof TextToImageParams]: sanitized[key as keyof TextToImageParams],
-        });
+      if (item.sanitize) {
+        const sanitized = item.sanitize(params);
+        for (const key in sanitized) {
+          // only assign to step metadata if no value has already been assigned
+          Object.assign(params, {
+            [key as keyof TextToImageParams]: sanitized[key as keyof TextToImageParams],
+          });
+        }
       }
     }
   }

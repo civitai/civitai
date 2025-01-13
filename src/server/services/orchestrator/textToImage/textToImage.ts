@@ -23,6 +23,7 @@ import { getRandomInt } from '~/utils/number-helpers';
 export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
+    whatIf?: boolean;
   }
 ) {
   input.params.seed =

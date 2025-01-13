@@ -253,10 +253,10 @@ function BreakdownExplanation() {
         <span className="font-semibold">Sampler Multiplier:</span> Some samplers cause generation to
         take more time and because of that increase the total cost of generating.
       </li>
-      <li className="mb-2">
+      {/* <li className="mb-2">
         <span className="font-semibold">Workflow Cost:</span> Some workflows cost extra because they
         take extra time to run on our hardware.
-      </li>
+      </li> */}
       <li className="mb-2">
         <span className="font-semibold">Creator Tip:</span> Show appreciation to the creator of the
         resources that you&apos;re using by including a tip. All tips go directly to the creators of

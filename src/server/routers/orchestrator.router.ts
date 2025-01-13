@@ -189,8 +189,9 @@ export const orchestratorRouter = router({
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate;
-        if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
-        else step = await createComfyStep(args);
+        if (args.params.workflow === 'txt2img')
+          step = await createTextToImageStep({ ...args, whatIf: true });
+        else step = await createComfyStep({ ...args, whatIf: true });
 
         const workflow = await submitWorkflow({
           token: args.token,
