@@ -93,7 +93,7 @@ export function usePersistForm<
 
     const prompt = localStorage.getItem('generation:prompt') ?? '';
     const negativePrompt = localStorage.getItem('generation:negativePrompt') ?? '';
-    const sourceImageUrl = localStorage.getItem('generation:sourceImageUrl') ?? undefined;
+    const sourceImage = localStorage.getItem('generation:sourceImage') ?? undefined;
 
     const obj = JSON.parse(value);
     const result = _storageSchema.current.safeParse(obj);
@@ -103,7 +103,7 @@ export function usePersistForm<
       return defaults;
     }
     return {
-      state: { ...response.state, prompt, negativePrompt, sourceImageUrl } ?? {},
+      state: { ...response.state, prompt, negativePrompt, sourceImage } ?? {},
       version: response.version,
     };
   }
@@ -143,12 +143,12 @@ export function usePersistForm<
       if (name === 'prompt') localStorage.setItem('generation:prompt', watchedValues[name]);
       if (name === 'negativePrompt')
         localStorage.setItem('generation:negativePrompt', watchedValues[name]);
-      if (name === 'sourceImageUrl')
-        localStorage.setItem('generation:sourceImageUrl', watchedValues.sourceImageUrl);
+      if (name === 'sourceImage')
+        localStorage.setItem('generation:sourceImage', watchedValues.sourceImage);
       if (!name) {
         localStorage.setItem('generation:prompt', watchedValues.prompt);
         localStorage.setItem('generation:negativePrompt', watchedValues.negativePrompt);
-        localStorage.setItem('generation:sourceImageUrl', watchedValues.sourceImageUrl);
+        localStorage.setItem('generation:sourceImage', watchedValues.sourceImage);
       }
       updateStorage(watchedValues);
     });

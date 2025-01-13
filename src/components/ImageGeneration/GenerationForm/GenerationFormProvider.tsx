@@ -279,6 +279,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
+          // useGenerationFormStore.setState({ sourceImage: storeData.params.image });
           break;
         case 'remix':
         case 'run':
@@ -298,9 +299,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
           });
 
-          setValues(
-            runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources }
-          );
+          const values =
+            runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources };
+          // if (values.image) useGenerationFormStore.setState({ sourceImage: values.image });
+          setValues(values);
           break;
       }
 

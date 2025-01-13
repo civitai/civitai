@@ -27,6 +27,7 @@ export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
         onError={(e) => e.currentTarget.classList.add(styles.loadError)}
         src={url}
         style={{ maxWidth: options?.width ? options.width : undefined, ...style }}
+        onDragStart={(e) => e.dataTransfer.setData('text/uri-list', url)}
         {...props}
       />
     );

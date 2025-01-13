@@ -95,6 +95,8 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
+import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -199,6 +201,16 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
+    // const {
+    //   sourceImage,
+    //   width = params.width,
+    //   height = params.height,
+    // } = useGenerationFormStore.getState();
+
+    // const imageDetails = data.workflow.includes('img2img')
+    //   ? { image: sourceImage, width, height }
+    //   : { width, height };
+
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
       if (additionalResources.length === 0) creatorTip = 0;
@@ -232,6 +244,7 @@ export function GenerationFormContent() {
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+            // ...imageDetails,
           },
           tips: featureFlags.creatorComp
             ? { creators: creatorTip, civitai: civitaiTip }
@@ -285,6 +298,11 @@ export function GenerationFormContent() {
     };
   }, []);
 
+  const workflowOptions =
+    workflowDefinitions
+      ?.filter((x) => x.selectable !== false && x.key !== undefined)
+      .map(({ key, label }) => ({ label, value: key })) ?? [];
+
   return (
     <Form
       form={form}
@@ -326,61 +344,66 @@ export function GenerationFormContent() {
             <>
               <div className="flex flex-col gap-2 px-3">
                 {!isFlux && !isSD3 && (
-                  <div className="flex items-start justify-start gap-3">
-                    {features.image && image && (
-                      <div className="relative mt-3">
-                        {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img
-                          src={image}
-                          alt="image to refine"
-                          className="max-w-16 rounded-md shadow-sm shadow-black"
-                        />
-                        <ActionIcon
-                          variant="light"
-                          size="sm"
-                          color="red"
-                          radius="xl"
-                          className="absolute -right-2 -top-2"
-                          onClick={() => form.setValue('image', undefined)}
-                        >
-                          <IconX size={16} strokeWidth={2.5} />
-                        </ActionIcon>
-                      </div>
-                    )}
-                    <div className="flex-1">
-                      <InputSelect
-                        label={
-                          <div className="flex items-center gap-1">
-                            <Input.Label>Workflow</Input.Label>
-                            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
-                              Go beyond text-to-image with different workflows. Currently we have
-                              limited workflows that cover some of the most important use cases.
-                              Community workflows coming soon.
-                            </InfoPopover>
-                            <Badge color="yellow" size="xs">
-                              New
-                            </Badge>
-                          </div>
-                        }
-                        // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
-                        className="flex-1"
-                        name="workflow"
-                        data={
-                          workflowDefinitions
-                            ?.filter(
-                              (x) => x.type === workflowDefinition?.type && x.selectable !== false
-                            )
-                            .map(({ key, label }) => ({ label, value: key })) ?? []
-                        }
-                        loading={loadingWorkflows}
-                      />
-                      {workflowDefinition?.description && (
-                        <Text size="xs" lh={1.2} color="dimmed" className="my-2">
-                          {workflowDefinition.description}
-                        </Text>
+                  <>
+                    <div className="flex items-start justify-start gap-3">
+                      {features.image && image && (
+                        <div className="relative mt-3">
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img
+                            src={image}
+                            alt="image to refine"
+                            className="max-w-16 rounded-md shadow-sm shadow-black"
+                          />
+                          <ActionIcon
+                            variant="light"
+                            size="sm"
+                            color="red"
+                            radius="xl"
+                            className="absolute -right-2 -top-2"
+                            onClick={() => form.setValue('image', undefined)}
+                          >
+                            <IconX size={16} strokeWidth={2.5} />
+                          </ActionIcon>
+                        </div>
                       )}
+                      <div className="flex-1">
+                        <InputSelect
+                          label={
+                            <div className="flex items-center gap-1">
+                              <Input.Label>Workflow</Input.Label>
+                              <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+                                Go beyond text-to-image with different workflows. Currently we have
+                                limited workflows that cover some of the most important use cases.
+                                Community workflows coming soon.
+                              </InfoPopover>
+                              <Badge color="yellow" size="xs">
+                                New
+                              </Badge>
+                            </div>
+                          }
+                          // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
+                          className="flex-1"
+                          name="workflow"
+                          data={[
+                            // ...workflowOptions.filter((x) => x.value.startsWith('txt')),
+                            // ...workflowOptions.filter((x) => x.value.startsWith('img')),
+                            ...(workflowDefinitions
+                              ?.filter(
+                                (x) => x.type === workflowDefinition?.type && x.selectable !== false
+                              )
+                              .map(({ key, label }) => ({ label, value: key })) ?? []),
+                          ]}
+                          loading={loadingWorkflows}
+                        />
+                        {workflowDefinition?.description && (
+                          <Text size="xs" lh={1.2} color="dimmed" className="my-2">
+                            {workflowDefinition.description}
+                          </Text>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                    {/* {features.image && <GenerationImage />} */}
+                  </>
                 )}
 
                 <div className="-mb-1 flex items-center gap-1">
@@ -1323,3 +1346,8 @@ const clipSkipMarks = Array(10)
   .fill(0)
   .map((_, index) => ({ value: index + 1 }));
 // #endregion
+
+function GenerationImage() {
+  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
+  return <GeneratorImageInput value={sourceImage} onChange={generationFormStore.setsourceImage} />;
+}
