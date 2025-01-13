@@ -30,6 +30,11 @@ declare global {
     [K in keyof T]: T[K];
   } & NonNullable<unknown>;
 
+  // Utility type to extract string values recursively
+  type Values<T> = T extends object
+    ? Values<T[keyof T]> // Recurse into nested objects
+    : T;
+
   type MixedObject = Record<string, any>;
   type BaseEntity = { id: number | string } & MixedObject;
 

@@ -8,7 +8,7 @@ import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { registerCounter } from '~/server/prom/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 
@@ -60,12 +60,22 @@ const checkFns = {
       return false;
     });
   },
-  async redis() {
-    return await redis
+  // TODO do we want to negatively return if cache redis is down?
+  // async redis() {
+  //   return await redis
+  //     .ping()
+  //     .then((res) => res === 'PONG')
+  //     .catch((e) => {
+  //       logError({ error: e, name: 'redis', details: null });
+  //       return false;
+  //     });
+  // },
+  async sysRedis() {
+    return await sysRedis
       .ping()
       .then((res) => res === 'PONG')
       .catch((e) => {
-        logError({ error: e, name: 'redis', details: null });
+        logError({ error: e, name: 'sysRedis', details: null });
         return false;
       });
   },
@@ -101,7 +111,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   const podname = process.env.PODNAME ?? getRandomInt(100, 999);
 
   const disabledChecks = JSON.parse(
-    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS)) ?? '[]'
+    (await sysRedis.hGet(
+      REDIS_SYS_KEYS.SYSTEM.FEATURES,
+      REDIS_SYS_KEYS.SYSTEM.DISABLED_HEALTHCHECKS
+    )) ?? '[]'
   ) as CheckKey[];
   const resultsArray = await Promise.all(
     Object.entries(checkFns)
@@ -116,8 +129,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       )
   );
   const nonCriticalChecks = JSON.parse(
-    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS)) ??
-      '[]'
+    (await sysRedis.hGet(
+      REDIS_SYS_KEYS.SYSTEM.FEATURES,
+      REDIS_SYS_KEYS.SYSTEM.NON_CRITICAL_HEALTHCHECKS
+    )) ?? '[]'
   ) as CheckKey[];
 
   const healthy = resultsArray.every((result) => {

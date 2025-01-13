@@ -1,27 +1,42 @@
 import {
-  Blob,
   ComfyStep,
-  HaiperVideoGenInput,
+  createCivitaiClient,
   HaiperVideoGenOutput,
   ImageJobNetworkParams,
   Priority,
   TextToImageInput,
   TextToImageStep,
   VideoBlob,
-  VideoGenOutput,
   VideoGenStep,
   Workflow,
   WorkflowStatus,
   WorkflowStep,
-  WorkflowStepJob,
-  createCivitaiClient,
 } from '@civitai/client';
+import type { SessionUser } from 'next-auth';
+import { z } from 'zod';
+import { env } from '~/env/server.mjs';
+import { generation } from '~/server/common/constants';
+import { extModeration } from '~/server/integrations/moderation';
+import { logToAxiom } from '~/server/logging/client';
 import { resourceDataCache } from '~/server/redis/caches';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
+import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
 import {
-  InjectableResource,
-  WORKFLOW_TAGS,
+  GeneratedImageStepMetadata,
+  generateImageSchema,
+  TextToImageParams,
+} from '~/server/schema/orchestrator/textToImage.schema';
+import { UserTier } from '~/server/schema/user.schema';
+import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import {
+  GeneratedImageWorkflow,
+  GeneratedImageWorkflowStep,
+  WorkflowDefinition,
+} from '~/server/services/orchestrator/types';
+import { queryWorkflows } from '~/server/services/orchestrator/workflows';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import {
   allInjectableResourceIds,
   fluxModeOptions,
   fluxUltraAir,
@@ -33,36 +48,16 @@ import {
   getIsSD3,
   getRoundedUpscaleSize,
   getSizeFromAspectRatio,
+  InjectableResource,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
-import { env } from '~/env/server.mjs';
-import { isDefined } from '~/utils/type-guards';
-import {
-  generateImageSchema,
-  GeneratedImageStepMetadata,
-  TextToImageParams,
-} from '~/server/schema/orchestrator/textToImage.schema';
-import {
-  GeneratedImageWorkflow,
-  GeneratedImageWorkflowStep,
-  WorkflowDefinition,
-} from '~/server/services/orchestrator/types';
-import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
-import { generation } from '~/server/common/constants';
-import type { SessionUser } from 'next-auth';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { z } from 'zod';
-import { extModeration } from '~/server/integrations/moderation';
-import { logToAxiom } from '~/server/logging/client';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { queryWorkflows } from '~/server/services/orchestrator/workflows';
-import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
+import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { UserTier } from '~/server/schema/user.schema';
+import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -76,7 +71,10 @@ export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRA
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
-    JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
+    JSON.parse(
+      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
+        '{}'
+    )
   );
 
   return status as GenerationStatus;

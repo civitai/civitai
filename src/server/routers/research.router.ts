@@ -1,14 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { z } from 'zod';
 import { CacheTTL } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { cachedCounter } from '~/server/utils/cache-helpers';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { queueNewRaterLevelWebhook } from '~/server/webhooks/research.webhooks';
 import { getRandomInt } from '~/utils/number-helpers';
-import { NsfwLevel } from '~/server/common/enums';
 
 const raterGetImagesSchema = z.object({
   level: z.number().transform((val) => val & ~32), // Remove the "Blocked" bit (32)
@@ -44,7 +44,7 @@ async function getUserPosition(userId: number) {
     trackPosition: undefined as number | undefined,
   };
 
-  const userProgress = await redis.hGetAll(REDIS_KEYS.RESEARCH.RATINGS_PROGRESS + ':' + userId);
+  const userProgress = await redis.hGetAll(`${REDIS_KEYS.RESEARCH.RATINGS_PROGRESS}:${userId}`);
   if (userProgress) {
     position.trackId = userProgress.currentTrack;
     if (userProgress[`track:${position.trackId}`])
@@ -82,14 +82,14 @@ export const ratingsCounter = cachedCounter(
 );
 
 async function getSanityIds() {
-  const sanityIds = ((await redis.sMembers(REDIS_KEYS.RESEARCH.RATINGS_SANITY_IDS)) ?? []).map(
-    Number
-  );
+  const sanityIds = (
+    (await sysRedis.sMembers(REDIS_SYS_KEYS.RESEARCH.RATINGS_SANITY_IDS)) ?? []
+  ).map(Number);
   return sanityIds;
 }
 
 async function getUserSanity(userId: number, sanityIds?: number[], refresh = false) {
-  const cacheKey = REDIS_KEYS.RESEARCH.RATINGS_PROGRESS + ':' + userId;
+  const cacheKey = `${REDIS_KEYS.RESEARCH.RATINGS_PROGRESS}:${userId}` as const;
   if (!refresh) {
     const cachedStrikes = await redis.hGet(cacheKey, 'strikes');
     if (cachedStrikes)
@@ -141,7 +141,7 @@ export const researchRouter = router({
   raterGetImages: protectedProcedure.input(raterGetImagesSchema).query(async ({ ctx, input }) => {
     // Get the user's current position
     const userPosition = await getUserPosition(ctx.user.id);
-    const tracks = await redis.hGetAll(REDIS_KEYS.RESEARCH.RATINGS_TRACKS);
+    const tracks = await sysRedis.hGetAll(REDIS_SYS_KEYS.RESEARCH.RATINGS_TRACKS);
     const foundTrack = userPosition.trackId && tracks[userPosition.trackId];
     if (!foundTrack) {
       input.cursor = undefined; // Reset the cursor if we don't have a track
@@ -165,11 +165,12 @@ export const researchRouter = router({
 
     // Set the user's position if they don't have one
     if (!foundTrack) {
-      await redis.hSet(REDIS_KEYS.RESEARCH.RATINGS_PROGRESS + ':' + ctx.user.id, {
+      const redisKey = `${REDIS_KEYS.RESEARCH.RATINGS_PROGRESS}:${ctx.user.id}` as const;
+      await redis.hSet(redisKey, {
         currentTrack: userPosition.trackId!.toString(),
         [`track:${userPosition.trackId}`]: userPosition.trackPosition!.toString(),
       });
-      await redis.expire(REDIS_KEYS.RESEARCH.RATINGS_PROGRESS + ':' + ctx.user.id, CacheTTL.week);
+      await redis.expire(redisKey, CacheTTL.week);
     }
 
     // Get the images
@@ -246,7 +247,7 @@ export const researchRouter = router({
         if (newProgress.level > currentProgress.level) await queueNewRaterLevelWebhook(ctx.user.id);
 
         // Update the user's position
-        const progressKey = REDIS_KEYS.RESEARCH.RATINGS_PROGRESS + ':' + ctx.user.id;
+        const progressKey = `${REDIS_KEYS.RESEARCH.RATINGS_PROGRESS}:${ctx.user.id}` as const;
         const lastImageId = results[results.length - 1].imageId;
         await redis.hSet(progressKey, `track:${input.trackId}`, lastImageId.toString());
         await redis.expire(progressKey, CacheTTL.week);
@@ -257,7 +258,7 @@ export const researchRouter = router({
       INSERT INTO research_ratings_resets ("userId")
       VALUES (${ctx.user.id});
     `;
-    await redis.del(REDIS_KEYS.RESEARCH.RATINGS_PROGRESS + ':' + ctx.user.id);
+    await redis.del(`${REDIS_KEYS.RESEARCH.RATINGS_PROGRESS}:${ctx.user.id}`);
     ratingsCounter.clear(ctx.user.id);
   }),
   raterGetSanityImages: moderatorProcedure.query(async () => {
@@ -273,11 +274,11 @@ export const researchRouter = router({
     .input(raterUpdateSanityImagesSchema)
     .mutation(async ({ input }) => {
       if (input.add?.length) {
-        await redis.sAdd(REDIS_KEYS.RESEARCH.RATINGS_SANITY_IDS, input.add.map(String));
+        await sysRedis.sAdd(REDIS_SYS_KEYS.RESEARCH.RATINGS_SANITY_IDS, input.add.map(String));
       }
 
       if (input.remove?.length) {
-        await redis.sRem(REDIS_KEYS.RESEARCH.RATINGS_SANITY_IDS, input.remove.map(String));
+        await sysRedis.sRem(REDIS_SYS_KEYS.RESEARCH.RATINGS_SANITY_IDS, input.remove.map(String));
       }
     }),
 });

@@ -1,21 +1,20 @@
+import dayjs from 'dayjs';
+import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { DonationCosmeticData, EngagementEvent, TeamScore } from '~/server/events/base.event';
-import { holiday2023 } from '~/server/events/holiday2023.event';
-import { redis } from '~/server/redis/client';
+import { holiday2024 } from '~/server/events/holiday2024.event';
+import { discord } from '~/server/integrations/discord';
+import { logToAxiom } from '~/server/logging/client';
+import { redis, REDIS_KEYS, REDIS_SUB_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import {
   createBuzzTransaction,
   getAccountSummary,
   getTopContributors,
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
-import { TeamScoreHistoryInput } from '~/server/schema/event.schema';
-import dayjs from 'dayjs';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { discord } from '~/server/integrations/discord';
 import { updateLeaderboardRank } from '~/server/services/user.service';
-import { clickhouse } from '~/server/clickhouse/client';
-import { logToAxiom } from '~/server/logging/client';
-import { holiday2024 } from '~/server/events/holiday2024.event';
 
 // Only include events that aren't completed
 export const events = [holiday2024];
@@ -40,7 +39,9 @@ export const eventEngine = {
       // If the event is over, unequip the event cosmetics from all users
       if (eventDef.endDate < new Date()) {
         // Check to see if we've already cleaned up this event
-        const alreadyCleanedUp = await redis.get(`eventCleanup:${eventDef.name}`);
+        const alreadyCleanedUp = await redis.get(
+          `${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}`
+        );
         if (alreadyCleanedUp) continue;
 
         // Get 1st place team
@@ -74,7 +75,9 @@ export const eventEngine = {
 
         // Mark cleanup as complete
         // Only need 7 days, because next deploy should make this event be ignored
-        await redis.set(`eventCleanup:${eventDef.name}`, `true`, { EX: 60 * 60 * 24 * 7 });
+        await redis.set(`${REDIS_KEYS.EVENT.EVENT_CLEANUP}:${eventDef.name}`, `true`, {
+          EX: 60 * 60 * 24 * 7,
+        });
       } else {
         // If the event isn't over, run the daily reset
         if (eventDef.onDailyReset) {
@@ -202,7 +205,9 @@ export const eventEngine = {
       await updateLeaderboardRank({ leaderboardIds });
 
       // Purge cache
-      await redis.del(`event:${eventDef.name}:contributors`);
+      await redis.del(
+        `${REDIS_KEYS.EVENT.BASE}:${eventDef.name}:${REDIS_SUB_KEYS.EVENT.CONTRIBUTORS}`
+      );
       await redis.purgeTags(leaderboardIds.map((id) => `leaderboard-${eventDef.name}:${id}`));
       await redis.purgeTags([`event-donors-${eventDef.name}`]);
       updated = true;
@@ -425,7 +430,9 @@ export const eventEngine = {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
-    const cacheJson = await redis.get(`event:${eventDef.name}:contributors`);
+    const cacheJson = await redis.get(
+      `${REDIS_KEYS.EVENT.BASE}:${eventDef.name}:${REDIS_SUB_KEYS.EVENT.CONTRIBUTORS}`
+    );
     if (cacheJson) return JSON.parse(cacheJson) as TopContributors;
 
     const teamAccounts = this.getTeamAccounts(event);
@@ -466,9 +473,13 @@ export const eventEngine = {
       day: dayContributors,
       teams: allTimeContributorsByTeamName,
     } as TopContributors;
-    await redis.set(`event:${eventDef.name}:contributors`, JSON.stringify(result), {
-      EX: 60 * 60 * 24,
-    });
+    await redis.set(
+      `${REDIS_KEYS.EVENT.BASE}:${eventDef.name}:${REDIS_SUB_KEYS.EVENT.CONTRIBUTORS}`,
+      JSON.stringify(result),
+      {
+        EX: 60 * 60 * 24,
+      }
+    );
 
     return result;
   },
@@ -476,7 +487,11 @@ export const eventEngine = {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
-    const partnersCache = await redis.lRange(`event:${event}:partners`, 0, -1);
+    const partnersCache = await sysRedis.lRange(
+      `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.PARTNERS}`,
+      0,
+      -1
+    );
     const partners = partnersCache.map((x) => JSON.parse(x)) as EventPartner[];
 
     return partners.sort((a, b) => b.amount - a.amount);
@@ -485,7 +500,10 @@ export const eventEngine = {
     const eventDef = events.find((x) => x.name === event);
     if (!eventDef) throw new Error("That event doesn't exist");
 
-    await redis.lPush(`event:${event}:add-role`, JSON.stringify({ team, userId }));
+    await sysRedis.lPush(
+      `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.ADD_ROLE}`,
+      JSON.stringify({ team, userId })
+    );
   },
   async addRole({ event, team, userId }: { event: string; team: string; userId: number }) {
     const eventDef = events.find((x) => x.name === event);
@@ -506,9 +524,10 @@ export const eventEngine = {
   },
   async processAddRoleQueue() {
     for (const eventDef of activeEvents) {
-      const queueKey = `event:${eventDef.name}:add-role`;
-      const queueLength = await redis.lLen(queueKey);
-      const queueJson = await redis.lPopCount(queueKey, queueLength);
+      const queueKey =
+        `${REDIS_SYS_KEYS.EVENT}:${eventDef.name}:${REDIS_SUB_KEYS.EVENT.ADD_ROLE}` as const;
+      const queueLength = await sysRedis.lLen(queueKey);
+      const queueJson = await sysRedis.lPopCount(queueKey, queueLength);
       if (!queueJson) continue;
       const queue = queueJson.map((x) => JSON.parse(x)) as { team: string; userId: number }[];
 

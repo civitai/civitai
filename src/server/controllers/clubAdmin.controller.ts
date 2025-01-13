@@ -1,16 +1,6 @@
-import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import { Context } from '~/server/createContext';
-import { userContributingClubs } from '~/server/services/club.service';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import {
-  AcceptClubAdminInviteInput,
-  DeleteClubAdminInput,
-  DeleteClubAdminInviteInput,
-  GetPagedClubAdminInviteSchema,
-  GetPagedClubAdminSchema,
-  UpdateClubAdminInput,
-  UpsertClubAdminInviteInput,
-} from '../schema/clubAdmin.schema';
+import { userContributingClubs } from '~/server/services/club.service';
 import {
   acceptClubAdminInvite,
   deleteClubAdmin,
@@ -20,6 +10,16 @@ import {
   updateClubAdmin,
   upsertClubAdminInvite,
 } from '~/server/services/clubAdmin.service';
+import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  AcceptClubAdminInviteInput,
+  DeleteClubAdminInput,
+  DeleteClubAdminInviteInput,
+  GetPagedClubAdminInviteSchema,
+  GetPagedClubAdminSchema,
+  UpdateClubAdminInput,
+  UpsertClubAdminInviteInput,
+} from '../schema/clubAdmin.schema';
 
 export const getPagedClubAdminInvitesHandler = async ({
   input,
@@ -29,7 +29,7 @@ export const getPagedClubAdminInvitesHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   const { user } = ctx;
-  const limit = input.limit + 1 ?? 10;
+  const limit = (input.limit ?? 9) + 1;
   const clubId = input.clubId;
 
   const [userClub] = await userContributingClubs({ userId: user.id, clubIds: [clubId] });
@@ -63,7 +63,7 @@ export const getPagedClubAdminsHandler = async ({
   ctx: DeepNonNullable<Context>;
 }) => {
   const { user } = ctx;
-  const limit = input.limit + 1 ?? 10;
+  const limit = (input.limit ?? 9) + 1;
   const clubId = input.clubId;
 
   const [userClub] = await userContributingClubs({ userId: user.id, clubIds: [clubId] });

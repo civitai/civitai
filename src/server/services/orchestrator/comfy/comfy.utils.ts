@@ -1,13 +1,13 @@
-import { ComfyNode } from '~/shared/types/generation.types';
-import { parseAIR } from '~/utils/string-helpers';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WorkflowDefinition, workflowDefinitionLabel } from '~/server/services/orchestrator/types';
+import { ComfyNode } from '~/shared/types/generation.types';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 
 const replacementWorkflows: Record<string, string> = {};
 
 export async function getWorkflowDefinitions() {
-  const workflowsJsons = await redis.hGetAll(REDIS_KEYS.GENERATION.WORKFLOWS);
+  const workflowsJsons = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.WORKFLOWS);
   if (!workflowsJsons) throw new Error('No workflows found');
   const workflows = Object.values(workflowsJsons).map((json) => {
     const workflow = JSON.parse(json) as WorkflowDefinition;
@@ -25,12 +25,12 @@ export async function getWorkflowDefinitions() {
 export async function clearWorkflowDefinitions() {
   const workflows = await getWorkflowDefinitions();
   await Promise.all(
-    workflows.map((workflow) => redis.hDel(REDIS_KEYS.GENERATION.WORKFLOWS, workflow.key))
+    workflows.map((workflow) => sysRedis.hDel(REDIS_SYS_KEYS.GENERATION.WORKFLOWS, workflow.key))
   );
 }
 
 export async function getWorkflowDefinition(key: string) {
-  const workflowJson = await redis.hGet(REDIS_KEYS.GENERATION.WORKFLOWS, key);
+  const workflowJson = await sysRedis.hGet(REDIS_SYS_KEYS.GENERATION.WORKFLOWS, key);
   if (!workflowJson) throw new Error('Workflow not found');
   const workflow = JSON.parse(workflowJson) as WorkflowDefinition;
   if (workflow.key in replacementWorkflows) workflow.template = replacementWorkflows[workflow.key];
@@ -38,7 +38,7 @@ export async function getWorkflowDefinition(key: string) {
 }
 
 export async function setWorkflowDefinition(key: string, data: WorkflowDefinition) {
-  await redis.hSet(REDIS_KEYS.GENERATION.WORKFLOWS, key, JSON.stringify(data));
+  await sysRedis.hSet(REDIS_SYS_KEYS.GENERATION.WORKFLOWS, key, JSON.stringify(data));
 }
 
 export async function populateWorkflowDefinition(key: string, data: any) {

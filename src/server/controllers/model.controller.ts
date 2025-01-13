@@ -115,7 +115,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
-import { redis } from '../redis/client';
+import { redis, REDIS_KEYS } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { getUnavailableResources } from '../services/generation/generation.service';
 
@@ -1569,7 +1569,7 @@ export const updateGallerySettingsHandler = async ({
       data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
     });
     // Clear cache
-    await redis.del(`model:gallery-settings:${id}`);
+    await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {
