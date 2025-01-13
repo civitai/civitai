@@ -57,12 +57,12 @@ import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateUserScore } from '~/server/jobs/update-user-score';
+import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
-import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 
 export const jobs: Job[] = [
   scanFilesJob,
