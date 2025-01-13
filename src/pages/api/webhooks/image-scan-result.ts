@@ -1,6 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
+import { env } from '~/env/server';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
@@ -129,6 +130,8 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 // 11-20: The images are visually similar
 // 21-30: The images are visually somewhat similar
 async function isBlocked(hash: string) {
+  if (!env.BLOCKED_IMAGE_HASH_CHECK) return false;
+
   const matches = await dbRead.$queryRaw<{ hash: bigint }[]>`
     SELECT hash
     FROM "BlockedImage"

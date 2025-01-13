@@ -124,6 +124,7 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_TOKEN: z.string().optional(),
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
   EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
+  BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
 
   EXTERNAL_IMAGE_SCANNER: z.enum(['hive', 'rekognition']).optional().default('hive').catch('hive'),
   MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),
