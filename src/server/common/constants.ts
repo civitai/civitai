@@ -705,6 +705,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      additionalResourceCharge: false,
     } as GenerationResource,
   },
   SDXL: {
@@ -727,6 +728,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      additionalResourceCharge: false,
     } as GenerationResource,
   },
   Pony: {
@@ -749,6 +751,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      additionalResourceCharge: false,
     } as GenerationResource,
   },
   Illustrious: {
@@ -771,6 +774,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      additionalResourceCharge: false,
     } as GenerationResource,
   },
   Flux1: {
@@ -793,6 +797,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      additionalResourceCharge: false,
     } as GenerationResource,
   },
   SD3: {
@@ -815,6 +820,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      additionalResourceCharge: false,
     } as GenerationResource,
   },
   SD3_5M: {
@@ -837,6 +843,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      additionalResourceCharge: false,
     } as GenerationResource,
   },
   Other: {
@@ -855,6 +862,7 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       minor: false,
+      additionalResourceCharge: false,
     } as GenerationResource,
   },
 };

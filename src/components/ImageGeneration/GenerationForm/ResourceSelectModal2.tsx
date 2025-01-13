@@ -132,7 +132,7 @@ export default function ResourceSelectModal({
     data: featuredModels,
     isFetching: isLoadingFeatured,
     // isError: isErrorFeatured,
-  } = trpc.model.getFeaturedModels.useQuery({ take }, { enabled: selectedTab === 'featured' });
+  } = trpc.model.getFeaturedModels.useQuery();
 
   const {
     steps,
@@ -645,6 +645,8 @@ function ResourceSelectCard({
   const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
   const [flipped, setFlipped] = useState(false);
 
+  const { data: featuredModels } = trpc.model.getFeaturedModels.useQuery();
+
   const handleSelect = () => {
     const version = versions.find((x) => x.id === selected);
     if (!version) return;
@@ -666,6 +668,7 @@ function ResourceSelectCard({
       strength: settings?.strength ?? 1,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
+      additionalResourceCharge: !featuredModels?.includes(data.id),
     });
   };
 

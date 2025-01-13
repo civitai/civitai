@@ -57,6 +57,7 @@ const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
   image: imageSchema.pick({ url: true }).optional(),
   minor: z.boolean().default(false),
   available: z.boolean().default(true),
+  additionalResourceCharge: z.boolean().default(false),
 });
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
