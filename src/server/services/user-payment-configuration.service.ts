@@ -1,7 +1,7 @@
 import Stripe from 'stripe';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
-import { env } from '../../env/server.mjs';
+import { env } from '../../env/server';
 import { dbRead, dbWrite } from '../db/client';
 import { logToAxiom } from '../logging/client';
 import { throwBadRequestError } from '../utils/errorHandling';

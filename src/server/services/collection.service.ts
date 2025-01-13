@@ -2427,3 +2427,11 @@ export const enableCollectionYoutubeSupport = async ({
     throw throwBadRequestError('Failed to save youtube authentication code');
   }
 };
+
+export async function randomizeCollectionItems(collectionId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "CollectionItem" ci SET "randomId" = FLOOR(RANDOM() * 1000000000)
+    WHERE ci."collectionId" = ${collectionId}
+      AND ci."status" = 'ACCEPTED'
+  `;
+}

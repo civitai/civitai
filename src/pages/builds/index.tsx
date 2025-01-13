@@ -29,7 +29,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { BuildBudget, BuildFeatures } from '~/server/schema/build-guide.schema';
 import { trpc } from '~/utils/trpc';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import dayjs from 'dayjs';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 

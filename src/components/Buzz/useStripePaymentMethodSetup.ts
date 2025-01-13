@@ -1,6 +1,6 @@
 import { useElements, useStripe } from '@stripe/react-stripe-js';
 import { useState } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 export const useStripePaymentMethodSetup = ({ redirectUrl }: { redirectUrl?: string }) => {
   const [processingSetup, setProcessingSetup] = useState<boolean>(false);

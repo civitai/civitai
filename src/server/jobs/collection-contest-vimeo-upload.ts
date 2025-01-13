@@ -1,7 +1,7 @@
 import { CollectionMode, CollectionType } from '@prisma/client';
 import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
@@ -31,6 +31,7 @@ export const contestCollectionVimeoUpload = createJob(
     }
 
     const [lastRun, setLastRun] = await getJobDate('collection-contest-vimeo-upload');
+    const start = new Date();
 
     const contestColletionsWithVimeo = await dbRead.collection.findMany({
       where: {
@@ -56,7 +57,7 @@ export const contestCollectionVimeoUpload = createJob(
             username: string;
           }[]
         >`
-          SELECT 
+          SELECT
             i.id as "imageId",
             i.url as "imageUrl",
             p.title,
@@ -72,7 +73,8 @@ export const contestCollectionVimeoUpload = createJob(
           -- Removed as per Matty's request. We will now upload all videos regardless of approval
           -- AND ci."status" = 'ACCEPTED'
             AND i.type = 'video'
-            AND i."ingestion" = 'Scanned'
+          -- Removed as per Matty's request. We will now upload all videos regardless of ingestion status
+          -- AND i."ingestion" = 'Scanned'
             AND (i.metadata->'vimeoVideoId') IS NULL
             AND ci."updatedAt" > ${lastRun}
           -- Ensures that we try to upload smaller videos first as a safeguard.
@@ -193,6 +195,6 @@ export const contestCollectionVimeoUpload = createJob(
       }
     }
 
-    await setLastRun();
+    await setLastRun(start);
   }
 );

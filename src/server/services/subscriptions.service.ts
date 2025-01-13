@@ -1,6 +1,6 @@
 import { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import {
   GetUserSubscriptionInput,

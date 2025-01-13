@@ -1,6 +1,6 @@
 import { types } from 'pg';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { AugmentedPool, getClient } from '~/server/db/db-helpers';
 
 declare global {

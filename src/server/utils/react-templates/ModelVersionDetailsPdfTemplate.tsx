@@ -3,7 +3,7 @@ import { convert } from 'html-to-text';
 import { Document, Page, Text, View, StyleSheet, Font } from '@react-pdf/renderer';
 import { getDisplayName } from '~/utils/string-helpers';
 import { formatDate } from '~/utils/date-helpers';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 Font.register({
   family: 'Montserrat',

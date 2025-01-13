@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';

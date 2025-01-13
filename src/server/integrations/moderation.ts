@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 const falsePositiveTriggers = Object.entries({
   '\\d*girl': 'woman',

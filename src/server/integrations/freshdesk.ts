@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { toBase64 } from '~/utils/string-helpers';
 

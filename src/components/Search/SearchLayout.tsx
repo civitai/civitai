@@ -14,7 +14,7 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { SearchIndex } from '~/components/Search/parsers/base';
 import { Configure, InstantSearch, InstantSearchProps } from 'react-instantsearch';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';

@@ -1,7 +1,7 @@
 import { ComfyStepTemplate, TimeSpan } from '@civitai/client';
 import { SessionUser } from 'next-auth';
 import { z } from 'zod';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { generateImageSchema } from '~/server/schema/orchestrator/textToImage.schema';

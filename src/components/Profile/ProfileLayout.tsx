@@ -7,7 +7,7 @@ import React from 'react';
 
 import { Meta } from '~/components/Meta/Meta';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { PageLoader } from '~/components/PageLoader/PageLoader';

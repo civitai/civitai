@@ -172,6 +172,7 @@ export async function getChallengeDetails(articleId: number) {
   `;
 
   const result = rows[0];
+  if (!result) return null;
   if (!result.prizes) result.prizes = dailyChallengeConfig.prizes;
   if (!result.entryPrizeRequirement)
     result.entryPrizeRequirement = dailyChallengeConfig.entryPrizeRequirement;
@@ -220,7 +221,7 @@ export async function getUpcomingChallenge() {
   `;
   if (!results.length) return null;
 
-  return getChallengeDetails(results[0].articleId);
+  return await getChallengeDetails(results[0].articleId);
 }
 export async function endChallenge(challenge?: { collectionId: number } | null) {
   challenge ??= await getCurrentChallenge();

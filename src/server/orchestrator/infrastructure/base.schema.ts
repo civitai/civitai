@@ -20,7 +20,7 @@ export const textEnhancementSchema = z.object({
 
 export const imageEnhancementSchema = z.object({
   type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
-  sourceImageUrl: z.string(),
+  sourceImage: z.string(),
   height: z.number().optional(),
   width: z.number().optional(),
 });

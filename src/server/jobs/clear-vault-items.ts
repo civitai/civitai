@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { removeModelVersionsFromVault } from '~/server/services/vault.service';
 import { createJob } from './job';
@@ -21,13 +21,13 @@ export const clearVaultItems = createJob('clear-vault-items', '0 0 * * *', async
   const problemVaults = await dbWrite.$queryRaw<VaultWithUsedStorage[]>`
     SELECT
       v."userId",
-      v."storageKb",  
+      v."storageKb",
       v."updatedAt",
       COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) as "usedStorageKb"
     FROM "Vault" v
     LEFT JOIN "VaultItem" vi ON v."userId" = vi."vaultId"
     WHERE v."updatedAt" < NOW() - INTERVAL '1 month'
-    GROUP BY 
+    GROUP BY
       v."userId"
     HAVING COALESCE(SUM(vi."detailsSizeKb" + vi."imagesSizeKb" + vi."modelSizeKb")::int, 0) > v."storageKb"
   `;

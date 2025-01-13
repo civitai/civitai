@@ -103,6 +103,9 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
   if (!Array.isArray(rateLimits)) rateLimits = [rateLimits];
 
   return middleware(async ({ ctx, next, path }) => {
+    // Skip if user is a moderator
+    if (ctx.user?.isModerator) return await next();
+
     // Get valid limits
     let validLimits: RateLimit[] = [];
     for (const rateLimit of rateLimits) {

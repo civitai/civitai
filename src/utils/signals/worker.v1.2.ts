@@ -6,7 +6,7 @@ import {
   LogLevel,
   // HubConnectionState,
 } from '@microsoft/signalr';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import type { WorkerIncomingMessage, WorkerOutgoingMessage } from './types';
 import { EventEmitter } from './utils';
 

@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import {
   BaseModel,
   BaseModelType,

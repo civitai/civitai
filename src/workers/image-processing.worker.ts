@@ -2,7 +2,7 @@ import { ImageAnalysisInput } from '../server/schema/image.schema';
 import * as tf from '@tensorflow/tfjs';
 import { setWasmPaths } from '@tensorflow/tfjs-backend-wasm';
 import QueueOld from '~/utils/queue';
-import { env as clientEnv } from '~/env/client.mjs';
+import { env as clientEnv } from '~/env/client';
 import {
   WorkerIncomingMessage,
   WorkerOutgoingMessage,

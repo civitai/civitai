@@ -21,7 +21,7 @@ const schema = z.object({
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   // Get challenge to cycle
   let challenge: Awaited<ReturnType<typeof getCurrentChallenge>>;
-  const { challengeId } = schema.parse(req.body);
+  const { challengeId } = schema.parse(req.query);
   if (challengeId) {
     challenge = await getChallengeDetails(challengeId);
     if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
@@ -55,6 +55,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       await startNextChallenge(config);
       await setCurrentChallenge(newChallenge.articleId);
     }
+    res
+      .status(200)
+      .json({ message: 'Cycle complete', challengeId: challenge?.articleId, newChallenge });
   } catch (e) {
     console.error(e);
   }

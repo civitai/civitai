@@ -1,6 +1,6 @@
 import type { Stripe } from '@stripe/stripe-js';
 import { useRef, useEffect } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useRouter } from 'next/router';
 import { z } from 'zod';
 import { showSuccessNotification } from '~/utils/notifications';

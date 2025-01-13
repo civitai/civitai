@@ -30,7 +30,7 @@ import {
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';

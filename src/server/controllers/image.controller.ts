@@ -209,7 +209,7 @@ export const setTosViolationHandler = async ({
       details: {
         modelName: image.post?.title ?? `post #${image.postId}`,
         entity: 'image',
-        url: `/posts/${image.postId}`,
+        url: `/images/${id}`,
       },
     }).catch();
 

@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 interface TokenPayload {
   userId: number;

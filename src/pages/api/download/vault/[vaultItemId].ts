@@ -2,7 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { SessionUser } from 'next-auth';
 import requestIp from 'request-ip';
 import { z } from 'zod';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
