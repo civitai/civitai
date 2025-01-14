@@ -23,7 +23,11 @@ import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
-import * as eventEngineJobs from '~/server/jobs/event-engine-work';
+import {
+  eventEngineDailyReset,
+  eventEngineLeaderboardUpdate,
+} from '~/server/jobs/event-engine-work';
+
 import { fullImageExistence } from '~/server/jobs/full-image-existence';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
@@ -94,7 +98,8 @@ export const jobs: Job[] = [
   processRewards,
   rewardsDailyReset,
   ...bountyJobs,
-  ...Object.values(eventEngineJobs),
+  eventEngineDailyReset,
+  eventEngineLeaderboardUpdate,
   processClubMembershipRecurringPayments,
   ...csamJobs,
   resourceGenerationAvailability,

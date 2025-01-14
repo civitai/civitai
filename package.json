@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.418",
+  "version": "5.0.419",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -37,7 +37,9 @@
     "prepare": "husky",
     "analyze": "cross-env ANALYZE=true next build",
     "analyze:server": "cross-env BUNDLE_ANALYZE=server next build",
-    "analyze:browser": "cross-env BUNDLE_ANALYZE=browser next build"
+    "analyze:browser": "cross-env BUNDLE_ANALYZE=browser next build",
+    "tsc:trace": "tsc  --generateTrace trace --incremental false",
+    "tsc:analyze": "npx analyze-trace trace"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -118,6 +120,7 @@
     "@trpc/react-query": "^10.45.0",
     "@trpc/server": "^10.45.0",
     "@types/stream-to-blob": "^2.0.0",
+    "@typescript/analyze-trace": "^0.10.1",
     "@vimeo/player": "^2.25.0",
     "@vladmandic/human": "^3.0.5",
     "algoliasearch": "^4.23.3",

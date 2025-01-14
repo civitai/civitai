@@ -34,8 +34,9 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import produce from 'immer';
+import { div } from 'motion/dist/react-m';
 import { LazyMotion } from 'motion/react';
-import * as m from 'motion/react-m';
+
 import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { loadMotion } from '~/components/Chat/util';
@@ -346,7 +347,7 @@ export function ChatList() {
                 return (
                   <PGroup
                     key={d.id}
-                    component={m.div}
+                    component={div}
                     noWrap
                     className={cx(classes.selectChat, {
                       [classes.selectedChat]: d.id === state.existingChatId,

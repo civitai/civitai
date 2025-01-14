@@ -38,7 +38,7 @@ import produce from 'immer';
 import Linkify from 'linkify-react';
 import { throttle } from 'lodash-es';
 import { LazyMotion } from 'motion/react';
-import * as m from 'motion/react-m';
+import { div } from 'motion/dist/react-m';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
@@ -874,7 +874,7 @@ function DisplayMessages({
 
         return (
           <PStack
-            component={m.div}
+            component={div}
             // ref={c.id === lastReadId ? lastReadRef : undefined}
             key={c.id}
             spacing={12}

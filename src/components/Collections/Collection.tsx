@@ -279,6 +279,7 @@ const ImageCollection = ({
       }}
       additionalMenuItemsAfter={(image) => {
         const isOwnerOrMod =
+
           permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
         return (
           <>

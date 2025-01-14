@@ -11,7 +11,7 @@ import {
   Loader,
 } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { CheckoutEventsData } from '@paddle/paddle-js';
+import type { CheckoutEventsData } from '@paddle/paddle-js';
 import { IconCancel, IconCircleCheck, IconLayoutDashboard, IconRosette } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useState } from 'react';
