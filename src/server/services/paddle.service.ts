@@ -1,14 +1,14 @@
-import {
+import type {
   Adjustment,
   AdjustmentAction,
-  ApiError,
-  EventName,
+  IEventName,
   PriceNotification,
   ProductNotification,
   SubscriptionNotification,
   Transaction,
   TransactionNotification,
 } from '@paddle/paddle-node-sdk';
+import { ApiError } from '@paddle/paddle-node-sdk';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
@@ -155,7 +155,7 @@ export const getBuzzPurchaseItem = (transaction: TransactionNotification) => {
 };
 
 export const processCompleteBuzzTransaction = async (
-  transaction: Transaction,
+  transaction: TransactionNotification,
   buzzTransactionExtras?: MixedObject
 ) => {
   const items = transaction.items;
@@ -314,14 +314,14 @@ export const upsertPriceRecord = async (price: PriceNotification) => {
 };
 
 export const upsertSubscription = async (
-  subscriptionNotification: SubscriptionNotification,
+  subscriptionNotification: Omit<SubscriptionNotification, 'transactionId'>,
   eventDate: Date,
-  eventName: EventName
+  eventName: IEventName
 ) => {
   log('upsertSubscription :: Event:', eventName);
-  const isUpdatingSubscription = eventName === EventName.SubscriptionUpdated;
-  const isCreatingSubscription = eventName === EventName.SubscriptionActivated;
-  const isCancelingSubscription = eventName === EventName.SubscriptionCanceled;
+  const isUpdatingSubscription = eventName === 'subscription.updated';
+  const isCreatingSubscription = eventName === 'subscription.activated';
+  const isCancelingSubscription = eventName === 'subscription.canceled';
 
   const subscriptionProducts = await getPlans({
     paymentProvider: PaymentProvider.Paddle,
