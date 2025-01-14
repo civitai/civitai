@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { ScanResultCode } from '~/shared/utils/prisma/enums';
-import { S3Client } from '@aws-sdk/client-s3';
+import type { S3Client } from '@aws-sdk/client-s3';
 import dayjs from 'dayjs';
 
 import { env } from '~/env/server';

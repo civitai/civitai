@@ -2,19 +2,8 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { env } from '~/env/server';
 import { Readable } from 'node:stream';
 import { getPaddle } from '~/server/paddle/client';
-import {
-  EventEntity,
-  EventName,
-  Transaction,
-  TransactionCompletedEvent,
-  ProductNotification,
-  ProductCreatedEvent,
-  PriceCreatedEvent,
-  SubscriptionActivatedEvent,
-  SubscriptionNotification,
-  TransactionNotification,
-} from '@paddle/paddle-node-sdk';
-import { TransactionMetadataSchema } from '~/server/schema/paddle.schema';
+import type { EventEntity } from '@paddle/paddle-node-sdk';
+import { EventName } from '@paddle/paddle-node-sdk';
 import {
   getBuzzPurchaseItem,
   manageSubscriptionTransactionComplete,
@@ -25,7 +14,6 @@ import {
 } from '~/server/services/paddle.service';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { paddleTransactionContainsSubscriptionItem } from '~/server/services/subscriptions.service';
-import { isDev } from '~/env/other';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -41,6 +29,17 @@ async function buffer(readable: Readable) {
   }
   return Buffer.concat(chunks);
 }
+
+// const relevantEvents = new Set<IEventName>([
+//   'transaction.completed',
+//   'product.created',
+//   'product.updated',
+//   'price.created',
+//   'price.updated',
+//   'subscription.activated',
+//   'subscription.updated',
+//   'subscription.canceled',
+// ]);
 
 const relevantEvents = new Set([
   EventName.TransactionCompleted,
@@ -82,7 +81,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       try {
         switch (event.eventType) {
           case EventName.TransactionCompleted:
-            const data = (event as TransactionCompletedEvent).data;
+            const data = event.data;
             const buzzPurchaseItem = getBuzzPurchaseItem(data);
             const containsProductMemberships = await paddleTransactionContainsSubscriptionItem(
               data
@@ -99,11 +98,11 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               (['subscription_recurring', 'subscription_update'].includes(data.origin) ||
                 containsProductMemberships)
             ) {
-              await manageSubscriptionTransactionComplete(event.data as TransactionNotification, {
+              await manageSubscriptionTransactionComplete(event.data, {
                 notificationId: event.eventId,
               });
             } else if (buzzPurchaseItem || data.origin === 'subscription_charge') {
-              await processCompleteBuzzTransaction(event.data as Transaction, {
+              await processCompleteBuzzTransaction(event.data, {
                 notificationId: event.eventId,
               });
             }
@@ -111,7 +110,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             break;
           case EventName.ProductCreated:
           case EventName.ProductUpdated: {
-            const data = (event as ProductCreatedEvent).data;
+            const data = event.data;
             const meta = data.customData as SubscriptionProductMetadata;
             if (!meta?.tier) {
               break;
@@ -122,7 +121,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }
           case EventName.PriceCreated:
           case EventName.PriceUpdated: {
-            const data = (event as PriceCreatedEvent).data;
+            const data = event.data;
             await upsertPriceRecord(data);
             break;
           }
@@ -130,11 +129,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case EventName.SubscriptionUpdated:
           case EventName.SubscriptionCanceled: {
             const data = event.data;
-            upsertSubscription(
-              data as SubscriptionNotification,
-              new Date(event.occurredAt),
-              event.eventType
-            );
+            upsertSubscription(data, new Date(event.occurredAt), event.eventType);
             break;
           }
           default:

@@ -1,12 +1,12 @@
 import { OAuth2Client } from 'google-auth-library';
-import { google, youtube_v3 } from 'googleapis';
 import { Readable } from 'node:stream';
 import sanitize from 'sanitize-html';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server';
 import { fetchBlob } from '~/utils/file-utils';
+import { youtube, auth, youtube_v3 } from 'googleapis/build/src/apis/youtube';
 
-const OAuth2 = google.auth.OAuth2;
+const OAuth2 = auth.OAuth2;
 
 const getClient = () => {
   if (!env.YOUTUBE_APP_CLIENT_ID || !env.YOUTUBE_APP_CLIENT_SECRET) {
@@ -73,7 +73,7 @@ export const uploadYoutubeVideo = async ({
   title,
   description,
 }: S3ToYoutubeInput) => {
-  const service = google.youtube('v3');
+  const service = youtube('v3');
   const blob = await fetchBlob(getEdgeUrl(url, { type: 'video', original: true }));
   if (!blob) return;
 
@@ -128,7 +128,7 @@ export const updateYoutubeVideo = async ({
   title,
   description,
 }: UpdateYoutubeVideoInput) => {
-  const service = google.youtube('v3');
+  const service = youtube('v3');
 
   return new Promise<youtube_v3.Schema$Video | undefined>((resolve, reject) => {
     service.videos.update(
