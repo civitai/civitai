@@ -1,15 +1,12 @@
 import {
   ActionIcon,
   Badge,
-  Box,
   Center,
   Checkbox,
   Chip,
-  Container,
   Group,
   Loader,
   Paper,
-  SegmentedControl,
   Stack,
   Text,
   Title,
@@ -20,7 +17,6 @@ import { showNotification } from '@mantine/notifications';
 import {
   IconCheck,
   IconExternalLink,
-  IconInfoCircle,
   IconReload,
   IconSquareCheck,
   IconSquareOff,
@@ -32,9 +28,6 @@ import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { MasonryGrid2 } from '~/components/MasonryGrid/MasonryGrid2';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { showSuccessNotification } from '~/utils/notifications';
@@ -43,38 +36,31 @@ import { CollectionItemStatus, CollectionMode, CollectionType } from '~/shared/u
 import { CollectionItemExpanded } from '~/server/services/collection.service';
 import { useRouter } from 'next/router';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
-import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
-import { FeedCard } from '~/components/Cards/FeedCard';
 import {
   getCollectionItemReviewData,
   useCollection,
-  useMutateCollection,
 } from '~/components/Collections/collection.utils';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { BackButton } from '~/components/BackButton/BackButton';
-import { formatDate, secondsAsMinutes } from '~/utils/date-helpers';
+import { formatDate } from '~/utils/date-helpers';
 import { CollectionReviewSort } from '~/server/common/enums';
 import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
-import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
-import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
-import { VideoMetadata } from '~/server/schema/media.schema';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { CollectionCategorySelect } from '~/components/Collections/components/CollectionCategorySelect';
-import {
-  CollectionMetadataSchema,
-  GetAllCollectionItemsSchema,
-} from '~/server/schema/collection.schema';
-import {
-  allBrowsingLevelsFlag,
-  browsingLevelLabels,
-  browsingLevels,
-} from '~/shared/constants/browsingLevel.constants';
+import { GetAllCollectionItemsSchema } from '~/server/schema/collection.schema';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
 import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
+import { InViewLoader } from '~/components/InView/InViewLoader';
+import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
+import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 
 type StoreState = {
   selected: Record<number, boolean>;
@@ -130,21 +116,37 @@ const ReviewCollection = () => {
   const [collectionTagId, setCollectionTagId] = useState<number | undefined>(undefined);
 
   const filters = useMemo(
-    () => ({ collectionId, statuses, forReview: true, reviewSort: sort, collectionTagId }),
+    () => ({
+      collectionId,
+      statuses,
+      forReview: true,
+      reviewSort: sort,
+      collectionTagId,
+      browsingLevel: allBrowsingLevelsFlag,
+    }),
     [collectionId, statuses, sort, collectionTagId]
   );
 
   const { collection, permissions, isLoading: loadingCollection } = useCollection(collectionId);
 
-  const { data, isLoading, isRefetching, fetchNextPage, hasNextPage, isFetchingNextPage } =
-    trpc.collection.getAllCollectionItems.useInfiniteQuery(
-      { ...filters, browsingLevel: allBrowsingLevelsFlag },
-      { enabled: !!collection, getNextPageParam: (lastPage) => lastPage.nextCursor }
-    );
+  const { data, isLoading, isFetching, fetchNextPage, hasNextPage } =
+    trpc.collection.getAllCollectionItems.useInfiniteQuery(filters, {
+      enabled: !!collection,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    });
 
   const collectionItems = useMemo(
-    () => data?.pages.flatMap((x) => x.collectionItems) ?? [],
-    [data?.pages]
+    () =>
+      !collection || !data
+        ? []
+        : data?.pages.flatMap((x) =>
+            x.collectionItems.map((collectionItem) => ({
+              ...collectionItem,
+              collectionId: collection.id,
+              statuses,
+            }))
+          ),
+    [data?.pages, statuses]
   );
 
   const handleStatusToggle = (value: string[]) => {
@@ -152,115 +154,110 @@ const ReviewCollection = () => {
     deselectAll();
   };
 
-  if (loadingCollection) <PageLoader />;
+  if (loadingCollection) return <PageLoader />;
   if ((!loadingCollection && !collection) || (permissions && !permissions.manage))
     return <NotFound />;
 
   const isContestCollection = collection?.mode === CollectionMode.Contest;
 
   return (
-    <ReviewCollectionContext.Provider
-      value={{
-        ...filters,
-        browsingLevel: allBrowsingLevelsFlag,
-      }}
-    >
-      <Container size="xl" py="xl">
-        <Stack>
-          <Paper
-            withBorder
-            shadow="lg"
-            p="xs"
-            sx={{
-              display: 'inline-flex',
-              float: 'right',
-              alignSelf: 'flex-end',
-              marginRight: 6,
-              position: 'sticky',
-              top: 'var(--header-height,0)',
-              marginBottom: -60,
-              zIndex: 1000,
-            }}
-          >
-            <ModerationControls collectionItems={collectionItems} filters={filters} />
-          </Paper>
-
-          <Stack spacing="sm" mb="lg">
-            <Group spacing="xs">
-              <BackButton url={`/collections/${collectionId}`} />
-              <Title order={1}>Collection items that need review</Title>
-            </Group>
-            <Text color="dimmed">
-              You are reviewing items on the collection that are either pending review or have been
-              rejected. You can change the status of these to be accepted or rejected.
-            </Text>
-            {isContestCollection && collection.tags.length > 0 && (
-              <CollectionCategorySelect
-                collectionId={collection.id}
-                value={collectionTagId?.toString() ?? 'all'}
-                onChange={(x) => setCollectionTagId(x && x !== 'all' ? parseInt(x, 10) : undefined)}
-              />
-            )}
-            <Group position="apart">
-              <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
-                <Chip value={CollectionItemStatus.REVIEW}>
-                  <span>Review</span>
-                </Chip>
-                <Chip value={CollectionItemStatus.REJECTED}>
-                  <span>Rejected</span>
-                </Chip>
-                <Chip value={CollectionItemStatus.ACCEPTED}>
-                  <span>Accepted</span>
-                </Chip>
-              </Chip.Group>
-
-              <SelectMenuV2
-                label="Sort by"
-                options={Object.values(CollectionReviewSort).map((v) => ({ label: v, value: v }))}
-                value={sort}
-                onClick={(x) => setSort(x as CollectionReviewSort)}
-              />
-            </Group>
-          </Stack>
-          {isLoading ? (
-            <Center py="xl">
-              <Loader size="xl" />
-            </Center>
-          ) : collectionItems.length ? (
-            <MasonryGrid2
-              data={collectionItems}
-              isRefetching={isRefetching}
-              isFetchingNextPage={isFetchingNextPage}
-              hasNextPage={hasNextPage}
-              fetchNextPage={fetchNextPage}
-              columnWidth={300}
-              filters={filters}
-              render={(props) => {
-                return (
-                  <CollectionItemGridItem
-                    {...props}
-                    collectionId={collection?.id as number}
-                    statuses={statuses}
-                  />
-                );
+    <ReviewCollectionContext.Provider value={filters}>
+      <MasonryProvider maxColumnCount={4}>
+        <MasonryContainer>
+          <Stack>
+            <Paper
+              withBorder
+              shadow="lg"
+              p="xs"
+              sx={{
+                display: 'inline-flex',
+                float: 'right',
+                alignSelf: 'flex-end',
+                marginRight: 6,
+                position: 'sticky',
+                top: 'var(--header-height,0)',
+                marginBottom: -60,
+                zIndex: 1000,
               }}
-            />
-          ) : (
-            <NoContent mt="lg" message="There are no images that need review" />
-          )}
-        </Stack>
-      </Container>
+            >
+              <ModerationControls collectionItems={collectionItems} filters={filters} />
+            </Paper>
+
+            <Stack spacing="sm" mb="lg">
+              <Group spacing="xs">
+                <BackButton url={`/collections/${collectionId}`} />
+                <Title order={1}>Collection items that need review</Title>
+              </Group>
+              <Text color="dimmed">
+                You are reviewing items on the collection that are either pending review or have
+                been rejected. You can change the status of these to be accepted or rejected.
+              </Text>
+              {isContestCollection && collection.tags.length > 0 && (
+                <CollectionCategorySelect
+                  collectionId={collection.id}
+                  value={collectionTagId?.toString() ?? 'all'}
+                  onChange={(x) =>
+                    setCollectionTagId(x && x !== 'all' ? parseInt(x, 10) : undefined)
+                  }
+                />
+              )}
+              <Group position="apart">
+                <Chip.Group value={statuses} onChange={handleStatusToggle} multiple>
+                  <Chip value={CollectionItemStatus.REVIEW}>
+                    <span>Review</span>
+                  </Chip>
+                  <Chip value={CollectionItemStatus.REJECTED}>
+                    <span>Rejected</span>
+                  </Chip>
+                  <Chip value={CollectionItemStatus.ACCEPTED}>
+                    <span>Accepted</span>
+                  </Chip>
+                </Chip.Group>
+
+                <SelectMenuV2
+                  label="Sort by"
+                  options={Object.values(CollectionReviewSort).map((v) => ({ label: v, value: v }))}
+                  value={sort}
+                  onClick={(x) => setSort(x as CollectionReviewSort)}
+                />
+              </Group>
+            </Stack>
+            {isLoading ? (
+              <Center py="xl">
+                <Loader size="xl" />
+              </Center>
+            ) : (
+              <div className="relative">
+                <MasonryGrid
+                  data={collectionItems}
+                  empty={<NoContent mt="lg" message="There are no images that need review" />}
+                  render={CollectionItemGridItem}
+                />
+                {hasNextPage && (
+                  <InViewLoader
+                    loadFn={fetchNextPage}
+                    loadCondition={!isFetching}
+                    style={{ gridColumn: '1/-1' }}
+                  >
+                    <Center p="xl" sx={{ height: 36 }} mt="md">
+                      <Loader />
+                    </Center>
+                  </InViewLoader>
+                )}
+                {!hasNextPage && collectionItems.length > 0 && <EndOfFeed />}
+              </div>
+            )}
+          </Stack>
+        </MasonryContainer>
+      </MasonryProvider>
     </ReviewCollectionContext.Provider>
   );
 };
 
 export default ReviewCollection;
 
-const CollectionItemGridItem = ({
-  data: collectionItem,
-  collectionId,
-  statuses,
-}: CollectionItemGridItemProps) => {
+const CollectionItemGridItem = ({ data: collectionItem }: CollectionItemGridItemProps) => {
+  const { collectionId, statuses } = collectionItem;
   const currentUser = useCurrentUser();
   const router = useRouter();
   const selected = useStore(
@@ -282,7 +279,7 @@ const CollectionItemGridItem = ({
   const image = reviewData.image;
 
   return (
-    <Stack spacing={0}>
+    <div className="flex flex-col">
       <CollectionItemNSFWLevelSelector
         collectionId={collectionId}
         collectionItemId={collectionItem.id}
@@ -305,116 +302,61 @@ const CollectionItemGridItem = ({
           }
         }}
       />
-      <FeedCard
+      <AspectRatioImageCard
+        onClick={() => toggleSelected(collectionItem.id)}
         className={cx({
           ['opacity-60']:
             selected || (collectionItem.status && !statuses.includes(collectionItem.status)),
         })}
-      >
-        <Box className={sharedClasses.root} onClick={() => toggleSelected(collectionItem.id)}>
-          <Stack
-            sx={{
-              position: 'absolute',
-              top: 5,
-              right: 5,
-              zIndex: 11,
-            }}
-          >
-            <Group>
-              {reviewData.url && (
-                <Link href={reviewData.url} passHref legacyBehavior>
-                  <ActionIcon
-                    component="a"
-                    variant="transparent"
-                    size="lg"
-                    target="_blank"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                    }}
-                  >
-                    <IconExternalLink
-                      color="white"
-                      filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                      opacity={0.8}
-                      strokeWidth={2.5}
-                      size={26}
-                    />
-                  </ActionIcon>
-                </Link>
+        image={image}
+        header={
+          <div className="flex w-full items-start justify-between">
+            <div className="flex gap-1">
+              {collectionItem.status && (
+                <Badge
+                  variant="filled"
+                  color={badgeColor[collectionItem.status]}
+                  h={26}
+                  radius="xl"
+                >
+                  {collectionItem.status}
+                </Badge>
               )}
-              <Checkbox checked={selected} readOnly size="lg" />
-            </Group>
-            {reviewData.baseModel && <Badge variant="filled">{reviewData.baseModel}</Badge>}
-          </Stack>
-          {image && (
-            <ImageGuard2 image={image} connectType="collectionItem" connectId={collectionItem.id}>
-              {(safe) => {
-                const originalAspectRatio =
-                  image.width && image.height ? image.width / image.height : 1;
-                return (
-                  <>
-                    <Group
-                      spacing={4}
-                      position="apart"
-                      className={cx(sharedClasses.contentOverlay, sharedClasses.top)}
-                      noWrap
+              {image?.type === 'video' && image.metadata && 'duration' in image.metadata && (
+                <DurationBadge duration={image.metadata.duration ?? 0} h={26} radius="xl" />
+              )}
+            </div>
+            <div className="flex flex-col items-end gap-1">
+              <div>
+                {reviewData.url && (
+                  <Link href={reviewData.url} passHref legacyBehavior>
+                    <ActionIcon
+                      component="a"
+                      variant="transparent"
+                      size="lg"
+                      target="_blank"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                      }}
                     >
-                      <Stack spacing={4}>
-                        <Group spacing={4}>
-                          <ImageGuard2.BlurToggle />
-                          {collectionItem.status && (
-                            <Badge variant="filled" color={badgeColor[collectionItem.status]}>
-                              {collectionItem.status}
-                            </Badge>
-                          )}
-                        </Group>
-                        {image.type === 'video' && (image.metadata as VideoMetadata)?.duration && (
-                          <Badge variant="filled" color="gray" size="xs">
-                            {secondsAsMinutes((image.metadata as VideoMetadata)?.duration ?? 0)}
-                          </Badge>
-                        )}
-                      </Stack>
-                    </Group>
-                    {safe ? (
-                      <EdgeMedia
-                        src={image.url ?? ''}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        type={image.type}
-                        width={
-                          originalAspectRatio > 1
-                            ? DEFAULT_EDGE_IMAGE_WIDTH * originalAspectRatio
-                            : DEFAULT_EDGE_IMAGE_WIDTH
-                        }
-                        placeholder="empty"
-                        className={sharedClasses.image}
-                        loading="lazy"
+                      <IconExternalLink
+                        color="white"
+                        filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                        opacity={0.8}
+                        strokeWidth={2.5}
+                        size={26}
                       />
-                    ) : (
-                      <MediaHash {...image} />
-                    )}
-                    {image.hasMeta && (
-                      <div className="absolute bottom-0.5 right-0.5 z-10">
-                        <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                          <ActionIcon variant="transparent" size="lg">
-                            <IconInfoCircle
-                              color="white"
-                              filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                              opacity={0.8}
-                              strokeWidth={2.5}
-                              size={26}
-                            />
-                          </ActionIcon>
-                        </ImageMetaPopover2>
-                      </div>
-                    )}
-                  </>
-                );
-              }}
-            </ImageGuard2>
-          )}
-
-          <Stack className={cx(sharedClasses.contentOverlay, sharedClasses.bottom)} spacing="sm">
+                    </ActionIcon>
+                  </Link>
+                )}
+                <Checkbox checked={selected} readOnly size="lg" />
+              </div>
+              {reviewData.baseModel && <Badge variant="filled">{reviewData.baseModel}</Badge>}
+            </div>
+          </div>
+        }
+        footer={
+          <div className="flex flex-col gap-1">
             {reviewData.title && (
               <Text
                 className={sharedClasses.dropShadow}
@@ -455,9 +397,9 @@ const CollectionItemGridItem = ({
                 />
               </UnstyledButton>
             )}
-          </Stack>
-        </Box>
-      </FeedCard>
+          </div>
+        }
+      />
       {collection?.metadata?.judgesCanScoreEntries && (
         <ContestCollectionItemScorer
           layout="minimal"
@@ -466,16 +408,14 @@ const CollectionItemGridItem = ({
           currentScore={collectionItem.scores?.find((s) => s.userId === currentUser?.id)?.score}
         />
       )}
-    </Stack>
+    </div>
   );
 };
 
 type CollectionItemGridItemProps = {
-  data: CollectionItemExpanded;
+  data: CollectionItemExpanded & { collectionId: number; statuses: CollectionItemStatus[] };
   index: number;
   width: number;
-  collectionId: number;
-  statuses: CollectionItemStatus[];
 };
 
 function ModerationControls({
@@ -553,6 +493,7 @@ function ModerationControls({
       },
       {
         onSuccess: async ({ type }) => {
+          queryUtils.collection.getAllCollectionItems.invalidate(filters);
           switch (type) {
             case CollectionType.Model:
               await queryUtils.model.getAll.invalidate();
