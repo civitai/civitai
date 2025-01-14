@@ -713,7 +713,7 @@ export const updateSubscriptionPlan = async ({
         // automatically when you change the subscription. So we do it manually.
         await updatePaddleSubscription({
           subscriptionId: subscription.id,
-          nextBilledAt: dayjs().add(30, 'minute').add(5, 'second').toISOString(),
+          nextBilledAt: dayjs().add(30, 'minute').add(20, 'second').toISOString(),
           prorationBillingMode: 'prorated_immediately',
           customData: {
             ...paddleSubscription.customData,
