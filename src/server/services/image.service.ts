@@ -4502,11 +4502,11 @@ export function addBlockedImage({
   hash: bigint | number;
   reason: BlockImageReason;
 }) {
-  return dbWrite.$executeRaw`
-    INSERT INTO "BlockedImage" (hash, reason)
-    VALUES (${hash}, ${reason}::"BlockImageReason")
-    ON CONFLICT DO NOTHING
-  `;
+  return clickhouse?.insert({
+    table: 'blocked_images',
+    values: [{ hash, reason }],
+    format: 'JSONEachRow',
+  });
 }
 
 export function bulkAddBlockedImages({
@@ -4516,15 +4516,16 @@ export function bulkAddBlockedImages({
 }) {
   if (data.length === 0) return;
 
-  const values = data
-    .map(({ hash, reason }) => `(${hash}, '${reason}'::"BlockImageReason")`)
-    .join(',');
+  const values = data.map(({ hash, reason }) => ({
+    hash: Number(hash),
+    reason: reason.toString(),
+  }));
 
-  return dbWrite.$executeRaw`
-    INSERT INTO "BlockedImage" (hash, reason)
-    VALUES ${Prisma.raw(values)}
-    ON CONFLICT DO NOTHING
-  `;
+  return clickhouse?.insert({
+    table: 'blocked_images',
+    values,
+    format: 'JSONEachRow',
+  });
 }
 
 export async function bulkRemoveBlockedImages({

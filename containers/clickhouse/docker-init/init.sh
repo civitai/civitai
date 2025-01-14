@@ -939,6 +939,14 @@ clickhouse client -n <<-EOSQL
             ORDER BY id
             SETTINGS index_granularity = 8192;
 
+    create table if not exists default.blocked_images
+    (
+        hash Int64,
+        reason LowCardinality(String),
+        created_at DateTime DEFAULT now()
+    ) engine = ReplacingMergeTree(created_at)
+    ORDER BY hash;
+
     CREATE MATERIALIZED VIEW default.buzz_cohorts_first_seen
                 (
                 userId Int32,
