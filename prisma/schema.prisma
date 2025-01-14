@@ -3170,6 +3170,7 @@ enum ToolType {
   Compute
   GameEngines
   Editor
+  LLM
 }
 
 model Tool {

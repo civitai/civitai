@@ -22,7 +22,7 @@ import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { usePaddleBuzzTransaction } from '~/components/Paddle/usePaddleCheckout';
-import { CheckoutEventsData, CurrencyCode } from '@paddle/paddle-js';
+import type { CheckoutEventsData, CurrencyCode } from '@paddle/paddle-js';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';

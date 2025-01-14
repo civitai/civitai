@@ -676,6 +676,7 @@ export const ToolType = {
   Compute: 'Compute',
   GameEngines: 'GameEngines',
   Editor: 'Editor',
+  LLM: 'LLM',
 } as const;
 
 export type ToolType = (typeof ToolType)[keyof typeof ToolType];

@@ -11,7 +11,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
-import { CheckoutEventsData } from '@paddle/paddle-js';
+import type { CheckoutEventsData } from '@paddle/paddle-js';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useHasPaddleSubscription, useMutatePaddle } from '~/components/Paddle/util';
 
