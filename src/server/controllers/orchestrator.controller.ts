@@ -84,7 +84,7 @@ export async function generate({
     token: token,
     body: {
       tags: [WORKFLOW_TAGS.GENERATION, ...tags],
-      steps: [step as any], // TODO.orchestrator -  fix types
+      steps: [step],
       tips: {
         civitai: civitaiTip,
         creators: creatorTip,
