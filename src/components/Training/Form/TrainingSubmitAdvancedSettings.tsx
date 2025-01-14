@@ -418,10 +418,7 @@ export const AdvancedSettings = ({
                     );
                   } else if (ts.type === 'select') {
                     let options = ts.options as string[];
-                    // TODO if we fix the bitsandbytes issue, we can disable this
-                    if (ts.name === 'optimizerType' && selectedRun.baseType === 'sdxl') {
-                      options = options.filter((o) => o !== 'AdamW8Bit');
-                    }
+
                     if (
                       ts.name === 'lrScheduler' &&
                       selectedRun.params.optimizerType === 'Prodigy'
