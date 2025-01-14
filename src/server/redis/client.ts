@@ -21,13 +21,13 @@ interface QueueCommandOptions {
   signal?: AbortSignal;
   returnBuffers?: boolean;
 }
+interface ClientCommandOptions extends QueueCommandOptions {
+  isolated?: boolean;
+}
 // declare const symbol: unique symbol;
 // type CommandOptions<T> = T & {
 //   readonly [symbol]: true;
 // };
-interface ClientCommandOptions extends QueueCommandOptions {
-  isolated?: boolean;
-}
 // type CommandType = CommandOptions<ClientCommandOptions>;
 type CommandType = ClientCommandOptions;
 
@@ -170,7 +170,7 @@ function getBaseClient(type: 'cache' | 'system', legacyMode = false) {
 
   const REDIS_URL = type === 'system' ? env.REDIS_SYS_URL : env.REDIS_URL;
 
-  const baseClient: RedisClientType = createClient({
+  const baseClient = createClient({
     url: REDIS_URL,
     socket: {
       reconnectStrategy(retries) {
@@ -213,7 +213,7 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacy
       await client.set(key, pack(value), options);
     },
 
-    async mSet(records: Record<K, unknown>) {
+    async mSet(records: Record<K, unknown>): Promise<void> {
       const packedRecords: [K, Buffer][] = Object.entries(records).map(([k, v]) => [
         k as K,
         pack(v),
@@ -290,7 +290,7 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacy
 }
 
 function getCacheClient(legacyMode = false) {
-  const client = getClient('cache', legacyMode) as unknown as CustomRedisClientCache;
+  const client = getClient<RedisKeyTemplateCache>('cache', legacyMode) as CustomRedisClientCache;
 
   client.purgeTags = async (tag: string | string[]) => {
     const tags = Array.isArray(tag) ? tag : [tag];
@@ -312,7 +312,7 @@ function getCacheClient(legacyMode = false) {
 }
 
 function getSysClient(legacyMode = false) {
-  return getClient('system', legacyMode) as unknown as CustomRedisClientSys;
+  return getClient<RedisKeyTemplateSys>('system', legacyMode) as CustomRedisClientSys;
 }
 
 export let redis: CustomRedisClientCache;
