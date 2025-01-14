@@ -4504,7 +4504,7 @@ export function addBlockedImage({
 }) {
   return clickhouse?.insert({
     table: 'blocked_images',
-    values: [{ hash, reason }],
+    values: [{ hash: Number(hash), reason }],
     format: 'JSONEachRow',
   });
 }
