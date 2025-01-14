@@ -713,7 +713,7 @@ export const updateSubscriptionPlan = async ({
         // automatically when you change the subscription. So we do it manually.
         await updatePaddleSubscription({
           subscriptionId: subscription.id,
-          nextBilledAt: dayjs().add(30, 'minute').toISOString(),
+          nextBilledAt: dayjs().add(30, 'minute').add(5, 'second').toISOString(),
           prorationBillingMode: 'prorated_immediately',
           customData: {
             ...paddleSubscription.customData,
@@ -721,13 +721,14 @@ export const updateSubscriptionPlan = async ({
           },
         });
       } catch (e) {
-        console.log(e);
         logToAxiom({
           subscriptionId: paddleSubscription.id,
           type: 'error',
           message: 'Failed to update subscription',
           userId,
           priceId,
+          error: e,
+          stack: (e as Error)?.stack,
         });
 
         throw e;
