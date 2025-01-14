@@ -3,6 +3,7 @@ import { haiperVideoGenerationConfig } from '~/server/orchestrator/haiper/haiper
 import { klingVideoGenerationConfig } from '~/server/orchestrator/kling/kling.schema';
 import { minimaxVideoGenerationConfig } from '~/server/orchestrator/minimax/minimax.schema';
 import { mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
+import { viduVideoGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 
 export type VideoGenerationSchema = z.infer<(typeof videoGenerationConfig)[number]['schema']>;
 export const videoGenerationConfig = [
@@ -10,4 +11,5 @@ export const videoGenerationConfig = [
   ...haiperVideoGenerationConfig,
   ...mochiVideoGenerationConfig,
   ...minimaxVideoGenerationConfig,
+  ...viduVideoGenerationConfig,
 ] as const;

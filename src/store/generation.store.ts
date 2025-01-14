@@ -174,13 +174,12 @@ export const useRemixStore = create<{
 
 export function useVideoGenerationWorkflows() {
   const { data, isLoading } = trpc.generation.getGenerationEngines.useQuery();
-  const workflows = generationFormWorkflowConfigurations
-    .map((config) => {
-      const engine = data?.find((x) => x.engine === config.engine);
-      if (!engine) return null;
-      return { ...config, ...engine };
-    })
-    .filter(isDefined);
+  const workflows = data
+    ? generationFormWorkflowConfigurations.map((config) => {
+        const engine = data?.find((x) => x.engine === config.engine);
+        return { ...config, ...engine };
+      })
+    : [];
   return { data: workflows, isLoading };
 }
 

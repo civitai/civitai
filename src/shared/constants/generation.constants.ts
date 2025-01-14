@@ -547,6 +547,11 @@ export const engineDefinitions: EnginesDictionary = {
     description: '',
     whatIf: [],
   },
+  vidu: {
+    label: 'Vidu',
+    description: '',
+    whatIf: ['duration'],
+  },
 };
 
 export const generationFormWorkflowConfigurations = videoGenerationConfig;
