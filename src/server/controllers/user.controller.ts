@@ -1346,7 +1346,9 @@ export const setUserSettingHandler = async ({
     const newSettings = {
       ...restSettings,
       ...restInput,
-      tourSettings: { ...tourSettings, ...completedTour },
+      tourSettings: tourSettings
+        ? { ...tourSettings, completed: { ...completedTour } }
+        : { completed: { ...completedTour } },
     };
 
     await setUserSetting(id, newSettings);

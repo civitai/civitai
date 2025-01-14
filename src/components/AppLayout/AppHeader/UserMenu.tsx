@@ -70,7 +70,6 @@ export function UserMenu() {
         <UnstyledButton
           className="flex items-center @md:rounded-[32px]"
           type="button"
-          data-tour="2"
           onClick={() => setOpen((o) => !o)}
         >
           <div

@@ -64,7 +64,7 @@ export function ClientHistoryStore() {
   useEffect(() => {
     const pushState = history.pushState;
     history.pushState = function (data, unused, url) {
-      pushKey(data.key);
+      if (data?.key) pushKey(data.key);
       return pushState.apply(history, [data, unused, url]);
     };
     return () => {

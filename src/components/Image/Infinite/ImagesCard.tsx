@@ -156,6 +156,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           color="white"
                           variant="filled"
                           data-activity="remix:image-card"
+                          data-tour="gen:remix"
                           onClick={handleRemixClick}
                         >
                           <IconBrush stroke={2.5} size={16} />

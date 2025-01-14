@@ -1,5 +1,6 @@
 import { Button, Menu } from '@mantine/core';
 import { IconChevronDown, IconPlus } from '@tabler/icons-react';
+import { useEffect } from 'react';
 import { useGetActionMenuItems } from '~/components/AppLayout/AppHeader/hooks';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -7,27 +8,36 @@ import { NextLink } from '~/components/NextLink/NextLink';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { constants } from '~/server/common/constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 
 export function CreateMenu() {
   const features = useFeatureFlags();
   const isMobile = useIsMobile({ breakpoint: 'md' });
+  const { opened, helpers, toggleTour, active } = useTourContext();
+
+  useEffect(() => {
+    console.log('running effect', { active, opened });
+    if (active && !opened) {
+      toggleTour({ currentStep: 0 });
+    }
+  }, []);
 
   return (
     <Menu
       position="bottom"
       offset={5}
-      withArrow
       trigger="hover"
       openDelay={400}
       zIndex={constants.imageGeneration.drawerZIndex + 2}
-      withinPortal
       disabled={isMobile}
+      withinPortal
+      withArrow
     >
       <Menu.Target>
         {features.imageGeneration ? (
-          <div className="flex items-center" data-tour="1">
+          <div className="flex items-center" data-tour="gen:start">
             <GenerateButton
               variant="light"
               py={8}
@@ -38,6 +48,10 @@ export function CreateMenu() {
               mode="toggle"
               // Quick hack to avoid svg from going over the button. cc: Justin 👀
               sx={() => ({ borderTopRightRadius: 0, borderBottomRightRadius: 0 })}
+              onClick={() => {
+                // Wait for the drawer to open before moving to the next step
+                if (opened && helpers) setTimeout(() => helpers.next(), 400);
+              }}
               compact
               data-activity="create:navbar"
               className="h-auto px-3 py-2 @md:pr-1"
