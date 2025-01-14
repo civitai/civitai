@@ -1,6 +1,3 @@
-import type { QueueCommandOptions } from '@redis/client/dist/lib/client/commands-queue';
-import type { CommandOptions } from '@redis/client/dist/lib/command-options';
-import type { RedisCommandArgument } from '@redis/client/dist/lib/commands';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
 import { commandOptions, createClient } from 'redis';
@@ -16,11 +13,23 @@ export type RedisKeyTemplateCache = `${RedisKeyStringsCache}${'' | `:${string}`}
 export type RedisKeyTemplateSys = `${RedisKeyStringsSys}${'' | `:${string}`}`;
 export type RedisKeyTemplates = RedisKeyTemplateCache | RedisKeyTemplateSys;
 
-// can't figure out how to import this, so copying it here
+// @redis/client/dist/lib
+type RedisCommandArgument = string | Buffer;
+interface QueueCommandOptions {
+  asap?: boolean;
+  chainId?: symbol;
+  signal?: AbortSignal;
+  returnBuffers?: boolean;
+}
+// declare const symbol: unique symbol;
+// type CommandOptions<T> = T & {
+//   readonly [symbol]: true;
+// };
 interface ClientCommandOptions extends QueueCommandOptions {
   isolated?: boolean;
 }
-type CommandType = CommandOptions<ClientCommandOptions>;
+// type CommandType = CommandOptions<ClientCommandOptions>;
+type CommandType = ClientCommandOptions;
 
 interface CustomRedisClient<K extends RedisKeyTemplates>
   extends Omit<
