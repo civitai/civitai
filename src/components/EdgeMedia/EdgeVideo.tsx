@@ -240,6 +240,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             autoPlay={options?.anim}
             loop
             poster={coverUrl}
+            disablePictureInPicture
             {...props}
           >
             {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}
