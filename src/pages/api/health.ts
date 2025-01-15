@@ -8,7 +8,7 @@ import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
 import { registerCounter } from '~/server/prom/client';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { redis, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getRandomInt } from '~/utils/number-helpers';
 
@@ -21,7 +21,7 @@ function logError({ error, name, details }: { error: Error; name: string; detail
       message: error.message,
       stack: error.stack,
       cause: error.cause,
-    });
+    }).catch();
   } else {
     console.log(`Failed to get a connection to ${name}`);
     console.error(error);
@@ -60,16 +60,15 @@ const checkFns = {
       return false;
     });
   },
-  // TODO do we want to negatively return if cache redis is down?
-  // async redis() {
-  //   return await redis
-  //     .ping()
-  //     .then((res) => res === 'PONG')
-  //     .catch((e) => {
-  //       logError({ error: e, name: 'redis', details: null });
-  //       return false;
-  //     });
-  // },
+  async redis() {
+    return await redis
+      .ping()
+      .then((res) => res === 'PONG')
+      .catch((e) => {
+        logError({ error: e, name: 'redis', details: null });
+        return false;
+      });
+  },
   async sysRedis() {
     return await sysRedis
       .ping()
