@@ -23,7 +23,6 @@ import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
-  InjectableResource,
   GeneratedImageStepMetadata,
   generateImageSchema,
   TextToImageParams,

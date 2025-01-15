@@ -202,7 +202,6 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacy
     },
 
     async mGet<T>(keys: K[]): Promise<(T | null)[]> {
-      // const results = await client.mGet<Buffer>(commandOptions({ returnBuffers: true }), keys);
       const results = await client.mGet<Buffer>(commandOptions({ returnBuffers: true }), keys);
       return results.map((result) => (result ? unpack(result) : null));
     },
