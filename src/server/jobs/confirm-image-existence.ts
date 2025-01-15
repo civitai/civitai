@@ -6,7 +6,7 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'check-image-existence';
@@ -18,8 +18,8 @@ export const checkImageExistence = createJob(jobName, '*/1 * * * *', async () =>
 
   try {
     // get list of ids of recently seen images from redis
-    const recentlySeenIds = await redis.packed.sPop<number>(
-      REDIS_KEYS.QUEUES.SEEN_IMAGES,
+    const recentlySeenIds = await sysRedis.packed.sPop<number>(
+      REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
       popLimit
     );
     if (recentlySeenIds && recentlySeenIds.length) {

@@ -1,7 +1,7 @@
 import { mergeWith } from 'lodash-es';
 import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 const challengeConfigSchema = z.object({
   challengeType: z.string(),
@@ -52,7 +52,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
   try {
-    const redisConfig = await redis.packed.get<any>(REDIS_KEYS.DAILY_CHALLENGE.CONFIG);
+    const redisConfig = await sysRedis.packed.get<any>(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG);
     if (redisConfig) config = challengeConfigSchema.partial().parse(redisConfig);
   } catch (e) {
     console.error('Invalid daily challenge config in redis:', e);

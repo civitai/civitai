@@ -1,4 +1,12 @@
 import { Prisma } from '@prisma/client';
+import { uniqBy } from 'lodash-es';
+import { SessionUser } from 'next-auth';
+import { getGenerationConfig } from '~/server/common/constants';
+
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead } from '~/server/db/client';
+import { resourceDataCache } from '~/server/redis/caches';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CheckResourcesCoverageSchema,
@@ -7,37 +15,29 @@ import {
   GetGenerationDataInput,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
-import { SessionUser } from 'next-auth';
-import { dbRead } from '~/server/db/client';
+
+import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import { modelsSearchIndex } from '~/server/search-index';
+import { getImageGenerationResources } from '~/server/services/image.service';
 import {
   handleLogError,
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { MediaType } from '~/shared/utils/prisma/enums';
-
-import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { uniqBy } from 'lodash-es';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
-
-import { fromJson, toJson } from '~/utils/json-helpers';
 
 import { getPagedData } from '~/server/utils/pagination-helpers';
-import { modelsSearchIndex } from '~/server/search-index';
-
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { resourceDataCache } from '~/server/redis/caches';
 import {
   formatGenerationResources,
   GenerationResource,
   getBaseModelFromResources,
   getBaseModelSet,
 } from '~/shared/constants/generation.constants';
-import { findClosest } from '~/utils/number-helpers';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import { getGenerationConfig } from '~/server/common/constants';
+import { MediaType } from '~/shared/utils/prisma/enums';
+
+import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
-import { getImageGenerationResources } from '~/server/services/image.service';
+import { findClosest } from '~/utils/number-helpers';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -189,7 +189,10 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
-    JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
+    JSON.parse(
+      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
+        '{}'
+    )
   );
 
   return status as GenerationStatus;
@@ -366,8 +369,8 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
 };
 
 export async function getUnstableResources() {
-  const cachedData = await redis
-    .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
+  const cachedData = await sysRedis
+    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
@@ -375,8 +378,8 @@ export async function getUnstableResources() {
 }
 
 export async function getUnavailableResources() {
-  const cachedData = await redis
-    .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
+  const cachedData = await sysRedis
+    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
@@ -394,8 +397,8 @@ export async function toggleUnavailableResource({
   if (index > -1) unavailableResources.splice(index, 1);
   else unavailableResources.push(id);
 
-  await redis.hSet(
-    REDIS_KEYS.SYSTEM.FEATURES,
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
     'generation:unavailable-resources',
     toJson(unavailableResources)
   );

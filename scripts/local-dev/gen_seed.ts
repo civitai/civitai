@@ -8,7 +8,7 @@ import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   ArticleEngagementType,
   Availability,
@@ -2938,11 +2938,13 @@ const genClickhouseRows = async () => {
 };
 
 const genRedisSystemFeatures = async () => {
-  const keys = [[REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.TRAINING.STATUS]];
+  // TODO set more system vars here
+
+  const keys = [[REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS]];
 
   for (const keySet of keys) {
     const [baseKey, subKey] = keySet;
-    await redis.hSet(baseKey, subKey, JSON.stringify({}));
+    await sysRedis.hSet(baseKey, subKey, JSON.stringify({}));
   }
 };
 

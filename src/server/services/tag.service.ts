@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { TagVotableEntityType, VotableTagModel } from '~/libs/tags';
@@ -24,6 +23,7 @@ import {
   ImplicitHiddenImages,
 } from '~/server/services/user-preferences.service';
 import { Flags } from '~/shared/utils';
+import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
@@ -540,7 +540,7 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
         continue;
 
       try {
-        await redis.del(`system:categories:${tag.name.replace(' category', '')}`);
+        await redis.del(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${tag.name.replace(' category', '')}`);
       } catch {}
     }
   }

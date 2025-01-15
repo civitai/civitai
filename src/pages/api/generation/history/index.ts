@@ -1,14 +1,14 @@
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import dayjs from 'dayjs';
 import fetch from 'node-fetch';
 import { env } from '~/env/server';
-import { CacheTTL, downloadGeneratedImagesByDate } from '~/server/common/constants';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
+import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLimiter } from '~/server/utils/rate-limiting';
 
 const historyLimiter = createLimiter({
   counterKey: REDIS_KEYS.COUNTERS.HISTORY_DOWNLOADS,
-  limitKey: REDIS_KEYS.LIMITS.HISTORY_DOWNLOADS,
+  limitKey: REDIS_SYS_KEYS.LIMITS.HISTORY_DOWNLOADS,
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,
 });
@@ -25,6 +25,8 @@ export default AuthedEndpoint(async function handler(req, res, user) {
 
   // const canDownload = new Date().getTime() < downloadGeneratedImagesByDate.getTime();
   // if (!canDownload) return res.status(400).send('download period has ended');
+
+  // TODO @Briant is this file used anymore?
 
   const url =
     `https://image-generation-scheduler-dev.civitai.com/users/${user.id}/images/download?` +

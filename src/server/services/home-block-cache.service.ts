@@ -1,7 +1,7 @@
-import { HomeBlockType } from '~/shared/utils/prisma/enums';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
 import { getHomeBlockData, HomeBlockWithData } from '~/server/services/home-block.service';
+import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
 const CACHE_EXPIRY = {
@@ -38,7 +38,7 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
 
   if (!identifier) return null;
 
-  const cacheKey = `packed:home-blocks:${homeBlock.type}:${identifier}`;
+  const cacheKey = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${homeBlock.type}:${identifier}` as const;
   const cachedHomeBlock = await redis.packed.get<HomeBlockWithData>(cacheKey);
 
   if (cachedHomeBlock) return cachedHomeBlock;
@@ -65,7 +65,7 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
 }
 
 export async function homeBlockCacheBust(type: HomeBlockType, entityId: number) {
-  const redisString = `packed:home-blocks:${type}:${entityId}`;
+  const redisString = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${type}:${entityId}` as const;
   log(`Cache busted: ${redisString}`);
   await redis.del(redisString);
 }
