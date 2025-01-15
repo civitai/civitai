@@ -713,7 +713,6 @@ type GetAllImagesRaw = {
   cursorId?: string;
   type: MediaType;
   metadata: ImageMetadata | VideoMetadata | null;
-  Fham;
   baseModel?: string;
   availability: Availability;
   minor: boolean;
@@ -2274,9 +2273,14 @@ export const getImage = async ({
 
   const imageMetrics = await getImageMetricsObject([firstRawImage]);
   const match = imageMetrics[firstRawImage.id];
+  const imageCosmetics = await getCosmeticsForEntity({
+    ids: [firstRawImage.id],
+    entity: 'Image',
+  });
 
   const image = {
     ...firstRawImage,
+    cosmetic: imageCosmetics?.[firstRawImage.id] ?? null,
     user: {
       id: creatorId,
       username,
