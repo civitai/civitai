@@ -125,7 +125,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           className={clsx(styles.image, {
                             [styles.top]: originalAspectRatio < 1,
                           })}
-                          wrapperProps={{ className: 'flex-1' }}
+                          wrapperProps={{ className: 'flex-1 h-full' }}
                           width={
                             originalAspectRatio > 1
                               ? IMAGE_CARD_WIDTH * originalAspectRatio

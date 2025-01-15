@@ -125,10 +125,10 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         alt={image.name ?? undefined}
                         skip={getSkipValue(image)}
                         type={image.type}
-                        wrapperProps={{ style: { height: '100%' } }}
+                        wrapperProps={{ className: 'flex-1 h-full' }}
                         width={450}
                         placeholder="empty"
-                        contain={!!image.cosmetic?.data}
+                        contain
                         // fadeIn
                       />
                     ) : (

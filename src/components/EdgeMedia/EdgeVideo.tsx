@@ -19,7 +19,7 @@ import React, {
 import { YoutubeEmbed } from '~/components/YoutubeEmbed/YoutubeEmbed';
 import { VimeoEmbed } from '../VimeoEmbed/VimeoEmbed';
 import { fadeInOut } from '~/libs/animations';
-import { useLocalStorage } from '@mantine/hooks';
+import { useLocalStorage, useTimeout } from '@mantine/hooks';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 
@@ -169,9 +169,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
-      ...options,
-      anim: false,
-      original: false,
+      width: options?.width,
+      optimized: options?.optimized,
+      skip: thumbnailUrl ? undefined : options?.skip,
+      anim: thumbnailUrl ? undefined : false,
+      transcode: thumbnailUrl ? undefined : true,
     });
 
     const node = useScrollAreaRef();
@@ -201,13 +203,19 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     }, [threshold, options?.anim]);
 
     const [mouseOver, setMouseOver] = useState(false);
-    const handleMouseEnter: MouseEventHandler<HTMLVideoElement> = (e) => {
-      e.currentTarget.play();
-      setMouseOver(true);
-    };
+
+    const { start: handleMouseEnter, clear } = useTimeout(
+      (e: [React.MouseEvent<HTMLVideoElement>]) => {
+        const [event] = e;
+        (event.target as HTMLVideoElement).play();
+        setMouseOver(true);
+      },
+      1000
+    );
 
     const handleMouseLeave: MouseEventHandler<HTMLVideoElement> = (e) => {
       e.currentTarget.pause();
+      clear();
       setMouseOver(false);
     };
 
