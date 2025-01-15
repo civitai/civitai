@@ -81,12 +81,12 @@ export function ToolBanner({
                     rightIcon={<IconBrush size={18} />}
                     onClick={() => {
                       const isVideo = selected.type === ToolType.Video;
+                      const engine = isVideo ? selected.name.toLowerCase() : undefined;
                       generationStore.setData({
                         resources: [],
                         params: {},
                         type: isVideo ? 'video' : 'image',
-                        // TODO.gen: have to think this through on how to get the right workflow
-                        workflow: isVideo ? `${selected.name.toLowerCase}-txt2vid` : undefined,
+                        engine,
                       });
                       generationPanel.open();
                     }}
