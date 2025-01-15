@@ -338,7 +338,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
           END
         ) as "onSite",
         p."modelVersionId" as "postedToId",
-        i."metadata"->>'remixOfId' as "remixOfId"
+        i."meta"->'extra'->'remixOfId' as "remixOfId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}

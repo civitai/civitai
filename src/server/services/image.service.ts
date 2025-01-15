@@ -1183,7 +1183,7 @@ export const getAllImages = async (
           ELSE FALSE
         END
       ) as "onSite",
-      i."metadata"->>'remixOfId' as "remixOfId",
+      i."meta"->'extra'->'remixOfId' as "remixOfId",
       i."createdAt",
       GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
       i."mimeType",
@@ -2229,7 +2229,7 @@ export const getImage = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      i."metadata"->>'remixOfId' as "remixOfId",
+      i."meta"->'extra'->'remixOfId' as "remixOfId",
       u.id as "userId",
       u.username,
       u.image as "userImage",
@@ -2519,7 +2519,7 @@ export const getImagesForModelVersion = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      i."metadata"->>'remixOfId' as "remixOfId"
+      i."meta"->'extra'->'remixOfId' as "remixOfId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id
     JOIN "Post" p ON p.id = i."postId"
@@ -4450,6 +4450,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
     techniques,
     external,
     canRemix: !image.hideMeta && !!meta?.prompt,
+    remixOfId: meta?.extra?.remixOfId,
   };
 }
 

@@ -61,6 +61,7 @@ type AspectRatioImageCardProps<T extends DialogKey> = {
   footerGradient?: boolean;
   onSite?: boolean;
   routedDialog?: RoutedDialogProps<T>;
+  target?: string;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -79,6 +80,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   footerGradient,
   onSite,
   routedDialog,
+  target,
 }: AspectRatioImageCardProps<T>) {
   const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
 
@@ -111,6 +113,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                         onClick={onClick}
                         routedDialog={routedDialog}
                         className={styles.linkOrClick}
+                        target={target}
                       >
                         {!safe ? (
                           <MediaHash {...image} />
@@ -177,15 +180,17 @@ function LinkOrClick<T extends DialogKey>({
   children,
   routedDialog,
   className,
+  target,
 }: {
   href?: string;
   onClick?: React.MouseEventHandler;
   children: React.ReactElement;
   routedDialog?: RoutedDialogProps<T>;
   className?: string;
+  target?: string;
 }) {
   return href ? (
-    <NextLink href={href} className={className}>
+    <NextLink href={href} className={className} target={target}>
       {children}
     </NextLink>
   ) : routedDialog ? (

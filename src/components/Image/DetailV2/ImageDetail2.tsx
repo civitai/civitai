@@ -56,6 +56,8 @@ import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/Image
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { ImageRemixOfDetails } from '~/components/Image/DetailV2/ImageRemixOfDetails';
+import { ImageRemixesDetails } from '~/components/Image/DetailV2/ImageRemixesDetails';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
@@ -186,7 +188,7 @@ export function ImageDetail2() {
       {image.postId && (
         <NextLink
           href={`/posts/${image.postId}`}
-          className="hidden @md:block"
+          className="@md:block hidden"
           onClick={() => {
             if (videoRef.current) videoRef.current.stop();
           }}
@@ -223,9 +225,9 @@ export function ImageDetail2() {
       <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
         <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
         <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
-          <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
+          <div className="bg-gray-2 dark:bg-dark-9 flex size-full max-h-full max-w-full flex-col overflow-hidden">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
+              <div className="@max-md:pb-[60px] relative flex flex-1 flex-col">
                 <ImageGuard2 image={image} explain={false}>
                   {() => (
                     <>
@@ -239,7 +241,7 @@ export function ImageDetail2() {
                         <div className="flex flex-1 flex-wrap justify-between gap-1">
                           {/* Placeholder */}
                           <div className="@md:hidden" />
-                          <div className="flex gap-1 @max-md:hidden">
+                          <div className="@max-md:hidden flex gap-1">
                             <ImageGuard2.BlurToggle {...sharedBadgeProps} />
                             {LeftImageControls}
                           </div>
@@ -365,17 +367,17 @@ export function ImageDetail2() {
                   !active ? '@max-md:translate-y-[calc(100%-60px)]' : '@max-md:transition-transform'
                 } @md:w-[450px] @md:min-w-[450px] ${
                   !sidebarOpen ? '@md:hidden' : ''
-                } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
+                } bg-gray-2 dark:bg-dark-9 z-10 flex flex-col`}
                 style={{ wordBreak: 'break-word' }}
               >
-                <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
+                <div className="@max-md:shadow-topper @md:hidden flex items-center justify-between rounded-md p-3">
                   <div className="flex gap-1">{LeftImageControls}</div>
                   <ActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
                     <IconChevron {...sharedIconProps} />
                   </ActionIcon>
                 </div>
                 <ScrollArea className="flex-1 p-3 py-0">
-                  <div className="flex flex-col gap-3 py-3 @max-md:pt-0" ref={adContainerRef}>
+                  <div className="@max-md:pt-0 flex flex-col gap-3 py-3" ref={adContainerRef}>
                     <SmartCreatorCard
                       user={image.user}
                       subText={
@@ -468,6 +470,8 @@ export function ImageDetail2() {
                     )}
                     <ImageProcess imageId={image.id} />
                     <ImageGenerationData imageId={image.id} />
+                    <ImageRemixOfDetails imageId={image.id} />
+                    <ImageRemixesDetails imageId={image.id} />
                     <Card className="flex flex-col gap-3 rounded-xl">
                       <Text className="flex items-center gap-2 text-xl font-semibold">
                         <IconBrandWechat />

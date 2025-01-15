@@ -89,7 +89,7 @@ const imageSelect = Prisma.sql`
         ELSE FALSE
       END
     ) as "onSite",
-      i."metadata"->>'remixOfId' as "remixOfId"
+      i."meta"->'extra'->'remixOfId' as "remixOfId"
   `;
 
 const imageMetricsJoin = Prisma.sql`"ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"`;
