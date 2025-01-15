@@ -1,20 +1,20 @@
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import styles from './AspectRatioImageCard.module.scss';
-import { useInView } from '~/hooks/useInView';
-import clsx from 'clsx';
-import React, { useState, type Key } from 'react';
-import { ConnectType, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
 import { Text } from '@mantine/core';
-import { NextLink } from '~/components/NextLink/NextLink';
+import clsx from 'clsx';
+import React, { type Key } from 'react';
+import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import type { DialogKey, DialogState } from '~/components/Dialog/routed-dialog-registry';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { ConnectType, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useInView } from '~/hooks/useInView';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { MediaType } from '~/shared/utils/prisma/enums';
+import styles from './AspectRatioImageCard.module.scss';
 
 type AspectRatio = keyof typeof aspectRatioMap;
 const aspectRatioMap = {
@@ -62,6 +62,7 @@ type AspectRatioImageCardProps<T extends DialogKey> = {
   onSite?: boolean;
   routedDialog?: RoutedDialogProps<T>;
   target?: string;
+  isRemix?: boolean;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -81,6 +82,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   onSite,
   routedDialog,
   target,
+  isRemix,
 }: AspectRatioImageCardProps<T>) {
   const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
 
@@ -165,7 +167,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                   {footer}
                 </div>
               )}
-              {onSite && <OnsiteIndicator />}
+              {onSite && <OnsiteIndicator isRemix={isRemix} />}
             </>
           )}
         </div>

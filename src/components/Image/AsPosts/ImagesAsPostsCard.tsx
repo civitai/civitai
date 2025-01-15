@@ -26,7 +26,7 @@ import {
   IconProps,
   IconUserPlus,
 } from '@tabler/icons-react';
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -344,7 +344,7 @@ export function ImagesAsPostsCard({
                   <ImageGuard2 image={image}>
                     {(safe) => (
                       <>
-                        {image.onSite && <OnsiteIndicator />}
+                        {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
                         <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                         {safe && (
                           <Stack spacing="xs" className="absolute right-2 top-2 z-10">
@@ -467,7 +467,7 @@ export function ImagesAsPostsCard({
                             <ImageGuard2 image={image} connectType="post" connectId={postId}>
                               {(safe) => (
                                 <>
-                                  {image.onSite && <OnsiteIndicator />}
+                                  {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
                                   <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                                   {safe && (
                                     <Stack spacing="xs" className="absolute right-2 top-2 z-10">

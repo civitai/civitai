@@ -9,7 +9,33 @@
   border-color: transparent transparent theme('colors.yellow.6') transparent;
   z-index: 10;
   opacity: 0.5;
+
   &:hover {
     opacity: 0.8;
   }
+
+  &.remix { 
+    border-width: 0 0 15px 15px;
+    border-color: transparent transparent theme('colors.orange.6') transparent;
+
+    > svg {
+      display: none;
+    }
+
+    &:hover {
+      opacity: 1;
+      border-width: 0 0 30px 30px;
+
+      > svg {
+        display: block;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-100%, 55%);
+        color: theme('colors.white');
+      }
+    }
+
+  }
 }
+ 
