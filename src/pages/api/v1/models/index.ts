@@ -116,8 +116,8 @@ export default MixedAuthEndpoint(async function handler(
           : undefined,
         tags: tagsOnModels.map(({ name }) => name),
         modelVersions: modelVersions
-          .filter((x) => x.status === 'Published')
-          .map(({ status, files, images, createdAt, ...version }) => {
+          .filter((x) => x.status === 'Published' && (!data.supportsGeneration || x.covered))
+          .map(({ status, files, images, createdAt, covered, ...version }) => {
             let castedFiles =
               (files as Array<
                 Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
@@ -131,6 +131,7 @@ export default MixedAuthEndpoint(async function handler(
 
             return {
               ...version,
+              supportsGeneration: covered,
               files: includeDownloadUrl
                 ? castedFiles.map(({ hashes, ...file }) => ({
                     ...file,

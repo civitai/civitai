@@ -2361,8 +2361,9 @@ export async function getModelsWithVersions({
       }) => ({
         ...model,
         user: user.username === 'civitai' ? undefined : user,
+        supportsGeneration: modelVersions.some((x) => x.covered),
         modelVersions: modelVersions.map(
-          ({ trainingStatus, vaeId, earlyAccessTimeFrame, covered, ...version }) => {
+          ({ trainingStatus, vaeId, earlyAccessTimeFrame, ...version }) => {
             const stats = getStatsForVersion(version.id);
             const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
             const files = groupedFiles[version.id]?.files ?? [];
