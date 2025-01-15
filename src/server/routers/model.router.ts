@@ -238,7 +238,7 @@ export const modelRouter = router({
     .input(setModelCollectionShowcaseSchema)
     .use(isOwnerOrModerator)
     .mutation(setModelCollectionShowcaseHandler),
-  migrateToCollection: moderatorProcedure
+  migrateToCollection: guardedProcedure
     .input(migrateResourceToCollectionSchema)
     .use(isOwnerOrModerator)
     .mutation(({ input }) => migrateResourceToCollection(input)),

@@ -38,7 +38,7 @@ import produce from 'immer';
 import Linkify from 'linkify-react';
 import { throttle } from 'lodash-es';
 import { LazyMotion } from 'motion/react';
-import { div } from 'motion/dist/react-m';
+import { div } from 'motion/react-m';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';

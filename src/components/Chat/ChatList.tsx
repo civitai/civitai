@@ -34,7 +34,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import { div } from 'motion/dist/react-m';
+import { div } from 'motion/react-m';
 import { LazyMotion } from 'motion/react';
 
 import React, { useEffect, useState } from 'react';
