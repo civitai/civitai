@@ -38,7 +38,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { hashify } from '~/utils/string-helpers';
+import { getDisplayName, hashify } from '~/utils/string-helpers';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
@@ -95,11 +95,11 @@ export function VideoGenerationForm() {
           <Loader />
         </div>
       ) : workflow?.disabled ? (
-        <Alert color="yellow" className="mx-3" title={`${workflow?.engine} generation disabled`}>
+        <Alert color="yellow" className="mx-3" title={<span className="capitalize">{`${workflow?.engine} generation disabled`}</span>}>
           {workflow?.message && <Text className="mb-2">{workflow?.message}</Text>}
           {workflows && (
             <>
-              <Text className="mb-1">Try out another of our generation tools</Text>
+              <Text className="mb-1">Try out another video generation tool:</Text>
               <div className="flex flex-wrap gap-2">
                 {uniqBy(
                   workflows.filter((x) => !x.disabled),
@@ -109,8 +109,11 @@ export function VideoGenerationForm() {
                     key={engine}
                     compact
                     onClick={() => generationFormStore.setEngine(engine)}
+                    variant="outline"
+                    color="yellow"
+                    className="capitalize"
                   >
-                    {engine}
+                    {getDisplayName(engine)}
                   </Button>
                 ))}
               </div>
