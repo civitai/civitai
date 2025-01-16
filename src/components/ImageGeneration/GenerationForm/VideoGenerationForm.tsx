@@ -68,6 +68,10 @@ export function VideoGenerationForm() {
   const workflow = useSelectedVideoWorkflow();
   const sourceImage = useGenerationFormStore((state) => state.sourceImage);
 
+  const engineHasImg2Vid = workflows.some(
+    (x) => x.engine === workflow.engine && x.subType === 'img2vid'
+  );
+
   return (
     <div className="flex flex-1 flex-col gap-2">
       <div className="flex flex-col gap-2 px-3">
@@ -95,7 +99,11 @@ export function VideoGenerationForm() {
           <Loader />
         </div>
       ) : workflow?.disabled ? (
-        <Alert color="yellow" className="mx-3" title={<span className="capitalize">{`${workflow?.engine} generation disabled`}</span>}>
+        <Alert
+          color="yellow"
+          className="mx-3"
+          title={<span className="capitalize">{`${workflow?.engine} generation disabled`}</span>}
+        >
           {workflow?.message && <Text className="mb-2">{workflow?.message}</Text>}
           {workflows && (
             <>
@@ -130,10 +138,12 @@ export function VideoGenerationForm() {
               onChange={(value) => generationFormStore.setEngine(value!)}
               data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
             />
-            <GeneratorImageInput
-              value={sourceImage}
-              onChange={generationFormStore.setsourceImage}
-            />
+            {engineHasImg2Vid && (
+              <GeneratorImageInput
+                value={sourceImage}
+                onChange={generationFormStore.setsourceImage}
+              />
+            )}
           </div>
           <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
             <EngineForm />
