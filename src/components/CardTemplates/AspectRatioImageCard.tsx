@@ -166,7 +166,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 {footer}
               </div>
             )}
-            {onSite && <OnsiteIndicator />}
+            {onSite && <OnsiteIndicator isRemix={isRemix} />}
           </>
         )}
       </div> 
