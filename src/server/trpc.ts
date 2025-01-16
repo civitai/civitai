@@ -1,13 +1,13 @@
 import { initTRPC, TRPCError } from '@trpc/server';
-import superjson from 'superjson';
-import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
-import type { Context } from './createContext';
-import { Flags } from '~/shared/utils';
-import { OnboardingSteps } from '~/server/common/enums';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
-import semver from 'semver';
 import { NextApiRequest } from 'next';
+import semver from 'semver';
+import superjson from 'superjson';
+import { OnboardingSteps } from '~/server/common/enums';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { FeatureAccess, getFeatureFlags } from '~/server/services/feature-flags.service';
 import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
+import type { Context } from './createContext';
 
 const t = initTRPC.context<Context>().create({
   transformer: superjson,
@@ -37,7 +37,7 @@ async function needsUpdate(req?: NextApiRequest) {
   const date = req?.headers['x-client-date'] as string;
 
   if (type !== 'web') return false;
-  const client = await redis.hGetAll(REDIS_KEYS.CLIENT);
+  const client = await sysRedis.hGetAll(REDIS_SYS_KEYS.CLIENT);
   if (client.version) {
     if (!version || version === 'unknown') return true;
     return semver.lt(version, client.version);

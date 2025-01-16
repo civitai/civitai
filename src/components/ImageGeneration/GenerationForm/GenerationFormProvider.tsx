@@ -40,6 +40,9 @@ import {
 import { useDebouncer } from '~/utils/debouncer';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
+import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
+import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 
 // #region [schemas]
@@ -64,7 +67,6 @@ export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true })
   .extend({
-    tier: userTierSchema.optional().default('free'),
     model: extendedTextToImageResourceSchema,
     // .refine(
     //   (x) => x.available !== false,
@@ -122,17 +124,7 @@ const formSchema = textToImageParamsSchema
       height,
       width,
     };
-  })
-  .refine(
-    (data) => {
-      // Check if resources are at limit based on tier
-      const { resources, tier } = data;
-      const limit = defaultsByTier[tier].resources;
-
-      return resources.length <= limit;
-    },
-    { message: `You have exceed the number of allowed resources`, path: ['resources'] }
-  );
+  });
 export const blockedRequest = (() => {
   let instances: number[] = [];
   const updateStorage = () => {
@@ -195,22 +187,16 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     vae = undefined;
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
-  const resources = data.resources
-    .filter((resource) => {
-      if (
-        resource.modelType === 'Checkpoint' ||
-        resource.modelType === 'VAE' ||
-        !resource.available
-      )
-        return false;
-      const baseModelSetKeys = getBaseModelSetTypes({
-        modelType: resource.modelType,
-        baseModel: resource.baseModel,
-        defaultType: baseModel as SupportedBaseModel,
-      });
-      return baseModelSetKeys.includes(baseModel as SupportedBaseModel);
-    })
-    .slice(0, 9);
+  const resources = data.resources.filter((resource) => {
+    if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE' || !resource.available)
+      return false;
+    const baseModelSetKeys = getBaseModelSetTypes({
+      modelType: resource.modelType,
+      baseModel: resource.baseModel,
+      defaultType: baseModel as SupportedBaseModel,
+    });
+    return baseModelSetKeys.includes(baseModel as SupportedBaseModel);
+  });
 
   return {
     ...params,
@@ -265,7 +251,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
-    exclude: ['tier', 'remixSimilarity', 'remixPrompt'],
+    exclude: ['remixSimilarity', 'remixPrompt'],
     storage: localStorage,
   });
 
@@ -288,6 +274,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
+          // useGenerationFormStore.setState({ sourceImage: storeData.params.image });
           break;
         case 'remix':
         case 'run':
@@ -307,9 +294,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
               runType === 'remix' ? resources : uniqBy([...resources, ...formResources], 'id'),
           });
 
-          setValues(
-            runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources }
-          );
+          const values =
+            runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources };
+          // if (values.image) useGenerationFormStore.setState({ sourceImage: values.image });
+          setValues(values);
           break;
       }
 
@@ -419,7 +407,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         fluxMode: fluxModeOptions[1].value,
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
-        tier: currentUser?.tier ?? 'free',
         // creatorTip: overrides.creatorTip ?? 0.25,
         experimental: overrides.experimental ?? false,
       },

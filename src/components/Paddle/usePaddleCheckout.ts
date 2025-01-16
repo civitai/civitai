@@ -1,4 +1,4 @@
-import { CurrencyCode } from '@paddle/paddle-js';
+import type { CurrencyCode } from '@paddle/paddle-js';
 import { useState, useCallback } from 'react';
 import { trpc } from '~/utils/trpc';
 import { useDebouncer } from '~/utils/debouncer';

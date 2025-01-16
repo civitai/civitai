@@ -1,6 +1,6 @@
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { createLogger } from '~/utils/logging';
 
 const connected = !!env.NEWSLETTER_KEY && !!env.NEWSLETTER_ID;
@@ -79,7 +79,8 @@ type Subscription = {
   referral_code: string;
 };
 
-const getRedisKey = (email: string) => `newsletter:${email.replace(/[^a-z0-9]/gi, '_')}`;
+const getRedisKey = (email: string) =>
+  `${REDIS_KEYS.BEEHIIV.NEWSLETTER}:${email.replace(/[^a-z0-9]/gi, '_')}` as const;
 
 const getSubscription = newsletterHandler(async (email: string) => {
   if (!email) return undefined;

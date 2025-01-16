@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.417",
+  "version": "5.0.426",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -37,7 +37,9 @@
     "prepare": "husky",
     "analyze": "cross-env ANALYZE=true next build",
     "analyze:server": "cross-env BUNDLE_ANALYZE=server next build",
-    "analyze:browser": "cross-env BUNDLE_ANALYZE=browser next build"
+    "analyze:browser": "cross-env BUNDLE_ANALYZE=browser next build",
+    "tsc:trace": "tsc  --generateTrace trace --incremental false",
+    "tsc:analyze": "npx analyze-trace trace"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -50,7 +52,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.1.9-beta.15",
+    "@civitai/client": "0.1.9-beta.17",
     "@civitai/next-axiom": "^0.17.0",
     "@clickhouse/client": "^0.2.2",
     "@cloudamqp/amqp-client": "^2.1.1",
@@ -118,6 +120,7 @@
     "@trpc/react-query": "^10.45.0",
     "@trpc/server": "^10.45.0",
     "@types/stream-to-blob": "^2.0.0",
+    "@typescript/analyze-trace": "^0.10.1",
     "@vimeo/player": "^2.25.0",
     "@vladmandic/human": "^3.0.5",
     "algoliasearch": "^4.23.3",

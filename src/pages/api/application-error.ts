@@ -3,7 +3,7 @@ import { isProd } from '~/env/other';
 import { logToAxiom } from '~/server/logging/client';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
-import * as stackTraceParser from 'stacktrace-parser';
+import { parse as parseStackTrace } from 'stacktrace-parser';
 import { SourceMapConsumer } from 'source-map';
 
 import path from 'node:path';
@@ -44,7 +44,7 @@ async function applySourceMaps(minifiedStackTrace: string) {
   // const datetime = `${date.getTime()}`;
   // const dir = `${baseDir}/${datetime}`;
 
-  const stack = stackTraceParser.parse(minifiedStackTrace);
+  const stack = parseStackTrace(minifiedStackTrace);
   const lines = minifiedStackTrace.split('\n');
   const filesToDownload = [...new Set(stack.map((x) => x.file))] as string[];
   const filesToRead = filesToDownload.map((x) => x.split('_next')[1]);

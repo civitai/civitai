@@ -8,10 +8,10 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
   baseModel: true,
   baseModelType: true,
   settings: true,
-  generationCoverage: { select: { covered: true } },
   availability: true,
   clipSkip: true,
   vaeId: true,
+  earlyAccessEndsAt: true,
   model: {
     select: {
       id: true,
@@ -21,11 +21,7 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
       poi: true,
       minor: true,
       availability: true,
+      userId: true,
     },
   },
 });
-
-const generationResource = Prisma.validator<Prisma.ModelVersionArgs>()({
-  select: generationResourceSelect,
-});
-export type GenerationResourceSelect = Prisma.ModelVersionGetPayload<typeof generationResource>;

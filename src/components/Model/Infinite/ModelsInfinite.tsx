@@ -60,7 +60,7 @@ export function ModelsInfinite({
           <Loader size="xl" />
         </Center>
       ) : !!models.length ? (
-        <div style={{ position: 'relative' }}>
+        <div className="relative">
           <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
           <MasonryGrid
             data={models}

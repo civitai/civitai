@@ -1,37 +1,37 @@
 import {
+  Alert,
+  Box,
   Button,
   Center,
   Group,
+  Image,
   Loader,
   Modal,
   Paper,
   Radio,
   Stack,
-  Image,
   Text,
   createStyles,
-  Box,
-  Alert,
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
-import { PlanMeta, getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { useMutatePaddle } from '~/components/Paddle/util';
 import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
+import { PlanMeta, getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { formatKBytes } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
-import { useMutatePaddle } from '~/components/Paddle/util';
+import { formatKBytes } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
 
@@ -441,11 +441,15 @@ export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; met
           </Paper>
         )}
 
-        <Alert>
+        <Alert color="orange">
           <Stack>
             <Text>
-              Please note you will be charged immediately to the card we have in file for your
-              upgrade and will get access to all benefits of the new plan.
+              Please note there will be up to{' '}
+              <Text component="span" weight="bold">
+                an hour
+              </Text>{' '}
+              delay from when you upgrade to when you receive your Buzz &amp; get charged. All other
+              membership perks will be immediate.
             </Text>
           </Stack>
         </Alert>

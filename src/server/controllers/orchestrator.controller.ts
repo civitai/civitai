@@ -5,8 +5,8 @@ import { constants, maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { GenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
+import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
@@ -20,7 +20,7 @@ type Ctx = { token: string; userId: number };
 
 const blockedPromptLimiter = createLimiter({
   counterKey: REDIS_KEYS.GENERATION.COUNT,
-  limitKey: REDIS_KEYS.GENERATION.LIMITS,
+  limitKey: REDIS_SYS_KEYS.GENERATION.LIMITS,
   fetchCount: async (userKey) => {
     if (!clickhouse) return 0;
     const data = await clickhouse.$query<{ count: number }>`
@@ -84,7 +84,7 @@ export async function generate({
     token: token,
     body: {
       tags: [WORKFLOW_TAGS.GENERATION, ...tags],
-      steps: [step],
+      steps: [step as any], // TODO.orchestrator -  fix types
       tips: {
         civitai: civitaiTip,
         creators: creatorTip,

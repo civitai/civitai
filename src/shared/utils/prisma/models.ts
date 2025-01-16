@@ -146,7 +146,7 @@ export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
 export type RedeemableCodeType = "Buzz" | "Membership";
 
-export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audio" | "Compute" | "GameEngines" | "Editor";
+export type ToolType = "Image" | "Video" | "MotionCapture" | "Upscalers" | "Audio" | "Compute" | "GameEngines" | "Editor" | "LLM";
 
 export type TechniqueType = "Image" | "Video";
 

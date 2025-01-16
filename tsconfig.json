@@ -42,9 +42,11 @@
     // "**/*.ts",
     // "**/*.tsx",
     // "**/*.cjs",
-    "**/*.mjs",
+    // "**/*.mjs",
     "scripts",
-    "src",
+    "src"
+    // ".next/types/**/*.ts"
+    ,
     ".next/types/**/*.ts"
   ],
   "exclude": [

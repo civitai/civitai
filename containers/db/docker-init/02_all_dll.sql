@@ -3647,20 +3647,6 @@ ALTER TABLE public."Article_id_seq" OWNER TO civitai;
 
 ALTER SEQUENCE public."Article_id_seq" OWNED BY public."Article".id;
 
-
---
--- Name: BlockedImage; Type: TABLE; Schema: public; Owner: doadmin
---
-
-CREATE TABLE public."BlockedImage" (
-    hash bigint NOT NULL,
-    reason public."BlockImageReason" DEFAULT 'Ownership'::public."BlockImageReason" NOT NULL,
-    "createdAt" timestamp(3) without time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
-);
-
-
-ALTER TABLE public."BlockedImage" OWNER TO doadmin;
-
 --
 -- Name: Bounty; Type: TABLE; Schema: public; Owner: civitai
 --
@@ -11227,14 +11213,6 @@ ALTER TABLE ONLY public."Article"
 
 
 --
--- Name: BlockedImage BlockedImage_pkey; Type: CONSTRAINT; Schema: public; Owner: doadmin
---
-
-ALTER TABLE ONLY public."BlockedImage"
-    ADD CONSTRAINT "BlockedImage_pkey" PRIMARY KEY (hash);
-
-
---
 -- Name: BountyBenefactor BountyBenefactor_pkey; Type: CONSTRAINT; Schema: public; Owner: civitai
 --
 
@@ -18287,16 +18265,6 @@ GRANT SELECT ON SEQUENCE public."Article_id_seq" TO pghero;
 GRANT SELECT,USAGE ON SEQUENCE public."Article_id_seq" TO "civitai-read";
 GRANT ALL ON SEQUENCE public."Article_id_seq" TO retool;
 GRANT ALL ON SEQUENCE public."Article_id_seq" TO "civitai-jobs";
-
-
---
--- Name: TABLE "BlockedImage"; Type: ACL; Schema: public; Owner: doadmin
---
-
-GRANT ALL ON TABLE public."BlockedImage" TO civitai;
-GRANT SELECT ON TABLE public."BlockedImage" TO "civitai-read";
-GRANT SELECT ON TABLE public."BlockedImage" TO retool;
-GRANT ALL ON TABLE public."BlockedImage" TO "civitai-jobs";
 
 
 --

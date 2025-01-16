@@ -14,10 +14,6 @@ import {
   InputTextArea,
 } from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import {
-  VideoGenerationSchema,
-  videoGenerationSchema,
-} from '~/server/schema/orchestrator/orchestrator.schema';
 import { trpc } from '~/utils/trpc';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
@@ -39,8 +35,7 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
-import { ImageUrlInput } from '~/components/Generate/Input/InputImageUrl';
-import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
+import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { hashify } from '~/utils/string-helpers';
@@ -52,11 +47,14 @@ import { KlingMode } from '@civitai/client';
 import { type OrchestratorEngine } from '~/server/orchestrator/infrastructure/base.enums';
 import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
 import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
-
-const schema = videoGenerationSchema;
+import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
+import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import { useIsMutating } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
+import { uniqBy } from 'lodash-es';
 
 const WorkflowContext = createContext<{
-  workflow: GenerationWorkflowConfig;
+  workflow: VideoGenerationConfig;
   engine: string;
 } | null>(null);
 function useWorkflowContext() {
@@ -66,17 +64,9 @@ function useWorkflowContext() {
 }
 
 export function VideoGenerationForm() {
-  const { data: workflows, isLoading } = useVideoGenerationWorkflows();
+  const { data: workflows, availableEngines, isLoading } = useVideoGenerationWorkflows();
   const workflow = useSelectedVideoWorkflow();
-  const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
-
-  const availableEngines = Object.keys(engineDefinitions)
-    .filter((key) =>
-      workflows
-        ?.filter((x) => (sourceImageUrl ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
-        .some((x) => x.engine === key && !x.disabled)
-    )
-    .map((key) => ({ key, ...engineDefinitions[key] }));
+  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
 
   return (
     <div className="flex flex-1 flex-col gap-2">
@@ -111,17 +101,18 @@ export function VideoGenerationForm() {
             <>
               <Text className="mb-1">Try out another of our generation tools</Text>
               <div className="flex flex-wrap gap-2">
-                {workflows
-                  .filter((x) => !x.disabled)
-                  .map(({ engine }) => (
-                    <Button
-                      key={engine}
-                      compact
-                      onClick={() => generationFormStore.setEngine(engine)}
-                    >
-                      {engine}
-                    </Button>
-                  ))}
+                {uniqBy(
+                  workflows.filter((x) => !x.disabled),
+                  'engine'
+                ).map(({ engine }) => (
+                  <Button
+                    key={engine}
+                    compact
+                    onClick={() => generationFormStore.setEngine(engine)}
+                  >
+                    {engine}
+                  </Button>
+                ))}
               </div>
             </>
           )}
@@ -136,13 +127,10 @@ export function VideoGenerationForm() {
               onChange={(value) => generationFormStore.setEngine(value!)}
               data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
             />
-
-            {workflow?.subType.startsWith('img') && (
-              <ImageUrlInput
-                value={sourceImageUrl}
-                onChange={generationFormStore.setSourceImageUrl}
-              />
-            )}
+            <GeneratorImageInput
+              value={sourceImage}
+              onChange={generationFormStore.setsourceImage}
+            />
           </div>
           <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
             <EngineForm />
@@ -178,7 +166,13 @@ function EngineForm() {
 function KlingTextToVideoForm() {
   return (
     <FormWrapper engine="kling">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <InputAspectRatioColonDelimited
         name="aspectRatio"
@@ -244,7 +238,7 @@ function KlingTextToVideoForm() {
 function KlingImageToVideoForm() {
   return (
     <FormWrapper engine="kling">
-      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
+      {/* <InputImageUrl name="sourceImage" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <div className="flex flex-col gap-0.5">
@@ -306,7 +300,13 @@ function KlingImageToVideoForm() {
 function HaiperTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="haiper">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <HaiperAspectRatio name="aspectRatio" label="Aspect Ratio" />
@@ -325,7 +325,7 @@ function HaiperTxt2VidGenerationForm() {
 function HaiperImg2VidGenerationForm() {
   return (
     <FormWrapper engine="haiper">
-      {/* <InputImageUrl name="sourceImageUrl" label="Image" /> */}
+      {/* <InputImageUrl name="sourceImage" label="Image" /> */}
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <div className="flex flex-col gap-0.5">
@@ -343,7 +343,13 @@ function HaiperImg2VidGenerationForm() {
 function MochiGenerationForm() {
   return (
     <FormWrapper engine="mochi">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
       <DescriptionTable
         items={[
@@ -360,7 +366,13 @@ function MochiGenerationForm() {
 function MinimaxTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="minimax">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
     </FormWrapper>
   );
@@ -400,6 +412,7 @@ function FormWrapper({
     storage: localStorage,
   });
 
+  const { availableEngines } = useVideoGenerationWorkflows();
   const { mutate, isLoading, error } = useGenerate();
   const [debouncedIsLoading, setDebouncedIsLoading] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -417,9 +430,10 @@ function FormWrapper({
     }
     form.reset();
     generationFormStore.reset();
+    generationFormStore.setEngine(availableEngines[0].key);
   }
 
-  function handleSubmit(data: z.infer<typeof schema>) {
+  function handleSubmit(data: VideoGenerationSchema) {
     if (isLoading) return;
     setDebouncedIsLoading(true);
 
@@ -507,13 +521,18 @@ function FormWrapper({
 }
 
 function SubmitButton2({ loading, engine }: { loading: boolean; engine: OrchestratorEngine }) {
-  const [query, setQuery] = useState<VideoGenerationSchema | null>(null);
+  const [query, setQuery] = useState<Record<string, any> | null>(null);
   const { getValues, watch } = useFormContext();
   const [error, setError] = useState<string | null>(null);
+  const isUploadingImageValue = useIsMutating({
+    mutationKey: getQueryKey(trpc.orchestrator.imageUpload),
+  });
+  const isUploadingImage = isUploadingImageValue === 1;
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
-    { type: 'video', data: query as VideoGenerationSchema },
-    { keepPreviousData: false, enabled: !!query }
+    { type: 'video', data: query as Record<string, any> },
+    { keepPreviousData: false, enabled: !!query && !isUploadingImage }
   );
+
   const { workflow } = useWorkflowContext();
   // console.log({ query, workflow, engine });
 
@@ -553,7 +572,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
     <GenerateButton
       type="submit"
       className="flex-1"
-      disabled={!data || !query}
+      disabled={!data || !query || isUploadingImage}
       loading={isFetching || loading}
       cost={totalCost}
     >
@@ -564,14 +583,17 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
 
 const useCostStore = create<{ cost: number }>(() => ({ cost: 0 }));
 
-function validateInput(workflow: GenerationWorkflowConfig, data?: Record<string, unknown>) {
-  const { sourceImageUrl, width, height } = useGenerationFormStore.getState();
+function validateInput<TSchema extends z.AnyZodObject>(
+  workflow: VideoGenerationConfig<TSchema>,
+  data?: Record<string, unknown>
+) {
+  const { sourceImage, width, height } = useGenerationFormStore.getState();
 
-  return workflow.validate({
+  return workflow.schema.parse({
     ...data,
     engine: workflow.engine,
     workflow: workflow.key,
-    sourceImageUrl,
+    sourceImage: sourceImage,
     width,
     height,
     type: workflow.subType,

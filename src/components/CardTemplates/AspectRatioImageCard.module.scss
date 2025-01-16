@@ -4,6 +4,7 @@
   opacity: 0;
   transition: opacity 200ms ease;
   display: flex;
+  height: 100%;
   // overflow: hidden;
 
   &:hover {
@@ -62,4 +63,5 @@
   border-radius: theme('borderRadius.xl');
   height: 26px;
   overflow: unset;
+  pointer-events: auto;
 }

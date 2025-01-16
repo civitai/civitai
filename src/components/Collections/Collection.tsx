@@ -278,7 +278,9 @@ const ImageCollection = ({
         );
       }}
       additionalMenuItemsAfter={(image) => {
-        const isOwnerOrMod = permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
+        const isOwnerOrMod =
+
+          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
         return (
           <>
             {isOwnerOrMod && (
@@ -780,10 +782,11 @@ export function Collection({
                                       : 'red';
 
                                   const label = capitalize(status.toLowerCase());
+                                  const entryCount = entryCountDetails[status];
 
-                                  return entryCountDetails[status]
+                                  return entryCount
                                     ? {
-                                        value: (entryCountDetails[status] / totalEntries) * 100,
+                                        value: (entryCount / totalEntries) * 100,
                                         color,
                                         // label,
                                         tooltip: `${label}: ${entryCountDetails[status]}`,

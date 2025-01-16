@@ -1,4 +1,4 @@
-import { TransactionNotification } from '@paddle/paddle-node-sdk';
+import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
@@ -7,13 +7,10 @@ import {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
-import { throwNotFoundError } from '~/server/utils/errorHandling';
-import { getBaseUrl } from '~/server/utils/url-helpers';
-import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
 
-const baseUrl = getBaseUrl();
-const log = createLogger('subscriptions', 'blue');
+// const baseUrl = getBaseUrl();
+// const log = createLogger('subscriptions', 'blue');
 
 export const getPlans = async ({
   paymentProvider = PaymentProvider.Stripe,

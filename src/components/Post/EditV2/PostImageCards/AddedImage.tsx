@@ -178,9 +178,9 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type } = storedImage;
   const otherImages = images
-    .filter((img) => img.type === 'added')
-    .filter((img) => img.data.id !== id && canAddFunc(img.data.type, img.data.meta)) // double filter because TS is stupid
-    .map((i) => i.data);
+    .map((img) => (img.type === 'added' ? img.data : null))
+    .filter(isDefined)
+    .filter((data) => data.id !== id && canAddFunc(data.type, data.meta));
 
   const allowedResources = useMemo(() => {
     return getAllowedResources(image.resourceHelper);

@@ -615,7 +615,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       );
     }
 
-    const goodFiles = files.filter((f) => !!f);
+    const goodFiles = files.filter(isDefined);
 
     if (goodFiles.length !== 0) {
       await handleDrop(
