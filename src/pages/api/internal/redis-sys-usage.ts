@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { redis, RedisKeyTemplateCache } from '~/server/redis/client';
+import { RedisKeyTemplateSys, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { formatBytes } from '~/utils/number-helpers';
 
@@ -9,19 +9,19 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     total: 0,
     no_ttl: 0,
   };
-  const stream = redis.scanIterator({
+  const stream = sysRedis.scanIterator({
     MATCH: req.query.pattern as string,
     COUNT: 10000,
   });
   for await (const key_ of stream) {
-    const key = key_ as RedisKeyTemplateCache;
+    const key = key_ as RedisKeyTemplateSys;
 
     stats.total++;
 
     const [keyType, memoryUsage, ttl] = await Promise.all([
-      redis.type(key),
-      redis.memoryUsage(key),
-      redis.ttl(key),
+      sysRedis.type(key),
+      sysRedis.memoryUsage(key),
+      sysRedis.ttl(key),
     ]);
     if (ttl === -1) stats.no_ttl++;
 

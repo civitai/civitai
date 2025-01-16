@@ -30,6 +30,7 @@ import { isDefined } from '~/utils/type-guards';
 import { fluxUltraAir } from '~/shared/constants/generation.constants';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { getShouldChargeForResources } from '~/server/services/generation/generation.service';
+import { parseAIR } from '~/utils/string-helpers';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -391,6 +392,62 @@ export const tagCache = createCachedObject<TagLookup>({
   },
   ttl: CacheTTL.day,
 });
+
+// const explicitCoveredModelAirs = [fluxUltraAir];
+// const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
+// export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
+// export const resourceDataCache = createCachedArray({
+//   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
+//   lookupFn: async (ids) => {
+//     if (!ids.length) return {};
+//     const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
+//     const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
+//     if (explicitIds.length) OR.push({ id: { in: explicitIds } });
+//     const [modelVersions, modelVersionFiles] = await Promise.all([
+//       dbWrite.modelVersion.findMany({
+//         where: {
+//           id: { in: ids as number[] },
+//           OR,
+//         },
+//         select: generationResourceSelect,
+//       }),
+//       dbRead.modelFile.findMany({
+//         where: { modelVersionId: { in: ids }, visibility: 'Public' },
+//         select: { id: true, sizeKB: true, type: true, metadata: true, modelVersionId: true },
+//       }),
+//     ]);
+
+//     const dbResults = modelVersions.map(({ settings = {}, ...result }) => {
+//       const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
+//         id: number;
+//         sizeKB: number;
+//         type: string;
+//         modelVersionId: number;
+//         metadata: FileMetadata;
+//       }[];
+//       const primaryFile = getPrimaryFile(files);
+//       return removeEmpty({
+//         ...result,
+//         settings: settings as RecommendedSettingsSchema,
+//         fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile.sizeKB) : undefined,
+//         available:
+//           result.availability === 'Public' ||
+//           result.availability === 'EarlyAccess' ||
+//           // If it's private, we need to check access ofcs.
+//           result.availability === 'Private',
+//       });
+//     });
+
+//     const results = dbResults.reduce<Record<number, (typeof dbResults)[number]>>((acc, result) => {
+//       acc[result.id] = result;
+//       return acc;
+//     }, {});
+//     return results;
+//   },
+//   idKey: 'id',
+//   dontCacheFn: (data) => !data.available,
+//   ttl: CacheTTL.hour,
+// });
 
 const explicitCoveredModelAirs = [fluxUltraAir];
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];

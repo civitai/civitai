@@ -3,7 +3,7 @@ import {
   IconCalendar,
   IconCaretDown,
   IconCategory,
-  IconChristmasTree,
+  IconShoppingBag,
   IconFileText,
   IconHome,
   IconLayoutList,
@@ -90,8 +90,7 @@ export const homeOptions: HomeOption[] = [
   {
     key: 'shop',
     url: '/shop',
-    // icon: (props: IconProps) => <IconShoppingBag {...props} />,
-    icon: (props: IconProps) => <IconChristmasTree {...props} />,
+    icon: (props: IconProps) => <IconShoppingBag {...props} />,
     classes: ['tabHighlight'],
   },
 ];
@@ -111,18 +110,18 @@ export function filterHomeOptions(features: FeatureAccess) {
 
 const useTabsStyles = createStyles((theme) => ({
   tabHighlight: {
-    backgroundColor: theme.fn.rgba(theme.colors.green[3], theme.colorScheme === 'dark' ? 0.1 : 0.3),
+    backgroundColor: theme.fn.rgba(theme.colors.yellow[3], theme.colorScheme === 'dark' ? 0.1 : 0.3),
     backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
-      theme.colors.green[4],
+      theme.colors.yellow[4],
       0
     )}, ${theme.fn.rgba(
-      theme.colors.green[4],
+      theme.colors.yellow[4],
       theme.colorScheme === 'dark' ? 0.1 : 0.2
-    )}, ${theme.fn.rgba(theme.colors.green[4], 0)})`,
+    )}, ${theme.fn.rgba(theme.colors.yellow[4], 0)})`,
     backgroundSize: '50px',
     backgroundPosition: '-300% 50%',
     backgroundRepeat: 'no-repeat',
-    color: theme.colorScheme === 'dark' ? theme.colors.green[3] : theme.colors.green[8],
+    color: theme.colorScheme === 'dark' ? theme.colors.yellow[3] : theme.colors.yellow[8],
     animation: 'button-highlight 5s linear infinite',
     willChange: 'background-position',
   },

@@ -1,4 +1,12 @@
 import { Prisma } from '@prisma/client';
+import { uniqBy } from 'lodash-es';
+import { SessionUser } from 'next-auth';
+import { getGenerationConfig } from '~/server/common/constants';
+
+import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { resourceDataCache } from '~/server/redis/caches';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CheckResourcesCoverageSchema,
@@ -7,8 +15,13 @@ import {
   GetGenerationDataInput,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
-import { SessionUser } from 'next-auth';
-import { dbRead } from '~/server/db/client';
+
+import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
+import { modelsSearchIndex } from '~/server/search-index';
+import { generationResourceSelect } from '~/server/selectors/generation.selector';
+import { hasEntityAccess } from '~/server/services/common.service';
+import { getImageGenerationResources } from '~/server/services/image.service';
 import {
   handleLogError,
   throwAuthorizationError,
@@ -23,21 +36,20 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { fromJson, toJson } from '~/utils/json-helpers';
 
 import { getPagedData } from '~/server/utils/pagination-helpers';
-import { modelsSearchIndex } from '~/server/search-index';
-
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { resourceDataCache } from '~/server/redis/caches';
 import {
+  fluxUltraAir,
   formatGenerationResources,
   GenerationResource,
   getBaseModelFromResources,
   getBaseModelSet,
 } from '~/shared/constants/generation.constants';
-import { findClosest } from '~/utils/number-helpers';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
-import { getGenerationConfig } from '~/server/common/constants';
+import { MediaType } from '~/shared/utils/prisma/enums';
+import { isFutureDate } from '~/utils/date-helpers';
+
+import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
-import { getImageGenerationResources } from '~/server/services/image.service';
+import { findClosest } from '~/utils/number-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 import { getFeaturedModels } from '~/server/services/model.service';
 
 export function parseModelVersionId(assetId: string) {
@@ -190,7 +202,10 @@ export async function checkResourcesCoverage({ id }: CheckResourcesCoverageSchem
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
-    JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
+    JSON.parse(
+      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
+        '{}'
+    )
   );
 
   return status as GenerationStatus;
@@ -367,8 +382,8 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
 };
 
 export async function getUnstableResources() {
-  const cachedData = await redis
-    .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
+  const cachedData = await sysRedis
+    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unstable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
@@ -376,8 +391,8 @@ export async function getUnstableResources() {
 }
 
 export async function getUnavailableResources() {
-  const cachedData = await redis
-    .hGet(REDIS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
+  const cachedData = await sysRedis
+    .hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'generation:unavailable-resources')
     .then((data) => (data ? fromJson<number[]>(data) : ([] as number[])))
     .catch(() => [] as number[]); // fallback to empty array if redis fails
 
@@ -395,8 +410,8 @@ export async function toggleUnavailableResource({
   if (index > -1) unavailableResources.splice(index, 1);
   else unavailableResources.push(id);
 
-  await redis.hSet(
-    REDIS_KEYS.SYSTEM.FEATURES,
+  await sysRedis.hSet(
+    REDIS_SYS_KEYS.SYSTEM.FEATURES,
     'generation:unavailable-resources',
     toJson(unavailableResources)
   );
@@ -438,4 +453,100 @@ export async function getShouldChargeForResources(
     }),
     {}
   );
+}
+
+const explicitCoveredModelAirs = [fluxUltraAir];
+const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
+export async function getModelVersionsForGeneration({
+  ids,
+  userId,
+  isModerator,
+}: {
+  ids: number[];
+  userId?: number;
+  isModerator?: boolean;
+}) {
+  // allow us to hard code covered models
+  const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
+  const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
+  if (explicitIds.length) OR.push({ id: { in: explicitIds } });
+
+  const modelVersions = await dbRead.modelVersion
+    .findMany({
+      where: { id: { in: ids }, status: 'Published', OR },
+      select: generationResourceSelect,
+    })
+    .then(async (data) => {
+      const modelVersions = data.map((item) => {
+        const cacheable = ['Public', 'Unsearchable'].includes(item.availability);
+        const hasAccess = cacheable || userId === item.model.userId || isModerator;
+        return { ...item, cacheable, hasAccess };
+      });
+
+      const modelVersionIds = modelVersions.map((x) => x.id);
+      const missingModelVersionIds = ids.filter((id) => !modelVersionIds.includes(id));
+
+      // get models from missing modelVersionIds
+      const missingModelIds = await dbRead.modelVersion
+        .findMany({ where: { id: { in: missingModelVersionIds } }, select: { modelId: true } })
+        .then((data) => data.map((x) => x.modelId));
+
+      // get latest covered modelVersions from missingModelIds
+      const possibleReplacementVersions = missingModelIds.length
+        ? await dbRead.model
+            .findMany({
+              where: {
+                id: { in: missingModelIds },
+              },
+              select: {
+                modelVersions: {
+                  select: generationResourceSelect,
+                  where: { status: 'Published', generationCoverage: { covered: true } },
+                  orderBy: { index: { sort: 'asc', nulls: 'last' } },
+                  distinct: ['modelId'],
+                },
+              },
+            })
+            .then((data) =>
+              data.flatMap((x) =>
+                x.modelVersions.map((item) => {
+                  const hasAccess =
+                    ['Public', 'Unsearchable'].includes(item.availability) ||
+                    userId === item.model.userId ||
+                    isModerator;
+                  return { ...item, hasAccess };
+                })
+              )
+            )
+        : [];
+
+      return [...modelVersions, ...possibleReplacementVersions];
+    });
+
+  const earlyAccessIds = modelVersions
+    .filter(
+      (x) =>
+        !x.hasAccess &&
+        x.availability === 'EarlyAccess' &&
+        x.earlyAccessEndsAt &&
+        isFutureDate(x.earlyAccessEndsAt)
+    )
+    .map((x) => x.id);
+
+  const entityAccessArray = userId
+    ? await hasEntityAccess({
+        entityType: 'ModelVersion',
+        entityIds: earlyAccessIds,
+        userId,
+        isModerator,
+        permissions: EntityAccessPermission.EarlyAccessDownload,
+      })
+    : [];
+
+  return modelVersions.map((item) => {
+    const hasAccess = !item.hasAccess
+      ? entityAccessArray.find((x) => x.entityId === item.id)?.hasAccess ?? false
+      : true;
+    return { ...item, hasAccess };
+  });
 }

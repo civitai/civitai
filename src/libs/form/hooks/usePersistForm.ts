@@ -1,15 +1,14 @@
-import { TypeOf, z, AnyZodObject, ZodEffects, input } from 'zod';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { useEffect, useRef } from 'react';
 import {
+  DeepPartial,
+  FieldValues,
   Path,
   useForm,
   UseFormProps,
   UseFormReturn,
-  DeepPartial,
-  FieldValues,
 } from 'react-hook-form';
-import { zodResolver } from '@hookform/resolvers/zod';
-import { useEffect, useRef, useState } from 'react';
-import { getDeepPartialWithoutChecks } from '~/utils/zod-helpers';
+import { AnyZodObject, input, TypeOf, z, ZodEffects } from 'zod';
 
 export type UsePersistFormReturn<TFieldValues extends FieldValues = FieldValues> =
   UseFormReturn<TFieldValues> & {
@@ -103,7 +102,7 @@ export function usePersistForm<
       return defaults;
     }
     return {
-      state: { ...response.state, prompt, negativePrompt, sourceImage } ?? {},
+      state: { ...response.state, prompt, negativePrompt, sourceImage },
       version: response.version,
     };
   }

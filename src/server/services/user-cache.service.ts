@@ -1,4 +1,4 @@
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import { EntityAccessWithKey, getUserEntityAccess } from './common.service';
 
 const PRIVATE_RESOURCE_ACCESS_CACHE_EXPIRY = 60 * 60 * 4;
@@ -11,12 +11,15 @@ export async function getPrivateEntityAccessForUser({
   userId?: number;
   refreshCache?: boolean;
 }) {
-  const cachedEntities = await redis.get(`user:${userId}:private-entity-access`);
+  const cacheKey =
+    `${REDIS_KEYS.USER.BASE}:${userId}:${REDIS_SUB_KEYS.USER.PRIVATE_ENTITY_ACCESS}` as const;
+
+  const cachedEntities = await redis.get(cacheKey);
   if (cachedEntities && !refreshCache) return JSON.parse(cachedEntities) as EntityAccessWithKey[];
-  if (refreshCache) await redis.del(`user:${userId}:private-entity-access`);
+  if (refreshCache) await redis.del(cacheKey);
 
   const entities = await getUserEntityAccess({ userId });
-  await redis.set(`user:${userId}:private-entity-access`, JSON.stringify(entities), {
+  await redis.set(cacheKey, JSON.stringify(entities), {
     EX: PRIVATE_RESOURCE_ACCESS_CACHE_EXPIRY,
   });
 

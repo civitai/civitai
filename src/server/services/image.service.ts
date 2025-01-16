@@ -37,7 +37,7 @@ import {
   thumbnailCache,
   userContentOverviewCache,
 } from '~/server/redis/caches';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
@@ -190,8 +190,8 @@ async function markImagesDeleted(id: number | number[]) {
 
   const toSet = Object.fromEntries(id.map((x) => [x, x]));
   await Promise.all([
-    redis.packed.hmSet(REDIS_KEYS.INDEXES.IMAGE_DELETED, toSet),
-    redis.hExpire(REDIS_KEYS.INDEXES.IMAGE_DELETED, Object.keys(toSet), CacheTTL.hour),
+    sysRedis.packed.hmSet(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, toSet),
+    sysRedis.hExpire(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, Object.keys(toSet), CacheTTL.hour),
   ]);
 }
 
@@ -199,7 +199,7 @@ const filterOutDeleted = async <T extends object>(data: (T & { id: number })[]) 
   const keys = data.map((x) => x.id.toString());
   if (!keys.length) return data;
   const deleted = (
-    (await redis.packed.hmGet<number>(REDIS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
+    (await sysRedis.packed.hmGet<number>(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
   ).filter(isDefined);
   return data.filter((x) => !deleted.includes(x.id));
 };
@@ -776,11 +776,11 @@ export const getAllImages = async (
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
-  // TODO.fix remove test
-  if (modelVersionId) {
-    const shouldBypassSort = JSON.parse((await redis.get('bypassSort')) ?? '[]') as number[];
-    if (shouldBypassSort.includes(modelVersionId)) sort = ImageSort.Newest;
-  }
+  // nb - test code
+  // if (modelVersionId) {
+  //   const shouldBypassSort = JSON.parse((await redis.get('bypassSort')) ?? '[]') as number[];
+  //   if (shouldBypassSort.includes(modelVersionId)) sort = ImageSort.Newest;
+  // }
 
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);
@@ -1923,9 +1923,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     });
 
     if (fullData.length) {
-      redis.packed
+      sysRedis.packed
         .sAdd(
-          REDIS_KEYS.QUEUES.SEEN_IMAGES,
+          REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
           fullData.map((i) => i.id)
         )
         .catch((e) => {
@@ -4502,11 +4502,11 @@ export function addBlockedImage({
   hash: bigint | number;
   reason: BlockImageReason;
 }) {
-  return dbWrite.$executeRaw`
-    INSERT INTO "BlockedImage" (hash, reason)
-    VALUES (${hash}, ${reason}::"BlockImageReason")
-    ON CONFLICT DO NOTHING
-  `;
+  return clickhouse?.insert({
+    table: 'blocked_images',
+    values: [{ hash: Number(hash), reason }],
+    format: 'JSONEachRow',
+  });
 }
 
 export function bulkAddBlockedImages({
@@ -4516,15 +4516,16 @@ export function bulkAddBlockedImages({
 }) {
   if (data.length === 0) return;
 
-  const values = data
-    .map(({ hash, reason }) => `(${hash}, '${reason}'::"BlockImageReason")`)
-    .join(',');
+  const values = data.map(({ hash, reason }) => ({
+    hash: Number(hash),
+    reason: reason.toString(),
+  }));
 
-  return dbWrite.$executeRaw`
-    INSERT INTO "BlockedImage" (hash, reason)
-    VALUES ${Prisma.raw(values)}
-    ON CONFLICT DO NOTHING
-  `;
+  return clickhouse?.insert({
+    table: 'blocked_images',
+    values,
+    format: 'JSONEachRow',
+  });
 }
 
 export async function bulkRemoveBlockedImages({

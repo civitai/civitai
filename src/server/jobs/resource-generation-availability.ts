@@ -1,6 +1,6 @@
 import { toJson } from '~/utils/json-helpers';
 import { clickhouse } from '../clickhouse/client';
-import { redis } from '../redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '../redis/client';
 import { createJob } from './job';
 
 export const resourceGenerationAvailability = createJob(
@@ -41,8 +41,8 @@ export const resourceGenerationAvailability = createJob(
       ).map(({ modelVersionId }) => modelVersionId);
 
       // Store new data
-      await redis.hSet(
-        'system:features',
+      await sysRedis.hSet(
+        REDIS_SYS_KEYS.SYSTEM.FEATURES,
         'generation:unstable-resources',
         toJson(affectedResources)
       );
