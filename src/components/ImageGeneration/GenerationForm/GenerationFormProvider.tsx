@@ -12,11 +12,9 @@ import {
   generation,
   getGenerationConfig,
 } from '~/server/common/constants';
-import { defaultsByTier } from '~/server/schema/generation.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import {
@@ -40,9 +38,6 @@ import {
 import { useDebouncer } from '~/utils/debouncer';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
-import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 
 // #region [schemas]

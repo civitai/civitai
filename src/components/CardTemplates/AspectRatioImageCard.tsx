@@ -4,8 +4,6 @@ import React, { type Key } from 'react';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import type { DialogKey, DialogState } from '~/components/Dialog/routed-dialog-registry';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { ConnectType, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { MediaType } from '~/shared/utils/prisma/enums';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
