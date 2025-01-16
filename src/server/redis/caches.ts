@@ -392,22 +392,71 @@ export const tagCache = createCachedObject<TagLookup>({
   ttl: CacheTTL.day,
 });
 
+// const explicitCoveredModelAirs = [fluxUltraAir];
+// const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
+// export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
+// export const resourceDataCache = createCachedArray({
+//   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
+//   lookupFn: async (ids) => {
+//     if (!ids.length) return {};
+//     const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
+//     const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
+//     if (explicitIds.length) OR.push({ id: { in: explicitIds } });
+//     const [modelVersions, modelVersionFiles] = await Promise.all([
+//       dbWrite.modelVersion.findMany({
+//         where: {
+//           id: { in: ids as number[] },
+//           OR,
+//         },
+//         select: generationResourceSelect,
+//       }),
+//       dbRead.modelFile.findMany({
+//         where: { modelVersionId: { in: ids }, visibility: 'Public' },
+//         select: { id: true, sizeKB: true, type: true, metadata: true, modelVersionId: true },
+//       }),
+//     ]);
+
+//     const dbResults = modelVersions.map(({ settings = {}, ...result }) => {
+//       const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
+//         id: number;
+//         sizeKB: number;
+//         type: string;
+//         modelVersionId: number;
+//         metadata: FileMetadata;
+//       }[];
+//       const primaryFile = getPrimaryFile(files);
+//       return removeEmpty({
+//         ...result,
+//         settings: settings as RecommendedSettingsSchema,
+//         fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile.sizeKB) : undefined,
+//         available:
+//           result.availability === 'Public' ||
+//           result.availability === 'EarlyAccess' ||
+//           // If it's private, we need to check access ofcs.
+//           result.availability === 'Private',
+//       });
+//     });
+
+//     const results = dbResults.reduce<Record<number, (typeof dbResults)[number]>>((acc, result) => {
+//       acc[result.id] = result;
+//       return acc;
+//     }, {});
+//     return results;
+//   },
+//   idKey: 'id',
+//   dontCacheFn: (data) => !data.available,
+//   ttl: CacheTTL.hour,
+// });
+
 const explicitCoveredModelAirs = [fluxUltraAir];
-const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
-    const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
-    const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
-    if (explicitIds.length) OR.push({ id: { in: explicitIds } });
     const [modelVersions, modelVersionFiles] = await Promise.all([
       dbWrite.modelVersion.findMany({
-        where: {
-          id: { in: ids as number[] },
-          OR,
-        },
+        where: { id: { in: ids as number[] } },
         select: generationResourceSelect,
       }),
       dbRead.modelFile.findMany({
@@ -416,7 +465,12 @@ export const resourceDataCache = createCachedArray({
       }),
     ]);
 
-    const dbResults = modelVersions.map(({ settings = {}, ...result }) => {
+    const dbResults = modelVersions.map(({ generationCoverage, settings = {}, ...result }) => {
+      const covered =
+        explicitCoveredModelAirs.some((air) =>
+          air.includes(`civitai:${result.model.id}@${result.id}`)
+        ) ||
+        (generationCoverage?.covered ?? false);
       const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
         id: number;
         sizeKB: number;
@@ -428,12 +482,14 @@ export const resourceDataCache = createCachedArray({
       return removeEmpty({
         ...result,
         settings: settings as RecommendedSettingsSchema,
+        covered,
         fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile.sizeKB) : undefined,
         available:
-          result.availability === 'Public' ||
-          result.availability === 'EarlyAccess' ||
-          // If it's private, we need to check access ofcs.
-          result.availability === 'Private',
+          covered &&
+          (result.availability === 'Public' ||
+            result.availability === 'EarlyAccess' ||
+            // If it's private, we need to check access ofcs.
+            result.availability === 'Private'),
       });
     });
 

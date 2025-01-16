@@ -24,4 +24,9 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
       userId: true,
     },
   },
+  generationCoverage: {
+    select: {
+      covered: true,
+    },
+  },
 });
