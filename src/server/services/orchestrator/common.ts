@@ -197,7 +197,7 @@ export async function parseGenerateImageInput({
   if (!resourceData.resources.every((x) => x.available) && params.workflow !== 'img2img-upscale')
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
-        .filter((x) => !x.covered)
+        .filter((x) => !x.available)
         .map((x) => x.air)
         .join(', ')}`
     );
