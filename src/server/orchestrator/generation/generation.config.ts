@@ -7,7 +7,7 @@ import { mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.sc
 export type VideoGenerationSchema = z.infer<(typeof videoGenerationConfig)[number]['schema']>;
 export const videoGenerationConfig = [
   ...klingVideoGenerationConfig,
+  ...minimaxVideoGenerationConfig,
   ...haiperVideoGenerationConfig,
   ...mochiVideoGenerationConfig,
-  ...minimaxVideoGenerationConfig,
 ] as const;

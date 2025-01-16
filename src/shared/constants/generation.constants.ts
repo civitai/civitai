@@ -528,6 +528,16 @@ type EnginesDictionary = Record<
   }
 >;
 export const engineDefinitions: EnginesDictionary = {
+  minimax: {
+    label: 'Hailuo by MiniMax',
+    description: '',
+    whatIf: [],
+  },
+  kling: {
+    label: 'Kling',
+    description: ``,
+    whatIf: ['mode', 'duration'],
+  },
   haiper: {
     label: 'Haiper',
     description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
@@ -536,16 +546,6 @@ export const engineDefinitions: EnginesDictionary = {
   mochi: {
     label: 'Mochi',
     description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
-  },
-  kling: {
-    label: 'Kling',
-    description: ``,
-    whatIf: ['mode', 'duration'],
-  },
-  minimax: {
-    label: 'Hailuo by MiniMax',
-    description: '',
-    whatIf: [],
   },
 };
 
