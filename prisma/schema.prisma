@@ -2733,7 +2733,7 @@ model Link {
 
 enum Availability {
   Public
-  Unsearchable // Ignored from search results.
+  Unsearchable // Public but Ignored from search results.
   Private
   EarlyAccess
 }
