@@ -64,7 +64,6 @@ export function ImagesAsPostsCard({
   height: number;
 }) {
   const theme = useMantineTheme();
-  const { ref, inView } = useInView();
   const { classes, cx } = useStyles();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
@@ -234,6 +233,8 @@ export function ImagesAsPostsCard({
             : undefined),
         }
       : undefined;
+
+  const { ref, inView } = useInView({ key: cosmeticData ? 1 : 0 });
 
   return (
     <TwCosmeticWrapper
