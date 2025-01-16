@@ -35,7 +35,10 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
-import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
+import {
+  AccordionGeneratorImageInput,
+  GeneratorImageInput,
+} from '~/components/Generate/Input/GeneratorImageInput';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { getDisplayName, hashify } from '~/utils/string-helpers';
@@ -139,7 +142,7 @@ export function VideoGenerationForm() {
               data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
             />
             {engineHasImg2Vid && (
-              <GeneratorImageInput
+              <AccordionGeneratorImageInput
                 value={sourceImage}
                 onChange={generationFormStore.setsourceImage}
               />
