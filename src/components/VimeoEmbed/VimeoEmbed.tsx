@@ -42,8 +42,6 @@ export const VimeoEmbed = ({
       sx={{
         overflow: 'hidden',
         position: 'relative',
-        height: 0,
-        paddingBottom: '56.25%',
         iframe: {
           position: 'absolute',
           top: 0,

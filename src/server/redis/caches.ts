@@ -29,6 +29,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { fluxUltraAir } from '~/shared/constants/generation.constants';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { parseAIR } from '~/utils/string-helpers';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -392,14 +393,21 @@ export const tagCache = createCachedObject<TagLookup>({
 });
 
 const explicitCoveredModelAirs = [fluxUltraAir];
+const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
+    const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
+    const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
+    if (explicitIds.length) OR.push({ id: { in: explicitIds } });
     const [modelVersions, modelVersionFiles] = await Promise.all([
       dbWrite.modelVersion.findMany({
-        where: { id: { in: ids as number[] } },
+        where: {
+          id: { in: ids as number[] },
+          OR,
+        },
         select: generationResourceSelect,
       }),
       dbRead.modelFile.findMany({
@@ -408,12 +416,7 @@ export const resourceDataCache = createCachedArray({
       }),
     ]);
 
-    const dbResults = modelVersions.map(({ generationCoverage, settings = {}, ...result }) => {
-      const covered =
-        explicitCoveredModelAirs.some((air) =>
-          air.includes(`civitai:${result.model.id}@${result.id}`)
-        ) ||
-        (generationCoverage?.covered ?? false);
+    const dbResults = modelVersions.map(({ settings = {}, ...result }) => {
       const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
         id: number;
         sizeKB: number;
@@ -425,14 +428,12 @@ export const resourceDataCache = createCachedArray({
       return removeEmpty({
         ...result,
         settings: settings as RecommendedSettingsSchema,
-        covered,
         fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile.sizeKB) : undefined,
         available:
-          covered &&
-          (result.availability === 'Public' ||
-            result.availability === 'EarlyAccess' ||
-            // If it's private, we need to check access ofcs.
-            result.availability === 'Private'),
+          result.availability === 'Public' ||
+          result.availability === 'EarlyAccess' ||
+          // If it's private, we need to check access ofcs.
+          result.availability === 'Private',
       });
     });
 

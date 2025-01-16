@@ -865,7 +865,7 @@ export const generation = {
   lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
   defaultValues: {
     workflow: 'txt2img',
-    cfgScale: 7,
+    cfgScale: 3.5,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
     seed: undefined,

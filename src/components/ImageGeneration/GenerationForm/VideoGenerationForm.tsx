@@ -51,6 +51,7 @@ import { VideoGenerationSchema } from '~/server/orchestrator/generation/generati
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
+import { uniqBy } from 'lodash-es';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -63,17 +64,9 @@ function useWorkflowContext() {
 }
 
 export function VideoGenerationForm() {
-  const { data: workflows, isLoading } = useVideoGenerationWorkflows();
+  const { data: workflows, availableEngines, isLoading } = useVideoGenerationWorkflows();
   const workflow = useSelectedVideoWorkflow();
   const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-
-  const availableEngines = Object.keys(engineDefinitions)
-    .filter((key) =>
-      workflows
-        ?.filter((x) => (sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
-        .some((x) => x.engine === key && !x.disabled)
-    )
-    .map((key) => ({ key, ...engineDefinitions[key] }));
 
   return (
     <div className="flex flex-1 flex-col gap-2">
@@ -108,20 +101,21 @@ export function VideoGenerationForm() {
             <>
               <Text className="mb-1">Try out another video generation tool:</Text>
               <div className="flex flex-wrap gap-2">
-                {workflows
-                  .filter((x) => !x.disabled)
-                  .map(({ engine }) => (
-                    <Button
-                      key={engine}
-                      compact
-                      onClick={() => generationFormStore.setEngine(engine)}
-                      variant="outline"
-                      color="yellow"
-                      className="capitalize"
-                    >
-                      {getDisplayName(engine)}
-                    </Button>
-                  ))}
+                {uniqBy(
+                  workflows.filter((x) => !x.disabled),
+                  'engine'
+                ).map(({ engine }) => (
+                  <Button
+                    key={engine}
+                    compact
+                    onClick={() => generationFormStore.setEngine(engine)}
+                    variant="outline"
+                    color="yellow"
+                    className="capitalize"
+                  >
+                    {getDisplayName(engine)}
+                  </Button>
+                ))}
               </div>
             </>
           )}
@@ -136,13 +130,6 @@ export function VideoGenerationForm() {
               onChange={(value) => generationFormStore.setEngine(value!)}
               data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
             />
-
-            {/* {workflow?.subType.startsWith('img') && (
-              <ImageUrlInput
-                value={sourceImage}
-                onChange={generationFormStore.setsourceImage}
-              />
-            )} */}
             <GeneratorImageInput
               value={sourceImage}
               onChange={generationFormStore.setsourceImage}
@@ -428,6 +415,7 @@ function FormWrapper({
     storage: localStorage,
   });
 
+  const { availableEngines } = useVideoGenerationWorkflows();
   const { mutate, isLoading, error } = useGenerate();
   const [debouncedIsLoading, setDebouncedIsLoading] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -445,6 +433,7 @@ function FormWrapper({
     }
     form.reset();
     generationFormStore.reset();
+    generationFormStore.setEngine(availableEngines[0].key);
   }
 
   function handleSubmit(data: VideoGenerationSchema) {

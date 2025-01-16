@@ -3,8 +3,8 @@ import { uniqBy } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { getGenerationConfig } from '~/server/common/constants';
 
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbRead } from '~/server/db/client';
+import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -19,6 +19,8 @@ import {
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
+import { generationResourceSelect } from '~/server/selectors/generation.selector';
+import { hasEntityAccess } from '~/server/services/common.service';
 import { getImageGenerationResources } from '~/server/services/image.service';
 import {
   handleLogError,
@@ -28,16 +30,19 @@ import {
 
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
+  fluxUltraAir,
   formatGenerationResources,
   GenerationResource,
   getBaseModelFromResources,
   getBaseModelSet,
 } from '~/shared/constants/generation.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { isFutureDate } from '~/utils/date-helpers';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -418,4 +423,100 @@ export async function toggleUnavailableResource({
       .catch(handleLogError);
 
   return unavailableResources;
+}
+
+const explicitCoveredModelAirs = [fluxUltraAir];
+const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
+export async function getModelVersionsForGeneration({
+  ids,
+  userId,
+  isModerator,
+}: {
+  ids: number[];
+  userId?: number;
+  isModerator?: boolean;
+}) {
+  // allow us to hard code covered models
+  const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
+  const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
+  if (explicitIds.length) OR.push({ id: { in: explicitIds } });
+
+  const modelVersions = await dbRead.modelVersion
+    .findMany({
+      where: { id: { in: ids }, status: 'Published', OR },
+      select: generationResourceSelect,
+    })
+    .then(async (data) => {
+      const modelVersions = data.map((item) => {
+        const cacheable = ['Public', 'Unsearchable'].includes(item.availability);
+        const hasAccess = cacheable || userId === item.model.userId || isModerator;
+        return { ...item, cacheable, hasAccess };
+      });
+
+      const modelVersionIds = modelVersions.map((x) => x.id);
+      const missingModelVersionIds = ids.filter((id) => !modelVersionIds.includes(id));
+
+      // get models from missing modelVersionIds
+      const missingModelIds = await dbRead.modelVersion
+        .findMany({ where: { id: { in: missingModelVersionIds } }, select: { modelId: true } })
+        .then((data) => data.map((x) => x.modelId));
+
+      // get latest covered modelVersions from missingModelIds
+      const possibleReplacementVersions = missingModelIds.length
+        ? await dbRead.model
+            .findMany({
+              where: {
+                id: { in: missingModelIds },
+              },
+              select: {
+                modelVersions: {
+                  select: generationResourceSelect,
+                  where: { status: 'Published', generationCoverage: { covered: true } },
+                  orderBy: { index: { sort: 'asc', nulls: 'last' } },
+                  distinct: ['modelId'],
+                },
+              },
+            })
+            .then((data) =>
+              data.flatMap((x) =>
+                x.modelVersions.map((item) => {
+                  const hasAccess =
+                    ['Public', 'Unsearchable'].includes(item.availability) ||
+                    userId === item.model.userId ||
+                    isModerator;
+                  return { ...item, hasAccess };
+                })
+              )
+            )
+        : [];
+
+      return [...modelVersions, ...possibleReplacementVersions];
+    });
+
+  const earlyAccessIds = modelVersions
+    .filter(
+      (x) =>
+        !x.hasAccess &&
+        x.availability === 'EarlyAccess' &&
+        x.earlyAccessEndsAt &&
+        isFutureDate(x.earlyAccessEndsAt)
+    )
+    .map((x) => x.id);
+
+  const entityAccessArray = userId
+    ? await hasEntityAccess({
+        entityType: 'ModelVersion',
+        entityIds: earlyAccessIds,
+        userId,
+        isModerator,
+        permissions: EntityAccessPermission.EarlyAccessDownload,
+      })
+    : [];
+
+  return modelVersions.map((item) => {
+    const hasAccess = !item.hasAccess
+      ? entityAccessArray.find((x) => x.entityId === item.id)?.hasAccess ?? false
+      : true;
+    return { ...item, hasAccess };
+  });
 }

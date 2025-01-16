@@ -309,7 +309,7 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
       strength: settings?.strength ?? 1,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
-      covered: resource.covered,
+      covered: true,
       minor: resource.model.minor,
       available: resource.available,
       fileSizeKB: resource.fileSizeKB,

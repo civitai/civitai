@@ -6,6 +6,7 @@ import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { GenerationData, RemixOfProps } from '~/server/services/generation/generation.service';
 import {
   GenerationResource,
+  engineDefinitions,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { QS } from '~/utils/qs';
@@ -181,7 +182,17 @@ export function useVideoGenerationWorkflows() {
       return { ...config, ...engine };
     })
     .filter(isDefined);
-  return { data: workflows, isLoading };
+
+  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
+  const availableEngines = Object.keys(engineDefinitions)
+    .filter((key) =>
+      workflows
+        ?.filter((x) => (sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
+        .some((x) => x.engine === key && !x.disabled)
+    )
+    .map((key) => ({ key, ...engineDefinitions[key] }));
+
+  return { data: workflows, availableEngines, isLoading };
 }
 
 export function useSelectedVideoWorkflow() {
