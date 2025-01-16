@@ -18,7 +18,7 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
-import { REDIS_KEYS, redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
@@ -58,7 +58,6 @@ import {
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
-import { getSystemHomeBlocks } from '~/server/services/home-block.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,

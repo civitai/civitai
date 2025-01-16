@@ -29,10 +29,6 @@ import {
 } from '~/server/utils/errorHandling';
 import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
-import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { uniqBy } from 'lodash-es';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
-
 import { fromJson, toJson } from '~/utils/json-helpers';
 
 import { getPagedData } from '~/server/utils/pagination-helpers';
@@ -43,10 +39,7 @@ import {
   getBaseModelFromResources,
   getBaseModelSet,
 } from '~/shared/constants/generation.constants';
-import { MediaType } from '~/shared/utils/prisma/enums';
 import { isFutureDate } from '~/utils/date-helpers';
-
-import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
 import { parseAIR } from '~/utils/string-helpers';
