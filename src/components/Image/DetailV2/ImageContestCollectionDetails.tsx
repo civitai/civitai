@@ -211,8 +211,7 @@ export const ImageContestCollectionDetails = ({
                     )}
 
                     <Text>
-                      Share the link to your submission in the contest and have your friends react
-                      on it.
+                      Share the link to your submission and have your friends react.
                     </Text>
                     <Text>
                       Please note than an account is required to react and reaction votes are
