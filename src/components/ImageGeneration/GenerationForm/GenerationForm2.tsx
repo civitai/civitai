@@ -28,7 +28,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { clone } from 'lodash-es';
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -36,6 +36,7 @@ import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewar
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   useGenerationStatus,
   useUnstableResources,
@@ -608,6 +609,70 @@ export function GenerationFormContent() {
                 )}
 
                 <div className="flex flex-col">
+                  <Watch {...form} fields={['remixSimilarity', 'remixOfId', 'remixPrompt']}>
+                    {({ remixSimilarity, remixOfId, remixPrompt }) => {
+                      if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
+
+                      return (
+                        <div className="my-2 flex flex-col gap-2">
+                          <div className="flex">
+                            <div className=" flex-none">
+                              <ImageById imageId={remixOfId} className="h-28" />
+                            </div>
+                            <div className="h-28 flex-1">
+                              {remixSimilarity >= 0.75 && (
+                                <Alert color="green" h="100%">
+                                  <Stack spacing={0}>
+                                    <Text weight="bold">Remixing</Text>
+                                    <Text size="xs" lineClamp={3}>
+                                      {remixPrompt}
+                                    </Text>
+                                  </Stack>
+                                </Alert>
+                              )}
+
+                              {remixSimilarity < 0.75 && (
+                                <Alert color="red" h="100%">
+                                  <Stack spacing={0}>
+                                    <Text weight="bold">Remixing</Text>
+                                    <Text size="xs">
+                                      You have deviated from the original prompt.
+                                    </Text>
+                                  </Stack>
+                                </Alert>
+                              )}
+                            </div>
+                          </div>
+                          {remixSimilarity < 0.75 && (
+                            <Group spacing="xs" grow noWrap>
+                              <Button
+                                variant="light"
+                                onClick={() => form.setValue('prompt', remixPrompt)}
+                                size="xs"
+                                color="yellow"
+                                fullWidth
+                              >
+                                Restore Remix
+                              </Button>
+                              <Button
+                                variant="light"
+                                color="red"
+                                size="xs"
+                                onClick={() => {
+                                  form.setValue('remixOfId', undefined);
+                                  form.setValue('remixSimilarity', undefined);
+                                  form.setValue('remixPrompt', undefined);
+                                }}
+                                fullWidth
+                              >
+                                Stop Remix
+                              </Button>
+                            </Group>
+                          )}
+                        </div>
+                      );
+                    }}
+                  </Watch>
                   <Input.Wrapper
                     label={
                       <div className="mb-1 flex items-center gap-1">

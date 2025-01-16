@@ -49,7 +49,7 @@ type ImageProps = {
 
 type RoutedDialogProps<T extends DialogKey> = { name: T; state: DialogState<T> };
 
-type AspectRatioImageCardProps<T extends DialogKey> = {
+export type AspectRatioImageCardProps<T extends DialogKey> = {
   href?: string;
   aspectRatio?: AspectRatio;
   onClick?: React.MouseEventHandler;

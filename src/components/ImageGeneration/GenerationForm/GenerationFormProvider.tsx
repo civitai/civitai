@@ -1,23 +1,27 @@
-import { DeepPartial } from 'react-hook-form';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { showNotification } from '@mantine/notifications';
+import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
+import { DeepPartial } from 'react-hook-form';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { UsePersistFormReturn, usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import {
-  BaseModel,
   BaseModelSetType,
   constants,
   generation,
   getGenerationConfig,
 } from '~/server/common/constants';
+import { defaultsByTier } from '~/server/schema/generation.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
+import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { userTierSchema } from '~/server/schema/user.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
+import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import {
   SupportedBaseModel,
+  fluxModeOptions,
   getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
@@ -26,22 +30,17 @@ import {
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { removeEmpty } from '~/utils/object-helpers';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import {
   fetchGenerationData,
   generationStore,
   useGenerationFormStore,
   useGenerationStore,
 } from '~/store/generation.store';
-import { auditPrompt } from '~/utils/metadata/audit';
-import { defaultsByTier } from '~/server/schema/generation.schema';
-import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
-import { uniqBy } from 'lodash-es';
-import { isDefined } from '~/utils/type-guards';
-import { showNotification } from '@mantine/notifications';
-import { fluxModeOptions } from '~/shared/constants/generation.constants';
 import { useDebouncer } from '~/utils/debouncer';
+import { auditPrompt } from '~/utils/metadata/audit';
+import { removeEmpty } from '~/utils/object-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 // #region [schemas]
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
@@ -103,6 +102,7 @@ const formSchema = textToImageParamsSchema
       }),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
+    remixPrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
     fluxUltraRaw: z.boolean().optional(),
@@ -245,7 +245,14 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const type = useGenerationFormStore((state) => state.type);
 
   const getValues = useCallback(
-    (storageValues: DeepPartialFormData) => getDefaultValues(storageValues),
+    (storageValues: DeepPartialFormData) => {
+      // Ensure we always get similarity accordingly.
+      if (storageValues.remixOfId && storageValues.prompt) {
+        checkSimilarity(storageValues.remixOfId, storageValues.prompt);
+      }
+
+      return getDefaultValues(storageValues);
+    },
     [currentUser, status] // eslint-disable-line
   );
 
@@ -258,7 +265,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
-    exclude: ['tier', 'remixSimilarity'],
+    exclude: ['tier', 'remixSimilarity', 'remixPrompt'],
     storage: localStorage,
   });
 
@@ -268,6 +275,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         const similarity = calculateAdjustedCosineSimilarities(data.params.prompt, prompt);
         form.setValue('remixSimilarity', similarity);
       }
+
+      form.setValue('remixPrompt', data.params.prompt);
     });
   }
 
@@ -318,6 +327,23 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       generationStore.clearData();
     }
   }, [status, currentUser, storeData]); // eslint-disable-line
+
+  // useEffect(() => {
+  //   if (type !== 'image') {
+  //     return;
+  //   }
+
+  //   // Ensures we check similarity on initial load.
+  //   // This is needed because the only wqy we set the remixOfId is when similarity
+  //   // is checked
+
+  //   const values = form.getValues();
+  //   if (!!values.remixOfId && !values.remixSimilarity && values.prompt) {
+  //     debouncer(() => {
+  //       checkSimilarity(values.remixOfId as number, values.prompt);
+  //     });
+  //   }
+  // }, [type]);
 
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {

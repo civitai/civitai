@@ -1,4 +1,3 @@
-import { MediaType } from '~/shared/utils/prisma/enums';
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -8,6 +7,7 @@ import {
   GenerationResource,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
