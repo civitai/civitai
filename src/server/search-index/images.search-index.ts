@@ -1,15 +1,9 @@
 import { Prisma } from '@prisma/client';
-import {
-  ImageGenerationProcess,
-  ImageIngestionStatus,
-  MediaType,
-} from '~/shared/utils/prisma/enums';
 import { chunk } from 'lodash-es';
 import { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
-import { pgDbRead } from '~/server/db/pgDb';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import {
@@ -22,6 +16,11 @@ import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.sea
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import {
+  ImageGenerationProcess,
+  ImageIngestionStatus,
+  MediaType,
+} from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -269,43 +268,45 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   maxQueueSize: 100, // Avoids hogging too much memory.
   pullSteps: 7,
   prepareBatches: async ({ pg, jobContext }, lastUpdatedAt) => {
-    const lastUpdateIso = lastUpdatedAt?.toISOString();
+    // const lastUpdateIso = lastUpdatedAt?.toISOString();
 
-    const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
-    
-    SELECT (
-      SELECT
-      i.id FROM "Image" i
-      ${lastUpdatedAt ? `WHERE i."createdAt" >= '${lastUpdateIso}'` : ``}
-      ORDER BY "createdAt" LIMIT 1
-    ) as "startId", (
-      SELECT MAX (id) FROM "Image"
-    ) as "endId";
-    `);
+    // const newItemsQuery = await pg.cancellableQuery<{ startId: number; endId: number }>(`
 
-    jobContext?.on('cancel', newItemsQuery.cancel);
-    const newItems = await newItemsQuery.result();
-    const { startId, endId } = newItems[0];
+    // SELECT (
+    //   SELECT
+    //   i.id FROM "Image" i
+    //   ${lastUpdatedAt ? `WHERE i."createdAt" >= '${lastUpdateIso}'` : ``}
+    //   ORDER BY "createdAt" LIMIT 1
+    // ) as "startId", (
+    //   SELECT MAX (id) FROM "Image"
+    // ) as "endId";
+    // `);
 
-    let updateIds: number[] = [];
-    // TODO remove createdAt clause below?
-    if (lastUpdatedAt) {
-      const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
-        SELECT id
-        FROM "Image"
-        WHERE "updatedAt" > '${lastUpdateIso}'
-          AND "postId" IS NOT NULL
-        ORDER BY id;
-      `);
-      const results = await updatedIdItemsQuery.result();
-      updateIds = results.map((x) => x.id);
-    }
+    // jobContext?.on('cancel', newItemsQuery.cancel);
+    // const newItems = await newItemsQuery.result();
+    // const { startId, endId } = newItems[0];
 
+    // let updateIds: number[] = [];
+    // // TODO remove createdAt clause below?
+    // if (lastUpdatedAt) {
+    //   const updatedIdItemsQuery = await pg.cancellableQuery<{ id: number }>(`
+    //     SELECT id
+    //     FROM "Image"
+    //     WHERE "updatedAt" > '${lastUpdateIso}'
+    //       AND "postId" IS NOT NULL
+    //     ORDER BY id;
+    //   `);
+    //   const results = await updatedIdItemsQuery.result();
+    //   updateIds = results.map((x) => x.id);
+    // }
+
+    // For the time being, we'll keep this index running solely for the purpose
+    // of managing deletes / queued updates.
     return {
       batchSize: READ_BATCH_SIZE,
-      startId,
-      endId,
-      updateIds,
+      startId: 0,
+      endId: 0,
+      updateIds: [],
     };
   },
   pullData: async ({ db, logger, indexName }, batch, step, prevData) => {
