@@ -187,7 +187,7 @@ export function QueueItem({
       {inView && (
         <Card.Section py={4} inheritPadding withBorder>
           <div className="flex justify-between">
-            <div className="flex items-center gap-1">
+            <div className="flex flex-wrap items-center gap-1">
               {!!images.length && (
                 <GenerationStatusBadge
                   status={request.status}
