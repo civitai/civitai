@@ -1,4 +1,4 @@
-import { IconHierarchy } from '@tabler/icons-react';
+import { IconHierarchy, IconSitemap } from '@tabler/icons-react';
 import clsx from 'clsx';
 
 import styles from './OnsiteIndicatore.module.scss';
@@ -11,7 +11,8 @@ export function OnsiteIndicator({ isRemix }: { isRemix?: boolean }) {
       })}
       title={isRemix ? 'Remixed from another image' : 'Created on Civitai'}
     >
-      {isRemix && <IconHierarchy size={18} />}
+      {!isRemix && <IconSitemap size={14} strokeWidth={2} />}
+      {isRemix && <IconHierarchy size={14} strokeWidth={2} />}
     </div>
   );
 }

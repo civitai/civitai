@@ -1,10 +1,10 @@
-import { Card, Text, Button } from '@mantine/core';
+import { Button, Card, Text } from '@mantine/core';
 import { IconHierarchy } from '@tabler/icons-react';
-import React, { useState } from 'react';
 import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
+import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '../image.utils';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 export const ImageRemixesDetails = ({ imageId }: { imageId: number }) => {
   const { images, hasNextPage } = useQueryImages({
@@ -22,19 +22,21 @@ export const ImageRemixesDetails = ({ imageId }: { imageId: number }) => {
       <div className="flex items-center gap-3">
         <Text className="flex items-center gap-2 text-xl font-semibold">
           <IconHierarchy />
-          <span>Remixed by</span>
+          <span>Remixes</span>
         </Text>
       </div>
 
       <div className="grid grid-cols-3 gap-4">
         {images.map((image) => (
           <div key={image.id}>
-            <AspectRatioImageCard
-              image={image}
-              href={`/images/${image.id}`}
-              target="_blank"
-              aspectRatio="square"
-            />
+            <RoutedDialogLink
+              name="imageDetail"
+              state={{
+                imageId: image.id,
+              }}
+            >
+              <AspectRatioImageCard image={image} aspectRatio="square" />
+            </RoutedDialogLink>
           </div>
         ))}
       </div>
