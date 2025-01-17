@@ -1,12 +1,11 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { getGenerationConfig } from '~/server/common/constants';
+import { CacheTTL, getGenerationConfig } from '~/server/common/constants';
 
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { resourceDataCache } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { dbRead } from '~/server/db/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CheckResourcesCoverageSchema,
@@ -22,18 +21,19 @@ import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.sche
 import { modelsSearchIndex } from '~/server/search-index';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { hasEntityAccess } from '~/server/services/common.service';
-import { getImageGenerationResources } from '~/server/services/image.service';
+import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
+import { resourceDataCache } from '~/server/services/model-version.service';
+import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { getPrimaryFile } from '~/server/utils/model-helpers';
 
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   fluxUltraAir,
-  formatGenerationResources,
-  GenerationResource,
   getBaseModelFromResources,
   getBaseModelSet,
 } from '~/shared/constants/generation.constants';
@@ -43,7 +43,8 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
-import { parseAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export function parseModelVersionId(assetId: string) {
   const pattern = /^@civitai\/(\d+)$/;
@@ -217,21 +218,33 @@ export type GenerationData = {
   remixOf?: RemixOfProps;
 };
 
-export const getGenerationData = async (props: GetGenerationDataInput): Promise<GenerationData> => {
-  switch (props.type) {
+export const getGenerationData = async ({
+  query,
+  user,
+}: {
+  query: GetGenerationDataInput;
+  user?: SessionUser;
+}): Promise<GenerationData> => {
+  switch (query.type) {
     case 'image':
     case 'video':
-      return await getMediaGenerationData(props.id);
+      return await getMediaGenerationData({ id: query.id, user });
     case 'modelVersion':
-      return await getResourceGenerationData({ modelVersionId: props.id });
+      return await getModelVersionGenerationData({ versionIds: [query.id], user });
     case 'modelVersions':
-      return await getMultipleResourceGenerationData({ versionIds: props.ids });
+      return await getModelVersionGenerationData({ versionIds: query.ids, user });
     default:
       throw new Error('unsupported generation data type');
   }
 };
 
-async function getMediaGenerationData(id: number): Promise<GenerationData> {
+async function getMediaGenerationData({
+  id,
+  user,
+}: {
+  id: number;
+  user?: SessionUser;
+}): Promise<GenerationData> {
   const media = await dbRead.image.findUnique({
     where: { id },
     select: {
@@ -262,7 +275,23 @@ async function getMediaGenerationData(id: number): Promise<GenerationData> {
 
   switch (media.type) {
     case 'image':
-      const resources = await getImageGenerationResources(media.id);
+      const imageResources = await dbRead.imageResource.findMany({
+        where: { imageId: id },
+        select: { imageId: true, modelVersionId: true, hash: true, strength: true },
+      });
+      const versionIds = [
+        ...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined)),
+      ];
+      const resources = await getGenerationResourceData({ ids: versionIds, user }).then((data) =>
+        formatGenerationResources(data).map((item) => {
+          const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
+          return {
+            ...item,
+            hash: imageResource?.hash ?? undefined,
+            strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
+          };
+        })
+      );
       const baseModel = getBaseModelFromResources(resources);
 
       let aspectRatio = '0';
@@ -333,34 +362,18 @@ async function getMediaGenerationData(id: number): Promise<GenerationData> {
   }
 }
 
-export const getResourceGenerationData = async ({ modelVersionId }: { modelVersionId: number }) => {
-  if (!modelVersionId) throw new Error('modelVersionId required');
-  const resources = await resourceDataCache.fetch([modelVersionId]);
-  if (!resources.length) throw throwNotFoundError();
-
-  const [resource] = resources;
-  if (resource.vaeId) {
-    const [vae] = await resourceDataCache.fetch([resource.vaeId]);
-    if (vae) resources.push({ ...vae, vaeId: null });
-  }
-
-  const deduped = uniqBy(formatGenerationResources(resources), 'id');
-
-  return {
-    resources: deduped,
-    params: {
-      baseModel: getBaseModelFromResources(deduped),
-      clipSkip: resource.clipSkip ?? undefined,
-    },
-  };
-};
-
-const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: number[] }) => {
+const getModelVersionGenerationData = async ({
+  versionIds,
+  user,
+}: {
+  versionIds: number[];
+  user?: SessionUser;
+}) => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const resources = await resourceDataCache.fetch(versionIds);
+  const resources = await getGenerationResourceData({ ids: versionIds, user });
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
-    const [vae] = await resourceDataCache.fetch([checkpoint.vaeId]);
+    const [vae] = await getGenerationResourceData({ ids: [checkpoint.vaeId], user });
     if (vae) resources.push({ ...vae, vaeId: null });
   }
 
@@ -370,6 +383,7 @@ const getMultipleResourceGenerationData = async ({ versionIds }: { versionIds: n
     resources: deduped,
     params: {
       baseModel: getBaseModelFromResources(deduped),
+      clipSkip: checkpoint?.clipSkip ?? undefined,
     },
   };
 };
@@ -426,75 +440,67 @@ export async function toggleUnavailableResource({
   return unavailableResources;
 }
 
-const explicitCoveredModelAirs = [fluxUltraAir];
-const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
-export async function getModelVersionsForGeneration({
+export type GenerationResourceData = AsyncReturnType<typeof getGenerationResourceData>[number];
+export async function getGenerationResourceData({
   ids,
   user,
 }: {
   ids: number[];
   user?: {
-    id: number;
+    id?: number;
     isModerator?: boolean;
   };
 }) {
   const { id: userId, isModerator } = user ?? {};
-  // allow us to hard code covered models
-  const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
-  const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
-  if (explicitIds.length) OR.push({ id: { in: explicitIds } });
 
-  const modelVersions = await dbRead.modelVersion
-    .findMany({
-      where: { id: { in: ids }, status: 'Published', OR },
-      select: generationResourceSelect,
-    })
-    .then(async (data) => {
-      const modelVersions = data.map((item) => {
-        const cacheable = ['Public', 'Unsearchable'].includes(item.availability);
-        const hasAccess = cacheable || userId === item.model.userId || isModerator;
-        return { ...item, cacheable, hasAccess };
-      });
-
-      const modelVersionIds = modelVersions.map((x) => x.id);
-      const missingModelVersionIds = ids.filter((id) => !modelVersionIds.includes(id));
-
-      // get models from missing modelVersionIds
-      const missingModelIds = await dbRead.modelVersion
-        .findMany({ where: { id: { in: missingModelVersionIds } }, select: { modelId: true } })
-        .then((data) => data.map((x) => x.modelId));
-
-      // get latest covered modelVersions from missingModelIds
-      const possibleReplacementVersions = missingModelIds.length
-        ? await dbRead.model
-            .findMany({
-              where: {
-                id: { in: missingModelIds },
-              },
-              select: {
-                modelVersions: {
-                  select: generationResourceSelect,
-                  where: { status: 'Published', generationCoverage: { covered: true } },
-                  orderBy: { index: { sort: 'asc', nulls: 'last' } },
-                  distinct: ['modelId'],
-                },
-              },
-            })
-            .then((data) =>
-              data.flatMap((x) =>
-                x.modelVersions.map((item) => {
-                  const hasAccess =
-                    ['Public', 'Unsearchable'].includes(item.availability) ||
-                    userId === item.model.userId ||
-                    isModerator;
-                  return { ...item, hasAccess, cacheable: false };
-                })
-              )
-            )
-        : [];
-
-      return [...modelVersions, ...possibleReplacementVersions];
+  const modelVersions = await resourceDataCache.fetch(ids).then(async (data) => {
+    const modelVersions = data.map((item) => {
+      const hasAccess =
+        ['Public', 'Unsearchable'].includes(item.availability) ||
+        userId === item.model.userId ||
+        isModerator;
+      return { ...item, hasAccess };
     });
+
+    const modelVersionIds = modelVersions.map((x) => x.id);
+    const missingModelVersionIds = ids.filter((id) => !modelVersionIds.includes(id));
+
+    // get models from missing modelVersionIds
+    const missingModelIds = await dbRead.modelVersion
+      .findMany({ where: { id: { in: missingModelVersionIds } }, select: { modelId: true } })
+      .then((data) => data.map((x) => x.modelId));
+
+    // get latest covered modelVersions from missingModelIds
+    const possibleReplacementVersions = missingModelIds.length
+      ? await dbRead.model
+          .findMany({
+            where: {
+              id: { in: missingModelIds },
+            },
+            select: {
+              modelVersions: {
+                select: generationResourceSelect,
+                where: { status: 'Published', generationCoverage: { covered: true } },
+                orderBy: { index: { sort: 'asc', nulls: 'last' } },
+                distinct: ['modelId'],
+              },
+            },
+          })
+          .then((data) =>
+            data.flatMap((x) =>
+              x.modelVersions.map((item) => {
+                const hasAccess =
+                  ['Public', 'Unsearchable'].includes(item.availability) ||
+                  userId === item.model.userId ||
+                  isModerator;
+                return { ...item, hasAccess };
+              })
+            )
+          )
+      : [];
+
+    return [...modelVersions, ...possibleReplacementVersions];
+  });
 
   const earlyAccessIds = modelVersions
     .filter(
@@ -512,15 +518,55 @@ export async function getModelVersionsForGeneration({
         entityIds: earlyAccessIds,
         userId,
         isModerator,
-        permissions: EntityAccessPermission.EarlyAccessDownload,
+        permissions: EntityAccessPermission.EarlyAccessGeneration,
       })
     : [];
+
+  const modelFilesCached = await getFilesForModelVersionCache(modelVersions.map((x) => x.id));
 
   return modelVersions.map((item) => {
     let hasAccess = item.hasAccess;
     if (!hasAccess)
       hasAccess = entityAccessArray.find((x) => x.entityId === item.id)?.hasAccess ?? false;
 
-    return { ...item, hasAccess, settings: item.settings as RecommendedSettingsSchema };
+    const primaryFile = getPrimaryFile(modelFilesCached[item.id].files);
+
+    return {
+      ...item,
+      hasAccess,
+      fileSizeKB: primaryFile?.sizeKB,
+      settings: item.settings as RecommendedSettingsSchema,
+      air: stringifyAIR({
+        baseModel: item.baseModel,
+        type: item.model.type,
+        modelId: item.model.id,
+        id: item.id,
+      }),
+    };
+  });
+}
+
+export type GenerationResource = MakeUndefinedOptional<
+  ReturnType<typeof formatGenerationResources>[number]
+>;
+export function formatGenerationResources(resources: Array<GenerationResourceData>) {
+  return resources.map((resource) => {
+    const settings = resource.settings as RecommendedSettingsSchema;
+    return {
+      id: resource.id,
+      name: resource.name,
+      trainedWords: resource.trainedWords,
+      modelId: resource.model.id,
+      modelName: resource.model.name,
+      modelType: resource.model.type,
+      baseModel: resource.baseModel,
+      strength: settings?.strength ?? 1,
+      minStrength: settings?.minStrength ?? -1,
+      maxStrength: settings?.maxStrength ?? 2,
+      minor: resource.model.minor,
+      availability: resource.availability,
+      fileSizeKB: resource.fileSizeKB,
+      available: resource.hasAccess,
+    };
   });
 }

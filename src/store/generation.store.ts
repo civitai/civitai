@@ -3,9 +3,12 @@ import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
-import { GenerationData, RemixOfProps } from '~/server/services/generation/generation.service';
 import {
+  GenerationData,
   GenerationResource,
+  RemixOfProps,
+} from '~/server/services/generation/generation.service';
+import {
   engineDefinitions,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';

@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { BaseModel } from '~/server/common/constants';
-import { GenerationResource } from '~/shared/constants/generation.constants';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 export function ResourceSelectModal({
   title,

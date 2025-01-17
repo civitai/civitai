@@ -19,7 +19,6 @@ import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
-import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
@@ -28,6 +27,11 @@ import {
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { UserTier } from '~/server/schema/user.schema';
+import {
+  formatGenerationResources,
+  GenerationResourceData,
+  getGenerationResourceData,
+} from '~/server/services/generation/generation.service';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import {
   GeneratedImageWorkflow,
@@ -40,7 +44,6 @@ import {
   allInjectableResourceIds,
   fluxModeOptions,
   fluxUltraAir,
-  formatGenerationResources,
   getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
@@ -56,7 +59,7 @@ import {
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
@@ -80,27 +83,15 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
-export type AirResourceData = AsyncReturnType<typeof getResourceDataWithAirs>[number];
-export async function getResourceDataWithAirs(versionIds: number[]) {
-  const resources = await resourceDataCache.fetch(versionIds);
-  return resources.map((resource) => ({
-    ...resource,
-    air: stringifyAIR({
-      baseModel: resource.baseModel,
-      type: resource.model.type,
-      modelId: resource.model.id,
-      id: resource.id,
-    }),
-  }));
-}
-
-export async function getResourceDataWithInjects<T extends AirResourceData>(
-  modelVersionIds: number[],
-  cb?: (resource: AirResourceData) => T
-) {
-  const ids = [...modelVersionIds, ...allInjectableResourceIds];
-  const results = await getResourceDataWithAirs(ids);
-  const allResources = (cb ? results.map(cb) : results) as T[];
+// TODO - pass user data
+export async function getResourceDataWithInjects<T extends GenerationResourceData>(args: {
+  ids: number[];
+  user?: SessionUser;
+  cb?: (resource: GenerationResourceData) => T;
+}) {
+  const ids = [...args.ids, ...allInjectableResourceIds];
+  const results = await getGenerationResourceData({ ids, user: args.user });
+  const allResources = (args.cb ? results.map(args.cb) : results) as T[];
 
   return {
     resources: allResources.filter((x) => !allInjectableResourceIds.includes(x.id)),
@@ -163,14 +154,15 @@ export async function parseGenerateImageInput({
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
 
-  const resourceData = await getResourceDataWithInjects(
-    originalResources.map((x) => x.id),
-    (resource) => ({
+  const resourceData = await getResourceDataWithInjects({
+    ids: originalResources.map((x) => x.id),
+    user,
+    cb: (resource) => ({
       ...resource,
       ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
-    })
-  );
+    }),
+  });
 
   if (
     resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
@@ -194,10 +186,10 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
   // handle missing coverage
-  if (!resourceData.resources.every((x) => x.available) && params.workflow !== 'img2img-upscale')
+  if (!resourceData.resources.every((x) => x.hasAccess) && params.workflow !== 'img2img-upscale')
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
-        .filter((x) => !x.available)
+        .filter((x) => !x.hasAccess)
         .map((x) => x.air)
         .join(', ')}`
     );
@@ -328,7 +320,7 @@ function getResources(step: WorkflowStep) {
 }
 
 function combineResourcesWithInputResource(
-  allResources: AirResourceData[],
+  allResources: GenerationResourceData[],
   resources: { id: number; strength?: number | null }[]
 ) {
   return allResources.map((resource) => {
@@ -340,12 +332,12 @@ function combineResourcesWithInputResource(
   });
 }
 
-export async function formatGenerationResponse(workflows: Workflow[]) {
+export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
   const versionIds = allResources.map((x) => x.id);
-  const { resources, injectable } = await getResourceDataWithInjects(versionIds);
+  const { resources, injectable } = await getResourceDataWithInjects({ ids: versionIds, user });
 
   return workflows.map((workflow) => {
     return {
@@ -387,7 +379,7 @@ export type WorkflowStepFormatted = ReturnType<typeof formatWorkflowStep>;
 function formatWorkflowStep(args: {
   workflowId: string;
   step: WorkflowStep;
-  resources: AirResourceData[];
+  resources: GenerationResourceData[];
 }) {
   const { step } = args;
   switch (step.$type) {
@@ -500,7 +492,7 @@ function formatTextToImageStep({
   workflowId,
 }: {
   step: WorkflowStep;
-  resources?: AirResourceData[];
+  resources?: GenerationResourceData[];
   workflowId: string;
 }) {
   const { input, output, jobs } = step as TextToImageStep;
@@ -638,7 +630,7 @@ export function formatComfyStep({
   workflowId,
 }: {
   step: WorkflowStep;
-  resources?: AirResourceData[];
+  resources?: GenerationResourceData[];
   workflowId: string;
 }) {
   const { output, jobs, metadata = {} } = step as ComfyStep;
@@ -709,13 +701,14 @@ export function formatComfyStep({
 export type GeneratedImageWorkflowModel = AsyncReturnType<
   typeof queryGeneratedImageWorkflows
 >['items'][0];
-export async function queryGeneratedImageWorkflows(
-  props: Parameters<typeof queryWorkflows>[0] & { token: string }
-) {
+export async function queryGeneratedImageWorkflows({
+  user,
+  ...props
+}: Parameters<typeof queryWorkflows>[0] & { token: string; user?: SessionUser }) {
   const { nextCursor, items } = await queryWorkflows(props);
 
   return {
-    items: await formatGenerationResponse(items as GeneratedImageWorkflow[]),
+    items: await formatGenerationResponse(items as GeneratedImageWorkflow[], user),
     nextCursor,
   };
 }

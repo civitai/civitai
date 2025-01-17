@@ -10,7 +10,7 @@ import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -18,11 +18,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import {
-  dataForModelsCache,
-  modelVersionAccessCache,
-  resourceDataCache,
-} from '~/server/redis/caches';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -36,6 +32,7 @@ import {
   ModelVersionUpsertInput,
   PublishVersionInput,
   QueryModelVersionSchema,
+  RecommendedSettingsSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -54,13 +51,17 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getBaseModelSet } from '~/shared/constants/generation.constants';
+import { fluxUltraAir, getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 import { logToAxiom } from '~/server/logging/client';
 import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { parseAIR } from '~/utils/string-helpers';
+import { createCachedArray } from '~/server/utils/cache-helpers';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { generationResourceSelect } from '~/server/selectors/generation.selector';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1391,3 +1392,34 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
 
   return trainingResults.workflowId ?? null;
 };
+
+const explicitCoveredModelAirs = [fluxUltraAir];
+const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
+export const resourceDataCache = createCachedArray({
+  key: REDIS_KEYS.GENERATION.RESOURCE_DATA_2,
+  lookupFn: async (ids) => {
+    if (!ids.length) return {};
+    const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
+    const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
+    if (explicitIds.length) OR.push({ id: { in: explicitIds } });
+
+    const dbResults = await dbRead.modelVersion.findMany({
+      where: { id: { in: ids }, status: 'Published', OR },
+      select: generationResourceSelect,
+    });
+
+    type DbResult = (typeof dbResults)[number] & { settings: RecommendedSettingsSchema };
+
+    const results = dbResults.reduce<Record<number, DbResult>>(
+      (acc, result) => ({ ...acc, [result.id]: result as DbResult }),
+      {}
+    );
+    return results;
+  },
+  idKey: 'id',
+  dontCacheFn: (data) => {
+    const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
+    return !cacheable;
+  },
+  ttl: CacheTTL.hour,
+});

@@ -1,5 +1,5 @@
 import { DeepPartial } from 'react-hook-form';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
@@ -49,11 +49,11 @@ const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
   modelType: z.nativeEnum(ModelType),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
-  covered: z.boolean().default(true),
   baseModel: z.string(),
   image: imageSchema.pick({ url: true }).optional(),
   minor: z.boolean().default(false),
   available: z.boolean().default(true),
+  availability: z.nativeEnum(Availability).default('Public'),
 });
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;

@@ -10,7 +10,7 @@ import { getSystemPermissions } from '~/server/services/system-cache';
 import { addGenerationEngine } from '~/server/services/generation/engines';
 import { dbWrite } from '~/server/db/client';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
-import { getModelVersionsForGeneration } from '~/server/services/generation/generation.service';
+import { getGenerationResourceData } from '~/server/services/generation/generation.service';
 
 type Row = {
   userId: number;
@@ -27,12 +27,8 @@ const test = [1183765, 164821];
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
-    const modelVersions = await getModelVersionsForGeneration({
-      ids: [
-        // ...test,
-        ...covered,
-        ...notCovered,
-      ],
+    const modelVersions = await getGenerationResourceData({
+      ids: [...test, ...covered, ...notCovered],
       user: session?.user,
     });
     res.status(200).send(modelVersions);

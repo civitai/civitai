@@ -13,9 +13,9 @@ import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import type { GenerationResource } from '~/shared/constants/generation.constants';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 export const constants = {
   modelFilterDefaults: {
@@ -705,6 +705,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      availability: 'Public',
     } as GenerationResource,
   },
   SDXL: {
@@ -727,6 +728,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      availability: 'Public',
     } as GenerationResource,
   },
   Pony: {
@@ -749,6 +751,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      availability: 'Public',
     } as GenerationResource,
   },
   Illustrious: {
@@ -771,6 +774,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      availability: 'Public',
     } as GenerationResource,
   },
   Flux1: {
@@ -793,6 +797,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      availability: 'Public',
     } as GenerationResource,
   },
   SD3: {
@@ -815,6 +820,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      availability: 'Public',
     } as GenerationResource,
   },
   SD3_5M: {
@@ -837,6 +843,7 @@ export const generationConfig = {
       covered: true,
       minor: false,
       available: true,
+      availability: 'Public',
     } as GenerationResource,
   },
   Other: {
@@ -855,6 +862,7 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       minor: false,
+      availability: 'Public',
     } as GenerationResource,
   },
 };

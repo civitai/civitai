@@ -83,7 +83,7 @@ import { BaseModel, constants } from '~/server/common/constants';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { Generation } from '~/server/services/generation/generation.types';
-import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -93,6 +93,7 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -660,7 +661,7 @@ function ResourceSelectCard({
       modelType: data.type,
       minor: data.minor,
       image: image,
-      covered: data.canGenerate,
+      availability: data.availability,
       // TODO - update generation panel resource select to include details about early access
       available:
         data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
