@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 type DirectUploadResponse = {
   success: boolean;

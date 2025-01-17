@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 
 export async function notifyAir(data: { email: string; name: string }) {

@@ -25,6 +25,7 @@ export const serverSchema = z.object({
   DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
   DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
   REDIS_URL: z.string().url(),
+  REDIS_SYS_URL: z.string().url(),
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
@@ -124,6 +125,7 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_TOKEN: z.string().optional(),
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
   EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
+  BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
 
   EXTERNAL_IMAGE_SCANNER: z.enum(['hive', 'rekognition']).optional().default('hive').catch('hive'),
   MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),

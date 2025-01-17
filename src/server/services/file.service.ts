@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { constants, ModelFileType } from '~/server/common/constants';
 import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';

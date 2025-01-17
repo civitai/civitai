@@ -1,7 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
 import { createLogger } from '~/utils/logging';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -16,7 +16,10 @@ export function queryCache(db: PrismaClient, key: string, version?: string) {
   return async function <T extends object[]>(query: Prisma.Sql, options?: cachedQueryOptions) {
     if (options?.ttl === 0) return db.$queryRaw<T>(query);
 
-    const cacheKey = [key, version, hashifyObject(query).toString()].filter(isDefined).join(':');
+    // this typing is not quite right, as we're creating redis keys on the fly here
+    const cacheKey = [key, version, hashifyObject(query).toString()]
+      .filter(isDefined)
+      .join(':') as RedisKeyTemplateCache;
     const cachedData = await redis.packed.get<T>(cacheKey);
     if (cachedData && options?.ttl !== 0) return cachedData ?? ([] as unknown as T);
 
@@ -31,21 +34,21 @@ export function queryCache(db: PrismaClient, key: string, version?: string) {
 async function tagCacheKey(key: string, tag: string | string[]) {
   const tags = Array.isArray(tag) ? tag : [tag];
   for (const tag of tags) {
-    await redis.sAdd(`tag:${tag}`, key);
+    await redis.sAdd(`${REDIS_KEYS.TAG}:${tag}`, key);
   }
 }
 
 export async function bustCacheTag(tag: string | string[]) {
   const tags = Array.isArray(tag) ? tag : [tag];
   for (const tag of tags) {
-    const keys = await redis.packed.sMembers<string>(`tag:${tag}`);
+    const keys = await redis.packed.sMembers<RedisKeyTemplateCache>(`${REDIS_KEYS.TAG}:${tag}`);
     for (const key of keys) await redis.del(key);
-    await redis.del(`tag:${tag}`);
+    await redis.del(`${REDIS_KEYS.TAG}:${tag}`);
   }
 }
 
 type CachedLookupOptions<T extends object> = {
-  key: string;
+  key: RedisKeyTemplateCache;
   idKey: keyof T;
   lookupFn: (ids: number[], fromWrite?: boolean) => Promise<Record<string, T>>;
   appendFn?: (results: Set<T>) => Promise<void>;
@@ -69,7 +72,9 @@ export function createCachedArray<T extends object>({
     const results = new Set<T>();
     const cacheResults: T[] = [];
     for (const batch of chunk(ids, 200)) {
-      const batchResults = await redis.packed.mGet<T>(batch.map((id) => `${key}:${id}`));
+      const batchResults = await redis.packed.mGet<T>(
+        batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache)
+      );
       cacheResults.push(...batchResults.filter(isDefined));
     }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
@@ -201,14 +206,14 @@ export type CachedCounterOptions = {
   ttl?: number;
 };
 export function cachedCounter<T extends string | number>(
-  rootKey: string,
+  rootKey: RedisKeyTemplateCache,
   fetchFn?: (id: T) => Promise<number>,
   { ttl }: CachedCounterOptions = {}
 ) {
   ttl ??= CacheTTL.hour;
   const counter = {
     async get(id: T) {
-      const key = `${rootKey}:${id}`;
+      const key = `${rootKey}:${id}` as RedisKeyTemplateCache;
       const cachedCount = Number((await redis.get(key)) ?? 0);
       if (cachedCount) return cachedCount;
 
@@ -217,13 +222,13 @@ export function cachedCounter<T extends string | number>(
       return count;
     },
     async incrementBy(id: T, amount = 1) {
-      const key = `${rootKey}:${id}`;
+      const key = `${rootKey}:${id}` as RedisKeyTemplateCache;
       const count = await counter.get(id);
       await redis.incrBy(key, amount);
       return count + amount;
     },
     async clear(id: T) {
-      const key = `${rootKey}:${id}`;
+      const key = `${rootKey}:${id}` as RedisKeyTemplateCache;
       await redis.del(key);
     },
   };
@@ -242,7 +247,7 @@ export async function clearCacheByPattern(pattern: string) {
     });
 
     cursor = reply.cursor;
-    const keys = reply.keys;
+    const keys = reply.keys as unknown as RedisKeyTemplateCache[];
     const newKeys = keys.filter((key) => !cleared.includes(key));
     console.log('Total keys:', cleared.length, 'Adding:', newKeys.length, 'Cursor:', cursor);
     if (newKeys.length === 0) continue;

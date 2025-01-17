@@ -210,7 +210,7 @@ export function GeneratedImageActions({
               <IconTrash size={iconSize} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Post images to earn buzz!">
+          <Tooltip label="Post your generations to earn buzz!">
             <Button
               color="blue"
               size="sm"

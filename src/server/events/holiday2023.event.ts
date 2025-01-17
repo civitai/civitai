@@ -1,4 +1,5 @@
 import { NotificationCategory } from '~/server/common/enums';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
 import { BuzzEventContext, createEvent, DonationCosmeticData } from './base.event';
 
@@ -14,7 +15,7 @@ const donationRewards = {
   Donor: 5000,
   'Golden Donor': 25000,
 };
-export const holiday2023 = createEvent('holiday2023', {
+export const holiday2023 = createEvent(REDIS_KEYS.HOLIDAY['2023']['BASE'], {
   title: 'Get Lit & Give Back',
   startDate: new Date('2023-12-01T08:00:00.000Z'),
   endDate: new Date('2024-01-01T08:00:00.000Z'),

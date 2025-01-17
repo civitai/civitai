@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { v4 as uuidv4 } from 'uuid';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { hashify } from '~/utils/string-helpers';
 
 const REQUEST_LIMIT = 5;

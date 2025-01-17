@@ -239,8 +239,6 @@ const ImageCollection = ({
   return (
     <ImageContextMenuProvider
       additionalMenuItemsBefore={(image) => {
-        const isOwnerOrMod =
-          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
         const canUpdateCover = !permissions || !permissions.manage || !image.id;
 
         return (
@@ -276,6 +274,15 @@ const ImageCollection = ({
                 Use as cover image
               </Menu.Item>
             )}
+          </>
+        );
+      }}
+      additionalMenuItemsAfter={(image) => {
+        const isOwnerOrMod =
+
+          permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
+        return (
+          <>
             {isOwnerOrMod && (
               <RemoveFromCollectionMenuItem collectionId={collection.id} itemId={image.id} />
             )}
@@ -468,15 +475,18 @@ export function Collection({
 }: { collectionId: number } & Omit<ContainerProps, 'children'>) {
   const router = useRouter();
 
+  const currentUser = useCurrentUser();
   const { collection, permissions, isLoading } = useCollection(collectionId);
   const { data: entryCountDetails } = useCollectionEntryCount(collectionId, {
-    enabled: collection?.mode === CollectionMode.Contest && !!collection?.metadata?.maxItemsPerUser,
+    enabled:
+      !!currentUser?.id &&
+      collection?.mode === CollectionMode.Contest &&
+      !!collection?.metadata?.maxItemsPerUser,
   });
 
   const { classes } = useStyles({ bannerPosition: collection?.metadata?.bannerPosition });
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
-  const currentUser = useCurrentUser();
 
   if (!isLoading && (!collection || isBlocked)) {
     return (
@@ -651,33 +661,42 @@ export function Collection({
                       [CollectionType.Image, CollectionType.Post].some(
                         (x) => x === collection.type
                       ) ? (
-                        <HoverCard width={300} withArrow withinPortal>
+                        <HoverCard
+                          width={300}
+                          disabled={!currentUser?.meta?.contestBanDetails}
+                          withArrow
+                          withinPortal
+                        >
                           <HoverCard.Target>
-                            <Button
-                              color="blue"
-                              radius="xl"
-                              onClick={() => {
-                                if (currentUser?.meta?.contestBanDetails) {
-                                  return;
-                                }
+                            {/* Required div to display hovercard even when button is disabled */}
+                            <div>
+                              <Button
+                                color="blue"
+                                radius="xl"
+                                disabled={!!currentUser?.meta?.contestBanDetails}
+                                onClick={() => {
+                                  if (currentUser?.meta?.contestBanDetails) {
+                                    return;
+                                  }
 
-                                if (
-                                  !!metadata.existingEntriesDisabled ||
-                                  collection.type === CollectionType.Post
-                                ) {
-                                  router.push(`/posts/create?collectionId=${collection.id}`);
-                                } else {
-                                  dialogStore.trigger({
-                                    component: AddUserContentModal,
-                                    props: {
-                                      collectionId: collection.id,
-                                    },
-                                  });
-                                }
-                              }}
-                            >
-                              Submit an entry
-                            </Button>
+                                  if (
+                                    !!metadata.existingEntriesDisabled ||
+                                    collection.type === CollectionType.Post
+                                  ) {
+                                    router.push(`/posts/create?collectionId=${collection.id}`);
+                                  } else {
+                                    dialogStore.trigger({
+                                      component: AddUserContentModal,
+                                      props: {
+                                        collectionId: collection.id,
+                                      },
+                                    });
+                                  }
+                                }}
+                              >
+                                Submit an entry
+                              </Button>
+                            </div>
                           </HoverCard.Target>
                           <HoverCard.Dropdown px="md" py={8}>
                             {currentUser?.meta?.contestBanDetails && (
@@ -763,10 +782,11 @@ export function Collection({
                                       : 'red';
 
                                   const label = capitalize(status.toLowerCase());
+                                  const entryCount = entryCountDetails[status];
 
-                                  return entryCountDetails[status]
+                                  return entryCount
                                     ? {
-                                        value: (entryCountDetails[status] / totalEntries) * 100,
+                                        value: (entryCount / totalEntries) * 100,
                                         color,
                                         // label,
                                         tooltip: `${label}: ${entryCountDetails[status]}`,

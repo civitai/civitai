@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { getUserByPaddleCustomerId } from '~/server/services/user.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 

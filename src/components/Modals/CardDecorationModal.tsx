@@ -3,18 +3,16 @@ import {
   Center,
   Grid,
   Group,
-  Image,
   Loader,
   Modal,
+  Paper,
   Stack,
   createStyles,
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
-import { truncate } from 'lodash-es';
 import { z } from 'zod';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import {
@@ -22,7 +20,7 @@ import {
   useQueryUserCosmetics,
 } from '~/components/Cosmetics/cosmetics.util';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { Form, InputCosmeticSelect, useForm } from '~/libs/form';
@@ -178,27 +176,32 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                 (selectedItem.entityImage.entityId !== entityId ||
                   selectedItem.entityImage.entityType !== entityType) && (
                   <Group noWrap>
-                    <Image
-                      src={getEdgeUrl(selectedItem.entityImage.url, {
-                        transcode: false,
-                        anim: false,
-                      })}
-                      alt={image.name ?? undefined}
-                      radius="md"
-                      width={48}
-                      height={62}
-                    />
+                    <Paper className="overflow-hidden" radius="md" w={48} h={62}>
+                      <EdgeMedia2
+                        src={selectedItem.entityImage.url}
+                        thumbnailUrl={selectedItem.entityImage.thumbnailUrl}
+                        type={selectedItem.entityImage.type}
+                        width={DEFAULT_EDGE_IMAGE_WIDTH}
+                        alt="current item with decoration"
+                        className="size-full object-cover"
+                        wrapperProps={{ className: 'h-full' }}
+                        skip={4}
+                      />
+                    </Paper>
                     <IconArrowRight size={24} style={{ flexShrink: 0 }} />
-                    <Image
-                      src={getEdgeUrl(image.url, {
-                        transcode: false,
-                        anim: false,
-                      })}
-                      alt={image.name ?? undefined}
-                      radius="md"
-                      width={48}
-                      height={62}
-                    />
+                    <Paper className="overflow-hidden" radius="md" w={48} h={62}>
+                      <EdgeMedia2
+                        src={image.url}
+                        thumbnailUrl={image.thumbnailUrl}
+                        type={image.type}
+                        width={DEFAULT_EDGE_IMAGE_WIDTH}
+                        alt="new item with decoration"
+                        className="size-full object-cover"
+                        wrapperProps={{ className: 'h-full' }}
+                        skip={4}
+                        contain
+                      />
+                    </Paper>
                   </Group>
                 )}
               <PreviewCard image={image} decoration={selectedItem} />
@@ -224,7 +227,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
 export type Props = {
   entityType: CosmeticEntity;
   entityId: number;
-  image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'name'>;
+  image: Pick<ImageProps, 'id' | 'url' | 'width' | 'height' | 'name' | 'type' | 'thumbnailUrl'>;
   currentCosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
 };
 
@@ -247,7 +250,15 @@ export const PreviewCard = ({
 
   return (
     <MasonryCard height={cardHeight} frameDecoration={decoration}>
-      <EdgeMedia src={image.url} className={classes.image} width={imageWidth} anim={true} />
+      <EdgeMedia2
+        src={image.url}
+        type={image.type}
+        className={classes.image}
+        width={imageWidth}
+        wrapperProps={{ className: 'h-full' }}
+        anim
+        contain
+      />
     </MasonryCard>
   );
 };

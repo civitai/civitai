@@ -1,4 +1,4 @@
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 

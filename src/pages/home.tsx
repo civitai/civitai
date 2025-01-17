@@ -17,7 +17,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { isProd } from '~/env/other';
 import { useInView } from '~/hooks/useInView';
 import { ImageSort, ModelSort } from '~/server/common/enums';

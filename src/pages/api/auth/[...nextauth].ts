@@ -11,7 +11,7 @@ import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import { v4 as uuid } from 'uuid';
 import { isDev } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
 import { Tracker } from '~/server/clickhouse/client';
@@ -20,7 +20,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -377,7 +377,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
 
 const emailLimiter = createLimiter({
   counterKey: REDIS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
-  limitKey: REDIS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
+  limitKey: REDIS_SYS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,
 });

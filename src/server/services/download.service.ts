@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 
-import { dbWrite, dbRead } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetUserDownloadsSchema, HideDownloadInput } from '~/server/schema/download.schema';
 import { getUserSettings, setUserSetting } from '~/server/services/user.service';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
@@ -67,7 +67,9 @@ export async function addUserDownload({
 }) {
   if (!userId) return;
 
-  const excludedUsers = await redis.packed.sMembers<number>(REDIS_KEYS.DOWNLOAD.HISTORY_EXCLUSION);
+  const excludedUsers = await sysRedis.packed.sMembers<number>(
+    REDIS_SYS_KEYS.DOWNLOAD.HISTORY_EXCLUSION
+  );
   if (excludedUsers.includes(userId)) return;
 
   await dbWrite.$executeRaw`
@@ -80,7 +82,7 @@ export async function addUserDownload({
 
 export async function excludeUserDownloadHistory(userIds: number | number[]) {
   if (!Array.isArray(userIds)) userIds = [userIds];
-  await redis.packed.sAdd(REDIS_KEYS.DOWNLOAD.HISTORY_EXCLUSION, userIds);
+  await sysRedis.packed.sAdd(REDIS_SYS_KEYS.DOWNLOAD.HISTORY_EXCLUSION, userIds);
 }
 
 export const updateUserActivityById = ({

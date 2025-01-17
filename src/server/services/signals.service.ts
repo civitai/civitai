@@ -1,6 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { GetSignalsAccessTokenResponse } from '~/server/schema/signals.schema';

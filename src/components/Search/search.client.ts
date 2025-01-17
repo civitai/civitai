@@ -1,6 +1,6 @@
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { InstantSearchProps } from 'react-instantsearch';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,

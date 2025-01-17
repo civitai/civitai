@@ -1,5 +1,5 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
 import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-encryption';

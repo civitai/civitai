@@ -3,7 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
@@ -13,7 +13,7 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
@@ -1470,7 +1470,7 @@ export const upsertModel = async (
     const newGallerySettings = result.gallerySettings as ModelGallerySettingsSchema;
     const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
 
-    if (galleryBrowsingLevelChanged) await redis.del(`model:gallery-settings:${id}`);
+    if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
 
     await userContentOverviewCache.bust(userId);
 
@@ -2147,7 +2147,9 @@ export const setAssociatedResources = async (
 // #endregion
 
 export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
-  const cachedSettings = await redis.get(`model:gallery-settings:${id}`);
+  const cacheKey = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
+
+  const cachedSettings = await redis.get(cacheKey);
   if (cachedSettings)
     return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
 
@@ -2162,7 +2164,7 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
         settings: model.gallerySettings as ModelGallerySettingsSchema,
       })
     : null;
-  await redis.set(`model:gallery-settings:${id}`, toJson(settings), { EX: CacheTTL.week });
+  await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
 
   return settings;
 };
@@ -2359,8 +2361,9 @@ export async function getModelsWithVersions({
       }) => ({
         ...model,
         user: user.username === 'civitai' ? undefined : user,
+        supportsGeneration: modelVersions.some((x) => x.covered),
         modelVersions: modelVersions.map(
-          ({ trainingStatus, vaeId, earlyAccessTimeFrame, covered, ...version }) => {
+          ({ trainingStatus, vaeId, earlyAccessTimeFrame, ...version }) => {
             const stats = getStatsForVersion(version.id);
             const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
             const files = groupedFiles[version.id]?.files ?? [];
@@ -2459,7 +2462,7 @@ export async function copyGallerySettingsToAllModelsByUser({
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);
 
-  await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
+  await Promise.all(modelIds.map((id) => redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`)));
   return result;
 }
 

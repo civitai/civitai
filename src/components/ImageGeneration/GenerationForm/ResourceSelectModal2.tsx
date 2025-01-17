@@ -74,7 +74,7 @@ import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -661,6 +661,7 @@ function ResourceSelectCard({
       minor: data.minor,
       image: image,
       covered: data.canGenerate,
+      // TODO - update generation panel resource select to include details about early access
       available:
         data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
       strength: settings?.strength ?? 1,

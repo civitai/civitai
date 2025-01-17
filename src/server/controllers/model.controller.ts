@@ -115,10 +115,20 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
-import { redis } from '../redis/client';
+import { redis, REDIS_KEYS } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import { getUnavailableResources } from '../services/generation/generation.service';
 
+// TODO.Briant - determine all the logic to check when getting model versions
+/*
+  1. If the model version status is not published, only return the version if the user is an owner or moderator
+  2. Check if the user is blocked from using a model version (this should probably be done during page load)
+  3. Don't fetch posts each time you get the model versions, only need to check for posts when a model is not published
+  4  don't check for entity access on each version. Doesn't need to happen for versions that are already available
+  5. ensure that we aren't fetching vae files when `!vadIds.length`
+  6. get suggested resources in another api call
+  7. getUnavailableResources needs to go. We can't have another source of truth for generation coverage
+*/
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
@@ -1569,7 +1579,7 @@ export const updateGallerySettingsHandler = async ({
       data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
     });
     // Clear cache
-    await redis.del(`model:gallery-settings:${id}`);
+    await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {

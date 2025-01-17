@@ -1,5 +1,5 @@
 import { EnqueuedTask, MeiliSearch } from 'meilisearch';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { createLogger } from '~/utils/logging';
 import { sleep } from '~/server/utils/errorHandling';
 import { JobContext } from '~/server/jobs/job';

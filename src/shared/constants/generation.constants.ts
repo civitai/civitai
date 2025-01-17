@@ -12,13 +12,9 @@ import { GenerationLimits } from '~/server/schema/generation.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
-import { GenerationWorkflowConfig } from '~/shared/types/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosest } from '~/utils/number-helpers';
-import { Kling } from '~/server/orchestrator/kling/kling.schema';
-import { Haiper } from '~/server/orchestrator/haiper/haiper.schema';
-import { Mochi } from '~/server/orchestrator/mochi/mochi.schema';
-import { Minimax } from '~/server/orchestrator/minimax/minimax.schema';
+import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -313,7 +309,7 @@ export function formatGenerationResources(resources: Array<ResourceData>) {
       strength: settings?.strength ?? 1,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
-      covered: resource.covered,
+      covered: true,
       minor: resource.model.minor,
       available: resource.available,
       fileSizeKB: resource.fileSizeKB,
@@ -532,6 +528,16 @@ type EnginesDictionary = Record<
   }
 >;
 export const engineDefinitions: EnginesDictionary = {
+  minimax: {
+    label: 'Hailuo by MiniMax',
+    description: '',
+    whatIf: [],
+  },
+  kling: {
+    label: 'Kling',
+    description: ``,
+    whatIf: ['mode', 'duration'],
+  },
   haiper: {
     label: 'Haiper',
     description: `Generate hyper-realistic and stunning videos with Haiper's next-gen 2.0 model!`,
@@ -541,91 +547,9 @@ export const engineDefinitions: EnginesDictionary = {
     label: 'Mochi',
     description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
   },
-  kling: {
-    label: 'Kling',
-    description: ``,
-    whatIf: ['mode', 'duration'],
-  },
-  minimax: {
-    label: 'Hailuo by MiniMax',
-    description: '',
-    whatIf: [],
-  },
 };
 
-export const generationFormWorkflowConfigurations: GenerationWorkflowConfig[] = [
-  {
-    type: 'video',
-    subType: 'txt2vid',
-    name: 'Text to video',
-    category: 'service',
-    engine: 'haiper',
-    key: 'haiper-txt2vid',
-    metadataDisplayProps: ['aspectRatio', 'duration', 'seed', 'resolution'],
-    validate: Haiper.validateInput,
-  },
-  {
-    type: 'video',
-    subType: 'img2vid',
-    name: 'Image to video',
-    category: 'service',
-    engine: 'haiper',
-    key: 'haiper-img2vid',
-    metadataDisplayProps: ['duration', 'seed', 'resolution'],
-    validate: Haiper.validateInput,
-  },
-  {
-    type: 'video',
-    subType: 'txt2vid',
-    name: 'Text to video',
-    category: 'service',
-    engine: 'mochi',
-    key: 'mochi-txt2vid',
-    metadataDisplayProps: ['seed'],
-    validate: Mochi.validateInput,
-  },
-  {
-    type: 'video',
-    subType: 'txt2vid',
-    name: 'Text to video',
-    category: 'service',
-    engine: 'kling',
-    key: 'kling-txt2vid',
-    metadataDisplayProps: ['cfgScale', 'mode', 'aspectRatio', 'duration', 'seed'],
-    validate: Kling.validateInput,
-  },
-  {
-    type: 'video',
-    subType: 'img2vid',
-    name: 'Image to video',
-    category: 'service',
-    engine: 'kling',
-    key: 'kling-img2vid',
-    metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
-    validate: Kling.validateInput,
-  },
-  {
-    type: 'video',
-    subType: 'txt2vid',
-    name: 'Text to video',
-    category: 'service',
-    engine: 'minimax',
-    key: 'minimax-txt2vid',
-    metadataDisplayProps: [],
-    validate: Minimax.validateInput,
-  },
-  {
-    type: 'video',
-    subType: 'img2vid',
-    name: 'Image to video',
-    category: 'service',
-    engine: 'minimax',
-    key: 'minimax-img2vid',
-    metadataDisplayProps: [],
-    validate: Minimax.validateInput,
-  },
-];
-// #endregion
+export const generationFormWorkflowConfigurations = videoGenerationConfig;
 
 export const fluxUltraAspectRatios = [
   { label: 'Landscape - 21:9', width: 3136, height: 1344 },

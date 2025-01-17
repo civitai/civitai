@@ -1,8 +1,9 @@
 import { useLocalStorage } from '@mantine/hooks';
-import { CheckoutEventsData, initializePaddle, Paddle, PaddleEventData } from '@paddle/paddle-js';
+import type { CheckoutEventsData, Paddle, PaddleEventData } from '@paddle/paddle-js';
+import { initializePaddle } from '@paddle/paddle-js';
 import dayjs from 'dayjs';
 import { useContext, useEffect, useState, createContext, useRef, useCallback } from 'react';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EventEmitter } from '~/utils/eventEmitter';

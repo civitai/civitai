@@ -2,13 +2,22 @@ import { PrismaClient } from '@prisma/client';
 import Rand, { PRNG } from 'rand-seed';
 import { dbWrite } from '~/server/db/client';
 import { discord } from '~/server/integrations/discord';
-import { redis } from '~/server/redis/client';
+import {
+  redis,
+  REDIS_KEYS,
+  REDIS_SUB_KEYS,
+  REDIS_SYS_KEYS,
+  RedisKeyTemplateCache,
+  sysRedis,
+} from '~/server/redis/client';
 
 // Disable pod memory keeping for now... We might not need it.
 // const manualAssignments: Record<string, Record<string, string>> = {};
 async function getManualAssignments(event: string) {
   // if (manualAssignments[event]) return manualAssignments[event];
-  const assignments = await redis.hGetAll(`event:${event}:manual-assignments`);
+  const assignments = await sysRedis.hGetAll(
+    `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`
+  );
   // manualAssignments[event] = assignments;
   return assignments;
 }
@@ -19,20 +28,24 @@ export async function addManualAssignments(event: string, team: string, users: s
   });
 
   for (const { id } of userIds) {
-    await redis.hSet(`event:${event}:manual-assignments`, id.toString(), team);
+    await sysRedis.hSet(
+      `${REDIS_SYS_KEYS.EVENT}:${event}:${REDIS_SUB_KEYS.EVENT.MANUAL_ASSIGNMENTS}`,
+      id.toString(),
+      team
+    );
   }
 }
 
-export function createEvent<T>(name: string, definition: HolidayEventDefinition) {
+export function createEvent<T>(name: RedisKeyTemplateCache, definition: HolidayEventDefinition) {
   async function getCosmetic(name: string) {
-    const cachedCosmeticId = await redis.hGet('cosmeticIds', name);
+    const cachedCosmeticId = await redis.hGet(REDIS_KEYS.COSMETICS.IDS, name);
     if (cachedCosmeticId) return Number(cachedCosmeticId);
     const cosmetic = await dbWrite.cosmetic.findFirst({
       where: { name: name },
     });
     if (!cosmetic) return;
 
-    await redis.hSet('cosmeticIds', name, cosmetic.id.toString());
+    await redis.hSet(REDIS_KEYS.COSMETICS.IDS, name, cosmetic.id.toString());
     return cosmetic.id;
   }
 
@@ -45,7 +58,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
   }
   async function clearKeys() {
     await redis.del(name);
-    await redis.del(`packed:event:${name}:cosmetics`);
+    await redis.del(`${REDIS_KEYS.EVENT.CACHE}:${name}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`);
   }
   async function getUserTeam(userId: number) {
     const manualAssignment = await getManualAssignments(name);
@@ -63,7 +76,10 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     return getTeamCosmetic(await getUserTeam(userId));
   }
   async function clearUserCosmeticCache(userId: number) {
-    await redis.hDel(`packed:event:${name}:cosmetics`, userId.toString());
+    await redis.hDel(
+      `${REDIS_KEYS.EVENT.CACHE}:${name}:${REDIS_SUB_KEYS.EVENT.COSMETICS}`,
+      userId.toString()
+    );
   }
   async function getRewards() {
     const rewards = await dbWrite.cosmetic.findMany({
@@ -80,8 +96,9 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
     return rewards;
   }
   async function getDiscordRoles() {
-    const cacheKey = `event:${name}:discord-roles`;
-    const roleCache = await redis.hGetAll(cacheKey);
+    const cacheKey =
+      `${REDIS_SYS_KEYS.EVENT}:${name}:${REDIS_SUB_KEYS.EVENT.DISCORD_ROLES}` as const;
+    const roleCache = await sysRedis.hGetAll(cacheKey);
     if (Object.keys(roleCache).length > 0) return roleCache;
 
     // Cache is empty, so we need to populate it
@@ -91,7 +108,7 @@ export function createEvent<T>(name: string, definition: HolidayEventDefinition)
       if (!role) continue;
       roleCache[team] = role.id;
     }
-    await redis.hSet(cacheKey, roleCache);
+    await sysRedis.hSet(cacheKey, roleCache);
 
     return roleCache;
   }

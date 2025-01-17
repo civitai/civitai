@@ -186,7 +186,7 @@ export function QueueSnackbar() {
           </div>
         </div>
         <div className="flex basis-20 items-center justify-end py-1">
-          {latestImage && (
+          {latestImage && latestImage.status === 'succeeded' && (
             <Card
               withBorder
               radius="md"

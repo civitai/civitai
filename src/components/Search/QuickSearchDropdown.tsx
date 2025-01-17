@@ -23,7 +23,7 @@ import {
 import { SearchIndexDataMap, useHitsTransformed } from '~/components/Search/search.utils2';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IndexToLabel } from '~/components/Search/useSearchState';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';

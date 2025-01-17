@@ -182,6 +182,7 @@ export function AddUserContentModal({ collectionId }: Props) {
                     hideManualResources: undefined,
                   }}
                   renderItem={SelectableImageCard}
+                  disableStoreFilters
                 />
               </MasonryContainer>
             </MasonryProvider>

@@ -5,7 +5,7 @@ import React from 'react';
 
 import { Meta } from '~/components/Meta/Meta';
 import { abbreviateNumber } from '~/utils/number-helpers';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { NoContent } from '~/components/NoContent/NoContent';

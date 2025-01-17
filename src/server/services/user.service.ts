@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { CacheTTL, constants, USERS_SEARCH_INDEX } from '~/server/common/constants';
 import {
   BanReasonCode,
@@ -711,7 +711,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
 
   // Get from cache
   // ----------------------------------
-  const cacheKey = `${REDIS_KEYS.USER.SESSION}:${userId}`;
+  const cacheKey = `${REDIS_KEYS.USER.SESSION}:${userId}` as const;
   const cachedResult = await redis.packed.get<SessionUser | null>(cacheKey);
   if (cachedResult && !('clearedAt' in cachedResult)) return cachedResult;
 

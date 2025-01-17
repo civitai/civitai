@@ -115,6 +115,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
     if (!theme) {
       const challengeDetails = await getChallengeDetails(challengeId!);
+      if (!challengeDetails) return res.status(404).json({ error: 'Challenge not found' });
       theme = challengeDetails.theme;
     }
 
@@ -129,6 +130,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
   if (action === 'winners') {
     const challengeDetails = await getChallengeDetails(challengeId!);
+    if (!challengeDetails) return res.status(404).json({ error: 'Challenge not found' });
     const judgedEntries = await getJudgedEntries(challengeDetails.collectionId, config);
 
     const result = await generateWinners({

@@ -32,6 +32,7 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { postgresSlugify, slugit, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { Meta } from '~/components/Meta/Meta';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -85,7 +86,7 @@ export default function ManageCategories({
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { classes, cx, theme } = useStyles();
   const currentUser = useCurrentUser();
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
@@ -218,86 +219,89 @@ export default function ManageCategories({
   const hasModels = items.length > 0;
 
   return (
-    <Container size="sm">
-      <Stack>
-        <ScrollArea
-          style={{ height: 500 }}
-          onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
-        >
-          <Table verticalSpacing="sm" fontSize="sm">
-            <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
-              <tr>
-                <th style={{ maxWidth: 30 }}>
-                  <BackButton url={`/user/${username}`} />
-                </th>
-                <th colSpan={3}>
-                  <Group position="apart">
-                    <Group spacing={4}>
-                      <Text size="lg">Model Category Manager</Text>
-                    </Group>
-                    <Group spacing={4}>
-                      {selection.length > 0 && (
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          color="red"
-                          onClick={() => setSelection([])}
-                        >
-                          Clear Selection
-                        </Button>
-                      )}
-                      <Menu width={200} withinPortal>
-                        <Menu.Target>
+    <>
+      <Meta deIndex />
+      <Container size="sm">
+        <Stack>
+          <ScrollArea
+            style={{ height: 500 }}
+            onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
+          >
+            <Table verticalSpacing="sm" fontSize="sm">
+              <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
+                <tr>
+                  <th style={{ maxWidth: 30 }}>
+                    <BackButton url={`/user/${username}`} />
+                  </th>
+                  <th colSpan={3}>
+                    <Group position="apart">
+                      <Group spacing={4}>
+                        <Text size="lg">Model Category Manager</Text>
+                      </Group>
+                      <Group spacing={4}>
+                        {selection.length > 0 && (
                           <Button
                             size="xs"
-                            rightIcon={<IconChevronDown size={18} />}
-                            loading={isLoading}
+                            variant="subtle"
+                            color="red"
+                            onClick={() => setSelection([])}
                           >
-                            Set Category {selection.length > 0 && `(${selection.length})`}
+                            Clear Selection
                           </Button>
-                        </Menu.Target>
-                        <Menu.Dropdown>
-                          {loadingCategories ? (
-                            <Center p="xs">
-                              <Text color="dimmed">Loading...</Text>
-                            </Center>
-                          ) : selection.length === 0 ? (
-                            <Center p="xs">
-                              <Text color="dimmed">You must select at least one model</Text>
-                            </Center>
-                          ) : (
-                            categories
-                          )}
-                        </Menu.Dropdown>
-                      </Menu>
+                        )}
+                        <Menu width={200} withinPortal>
+                          <Menu.Target>
+                            <Button
+                              size="xs"
+                              rightIcon={<IconChevronDown size={18} />}
+                              loading={isLoading}
+                            >
+                              Set Category {selection.length > 0 && `(${selection.length})`}
+                            </Button>
+                          </Menu.Target>
+                          <Menu.Dropdown>
+                            {loadingCategories ? (
+                              <Center p="xs">
+                                <Text color="dimmed">Loading...</Text>
+                              </Center>
+                            ) : selection.length === 0 ? (
+                              <Center p="xs">
+                                <Text color="dimmed">You must select at least one model</Text>
+                              </Center>
+                            ) : (
+                              categories
+                            )}
+                          </Menu.Dropdown>
+                        </Menu>
+                      </Group>
                     </Group>
-                  </Group>
-                </th>
-              </tr>
-            </thead>
-            <tbody style={{ position: 'relative' }}>
-              {hasModels ? (
-                rows
-              ) : (
-                <tr>
-                  <td colSpan={3}>
-                    {loadingModels && <LoadingOverlay visible />}
-                    <Center py="md">
-                      <NoContent message="You have no draft models" />
-                    </Center>
-                  </td>
+                  </th>
                 </tr>
-              )}
-            </tbody>
-          </Table>
-        </ScrollArea>
-        {pagination.totalPages > 1 && (
-          <Group position="apart">
-            <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
-            <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
-          </Group>
-        )}
-      </Stack>
-    </Container>
+              </thead>
+              <tbody style={{ position: 'relative' }}>
+                {hasModels ? (
+                  rows
+                ) : (
+                  <tr>
+                    <td colSpan={3}>
+                      {loadingModels && <LoadingOverlay visible />}
+                      <Center py="md">
+                        <NoContent message="You have no draft models" />
+                      </Center>
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </Table>
+          </ScrollArea>
+          {pagination.totalPages > 1 && (
+            <Group position="apart">
+              <Text>Total {pagination.totalItems.toLocaleString()} items</Text>
+              <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
+            </Group>
+          )}
+        </Stack>
+      </Container>
+    </>
   );
 }

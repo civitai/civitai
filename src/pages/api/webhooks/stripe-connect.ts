@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import Stripe from 'stripe';
 // import { buffer } from 'micro';
 import { Readable } from 'node:stream';

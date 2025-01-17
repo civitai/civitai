@@ -1,8 +1,7 @@
 import { Prisma } from '@prisma/client';
-import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { SignalMessages } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -27,6 +26,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ChatMemberStatus, ChatMessageType } from '~/shared/utils/prisma/enums';
 import { ChatCreateChat } from '~/types/router';
 
 /**
@@ -377,7 +377,7 @@ export const modifyUserHandler = async ({
       await fetch(`${env.SIGNALS_ENDPOINT}/users/${existing.userId}/groups`, {
         method: status === ChatMemberStatus.Joined ? 'POST' : 'DELETE',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(`chat:${existing.chat.id}`),
+        body: JSON.stringify(`chat:${existing.chat.id}`), // * for all
       });
 
       if (status !== ChatMemberStatus.Ignored) {

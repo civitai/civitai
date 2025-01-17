@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import { z } from 'zod';
+import { env } from '~/env/server';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
+import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -129,13 +131,15 @@ type Tag = { tag: string; confidence: number; id?: number; source?: TagSource };
 // 11-20: The images are visually similar
 // 21-30: The images are visually somewhat similar
 async function isBlocked(hash: string) {
-  const matches = await dbRead.$queryRaw<{ hash: bigint }[]>`
-    SELECT hash
-    FROM "BlockedImage"
-    WHERE hamming_distance(${hash}::bigint, "hash") < 5
+  if (!env.BLOCKED_IMAGE_HASH_CHECK || !clickhouse) return false;
+
+  const [{ count }] = await clickhouse.$query<{ count: number }>`
+    SELECT cast(count() as int) as count
+    FROM blocked_images
+    WHERE bitCount(bitXor(hash, ${hash})) < 5
   `;
 
-  return matches.length > 0;
+  return count > 0;
 }
 
 async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {

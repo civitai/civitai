@@ -2,7 +2,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import type { MetadataParam } from '@stripe/stripe-js';
 import { chunk } from 'lodash-es';
 import { Stripe } from 'stripe';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {

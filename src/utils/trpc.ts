@@ -5,7 +5,7 @@ import { createTRPCNext } from '@trpc/next';
 import superjson from 'superjson';
 import type { AppRouter } from '~/server/routers';
 import { isDev } from '~/env/other';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 

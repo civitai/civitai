@@ -37,7 +37,7 @@ import { ResourceReviewThumbActions } from '~/components/ResourceReview/Resource
 import { getAverageRating, getRatingCount } from '~/components/ResourceReview/resourceReview.utils';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getResourceReviewPagedSchema } from '~/server/schema/resourceReview.schema';

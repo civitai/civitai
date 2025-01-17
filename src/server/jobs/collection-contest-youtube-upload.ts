@@ -1,6 +1,6 @@
 import { CollectionMode, CollectionType } from '@prisma/client';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
@@ -63,7 +63,7 @@ export const contestCollectionYoutubeUpload = createJob(
             metadata: VideoMetadata;
           }[]
         >`
-          SELECT 
+          SELECT
             i.id as "imageId",
             i.url as "imageUrl",
             i."mimeType",
@@ -75,7 +75,7 @@ export const contestCollectionYoutubeUpload = createJob(
             AND i.type = 'video'
             AND i."ingestion" = 'Scanned'
             -- We only want to upload videos that are longer than 30 seconds
-            AND (i.metadata->'duration')::int > 30  
+            AND (i.metadata->'duration')::int > 30
             AND (i.metadata->'youtubeVideoId') IS NULL
             AND ci."updatedAt" > ${lastRun}
           -- Ensures that we try to upload smaller videos first as a safeguard.

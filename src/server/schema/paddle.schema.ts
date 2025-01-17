@@ -1,4 +1,4 @@
-import { CurrencyCode } from '@paddle/paddle-js';
+import type { CurrencyCode } from '@paddle/paddle-js';
 import { z } from 'zod';
 import { constants } from '~/server/common/constants';
 

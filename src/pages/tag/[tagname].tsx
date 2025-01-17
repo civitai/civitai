@@ -7,7 +7,7 @@ import { Meta } from '~/components/Meta/Meta';
 import { ModelFiltersDropdown } from '~/components/Model/Infinite/ModelFiltersDropdown';
 import { ModelsInfinite } from '~/components/Model/Infinite/ModelsInfinite';
 import { useModelQueryParams } from '~/components/Model/model.utils';
-import { env } from '~/env/client.mjs';
+import { env } from '~/env/client';
 import { constants } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';

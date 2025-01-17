@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { HttpCaller } from '../httpCaller';
 import { Orchestrator } from './orchestrator.types';

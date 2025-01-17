@@ -5,7 +5,7 @@ import { extname } from 'node:path';
 import { filenamize, generateToken } from '~/utils/string-helpers';
 import { getMultipartPutUrl } from '~/utils/s3-utils';
 import { logToDb } from '~/utils/logging';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const session = await getServerAuthSession({ req, res });

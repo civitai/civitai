@@ -3,7 +3,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { cosmeticCache, profilePictureCache, userBasicCache } from '~/server/redis/caches';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import { EventInput, TeamScoreHistoryInput } from '~/server/schema/event.schema';
 import { getCosmeticDetail } from '~/server/services/cosmetic.service';
 import { cosmeticStatus, getCosmeticsForUsers } from '~/server/services/user.service';
@@ -44,7 +44,7 @@ const noCosmetic = {
 } as EventCosmetic;
 export async function getEventCosmetic({ event, userId }: EventInput & { userId: number }) {
   try {
-    const key = `packed:event:${event}:cosmetics`;
+    const key = `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}` as const;
     // TODO optimize, let's cache this to avoid multiple queries
     let userStatus = await redis.packed.hGet<
       Awaited<ReturnType<typeof cosmeticStatus>> & { cosmeticId: number }
@@ -95,16 +95,19 @@ export async function activateEventCosmetic({ event, userId }: EventInput & { us
       RETURNING data;
     `) ?? [{ data: {} }];
 
+    const cacheKey =
+      `${REDIS_KEYS.EVENT.CACHE}:${event}:${REDIS_SUB_KEYS.EVENT.COSMETICS}` as const;
+
     // Update cache
     await Promise.all([
-      redis.packed.hSet(`packed:event:${event}:cosmetics`, userId.toString(), {
+      redis.packed.hSet(cacheKey, userId.toString(), {
         equipped: true,
         available: true,
         obtained: true,
         data,
         cosmeticId,
       }),
-      redis.hExpire(`packed:event:${event}:cosmetics`, userId.toString(), CacheTTL.hour),
+      redis.hExpire(cacheKey, userId.toString(), CacheTTL.hour),
     ]);
 
     // Queue adding to role

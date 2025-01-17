@@ -1,15 +1,16 @@
-import {
+import type {
   Adjustment,
   AdjustmentAction,
-  EventName,
+  IEventName,
   PriceNotification,
   ProductNotification,
   SubscriptionNotification,
   Transaction,
   TransactionNotification,
 } from '@paddle/paddle-node-sdk';
+import { ApiError } from '@paddle/paddle-node-sdk';
 import dayjs from 'dayjs';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -154,7 +155,7 @@ export const getBuzzPurchaseItem = (transaction: TransactionNotification) => {
 };
 
 export const processCompleteBuzzTransaction = async (
-  transaction: Transaction,
+  transaction: TransactionNotification,
   buzzTransactionExtras?: MixedObject
 ) => {
   const items = transaction.items;
@@ -313,14 +314,14 @@ export const upsertPriceRecord = async (price: PriceNotification) => {
 };
 
 export const upsertSubscription = async (
-  subscriptionNotification: SubscriptionNotification,
+  subscriptionNotification: Omit<SubscriptionNotification, 'transactionId'>,
   eventDate: Date,
-  eventName: EventName
+  eventName: IEventName
 ) => {
   log('upsertSubscription :: Event:', eventName);
-  const isUpdatingSubscription = eventName === EventName.SubscriptionUpdated;
-  const isCreatingSubscription = eventName === EventName.SubscriptionActivated;
-  const isCancelingSubscription = eventName === EventName.SubscriptionCanceled;
+  const isUpdatingSubscription = eventName === 'subscription.updated';
+  const isCreatingSubscription = eventName === 'subscription.activated';
+  const isCancelingSubscription = eventName === 'subscription.canceled';
 
   const subscriptionProducts = await getPlans({
     paymentProvider: PaymentProvider.Paddle,
@@ -705,16 +706,15 @@ export const updateSubscriptionPlan = async ({
               quantity: 1,
             },
           ],
-          prorationBillingMode: 'full_immediately',
-          onPaymentFailure: 'prevent_change',
+          prorationBillingMode: 'do_not_bill',
         });
 
         // For whatever random reason in the world, Paddle doesn't update the next billed at date
         // automatically when you change the subscription. So we do it manually.
         await updatePaddleSubscription({
           subscriptionId: subscription.id,
-          nextBilledAt: dayjs().add(1, 'month').toISOString(),
-          prorationBillingMode: 'do_not_bill',
+          nextBilledAt: dayjs().add(30, 'minute').add(20, 'second').toISOString(),
+          prorationBillingMode: 'prorated_immediately',
           customData: {
             ...paddleSubscription.customData,
             originalNextBilledAt: paddleSubscription?.nextBilledAt,
@@ -727,8 +727,11 @@ export const updateSubscriptionPlan = async ({
           message: 'Failed to update subscription',
           userId,
           priceId,
+          error: e,
+          stack: (e as Error)?.stack,
         });
-        throw new Error('Failed to update subscription');
+
+        throw e;
       }
     }
 
@@ -739,7 +742,9 @@ export const updateSubscriptionPlan = async ({
 
     return true;
   } catch (e) {
-    return new Error('Failed to update subscription');
+    if (e instanceof ApiError) {
+      throw new Error((e as ApiError).detail);
+    }
   }
 };
 
@@ -781,22 +786,37 @@ export const refreshSubscription = async ({ userId }: { userId: number }) => {
     // This is a different subscription, we should update the user.
     await dbWrite.customerSubscription.delete({ where: { id: customerSubscription.id } });
   }
+  try {
+    // This should trigger an update...
+    await updatePaddleSubscription({
+      subscriptionId: subscription.id,
+      customData: {
+        ...subscription.customData,
+        refreshed: new Date().toISOString(),
+      },
+    });
 
-  // This should trigger an update...
-  await updatePaddleSubscription({
-    subscriptionId: subscription.id,
-    customData: {
-      ...subscription.customData,
-      refreshed: new Date().toISOString(),
-    },
-  });
+    await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
 
-  await sleep(500); // Waits for the webhook to update the subscription. Might be wishful thinking.
+    await invalidateSession(userId);
+    await getMultipliersForUser(userId, true);
 
-  await invalidateSession(userId);
-  await getMultipliersForUser(userId, true);
+    return true;
+  } catch (error) {
+    if (error instanceof ApiError) {
+      // Check if they are ok errors
+      const apiError = error as ApiError;
+      if (
+        apiError.code === 'subscription_locked_renewal' ||
+        apiError.code === 'subscription_locked_pending_changes'
+      ) {
+        // Not a bad error, we can ignore this.
+        return true;
+      }
+    }
 
-  return true;
+    throw error;
+  }
 };
 
 export const cancelAllPaddleSubscriptions = async ({ customerId }: { customerId: string }) => {

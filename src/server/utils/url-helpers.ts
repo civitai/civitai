@@ -1,4 +1,4 @@
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 
 export const getBaseUrl = () => {
   if (typeof window !== 'undefined') return ''; // browser should use relative url

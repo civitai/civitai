@@ -1478,7 +1478,7 @@ export const updateCollectionItemsStatus = async ({
   if (collectionItemIds.length > 0) {
     await dbWrite.$executeRaw`
       UPDATE "CollectionItem"
-      SET "reviewedById" = ${userId}, 
+      SET "reviewedById" = ${userId},
       "reviewedAt" = ${new Date()},
       "updatedAt" = ${new Date()},
       "status" = ${status}::"CollectionItemStatus" ${Prisma.raw(
@@ -1539,7 +1539,7 @@ export function getCollectionItemCount({
   return dbRead.$queryRaw<{ id: number; count: number }[]>`
     SELECT "collectionId" as "id", COUNT(*) as "count"
     FROM "CollectionItem"
-    WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`} 
+    WHERE ${Prisma.sql`${Prisma.join(where, ' AND ')}`}
       AND ("imageId" IS NOT NULL OR "modelId" IS NOT NULL OR "postId" IS NOT NULL OR "articleId" IS NOT NULL)
     GROUP BY "collectionId"
   `;
@@ -2414,3 +2414,11 @@ export const enableCollectionYoutubeSupport = async ({
     throw throwBadRequestError('Failed to save youtube authentication code');
   }
 };
+
+export async function randomizeCollectionItems(collectionId: number) {
+  await dbWrite.$executeRaw`
+    UPDATE "CollectionItem" ci SET "randomId" = FLOOR(RANDOM() * 1000000000)
+    WHERE ci."collectionId" = ${collectionId}
+      AND ci."status" = 'ACCEPTED'
+  `;
+}

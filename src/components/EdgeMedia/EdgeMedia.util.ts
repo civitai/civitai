@@ -26,7 +26,7 @@ export function getSkipValue({
 }: {
   type: MediaType;
   metadata?: MixedObject | null;
-  thumbnailUrl?: string;
+  thumbnailUrl?: string | null;
 }) {
   const parsed = videoMetadataSchema.safeParse(metadata);
   if (!parsed.success) return undefined;

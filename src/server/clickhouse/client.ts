@@ -12,7 +12,7 @@ import dayjs from 'dayjs';
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { isProd } from '~/env/other';
-import { env } from '~/env/server.mjs';
+import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 import { ProhibitedSources } from '~/server/schema/user.schema';
 import { NsfwLevelDeprecated } from '~/shared/constants/browsingLevel.constants';

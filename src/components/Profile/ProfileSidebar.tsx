@@ -9,8 +9,6 @@ import {
   Popover,
   Stack,
   Text,
-  ThemeIcon,
-  Tooltip,
   useMantineTheme,
   Badge,
   UnstyledButton,
@@ -23,7 +21,6 @@ import {
   IconPencilMinus,
   IconRss,
   IconShare3,
-  IconBan,
   IconInfoCircle,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
@@ -211,9 +208,13 @@ export function ProfileSidebar({ username, className }: { username: string; clas
         {isMobile && (
           <Group noWrap spacing={4}>
             {muted ? mutedAlert : editProfileBtn}
-            {followUserBtn}
-            <TipBuzzBtn label="" />
-            <ChatBtn label="" />
+            {!user?.bannedAt && (
+              <>
+                {followUserBtn}
+                <TipBuzzBtn label="" />
+                <ChatBtn label="" />
+              </>
+            )}
             {shareBtn}
             <UserContextMenu username={username} />
           </Group>
@@ -281,14 +282,16 @@ export function ProfileSidebar({ username, className }: { username: string; clas
           ))}
         </Group>
       )}
-      {!isMobile && (
-        <Group grow>
-          {muted ? mutedAlert : editProfileBtn}
-          {followUserBtn}
-        </Group>
+      {!isMobile && !user?.bannedAt && (
+        <>
+          <Group grow>
+            {muted ? mutedAlert : editProfileBtn}
+            {followUserBtn}
+          </Group>
+          <TipBuzzBtn />
+          <ChatBtn />
+        </>
       )}
-      {!isMobile && <TipBuzzBtn />}
-      {!isMobile && <ChatBtn />}
 
       <Divider my={sizeOpts.spacing} />
 

@@ -6,6 +6,7 @@ import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import { GenerationData, RemixOfProps } from '~/server/services/generation/generation.service';
 import {
   GenerationResource,
+  engineDefinitions,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { QS } from '~/utils/qs';
@@ -30,7 +31,7 @@ type GenerationState = {
     args: GenerationData & {
       type: MediaType;
       workflow?: string;
-      sourceImageUrl?: string;
+      sourceImage?: string;
       engine?: string;
     }
   ) => void;
@@ -80,8 +81,8 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: ({ type, remixOf, workflow, sourceImageUrl, engine, ...data }) => {
-        useGenerationFormStore.setState({ type, workflow, sourceImageUrl });
+      setData: ({ type, remixOf, workflow, sourceImage, engine, ...data }) => {
+        useGenerationFormStore.setState({ type, workflow, sourceImage });
         if (engine) useGenerationFormStore.setState({ engine });
         set((state) => {
           state.remixOf = remixOf;
@@ -141,7 +142,7 @@ export const useGenerationFormStore = create<{
   type: MediaType;
   engine?: string;
   workflow?: string; // is this needed?
-  sourceImageUrl?: string;
+  sourceImage?: string;
   width?: number;
   height?: number;
 }>()(persist((set) => ({ type: 'image' }), { name: 'generation-form' }));
@@ -162,8 +163,7 @@ export const generationFormStore = {
     useGenerationFormStore.setState({ workflow: updatedWorkflow, engine });
   },
   setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
-  setSourceImageUrl: (sourceImageUrl?: string) =>
-    useGenerationFormStore.setState({ sourceImageUrl }),
+  setsourceImage: (sourceImage?: string) => useGenerationFormStore.setState({ sourceImage }),
   reset: () => useGenerationFormStore.setState((state) => ({ type: state.type }), true),
 };
 
@@ -182,15 +182,25 @@ export function useVideoGenerationWorkflows() {
       return { ...config, ...engine };
     })
     .filter(isDefined);
-  return { data: workflows, isLoading };
+
+  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
+  const availableEngines = Object.keys(engineDefinitions)
+    .filter((key) =>
+      workflows
+        ?.filter((x) => (sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
+        .some((x) => x.engine === key && !x.disabled)
+    )
+    .map((key) => ({ key, ...engineDefinitions[key] }));
+
+  return { data: workflows, availableEngines, isLoading };
 }
 
 export function useSelectedVideoWorkflow() {
   const { data } = useVideoGenerationWorkflows();
   const selectedEngine = useGenerationFormStore((state) => state.engine);
-  const sourceImageUrl = useGenerationFormStore((state) => state.sourceImageUrl);
+  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
   const workflows = data.filter(({ subType, type }) =>
-    type === 'video' && sourceImageUrl ? subType.startsWith('img') : subType.startsWith('txt')
+    type === 'video' && sourceImage ? subType.startsWith('img') : subType.startsWith('txt')
   );
   return workflows.find((x) => x.engine === selectedEngine) ?? workflows[0];
 }

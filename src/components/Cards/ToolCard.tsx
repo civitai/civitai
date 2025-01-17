@@ -81,12 +81,12 @@ export function ToolCard({ data }: Props) {
                 e.stopPropagation();
 
                 const isVideo = data.type === ToolType.Video;
+                const engine = isVideo ? data.name.toLowerCase() : undefined;
                 generationStore.setData({
                   resources: [],
                   params: {},
                   type: isVideo ? 'video' : 'image',
-                  // TODO.gen: have to think this through on how to get the right workflow
-                  workflow: isVideo ? `${data.name.toLowerCase()}-txt2vid` : undefined,
+                  engine,
                 });
                 generationPanel.open();
               }}

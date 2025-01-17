@@ -1,27 +1,42 @@
 import {
-  Blob,
   ComfyStep,
-  HaiperVideoGenInput,
+  createCivitaiClient,
   HaiperVideoGenOutput,
   ImageJobNetworkParams,
   Priority,
   TextToImageInput,
   TextToImageStep,
   VideoBlob,
-  VideoGenOutput,
   VideoGenStep,
   Workflow,
   WorkflowStatus,
   WorkflowStep,
-  WorkflowStepJob,
-  createCivitaiClient,
 } from '@civitai/client';
+import type { SessionUser } from 'next-auth';
+import { z } from 'zod';
+import { env } from '~/env/server';
+import { generation } from '~/server/common/constants';
+import { extModeration } from '~/server/integrations/moderation';
+import { logToAxiom } from '~/server/logging/client';
+import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
 import { resourceDataCache } from '~/server/redis/caches';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
-  InjectableResource,
-  WORKFLOW_TAGS,
+  GeneratedImageStepMetadata,
+  generateImageSchema,
+  TextToImageParams,
+} from '~/server/schema/orchestrator/textToImage.schema';
+import { UserTier } from '~/server/schema/user.schema';
+import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
+import {
+  GeneratedImageWorkflow,
+  GeneratedImageWorkflowStep,
+  WorkflowDefinition,
+} from '~/server/services/orchestrator/types';
+import { queryWorkflows } from '~/server/services/orchestrator/workflows';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
+import {
   allInjectableResourceIds,
   fluxModeOptions,
   fluxUltraAir,
@@ -33,36 +48,16 @@ import {
   getIsSD3,
   getRoundedUpscaleSize,
   getSizeFromAspectRatio,
+  InjectableResource,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
-import { env } from '~/env/server.mjs';
-import { isDefined } from '~/utils/type-guards';
-import {
-  generateImageSchema,
-  GeneratedImageStepMetadata,
-  TextToImageParams,
-} from '~/server/schema/orchestrator/textToImage.schema';
-import {
-  GeneratedImageWorkflow,
-  GeneratedImageWorkflowStep,
-  WorkflowDefinition,
-} from '~/server/services/orchestrator/types';
-import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
-import { generation } from '~/server/common/constants';
-import type { SessionUser } from 'next-auth';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { z } from 'zod';
-import { extModeration } from '~/server/integrations/moderation';
-import { logToAxiom } from '~/server/logging/client';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { queryWorkflows } from '~/server/services/orchestrator/workflows';
-import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
-import { VideoGenerationSchema } from '~/server/schema/orchestrator/orchestrator.schema';
+import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { UserTier } from '~/server/schema/user.schema';
+import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
@@ -76,7 +71,10 @@ export const internalOrchestratorClient = createOrchestratorClient(env.ORCHESTRA
 
 export async function getGenerationStatus() {
   const status = generationStatusSchema.parse(
-    JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.GENERATION.STATUS)) ?? '{}')
+    JSON.parse(
+      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.GENERATION.STATUS)) ??
+        '{}'
+    )
   );
 
   return status as GenerationStatus;
@@ -199,7 +197,7 @@ export async function parseGenerateImageInput({
   if (!resourceData.resources.every((x) => x.available) && params.workflow !== 'img2img-upscale')
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
-        .filter((x) => !x.covered)
+        .filter((x) => !x.available)
         .map((x) => x.air)
         .join(', ')}`
     );
@@ -377,7 +375,7 @@ export async function formatGenerationResponse(workflows: Workflow[]) {
 function getTextToImageAirs(inputs: TextToImageInput[]) {
   return Object.entries(
     inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
-      acc[input.model] = {};
+      if (input.model) acc[input.model] = {};
       const additionalNetworks = input.additionalNetworks ?? {};
       for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
       return acc;
@@ -407,35 +405,39 @@ function formatWorkflowStep(args: {
 function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflowId: string }) {
   const { input, output, jobs } = step as VideoGenStep;
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
-
-  let width = videoMetadata.params?.width;
-  let height = videoMetadata.params?.height;
-  let aspectRatio = width && height ? width / height : 16 / 9;
-
-  // if ((workflowId = '0-20241108234000287')) console.log(input);
-
   const { params } = videoMetadata;
+
+  let width: number | undefined;
+  let height: number | undefined;
+  let aspectRatio = 1;
+
   if (params) {
-    switch (params.engine) {
-      case 'haiper': {
-        if (params.aspectRatio) {
-          const [rw, rh] = params.aspectRatio.split(':').map(Number);
-          aspectRatio = rw / rh;
+    if (params.type === 'img2vid') {
+      width = params?.width;
+      height = params?.height;
+      aspectRatio = width && height ? width / height : 16 / 9;
+    } else if (params.type === 'txt2vid') {
+      switch (params.engine) {
+        case 'haiper': {
+          if (params.aspectRatio) {
+            const [rw, rh] = params.aspectRatio.split(':').map(Number);
+            aspectRatio = rw / rh;
+          }
+          break;
         }
-        break;
-      }
-      case 'kling': {
-        if (params.aspectRatio) {
-          const [rw, rh] = params.aspectRatio.split(':').map(Number);
-          aspectRatio = rw / rh;
+        case 'kling': {
+          if (params.aspectRatio) {
+            const [rw, rh] = params.aspectRatio.split(':').map(Number);
+            aspectRatio = rw / rh;
+          }
+          break;
         }
-        break;
+        case 'mochi':
+          width = 848;
+          height = 480;
+          aspectRatio = width / height;
+          break;
       }
-      case 'mochi':
-        width = 848;
-        height = 480;
-        aspectRatio = width / height;
-        break;
     }
   }
 
@@ -454,9 +456,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             jobId: job.id,
             id: image.id,
             status: image.available ? 'succeeded' : job.status ?? ('unassignend' as WorkflowStatus),
-            reason: (output as HaiperVideoGenOutput).externalTOSViolation
-              ? `The content may violate our usage policy`
-              : undefined,
+            reason: (output as HaiperVideoGenOutput).message ?? undefined,
             seed: (input as any).seed, // TODO - determine if seed should be a common videoGen prop
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url + '.mp4',
@@ -472,7 +472,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
 
   // TODO - this should be temporary until Koen updates the orchestrator - 12/11/2024
-  if (input.engine === 'kling' && (input as any).sourceImageUrl) {
+  if (input.engine === 'kling' && ((input as any).sourceImage || (input as any).sourceImageUrl)) {
     if ('aspectRatio' in input) delete input.aspectRatio;
   }
 
@@ -483,6 +483,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     // workflow and quantity are only here because they are required for other components to function
     params: {
       ...input,
+      sourceImage: (input as any).sourceImage ?? (input as any).sourceImageUrl,
       workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
