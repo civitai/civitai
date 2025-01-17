@@ -1,9 +1,16 @@
 import { Button, CloseButton, Group, Paper, Text } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import React, { useCallback } from 'react';
-import { TooltipRenderProps } from 'react-joyride';
+import { StoreHelpers, TooltipRenderProps } from 'react-joyride';
+import { useTourContext } from '~/providers/TourProvider';
+
+export interface StepData {
+  onNext?: (helpers: StoreHelpers) => void | Promise<void>;
+  onPrev?: (helpers: StoreHelpers) => void | Promise<void>;
+}
 
 export function TourPopover(props: TooltipRenderProps) {
+  const { helpers } = useTourContext();
   const {
     index,
     step,
@@ -18,18 +25,18 @@ export function TourPopover(props: TooltipRenderProps) {
 
   const handlePrevClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
     async (e) => {
-      await step.data?.onPrev?.();
+      if (helpers) await (step.data as StepData)?.onPrev?.(helpers);
       backProps.onClick(e);
     },
-    [backProps, step.data]
+    [backProps, helpers, step.data]
   );
 
   const handleNextClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
     async (e) => {
-      await step.data?.onNext?.();
+      if (helpers) await (step.data as StepData)?.onNext?.(helpers);
       primaryProps.onClick(e);
     },
-    [primaryProps, step.data]
+    [helpers, primaryProps, step.data]
   );
 
   return (

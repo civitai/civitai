@@ -26,7 +26,7 @@ import { useTourContext } from '~/providers/TourProvider';
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { active, opened, toggleTour } = useTourContext();
+  const { opened, openTour } = useTourContext();
 
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
@@ -68,8 +68,10 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               onClick={async () => {
                 const url = new URL(router.asPath, window.location.origin);
                 url.searchParams.set('tour', 'content-generation');
-                await router.replace(url);
-                if (!opened) toggleTour({ currentStep: 0 });
+                await router.replace(url, undefined, { shallow: true });
+                if (!opened) {
+                  openTour({ currentStep: 0 });
+                }
               }}
             />
           </div>

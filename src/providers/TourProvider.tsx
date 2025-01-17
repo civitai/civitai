@@ -1,4 +1,5 @@
-import { useMantineTheme } from '@mantine/core';
+import { Text, useMantineTheme } from '@mantine/core';
+import { reset } from 'linkifyjs';
 import { useSearchParams } from 'next/navigation';
 import Router from 'next/router';
 import { createContext, useCallback, useContext, useRef, useState } from 'react';
@@ -13,32 +14,31 @@ import Joyride, {
   StoreHelpers,
 } from 'react-joyride';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { TourPopover } from '~/components/Tour/TourPopover';
+import { StepData, TourPopover } from '~/components/Tour/TourPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { generationPanel } from '~/store/generation.store';
-import { EventEmitter } from '~/utils/eventEmitter';
 import { trpc } from '~/utils/trpc';
+
+type StepWithData = Step & { data?: StepData };
 
 type TourState = {
   opened: boolean;
   active: boolean;
   currentStep: number;
-  toggleTour: (args?: Partial<Pick<TourState, 'currentStep'>>) => void;
-  steps?: Step[];
+  openTour: (args?: Partial<Pick<TourState, 'currentStep'>>) => void;
+  closeTour: (args?: { reset?: boolean }) => void;
+  steps?: StepWithData[];
   helpers?: StoreHelpers | null;
 };
-
-type TourEventEmitter = 'start' | 'end' | 'next' | 'prev';
 
 const TourContext = createContext<TourState>({
   opened: false,
   active: false,
   currentStep: 0,
-  toggleTour: () => null,
+  openTour: () => null,
+  closeTour: () => null,
   steps: [],
 });
-
-const emitter = new EventEmitter<Record<TourEventEmitter, CallBackProps>>();
 
 export const useTourContext = () => {
   const context = useContext(TourContext);
@@ -56,7 +56,7 @@ export function TourProvider({ children, ...props }: Props) {
   const searchParams = useSearchParams();
   const theme = useMantineTheme();
   const tourKey = searchParams.get('tour');
-  const [state, setState] = useState<Omit<TourState, 'toggleTour' | 'helpers'>>({
+  const [state, setState] = useState<Omit<TourState, 'openTour' | 'closeTour' | 'helpers'>>({
     opened: false,
     active: !!tourKey,
     currentStep: 0,
@@ -75,11 +75,18 @@ export function TourProvider({ children, ...props }: Props) {
     },
   });
 
-  const toggleTour = (opts?: Partial<Pick<TourState, 'currentStep'>>) =>
+  const openTour = (opts?: Partial<Pick<TourState, 'currentStep'>>) =>
     setState((current) => ({
       ...current,
-      opened: !current.opened,
+      opened: true,
       currentStep: opts?.currentStep ?? current.currentStep,
+    }));
+
+  const closeTour = (args?: { reset?: boolean }) =>
+    setState((current) => ({
+      ...current,
+      opened: false,
+      currentStep: args?.reset ? 0 : current.currentStep,
     }));
 
   const handleJoyrideCallback = useCallback<Callback>(
@@ -90,21 +97,18 @@ export function TourProvider({ children, ...props }: Props) {
         // updateUserSettingsMutation.mutate({
         //   completedTour: { [tourKey]: true },
         // });
-        emitter.emit('end', data);
         setState((current) => ({ ...current, opened: false, currentStep: 0 }));
       } else if (nextEvents.includes(type)) {
         const isPrevAction = action === ACTIONS.PREV;
-        const nextStepIndex = index + (isPrevAction ? -1 : 1);
+        const nextStepIndex = index > 0 ? index + (isPrevAction ? -1 : 1) : 0;
 
         if (index < size && (step.data?.onNext || step.data?.onPrev)) {
           setState((current) => ({ ...current, opened: false }));
         }
 
         if (isPrevAction) {
-          emitter.emit('prev', data);
           setState((current) => ({ ...current, currentStep: nextStepIndex }));
         } else {
-          emitter.emit('next', data);
           setState((current) => ({ ...current, currentStep: nextStepIndex }));
         }
       }
@@ -118,13 +122,13 @@ export function TourProvider({ children, ...props }: Props) {
     : false;
 
   return (
-    <TourContext.Provider value={{ ...state, toggleTour, helpers: tourHelpers.current }}>
+    <TourContext.Provider value={{ ...state, openTour, closeTour, helpers: tourHelpers.current }}>
       {children}
       <IsClient>
         <Joyride
           steps={steps}
           stepIndex={state.currentStep}
-          run={(!isLoading && !alreadyCompleted) || state.opened}
+          run={state.opened}
           callback={handleJoyrideCallback}
           styles={{
             options: {
@@ -137,6 +141,7 @@ export function TourProvider({ children, ...props }: Props) {
           spotlightClicks
           continuous
           showSkipButton
+          debug
           {...props}
         />
       </IsClient>
@@ -146,34 +151,40 @@ export function TourProvider({ children, ...props }: Props) {
 
 type Props = Omit<JoyrideProps, 'callback' | 'steps'> & {
   children: React.ReactNode;
-  steps?: Step[];
+  steps?: StepWithData[];
 };
 
-const stepsMap: Record<string, Step[]> = {
+const stepsMap: Record<string, StepWithData[]> = {
   'content-generation': [
     {
       target: '[data-tour="gen:start"]',
-      title: 'Getting Start with Content Generation',
+      title: 'Getting Started with Content Generation',
       content: `Ready to start creating content? Just click the "Create" button to begin!`,
       locale: { next: "Let's go" },
       data: {
-        onNext: async () => {
+        onNext: async ({ close }) => {
+          close();
           await generationPanel.open();
-          await Router.push('/collections/151?tour=content-generation');
-        },
-        onPrev: async () => {
-          generationPanel.close();
         },
       },
       disableBeacon: true,
       disableOverlayClose: true,
     },
     {
-      target: '[data-tour="gen:panel]',
+      target: '[data-tour="gen:panel"]',
       title: 'Your Content Generation Panel',
       content:
         'This is the content generation panel. From here, you can choose to create images or videos and bring your ideas to life.',
+      data: {
+        onPrev: async ({ prev }) => {
+          console.log('closing panel');
+          generationPanel.close();
+          prev();
+        },
+      },
       disableBeacon: true,
+      disableOverlay: true,
+      placement: 'center',
     },
     {
       target: '[data-tour="gen:prompt"]',
@@ -182,10 +193,31 @@ const stepsMap: Record<string, Step[]> = {
         'You can type a prompt here to generate an image. Try something simple, like "a blue robot", to get started.',
     },
     {
-      target: '[data-tour="gen:remix"]',
+      target: '[data-tour="gen:prompt"]',
       title: 'Remix Content',
-      content:
-        'Alternatively, you can remix existing images on the site. Click Next to learn more.',
+      content: (
+        <div className="flex flex-col gap-2">
+          <Text>
+            Alternatively, you can remix existing images on the site. Click{' '}
+            <Text weight={600} span>
+              <strong>Next</strong>
+            </Text>{' '}
+            to learn more.
+          </Text>
+        </div>
+      ),
+      data: {
+        onNext: async ({ close }) => {
+          close();
+          await Router.push('/collections/1169354?tour=content-generation');
+          // open();
+        },
+      },
+    },
+    {
+      target: '[data-tour="gen:remix"]',
+      title: 'Remix This Image',
+      content: 'Click this button to remix an image and create something new',
     },
     {
       target: '[data-tour="gen:submit"]',
@@ -199,7 +231,7 @@ const stepsMap: Record<string, Step[]> = {
     {
       target: '[data-tour="gen:reset"]',
       content: 'You can view this tour at anytime by clicking this icon.',
-      locale: { next: 'Done' },
+      locale: { last: 'Done' },
     },
   ],
   'tour-2': [

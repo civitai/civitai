@@ -15,12 +15,12 @@ import { Currency } from '~/shared/utils/prisma/enums';
 export function CreateMenu() {
   const features = useFeatureFlags();
   const isMobile = useIsMobile({ breakpoint: 'md' });
-  const { opened, helpers, toggleTour, active } = useTourContext();
+  const { opened, helpers, openTour, active } = useTourContext();
 
   useEffect(() => {
-    console.log('running effect', { active, opened });
     if (active && !opened) {
-      toggleTour({ currentStep: 0 });
+      console.log('running effect', { active, opened });
+      openTour({ currentStep: 0 });
     }
   }, []);
 

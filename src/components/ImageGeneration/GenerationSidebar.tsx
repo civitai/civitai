@@ -13,7 +13,7 @@ const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/Genera
 export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);
   const router = useRouter();
-  const { opened: tourOpened, active, toggleTour } = useTourContext();
+  const { helpers, active, opened: tourOpened, openTour } = useTourContext();
   // TODO - see if we can elevate this to `BaseLayout` and set visibility hidden to content behind sidebar
   const [fullScreen, setFullScreen] = useState(false);
   const isGeneratePage = router.pathname.startsWith('/generate');
@@ -44,9 +44,9 @@ export function GenerationSidebar() {
   useEffect(() => {
     console.log('opening tour', { active });
     if (active && opened && !tourOpened) {
-      toggleTour({ currentStep: 1 });
+      openTour({ currentStep: 1 });
     }
-  }, []);
+  }, [active, opened]);
 
   if (!opened) return null;
 
