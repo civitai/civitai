@@ -50,7 +50,7 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
   const isMember = currentUser?.isMember ?? false;
   const allowAds = useBrowsingSettings((x) => x.allowAds);
   const adsEnabled = isDev
-    ? false
+    ? true
     : features.adsEnabled &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url));
@@ -101,15 +101,13 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
-      {adsEnabled && (
-        <>
-          {isDev && (
-            <Script
-              id="snigel-ads-domain-spoof"
-              data-cfasync="false"
-              type="text/javascript"
-              dangerouslySetInnerHTML={{
-                __html: `
+      {adsEnabled && isDev && (
+        <Script
+          id="snigel-ads-domain-spoof"
+          data-cfasync="false"
+          type="text/javascript"
+          dangerouslySetInnerHTML={{
+            __html: `
                 // Spoofing domain to 'civitai.com' --> ONLY FOR TESTING PURPOSES.
                 // This is required when the test environment domain differs from the production domain.
                 window.addEventListener("adnginLoaderReady", function () {
@@ -120,15 +118,16 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                   });
                 });
               `,
-              }}
-            ></Script>
-          )}
-          <Script
-            id="snigel-config"
-            data-cfasync="false"
-            type="text/javascript"
-            dangerouslySetInnerHTML={{
-              __html: `
+          }}
+        ></Script>
+      )}
+      {adsEnabled && (
+        <Script
+          id="snigel-config"
+          data-cfasync="false"
+          type="text/javascript"
+          dangerouslySetInnerHTML={{
+            __html: `
 
                 window.snigelPubConf = {
                   "adengine": {
@@ -136,22 +135,24 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                   }
                 }
               `,
-            }}
-          ></Script>
-
-          <Script
-            async
-            src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
-            onError={handleLoadedError}
-            onLoad={handleLoaded}
-          />
-
-          {/* Cleanup old ad tags */}
-          <Script
-            id="ad-cleanup"
-            type="text/javascript"
-            dangerouslySetInnerHTML={{
-              __html: `
+          }}
+        />
+      )}
+      {adsEnabled && (
+        <Script
+          async
+          src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
+          onError={handleLoadedError}
+          onLoad={handleLoaded}
+        />
+      )}
+      {/* Cleanup old ad tags */}
+      {adsEnabled && (
+        <Script
+          id="ad-cleanup"
+          type="text/javascript"
+          dangerouslySetInnerHTML={{
+            __html: `
                 // GPT
                 window.googletag = window.googletag || {cmd: []};
                 googletag.cmd.push(function() {
@@ -163,12 +164,10 @@ export function AdsProvider({ children }: { children: React.ReactNode }) {
                 // adsense
                 (window.adsbygoogle = window.adsbygoogle || []).pauseAdRequests = 1
               `,
-            }}
-          ></Script>
-
-          <ImpressionTracker />
-        </>
+          }}
+        />
       )}
+      {adsEnabled && <ImpressionTracker />}
     </AdsContext.Provider>
   );
 }
