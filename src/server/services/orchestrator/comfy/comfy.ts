@@ -25,11 +25,12 @@ export async function createComfyStep(
     whatIf?: boolean;
   }
 ) {
-  input.params.seed =
-    input.params.seed ?? getRandomInt(input.params.quantity, maxRandomSeed) - input.params.quantity;
+  const { priority, ...inputParams } = input.params;
+  inputParams.seed =
+    inputParams.seed ?? getRandomInt(inputParams.quantity, maxRandomSeed) - inputParams.quantity;
 
-  const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
-  const { resources, params, priority } = await parseGenerateImageInput({
+  const workflowDefinition = await getWorkflowDefinition(inputParams.workflow);
+  const { resources, params } = await parseGenerateImageInput({
     ...input,
     workflowDefinition,
   });
@@ -40,7 +41,7 @@ export async function createComfyStep(
       (params.sampler as keyof typeof samplersToComfySamplers) ?? 'DPM++ 2M Karras'
     ];
 
-  const comfyWorkflow = await populateWorkflowDefinition(input.params.workflow, {
+  const comfyWorkflow = await populateWorkflowDefinition(inputParams.workflow, {
     ...params,
     sampler,
     scheduler,
@@ -66,6 +67,7 @@ export async function createComfyStep(
 
   return {
     $type: 'comfy',
+    priority,
     input: {
       quantity: params.quantity,
       comfyWorkflow,
@@ -77,7 +79,6 @@ export async function createComfyStep(
       params: input.params,
       remixOfId: input.remixOfId,
     },
-    priority,
   } as ComfyStepTemplate;
 }
 

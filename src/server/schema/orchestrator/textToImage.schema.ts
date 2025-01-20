@@ -1,3 +1,4 @@
+import { Priority } from '@civitai/client';
 import { z } from 'zod';
 import { isProd } from '~/env/other';
 import { baseModelSetTypes, generation } from '~/server/common/constants';
@@ -49,6 +50,7 @@ export const textToImageParamsSchema = z.object({
   fluxUltraRaw: z.boolean().optional(),
   experimental: z.boolean().optional(),
   engine: z.string().optional(),
+  priority: z.nativeEnum(Priority).default('low'),
 });
 
 // #endregion

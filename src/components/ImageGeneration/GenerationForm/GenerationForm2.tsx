@@ -97,6 +97,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
 import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
+import { Priority } from '@civitai/client';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -1034,6 +1035,11 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
+                <InputSelect
+                  label="Request Priority"
+                  name="priority"
+                  data={Object.values(Priority)}
+                />
               </div>
               <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />

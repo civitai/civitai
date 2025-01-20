@@ -99,7 +99,7 @@ export function GenerationCostPopover({
       className: classes.tableCell,
     },
     {
-      label: 'Additional Resource Usage',
+      label: 'Additional Resource Cost',
       value: (
         <Group spacing={4} position="right" noWrap>
           {workflowCost.fixed?.additionalNetworks}
@@ -107,6 +107,17 @@ export function GenerationCostPopover({
         </Group>
       ),
       visible: !!workflowCost.fixed?.additionalNetworks,
+      className: classes.tableCell,
+    },
+    {
+      label: 'Priority Pricing',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {workflowCost.fixed?.priority}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !!workflowCost.fixed?.priority,
       className: classes.tableCell,
     },
     {

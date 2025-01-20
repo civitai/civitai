@@ -317,7 +317,7 @@ export async function parseGenerateImageInput({
       upscaleWidth: upscale?.width,
       upscaleHeight: upscale?.height,
     }),
-    priority: getUserPriority(status, user),
+    // priority: getUserPriority(status, user),
   };
 }
 
