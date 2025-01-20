@@ -663,7 +663,7 @@ export function GenerationFormContent() {
                                 py={0}
                               >
                                 <Stack spacing={0} h="100%">
-                                  <Text weight="bold" size="sm">
+                                  <Text weight="bold" size="sm" mt={2}>
                                     Remixing
                                   </Text>
                                   {remixSimilarity >= 0.75 && (
@@ -673,17 +673,17 @@ export function GenerationFormContent() {
                                   )}
                                   {remixSimilarity < 0.75 && (
                                     <>
-                                      <Text size="xs" lineClamp={2}>
+                                      <Text size="xs" lh={1.2} mb={6}>
                                         Your prompt has deviated sufficiently from the original that
                                         this generation will be treated as a new image rather than a
                                         remix
                                       </Text>
-                                      <Group className="mt-3" spacing="xs" grow noWrap>
+                                      <Group spacing="xs" grow noWrap>
                                         <Button
-                                          variant="outline"
+                                          variant="default"
                                           onClick={() => form.setValue('prompt', remixPrompt)}
                                           size="xs"
-                                          color="green"
+                                          color="default"
                                           fullWidth
                                           h={30}
                                           leftIcon={<IconRestore size={14} />}
@@ -691,7 +691,7 @@ export function GenerationFormContent() {
                                           Restore Prompt
                                         </Button>
                                         <Button
-                                          variant="filled"
+                                          variant="light"
                                           color="red"
                                           size="xs"
                                           onClick={() => {

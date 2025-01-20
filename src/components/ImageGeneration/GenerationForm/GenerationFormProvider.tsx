@@ -311,23 +311,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     }
   }, [status, currentUser, storeData]); // eslint-disable-line
 
-  // useEffect(() => {
-  //   if (type !== 'image') {
-  //     return;
-  //   }
-
-  //   // Ensures we check similarity on initial load.
-  //   // This is needed because the only wqy we set the remixOfId is when similarity
-  //   // is checked
-
-  //   const values = form.getValues();
-  //   if (!!values.remixOfId && !values.remixSimilarity && values.prompt) {
-  //     debouncer(() => {
-  //       checkSimilarity(values.remixOfId as number, values.prompt);
-  //     });
-  //   }
-  // }, [type]);
-
   useEffect(() => {
     const subscription = form.watch((watchedValues, { name }) => {
       // handle model change to update baseModel value
