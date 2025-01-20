@@ -152,7 +152,8 @@ export const updatePostHandler = async ({
       post?.collectionId &&
       dayjs(input.publishedAt).isAfter(dayjs().add(10, 'minutes'))
     ) {
-      throw throwBadRequestError('Cannot schedule a post in a collection');
+      // Force be published right away.
+      input.publishedAt = new Date();
     }
 
     if (post && input.publishedAt && input.collectionId) {
