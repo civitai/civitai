@@ -434,6 +434,7 @@ enum ModelType {
   Poses
   Wildcards
   Workflows
+  Detection
   Other
 }
 
