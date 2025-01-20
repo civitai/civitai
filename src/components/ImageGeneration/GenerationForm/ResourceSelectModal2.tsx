@@ -663,6 +663,7 @@ function ResourceSelectCard({
       minor: data.minor,
       image: image,
       covered: data.canGenerate,
+      // TODO - update generation panel resource select to include details about early access
       available:
         data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
       strength: settings?.strength ?? 1,

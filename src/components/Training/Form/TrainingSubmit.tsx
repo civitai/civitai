@@ -27,7 +27,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
@@ -115,7 +114,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz(currentUser?.id, 'user');
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to train this model. Required Buzz: ${numberWithCommas(
@@ -318,17 +316,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
                 <Text span inline>
                   {totalBuzzCost.toLocaleString()}
-                </Text>
-              </Group>
-            </Group>
-            <Group>
-              <Text span inline>
-                Your remaining balance will be:{' '}
-              </Text>
-              <Group spacing={2}>
-                <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                <Text span inline>
-                  {(balance - totalBuzzCost).toLocaleString()}
                 </Text>
               </Group>
             </Group>

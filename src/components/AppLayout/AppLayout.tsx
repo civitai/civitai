@@ -41,7 +41,7 @@ export function AppLayout({
   const router = useRouter();
 
   return (
-    <>
+    <div className="flex h-full flex-1 flex-col">
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
       {loading ? (
         <PageLoader />
@@ -66,7 +66,7 @@ export function AppLayout({
         </div>
       )}
       {!currentUser?.isPaidMember && !router.asPath.includes('/moderator') && <AdhesiveAd />}
-    </>
+    </div>
   );
 }
 

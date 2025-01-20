@@ -474,9 +474,15 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   );
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+  // need to get sourceImage from original input due to orchestrator not always returning sourceImage in the step input - 01/18/2025
+  const sourceImage =
+    params && 'sourceImage' in params ? (params.sourceImage as string) : undefined;
 
   // TODO - this should be temporary until Koen updates the orchestrator - 12/11/2024
-  if (input.engine === 'kling' && ((input as any).sourceImage || (input as any).sourceImageUrl)) {
+  if (
+    input.engine === 'kling' &&
+    (sourceImage || (input as any).sourceImage || (input as any).sourceImageUrl)
+  ) {
     if ('aspectRatio' in input) delete input.aspectRatio;
   }
 
@@ -487,7 +493,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     // workflow and quantity are only here because they are required for other components to function
     params: {
       ...input,
-      sourceImage: (input as any).sourceImage ?? (input as any).sourceImageUrl,
+      sourceImage: sourceImage ?? (input as any).sourceImage ?? (input as any).sourceImageUrl,
       workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
