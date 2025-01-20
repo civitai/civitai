@@ -49,7 +49,7 @@ services:
     command: redis-server --requirepass "redis"
     restart: unless-stopped
     ports:
-      - "6378:6378"
+      - "6378:6379"
     volumes:
       - redis-sys:/data/redis
 
