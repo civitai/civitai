@@ -64,6 +64,7 @@ export const ModelType = {
   Poses: 'Poses',
   Wildcards: 'Wildcards',
   Workflows: 'Workflows',
+  Detection: 'Detection',
   Other: 'Other',
 } as const;
 
