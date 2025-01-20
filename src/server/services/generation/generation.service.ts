@@ -17,6 +17,7 @@ import {
 } from '~/server/schema/generation.schema';
 
 import { imageGenerationSchema } from '~/server/schema/image.schema';
+import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
@@ -429,13 +430,15 @@ const explicitCoveredModelAirs = [fluxUltraAir];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 export async function getModelVersionsForGeneration({
   ids,
-  userId,
-  isModerator,
+  user,
 }: {
   ids: number[];
-  userId?: number;
-  isModerator?: boolean;
+  user?: {
+    id: number;
+    isModerator?: boolean;
+  };
 }) {
+  const { id: userId, isModerator } = user ?? {};
   // allow us to hard code covered models
   const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
   const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
@@ -484,7 +487,7 @@ export async function getModelVersionsForGeneration({
                     ['Public', 'Unsearchable'].includes(item.availability) ||
                     userId === item.model.userId ||
                     isModerator;
-                  return { ...item, hasAccess };
+                  return { ...item, hasAccess, cacheable: false };
                 })
               )
             )
@@ -514,9 +517,10 @@ export async function getModelVersionsForGeneration({
     : [];
 
   return modelVersions.map((item) => {
-    const hasAccess = !item.hasAccess
-      ? entityAccessArray.find((x) => x.entityId === item.id)?.hasAccess ?? false
-      : true;
-    return { ...item, hasAccess };
+    let hasAccess = item.hasAccess;
+    if (!hasAccess)
+      hasAccess = entityAccessArray.find((x) => x.entityId === item.id)?.hasAccess ?? false;
+
+    return { ...item, hasAccess, settings: item.settings as RecommendedSettingsSchema };
   });
 }

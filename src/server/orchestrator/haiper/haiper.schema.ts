@@ -26,7 +26,7 @@ const baseHaiperSchema = z.object({
   enablePromptEnhancer: z.boolean().default(true),
   duration: numberEnum(haiperDuration).default(4).catch(4),
   seed: seedSchema,
-  resolution: numberEnum(haiperResolution).default(1080),
+  resolution: numberEnum(haiperResolution).default(720),
 });
 
 const haiperTxt2VidSchema = textEnhancementSchema.merge(baseHaiperSchema).extend({

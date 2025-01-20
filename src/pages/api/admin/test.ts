@@ -22,14 +22,18 @@ type Row = {
 
 const covered = [1288397, 1288372, 1288371, 1288358, 1282254, 1281249];
 const notCovered = [474453, 379259];
+const test = [1183765, 164821];
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
     const modelVersions = await getModelVersionsForGeneration({
-      ids: [...covered, ...notCovered],
-      userId: session?.user?.id,
-      isModerator: session?.user?.isModerator,
+      ids: [
+        // ...test,
+        ...covered,
+        ...notCovered,
+      ],
+      user: session?.user,
     });
     res.status(200).send(modelVersions);
   } catch (e) {
