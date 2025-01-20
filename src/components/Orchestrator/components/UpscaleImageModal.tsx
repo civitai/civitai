@@ -11,7 +11,7 @@ import { GenerateButton } from '~/components/Orchestrator/components/GenerateBut
 import { Form, useForm } from '~/libs/form';
 import { generationConfig } from '~/server/common/constants';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import { GenerationResourceSimple } from '~/server/services/generation/generation.service';
 import {
   getBaseModelSetType,
   getRoundedUpscaleSize,
@@ -32,7 +32,7 @@ export function UpscaleImageModal({
   params: { aspectRatio, ...params },
   resources,
 }: {
-  resources: GenerationResource[];
+  resources: GenerationResourceSimple[];
   params: TextToImageInput;
 }) {
   const dialog = useDialogContext();
@@ -71,7 +71,7 @@ function UpscalImageForm({
   resources,
 }: {
   params: TextToImageInput;
-  resources: GenerationResource[];
+  resources: GenerationResourceSimple[];
 }) {
   const dialog = useDialogContext();
 

@@ -15,7 +15,7 @@ import { BanReasonCode, ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import { GenerationResourceSimple } from '~/server/services/generation/generation.service';
 
 export const constants = {
   modelFilterDefaults: {
@@ -706,7 +706,7 @@ export const generationConfig = {
       minor: false,
       available: true,
       availability: 'Public',
-    } as GenerationResource,
+    } as GenerationResourceSimple,
   },
   SDXL: {
     aspectRatios: [
@@ -729,7 +729,7 @@ export const generationConfig = {
       minor: false,
       available: true,
       availability: 'Public',
-    } as GenerationResource,
+    } as GenerationResourceSimple,
   },
   Pony: {
     aspectRatios: [
@@ -752,7 +752,7 @@ export const generationConfig = {
       minor: false,
       available: true,
       availability: 'Public',
-    } as GenerationResource,
+    } as GenerationResourceSimple,
   },
   Illustrious: {
     aspectRatios: [
@@ -775,7 +775,7 @@ export const generationConfig = {
       minor: false,
       available: true,
       availability: 'Public',
-    } as GenerationResource,
+    } as GenerationResourceSimple,
   },
   Flux1: {
     aspectRatios: [
@@ -798,7 +798,7 @@ export const generationConfig = {
       minor: false,
       available: true,
       availability: 'Public',
-    } as GenerationResource,
+    } as GenerationResourceSimple,
   },
   SD3: {
     aspectRatios: [
@@ -821,7 +821,7 @@ export const generationConfig = {
       minor: false,
       available: true,
       availability: 'Public',
-    } as GenerationResource,
+    } as GenerationResourceSimple,
   },
   SD3_5M: {
     aspectRatios: [
@@ -844,7 +844,7 @@ export const generationConfig = {
       minor: false,
       available: true,
       availability: 'Public',
-    } as GenerationResource,
+    } as GenerationResourceSimple,
   },
   Other: {
     aspectRatios: [] as { label: string; width: number; height: number }[],
@@ -863,7 +863,7 @@ export const generationConfig = {
       maxStrength: 2,
       minor: false,
       availability: 'Public',
-    } as GenerationResource,
+    } as GenerationResourceSimple,
   },
 };
 

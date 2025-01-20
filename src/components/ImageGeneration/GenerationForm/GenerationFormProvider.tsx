@@ -44,16 +44,22 @@ import { useDebouncer } from '~/utils/debouncer';
 const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
   name: z.string(),
   trainedWords: z.string().array().default([]),
-  modelId: z.number(),
-  modelName: z.string(),
-  modelType: z.nativeEnum(ModelType),
+  baseModel: z.string(),
+  earlyAccessEndsAt: z.date().optional(),
+  earlyAccessConfig: z.record(z.any()).optional(),
+  canGenerate: z.boolean().optional(),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
-  baseModel: z.string(),
   image: imageSchema.pick({ url: true }).optional(),
-  minor: z.boolean().default(false),
-  available: z.boolean().default(true),
-  availability: z.nativeEnum(Availability).default('Public'),
+  model: z.object({
+    id: z.number(),
+    name: z.string(),
+    type: z.nativeEnum(ModelType),
+    nsfw: z.boolean().default(false),
+    poi: z.boolean().default(false),
+    minor: z.boolean().default(false),
+    userId: z.number(),
+  }),
 });
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
@@ -63,17 +69,8 @@ const formSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true })
   .extend({
     model: extendedTextToImageResourceSchema,
-    // .refine(
-    //   (x) => x.available !== false,
-    //   'This resource is unavailable for generation'
-    // ),
     resources: extendedTextToImageResourceSchema.array().min(0).default([]),
-    // .refine(
-    //   (resources) => !resources.length || resources.some((x) => x.available !== false),
-    //   'One or more resources are unavailable for generation'
-    // ),
     vae: extendedTextToImageResourceSchema.optional(),
-    // .refine((x) => x?.available !== false, 'This resource is unavailable for generation'),
     prompt: z
       .string()
       .nonempty('Prompt cannot be empty')
@@ -102,8 +99,6 @@ const formSchema = textToImageParamsSchema
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
     fluxUltraRaw: z.boolean().optional(),
-    // creatorTip: z.number().min(0).max(1).default(0.25).optional(),
-    // civitaiTip: z.number().min(0).max(1).optional(),
   })
   .transform(({ fluxUltraRaw, ...data }) => {
     const isFluxUltra = getIsFluxUltra({ modelId: data.model.modelId, fluxMode: data.fluxMode });
@@ -290,7 +285,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         checkSimilarity(remixOfId, params.prompt);
       }
 
-      if (runType === 'remix' && resources.length && resources.some((x) => !x.available)) {
+      if (runType === 'remix' && resources.length && resources.some((x) => !x.canGenerate)) {
         showNotification({
           color: 'yellow',
           title: 'Remix',

@@ -28,8 +28,7 @@ import {
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { UserTier } from '~/server/schema/user.schema';
 import {
-  formatGenerationResources,
-  GenerationResourceData,
+  GenerationResource,
   getGenerationResourceData,
 } from '~/server/services/generation/generation.service';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
@@ -44,6 +43,7 @@ import {
   allInjectableResourceIds,
   fluxModeOptions,
   fluxUltraAir,
+  fluxUltraAirId,
   getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
@@ -84,10 +84,10 @@ export async function getGenerationStatus() {
 }
 
 // TODO - pass user data
-export async function getResourceDataWithInjects<T extends GenerationResourceData>(args: {
+export async function getResourceDataWithInjects<T extends GenerationResource>(args: {
   ids: number[];
   user?: SessionUser;
-  cb?: (resource: GenerationResourceData) => T;
+  cb?: (resource: GenerationResource) => T;
 }) {
   const ids = [...args.ids, ...allInjectableResourceIds];
   const results = await getGenerationResourceData({ ids, user: args.user });
@@ -186,11 +186,11 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
   // handle missing coverage
-  if (!resourceData.resources.every((x) => x.hasAccess) && params.workflow !== 'img2img-upscale')
+  if (!resourceData.resources.every((x) => x.canGenerate) && params.workflow !== 'img2img-upscale')
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
-        .filter((x) => !x.hasAccess)
-        .map((x) => x.air)
+        .filter((x) => !x.canGenerate)
+        .map((x) => x.name)
         .join(', ')}`
     );
 
@@ -320,13 +320,13 @@ function getResources(step: WorkflowStep) {
 }
 
 function combineResourcesWithInputResource(
-  allResources: GenerationResourceData[],
+  allResources: GenerationResource[],
   resources: { id: number; strength?: number | null }[]
 ) {
   return allResources.map((resource) => {
     const original = resources.find((x) => x.id === resource.id);
     const { settings = {} } = resource;
-    settings.strength = original?.strength;
+    settings.strength = original?.strength ?? undefined;
     resource.settings = settings;
     return resource;
   });
@@ -379,7 +379,7 @@ export type WorkflowStepFormatted = ReturnType<typeof formatWorkflowStep>;
 function formatWorkflowStep(args: {
   workflowId: string;
   step: WorkflowStep;
-  resources: GenerationResourceData[];
+  resources: GenerationResource[];
 }) {
   const { step } = args;
   switch (step.$type) {
@@ -492,7 +492,7 @@ function formatTextToImageStep({
   workflowId,
 }: {
   step: WorkflowStep;
-  resources?: GenerationResourceData[];
+  resources?: GenerationResource[];
   workflowId: string;
 }) {
   const { input, output, jobs } = step as TextToImageStep;
@@ -602,7 +602,7 @@ function formatTextToImageStep({
     fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
   } as TextToImageParams;
 
-  if (resources.some((x) => x.air === fluxUltraAir)) {
+  if (resources.some((x) => x.id === fluxUltraAirId)) {
     delete params.steps;
     delete params.cfgScale;
     delete params.clipSkip;
@@ -620,7 +620,7 @@ function formatTextToImageStep({
     images,
     status: step.status,
     metadata: metadata,
-    resources: formatGenerationResources(resources.filter((x) => !injectableIds.includes(x.id))),
+    resources: resources.filter((x) => !injectableIds.includes(x.id)),
   };
 }
 
@@ -630,7 +630,7 @@ export function formatComfyStep({
   workflowId,
 }: {
   step: WorkflowStep;
-  resources?: GenerationResourceData[];
+  resources?: GenerationResource[];
   workflowId: string;
 }) {
   const { output, jobs, metadata = {} } = step as ComfyStep;
@@ -690,10 +690,8 @@ export function formatComfyStep({
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
-    resources: formatGenerationResources(
-      combineResourcesWithInputResource(resources, stepResources).filter((resource) =>
-        stepResources.some((x) => x.id === resource.id)
-      )
+    resources: combineResourcesWithInputResource(resources, stepResources).filter((resource) =>
+      stepResources.some((x) => x.id === resource.id)
     ),
   };
 }

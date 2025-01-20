@@ -5,7 +5,7 @@ import { immer } from 'zustand/middleware/immer';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import {
   GenerationData,
-  GenerationResource,
+  GenerationResourceSimple,
   RemixOfProps,
 } from '~/server/services/generation/generation.service';
 import {
@@ -171,7 +171,7 @@ export const generationFormStore = {
 };
 
 export const useRemixStore = create<{
-  resources?: GenerationResource[];
+  resources?: GenerationResourceSimple[];
   params?: Record<string, unknown>;
   remixOf?: RemixOfProps;
 }>()(persist(() => ({}), { name: 'remixOf' }));

@@ -4,11 +4,11 @@ import {
   BaseModelResourceTypes,
   SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import { GenerationResourceSimple } from '~/server/services/generation/generation.service';
 
 type ResourceSelectState = {
-  value?: GenerationResource[];
-  onChange?: (value: GenerationResource[]) => void;
+  value?: GenerationResourceSimple[];
+  onChange?: (value: GenerationResourceSimple[]) => void;
 };
 
 const ResourceSelectContext = createContext<ResourceSelectState | null>(null);
@@ -44,11 +44,11 @@ export function ResourceSelect<T extends SupportedBaseModel>({
   modelTypes: BaseModelResourceTypes[T][number]['type'][];
   multiple?: boolean;
   limit?: number;
-  value?: GenerationResource[];
-  onChange?: (value: GenerationResource[]) => void;
+  value?: GenerationResourceSimple[];
+  onChange?: (value: GenerationResourceSimple[]) => void;
   children: (args: {
-    resources: GenerationResource[];
-    addResource: (resource: GenerationResource) => void;
+    resources: GenerationResourceSimple[];
+    addResource: (resource: GenerationResourceSimple) => void;
     removeResource: (id: number) => void;
     openResourceSelect: (options?: ResourceSelectProps) => void;
   }) => React.ReactNode;
@@ -63,7 +63,7 @@ export function ResourceSelect<T extends SupportedBaseModel>({
     'id'
   );
 
-  function handleChange(resources: GenerationResource[]) {
+  function handleChange(resources: GenerationResourceSimple[]) {
     onChange?.(resources);
   }
 
@@ -71,7 +71,7 @@ export function ResourceSelect<T extends SupportedBaseModel>({
     handleChange(resources.filter((x) => x.id !== id));
   }
 
-  function addResource(resource: GenerationResource) {
+  function addResource(resource: GenerationResourceSimple) {
     handleChange([...resources, resource]);
   }
 

@@ -458,6 +458,7 @@ export function getBaseModelResourceTypes(baseModel: string) {
 }
 
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
+export const fluxUltraAirId = 1088507;
 export const fluxModeOptions = [
   { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
   { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },

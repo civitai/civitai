@@ -93,7 +93,7 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import { GenerationResourceSimple } from '~/server/services/generation/generation.service';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -263,7 +263,7 @@ export default function ResourceSelectModal({
 
   // console.log(totalFilters);
 
-  function handleSelect(value: GenerationResource) {
+  function handleSelect(value: GenerationResourceSimple) {
     onSelect(value);
     dialog.onClose();
   }
@@ -342,7 +342,7 @@ const ResourceSelectContext = React.createContext<{
   canGenerate?: boolean;
   resources: { type: string; baseModels?: string[] }[];
   onSelect: (
-    value: GenerationResource & { image: SearchIndexDataMap['models'][number]['images'][number] }
+    value: GenerationResourceSimple & { image: SearchIndexDataMap['models'][number]['images'][number] }
   ) => void;
 } | null>(null);
 
