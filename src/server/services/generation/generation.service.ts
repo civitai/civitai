@@ -16,13 +16,19 @@ import {
 } from '~/server/schema/generation.schema';
 
 import { imageGenerationSchema } from '~/server/schema/image.schema';
-import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import {
+  ModelVersionEarlyAccessConfig,
+  RecommendedSettingsSchema,
+} from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { modelsSearchIndex } from '~/server/search-index';
 import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
-import { resourceDataCache } from '~/server/services/model-version.service';
+import {
+  GenerationResourceDataModel,
+  resourceDataCache,
+} from '~/server/services/model-version.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
@@ -37,12 +43,13 @@ import {
   getBaseModelFromResources,
   getBaseModelSet,
 } from '~/shared/constants/generation.constants';
-import { MediaType } from '~/shared/utils/prisma/enums';
+import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { isFutureDate } from '~/utils/date-helpers';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
+import { removeEmpty, removeNulls } from '~/utils/object-helpers';
 import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -440,7 +447,37 @@ export async function toggleUnavailableResource({
   return unavailableResources;
 }
 
-export type GenerationResourceData = AsyncReturnType<typeof getGenerationResourceData>[number];
+type GenerationResourceBase = {
+  id: number;
+  name: string;
+  trainedWords: string[];
+  vaeId?: number;
+  baseModel: string;
+  settings: {
+    clipSkip?: number;
+    minStrength?: number;
+    maxStrength?: number;
+    strength?: number;
+  };
+  earlyAccessEndsAt?: Date;
+  earlyAccessConfig?: ModelVersionEarlyAccessConfig;
+};
+
+export type GenerationResourceData = GenerationResourceBase & {
+  model: {
+    id: number;
+    name: string;
+    type: ModelType;
+    nsfw: boolean;
+    poi: boolean;
+    minor: boolean;
+    userId: number;
+  };
+  substitute?: GenerationResourceBase;
+};
+
+const explicitCoveredModelAirs = [fluxUltraAir];
+const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 export async function getGenerationResourceData({
   ids,
   user,
@@ -450,99 +487,103 @@ export async function getGenerationResourceData({
     id?: number;
     isModerator?: boolean;
   };
-}) {
+}): Promise<GenerationResourceData[]> {
   const { id: userId, isModerator } = user ?? {};
-
-  const modelVersions = await resourceDataCache.fetch(ids).then(async (data) => {
-    const modelVersions = data.map((item) => {
-      const hasAccess =
-        ['Public', 'Unsearchable'].includes(item.availability) ||
-        userId === item.model.userId ||
-        isModerator;
-      return { ...item, hasAccess };
-    });
-
-    const modelVersionIds = modelVersions.map((x) => x.id);
-    const missingModelVersionIds = ids.filter((id) => !modelVersionIds.includes(id));
-
-    // get models from missing modelVersionIds
-    const missingModelIds = await dbRead.modelVersion
-      .findMany({ where: { id: { in: missingModelVersionIds } }, select: { modelId: true } })
-      .then((data) => data.map((x) => x.modelId));
-
-    // get latest covered modelVersions from missingModelIds
-    const possibleReplacementVersions = missingModelIds.length
-      ? await dbRead.model
-          .findMany({
-            where: {
-              id: { in: missingModelIds },
-            },
-            select: {
-              modelVersions: {
-                select: generationResourceSelect,
-                where: { status: 'Published', generationCoverage: { covered: true } },
-                orderBy: { index: { sort: 'asc', nulls: 'last' } },
-                distinct: ['modelId'],
-              },
-            },
-          })
-          .then((data) =>
-            data.flatMap((x) =>
-              x.modelVersions.map((item) => {
-                const hasAccess =
-                  ['Public', 'Unsearchable'].includes(item.availability) ||
-                  userId === item.model.userId ||
-                  isModerator;
-                return { ...item, hasAccess };
-              })
-            )
-          )
-      : [];
-
-    return [...modelVersions, ...possibleReplacementVersions];
-  });
-
-  const earlyAccessIds = modelVersions
-    .filter(
-      (x) =>
-        !x.hasAccess &&
-        x.availability === 'EarlyAccess' &&
-        x.earlyAccessEndsAt &&
-        isFutureDate(x.earlyAccessEndsAt)
-    )
-    .map((x) => x.id);
-
-  const entityAccessArray = userId
-    ? await hasEntityAccess({
-        entityType: 'ModelVersion',
-        entityIds: earlyAccessIds,
-        userId,
-        isModerator,
-        permissions: EntityAccessPermission.EarlyAccessGeneration,
-      })
-    : [];
-
-  const modelFilesCached = await getFilesForModelVersionCache(modelVersions.map((x) => x.id));
-
-  return modelVersions.map((item) => {
-    let hasAccess = item.hasAccess;
-    if (!hasAccess)
-      hasAccess = entityAccessArray.find((x) => x.entityId === item.id)?.hasAccess ?? false;
-
-    const primaryFile = getPrimaryFile(modelFilesCached[item.id].files);
-
+  function transformGenerationData({ clipSkip, ...item }: GenerationResourceDataModel) {
     return {
       ...item,
-      hasAccess,
-      fileSizeKB: primaryFile?.sizeKB,
-      settings: item.settings as RecommendedSettingsSchema,
-      air: stringifyAIR({
-        baseModel: item.baseModel,
-        type: item.model.type,
-        modelId: item.model.id,
-        id: item.id,
-      }),
+      settings: removeNulls({ ...item.settings, clipSkip }),
+      covered: item.covered || explicitCoveredModelVersionIds.includes(item.id),
+      hasAccess:
+        ['Public', 'Unsearchable'].includes(item.availability) ||
+        userId === item.model.userId ||
+        isModerator,
     };
+  }
+  return await resourceDataCache.fetch(ids).then(async (initialResult) => {
+    const initialTransformed = initialResult.map(transformGenerationData);
+    const modelIds = initialTransformed
+      .filter((x) => !x.covered || !x.hasAccess)
+      .map((x) => x.model.id);
+    const substituteIds = await dbRead.modelVersion
+      .findMany({
+        where: {
+          status: 'Published',
+          generationCoverage: { covered: true },
+          modelId: { in: modelIds },
+        },
+        orderBy: { index: { sort: 'asc', nulls: 'last' } },
+        select: { id: true },
+      })
+      .then((data) => data.map((x) => x.id));
+
+    const substitutesTransformed = await resourceDataCache
+      .fetch(substituteIds)
+      .then((data) => data.map(transformGenerationData));
+
+    const earlyAccessIds = [...initialTransformed, ...substitutesTransformed]
+      .filter(
+        (x) =>
+          x.covered &&
+          !x.hasAccess &&
+          x.availability === 'EarlyAccess' &&
+          x.earlyAccessEndsAt &&
+          isFutureDate(x.earlyAccessEndsAt)
+      )
+      .map((x) => x.id);
+
+    // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
+    const entityAccessArray = userId
+      ? await hasEntityAccess({
+          entityType: 'ModelVersion',
+          entityIds: earlyAccessIds,
+          userId,
+          isModerator,
+          permissions: EntityAccessPermission.EarlyAccessGeneration,
+        })
+      : [];
+
+    const [initialWithAccess, substitutesWithAccess] = [
+      initialTransformed,
+      substitutesTransformed,
+    ].map((tupleItem) =>
+      tupleItem.map((item) => ({
+        ...item,
+        earlyAccessConfig:
+          item.availability === 'EarlyAccess' && item.earlyAccessConfig
+            ? Object.keys(item.earlyAccessConfig).length
+              ? item.earlyAccessConfig
+              : undefined
+            : undefined,
+        hasAccess:
+          item.covered &&
+          (item.hasAccess || entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess),
+      }))
+    );
+
+    const modelFilesCached = await getFilesForModelVersionCache(
+      [...initialWithAccess, ...substitutesWithAccess].filter((x) => x.hasAccess).map((x) => x.id)
+    );
+
+    return initialWithAccess.map(({ covered, hasAccess, availability, ...item }) => {
+      const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
+      const substitute = substitutesWithAccess.find((sub) => sub.model.id === item.model.id);
+      const payload = removeNulls({
+        ...item,
+        canGenerate: covered && hasAccess,
+        fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile?.sizeKB) : undefined,
+      });
+
+      if (substitute) {
+        const { model, covered, hasAccess, availability, ...rest } = substitute;
+        return {
+          ...payload,
+          substitute: removeNulls({ ...rest, canGenerate: covered && hasAccess }),
+        };
+      }
+
+      return payload;
+    });
   });
 }
 

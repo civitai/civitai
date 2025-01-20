@@ -8,9 +8,10 @@ import { generationServiceCookie } from '~/shared/constants/generation.constants
 import { env } from '~/env/server';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { addGenerationEngine } from '~/server/services/generation/engines';
-import { dbWrite } from '~/server/db/client';
+import { dbWrite, dbRead } from '~/server/db/client';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { getGenerationResourceData } from '~/server/services/generation/generation.service';
+import { Prisma } from '@prisma/client';
 
 type Row = {
   userId: number;
@@ -31,8 +32,41 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       ids: [...test, ...covered, ...notCovered],
       user: session?.user,
     });
+    //   const modelVersions = await dbRead.$queryRaw`
+    //   SELECT
+    //     mv."id",
+    //     mv."name",
+    //     mv."trainedWords",
+    //     mv."baseModel",
+    //     mv."settings",
+    //     mv."availability",
+    //     mv."clipSkip",
+    //     mv."vaeId",
+    //     mv."earlyAccessEndsAt",
+    //     (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+    //     gc."covered",
+    //     (
+    //       SELECT to_json(obj)
+    //       FROM (
+    //         SELECT
+    //           m."id",
+    //           m."name",
+    //           m."type",
+    //           m."nsfw",
+    //           m."poi",
+    //           m."minor",
+    //           m."userId"
+    //         FROM "Model" m
+    //         WHERE m.id = mv."modelId"
+    //       ) as obj
+    //     ) as model
+    //   FROM "ModelVersion" mv
+    //   LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
+    //   WHERE mv.id IN (${Prisma.join([...test, ...covered, ...notCovered])})
+    // `;
     res.status(200).send(modelVersions);
   } catch (e) {
+    console.log(e);
     res.status(400).end();
   }
 });

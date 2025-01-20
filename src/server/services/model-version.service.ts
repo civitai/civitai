@@ -3,6 +3,7 @@ import {
   Availability,
   CommercialUse,
   ModelStatus,
+  ModelType,
   ModelVersionEngagementType,
 } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
@@ -1393,25 +1394,45 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   return trainingResults.workflowId ?? null;
 };
 
-const explicitCoveredModelAirs = [fluxUltraAir];
-const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA_2,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
-    const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
-    const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
-    if (explicitIds.length) OR.push({ id: { in: explicitIds } });
+    const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
+      SELECT
+        mv."id",
+        mv."name",
+        mv."trainedWords",
+        mv."baseModel",
+        mv."settings",
+        mv."availability",
+        mv."clipSkip",
+        mv."vaeId",
+        mv."earlyAccessEndsAt",
+        (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        gc."covered",
+        (
+          SELECT to_json(obj)
+          FROM (
+            SELECT
+              m."id",
+              m."name",
+              m."type",
+              m."nsfw",
+              m."poi",
+              m."minor",
+              m."userId"
+            FROM "Model" m
+            WHERE m.id = mv."modelId"
+          ) as obj
+        ) as model
+      FROM "ModelVersion" mv
+      LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
+      WHERE mv.id IN (${Prisma.join(ids)})
+    `;
 
-    const dbResults = await dbRead.modelVersion.findMany({
-      where: { id: { in: ids }, status: 'Published', OR },
-      select: generationResourceSelect,
-    });
-
-    type DbResult = (typeof dbResults)[number] & { settings: RecommendedSettingsSchema };
-
-    const results = dbResults.reduce<Record<number, DbResult>>(
-      (acc, result) => ({ ...acc, [result.id]: result as DbResult }),
+    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>(
+      (acc, result) => ({ ...acc, [result.id]: result }),
       {}
     );
     return results;
@@ -1423,3 +1444,26 @@ export const resourceDataCache = createCachedArray({
   },
   ttl: CacheTTL.hour,
 });
+
+export type GenerationResourceDataModel = {
+  id: number;
+  name: string;
+  trainedWords: string[];
+  clipSkip: number | null;
+  vaeId: number | null;
+  baseModel: string;
+  settings: RecommendedSettingsSchema;
+  availability: Availability;
+  earlyAccessEndsAt: Date | null;
+  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
+  covered: boolean | null;
+  model: {
+    id: number;
+    name: string;
+    type: ModelType;
+    nsfw: boolean;
+    poi: boolean;
+    minor: boolean;
+    userId: number;
+  };
+};
