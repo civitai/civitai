@@ -57,7 +57,16 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
 
     const handleAdd = (resource: GenerationResource) => {
       if (!canAdd) return;
-      onChange?.([..._values, resource]);
+      if (
+        selectSource === 'generation' &&
+        resource &&
+        !resource.canGenerate &&
+        resource.substitute?.canGenerate
+      ) {
+        onChange?.([..._values, { ...resource, ...resource.substitute }]);
+      } else {
+        onChange?.([..._values, resource]);
+      }
       onCloseModal?.();
     };
 

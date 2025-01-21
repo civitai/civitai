@@ -329,6 +329,7 @@ export default function ResourceSelectModal({
                 canGenerate={canGenerate}
                 excludeIds={excludeIds}
                 likes={likedModels}
+                selectSource={selectSource}
               />
             )}
           </InstantSearch>
@@ -379,9 +380,11 @@ function ResourceHitList({
   resources,
   excludeIds,
   likes,
+  selectSource,
 }: ResourceSelectOptions &
   Required<Pick<ResourceSelectOptions, 'resources' | 'excludeIds'>> & {
     likes: number[] | undefined;
+    selectSource?: ResourceSelectSource;
   }) {
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
@@ -477,6 +480,7 @@ function ResourceHitList({
               key={model.id}
               data={model}
               isFavorite={!!likes && likes.includes(model.id)}
+              selectSource={selectSource}
             />
           ))}
       </div>
@@ -629,9 +633,11 @@ const TopRightIcons = ({
 function ResourceSelectCard({
   data,
   isFavorite,
+  selectSource,
 }: {
   data: SearchIndexDataMap['models'][number];
   isFavorite: boolean;
+  selectSource?: ResourceSelectSource;
 }) {
   // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
   const { onSelect } = useResourceSelectContext();
@@ -656,11 +662,16 @@ function ResourceSelectCard({
     setLoading(true);
     await fetchGenerationData({ type: 'modelVersion', id }).then((data) => {
       const resource = data.resources[0];
-      if (resource?.canGenerate || resource.substitute) onSelect({ ...resource, image });
-      else
-        showErrorNotification({
-          error: new Error('This model is no longer available for generation'),
-        });
+      if (selectSource !== 'generation') {
+        onSelect({ ...resource, image });
+      } else {
+        if (resource?.canGenerate || resource.substitute?.canGenerate)
+          onSelect({ ...resource, image });
+        else
+          showErrorNotification({
+            error: new Error('This model is no longer available for generation'),
+          });
+      }
     });
     setLoading(false);
   };

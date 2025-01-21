@@ -67,7 +67,11 @@ export const useGenerationStore = create<GenerationState>()(
 
           const { remixOf, ...data } = result;
           set((state) => {
-            state.data = { ...data, runType: input.type === 'image' ? 'remix' : 'run' };
+            state.data = {
+              ...data,
+              resources: withSubstitute(data.resources),
+              runType: input.type === 'image' ? 'remix' : 'run',
+            };
           });
         }
       },
@@ -89,7 +93,7 @@ export const useGenerationStore = create<GenerationState>()(
         if (engine) useGenerationFormStore.setState({ engine });
         set((state) => {
           state.remixOf = remixOf;
-          state.data = { ...data, runType: 'replay' };
+          state.data = { ...data, resources: withSubstitute(data.resources), runType: 'replay' };
           if (!location.pathname.includes('generate')) state.view = 'generate';
         });
       },
@@ -118,6 +122,13 @@ export const generationStore = {
   //   return { remixOf, type };
   // },
 };
+
+function withSubstitute(resources: GenerationResource[]) {
+  return resources.map((item) => {
+    if (!item.canGenerate && item.substitute?.canGenerate) return { ...item, ...item.substitute };
+    return item;
+  });
+}
 
 const dictionary: Record<string, GenerationData> = {};
 export const fetchGenerationData = async (input: GetGenerationDataInput) => {

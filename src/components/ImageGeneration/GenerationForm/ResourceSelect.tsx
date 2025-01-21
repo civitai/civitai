@@ -36,22 +36,27 @@ export const ResourceSelect = ({
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.model.type) ? undefined : value;
 
-  const handleAdd = (resource: GenerationResource) => {
-    onChange?.(resource);
-  };
+  function handleChange(resource?: GenerationResource) {
+    if (
+      selectSource === 'generation' &&
+      resource &&
+      !resource.canGenerate &&
+      resource.substitute?.canGenerate
+    ) {
+      onChange?.({ ...resource, ...resource.substitute });
+    } else {
+      onChange?.(resource);
+    }
+  }
 
   const handleRemove = () => {
-    onChange?.(undefined);
-  };
-
-  const handleUpdate = (resource: GenerationResource) => {
-    onChange?.(resource);
+    handleChange(undefined);
   };
 
   const handleOpenResourceSearch = () => {
     openResourceSelectModal({
       title: modalTitle ?? buttonLabel,
-      onSelect: handleAdd,
+      onSelect: handleChange,
       options,
       selectSource,
     });
@@ -81,7 +86,7 @@ export const ResourceSelect = ({
         <ResourceSelectCard
           resource={value}
           selectSource={selectSource}
-          onUpdate={handleUpdate}
+          onUpdate={handleChange}
           onRemove={allowRemove ? handleRemove : undefined}
           onSwap={handleOpenResourceSearch}
           hideVersion={hideVersion}
