@@ -151,3 +151,34 @@ export function needsColorSwap({ hexColor, colorScheme, threshold = 0.5 }: Color
     }
   }
 }
+
+export function waitForElement({
+  selector,
+  timeout = 5000,
+  interval = 500,
+}: {
+  selector: string;
+  timeout?: number;
+  interval?: number;
+}) {
+  return new Promise<Element | null>((resolve, reject) => {
+    const startTime = Date.now();
+
+    const check = () => {
+      const element = document.querySelector(selector);
+      if (element) {
+        resolve(element);
+        return;
+      }
+
+      if (Date.now() - startTime > timeout) {
+        reject(new Error(`Timeout waiting for element: ${selector}`));
+        return;
+      }
+
+      setTimeout(check, interval);
+    };
+
+    check();
+  });
+}

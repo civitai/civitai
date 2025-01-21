@@ -1,16 +1,15 @@
 import { Button, CloseButton, Group, Paper, Text } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import React, { useCallback } from 'react';
-import { StoreHelpers, TooltipRenderProps } from 'react-joyride';
-import { useTourContext } from '~/providers/TourProvider';
+import { TooltipRenderProps } from 'react-joyride';
 
 export interface StepData {
-  onNext?: (helpers: StoreHelpers) => void | Promise<void>;
-  onPrev?: (helpers: StoreHelpers) => void | Promise<void>;
+  onNext?: VoidFunction | Awaited<VoidFunction>;
+  onPrev?: VoidFunction | Awaited<VoidFunction>;
+  waitForElement?: { selector: string; timeout?: number };
 }
 
 export function TourPopover(props: TooltipRenderProps) {
-  const { helpers } = useTourContext();
   const {
     index,
     step,
@@ -25,18 +24,18 @@ export function TourPopover(props: TooltipRenderProps) {
 
   const handlePrevClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
     async (e) => {
-      if (helpers) await (step.data as StepData)?.onPrev?.(helpers);
       backProps.onClick(e);
+      await (step.data as StepData)?.onPrev?.();
     },
-    [backProps, helpers, step.data]
+    [backProps, step.data]
   );
 
   const handleNextClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
     async (e) => {
-      if (helpers) await (step.data as StepData)?.onNext?.(helpers);
       primaryProps.onClick(e);
+      await (step.data as StepData)?.onNext?.();
     },
-    [helpers, primaryProps, step.data]
+    [primaryProps, step.data]
   );
 
   return (
@@ -73,7 +72,7 @@ export function TourPopover(props: TooltipRenderProps) {
               size="xs"
               rightIcon={!isLastStep ? <IconChevronRight size={16} /> : null}
             >
-              {primaryProps.title}
+              {isLastStep ? 'Done' : primaryProps.title}
             </Button>
           </Group>
         )}

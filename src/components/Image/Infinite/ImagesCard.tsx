@@ -12,7 +12,7 @@ import {
 } from '@mantine/core';
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useMemo, useCallback, useEffect } from 'react';
+import { useMemo, useCallback } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -42,7 +42,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
-  const { active, opened, openTour } = useTourContext();
+  const { running, runTour } = useTourContext();
 
   const image = useImageStore(data);
   const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
@@ -66,12 +66,16 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+
       generationPanel.open({
         type: image.type,
         id: image.id,
       });
+
+      // Go to next step in tour when clicking
+      if (running) runTour({ step: 5 });
     },
-    [image.type, image.id]
+    [image.type, image.id, running, runTour]
   );
 
   const twCardStyle = useMemo(() => {
@@ -96,12 +100,6 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
     const minIndex = index - 50 > -1 ? index - 50 : 0;
     return images.slice(minIndex, index + 50);
   }
-
-  useEffect(() => {
-    if (active && !opened) {
-      openTour({ currentStep: 4 });
-    }
-  }, []);
 
   return (
     <TwCosmeticWrapper

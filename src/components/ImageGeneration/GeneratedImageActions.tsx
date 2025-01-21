@@ -20,6 +20,7 @@ import { uniqBy } from 'lodash-es';
 import { useState } from 'react';
 import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
+import { useTourContext } from '~/providers/TourProvider';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -30,7 +31,8 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
-  const { images, steps, data } = useGetTextToImageRequests();
+  const { images, data } = useGetTextToImageRequests();
+  const { running, runTour } = useTourContext();
   const selectableImages = images.filter((x) => x.status === 'succeeded');
   const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
@@ -104,8 +106,11 @@ export function GeneratedImageActions({
       orchestratorMediaTransmitter.setUrls(key, imageData);
       const post = await createPostMutation.mutateAsync({});
       // updateImages({}) // tODO - show that this image has been posted?
-      const pathname = `/posts/${post.id}/edit?src=${key}`;
-      await router.push(pathname);
+      if (running) runTour({ step: 4 });
+      await router.push({
+        pathname: '/posts/[postId]/edit',
+        query: { ...router.query, postId: post.id, src: key },
+      });
       generationPanel.close();
       deselect();
     } catch (e) {
@@ -212,6 +217,7 @@ export function GeneratedImageActions({
           </Tooltip>
           <Tooltip label="Post your generations to earn buzz!">
             <Button
+              data-tour="gen:post"
               color="blue"
               size="sm"
               h={34}

@@ -49,6 +49,7 @@ import {
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { useTourContext } from '~/providers/TourProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -75,6 +76,8 @@ export function GeneratedImage({
 
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
+
+  const { running, runTour } = useTourContext();
 
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
@@ -294,12 +297,13 @@ export function GeneratedImage({
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
           {!isLightbox && (
-            <label className="absolute left-3 top-3 ">
+            <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
                 className={classes.checkbox}
                 checked={selected}
                 onChange={(e) => {
                   toggleSelect(e.target.checked);
+                  if (running) runTour({ step: 3 });
                 }}
               />
             </label>

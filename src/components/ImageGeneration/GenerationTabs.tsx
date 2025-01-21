@@ -26,7 +26,7 @@ import { useTourContext } from '~/providers/TourProvider';
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { opened, openTour } = useTourContext();
+  const { running, runTour } = useTourContext();
 
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
@@ -66,11 +66,18 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
             <HelpButton
               data-tour="gen:reset"
               onClick={async () => {
-                const url = new URL(router.asPath, window.location.origin);
-                url.searchParams.set('tour', 'content-generation');
-                await router.replace(url, undefined, { shallow: true });
-                if (!opened) {
-                  openTour({ currentStep: 0 });
+                if (!running) {
+                  await router.replace(
+                    {
+                      query: {
+                        ...router.query,
+                        tour: view === 'generate' ? 'content-generation' : 'post-generation',
+                      },
+                    },
+                    undefined,
+                    { shallow: true }
+                  );
+                  runTour({ step: 0 });
                 }
               }}
             />
@@ -85,7 +92,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
                   <Tooltip label={label} position="bottom" color="dark" openDelay={200} offset={10}>
-                    <Icon size={16} />
+                    <Icon size={16} data-tour={`gen:${key}`} />
                   </Tooltip>
                 ),
                 value: key,

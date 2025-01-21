@@ -6,7 +6,6 @@ import { createContext, useCallback, useContext, useRef, useState } from 'react'
 import Joyride, {
   ACTIONS,
   Callback,
-  CallBackProps,
   EVENTS,
   Props as JoyrideProps,
   STATUS,
@@ -16,26 +15,28 @@ import Joyride, {
 import { IsClient } from '~/components/IsClient/IsClient';
 import { StepData, TourPopover } from '~/components/Tour/TourPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useStorage } from '~/hooks/useStorage';
 import { generationPanel } from '~/store/generation.store';
+import { waitForElement } from '~/utils/html-helpers';
 import { trpc } from '~/utils/trpc';
 
 type StepWithData = Step & { data?: StepData };
 
 type TourState = {
-  opened: boolean;
+  running: boolean;
   active: boolean;
   currentStep: number;
-  openTour: (args?: Partial<Pick<TourState, 'currentStep'>>) => void;
-  closeTour: (args?: { reset?: boolean }) => void;
+  runTour: (opts?: { step?: number }) => void;
+  closeTour: (opts?: { reset?: boolean }) => void;
   steps?: StepWithData[];
   helpers?: StoreHelpers | null;
 };
 
 const TourContext = createContext<TourState>({
-  opened: false,
+  running: false,
   active: false,
   currentStep: 0,
-  openTour: () => null,
+  runTour: () => null,
   closeTour: () => null,
   steps: [],
 });
@@ -56,16 +57,22 @@ export function TourProvider({ children, ...props }: Props) {
   const searchParams = useSearchParams();
   const theme = useMantineTheme();
   const tourKey = searchParams.get('tour');
-  const [state, setState] = useState<Omit<TourState, 'openTour' | 'closeTour' | 'helpers'>>({
-    opened: false,
+
+  const [state, setState] = useState<Omit<TourState, 'runTour' | 'closeTour' | 'helpers'>>({
+    running: false,
     active: !!tourKey,
     currentStep: 0,
-    steps: tourKey ? stepsMap[tourKey] ?? [] : [],
+    steps: tourKey ? availableTours[tourKey] ?? [] : [],
   });
-  console.log({ state });
   const tourHelpers = useRef<StoreHelpers | null>(null);
 
-  const { data: userSettings, isLoading } = trpc.user.getSettings.useQuery(undefined, {
+  const [completed = {}, setCompleted] = useStorage<{ [k: string]: boolean }>({
+    key: 'completed-tours',
+    type: 'localStorage',
+    defaultValue: {},
+  });
+
+  const { data: userSettings, isInitialLoading } = trpc.user.getSettings.useQuery(undefined, {
     enabled: !!currentUser,
   });
 
@@ -75,60 +82,62 @@ export function TourProvider({ children, ...props }: Props) {
     },
   });
 
-  const openTour = (opts?: Partial<Pick<TourState, 'currentStep'>>) =>
-    setState((current) => ({
-      ...current,
-      opened: true,
-      currentStep: opts?.currentStep ?? current.currentStep,
+  const runTour = (opts?: { step?: number }) =>
+    setState((old) => ({
+      ...old,
+      running: true,
+      currentStep: opts?.step ?? old.currentStep,
     }));
 
   const closeTour = (args?: { reset?: boolean }) =>
-    setState((current) => ({
-      ...current,
-      opened: false,
-      currentStep: args?.reset ? 0 : current.currentStep,
+    setState((old) => ({
+      ...old,
+      running: false,
+      currentStep: args?.reset ? 0 : old.currentStep,
     }));
 
   const handleJoyrideCallback = useCallback<Callback>(
-    (data) => {
-      const { status, type, action, index, size, step } = data;
-      console.log(data);
+    async (data) => {
+      const { status, type, action, index, step } = data;
       if (type === EVENTS.TOUR_END && completeStatus.includes(status) && tourKey) {
-        // updateUserSettingsMutation.mutate({
-        //   completedTour: { [tourKey]: true },
-        // });
-        setState((current) => ({ ...current, opened: false, currentStep: 0 }));
-      } else if (nextEvents.includes(type)) {
+        updateUserSettingsMutation.mutate({
+          completedTour: { [tourKey]: true },
+        });
+        setCompleted((old) => ({ ...old, [tourKey]: true }));
+        closeTour({ reset: true });
+        return;
+      }
+
+      if (nextEvents.includes(type)) {
         const isPrevAction = action === ACTIONS.PREV;
-        const nextStepIndex = index > 0 ? index + (isPrevAction ? -1 : 1) : 0;
+        const nextStepIndex = index + (isPrevAction ? -1 : 1);
 
-        if (index < size && (step.data?.onNext || step.data?.onPrev)) {
-          setState((current) => ({ ...current, opened: false }));
+        if (isPrevAction) await (step.data as StepData)?.onPrev?.();
+        else await (step.data as StepData)?.onNext?.();
+
+        if (step.data?.waitForElement) {
+          closeTour();
+          await waitForElement({ ...step.data.waitForElement }).catch(console.error);
         }
 
-        if (isPrevAction) {
-          setState((current) => ({ ...current, currentStep: nextStepIndex }));
-        } else {
-          setState((current) => ({ ...current, currentStep: nextStepIndex }));
-        }
+        runTour({ step: nextStepIndex });
       }
     },
     [tourKey, updateUserSettingsMutation]
   );
 
-  const steps = tourKey ? stepsMap[tourKey] || [] : [];
+  const steps = tourKey ? availableTours[tourKey] || [] : [];
   const alreadyCompleted = tourKey
-    ? userSettings?.tourSettings?.completed?.[tourKey] ?? false
+    ? (userSettings?.tourSettings?.completed?.[tourKey] ?? false) || (completed[tourKey] ?? false)
     : false;
 
   return (
-    <TourContext.Provider value={{ ...state, openTour, closeTour, helpers: tourHelpers.current }}>
+    <TourContext.Provider value={{ ...state, runTour, closeTour, helpers: tourHelpers.current }}>
       {children}
       <IsClient>
         <Joyride
           steps={steps}
           stepIndex={state.currentStep}
-          run={state.opened}
           callback={handleJoyrideCallback}
           styles={{
             options: {
@@ -138,10 +147,10 @@ export function TourProvider({ children, ...props }: Props) {
           }}
           getHelpers={(helpers) => (tourHelpers.current = helpers)}
           tooltipComponent={TourPopover}
+          run={(!alreadyCompleted && !isInitialLoading) || state.running}
           spotlightClicks
-          continuous
           showSkipButton
-          debug
+          continuous
           {...props}
         />
       </IsClient>
@@ -154,37 +163,17 @@ type Props = Omit<JoyrideProps, 'callback' | 'steps'> & {
   steps?: StepWithData[];
 };
 
-const stepsMap: Record<string, StepWithData[]> = {
+const availableTours: Record<string, StepWithData[]> = {
   'content-generation': [
     {
       target: '[data-tour="gen:start"]',
+      placement: 'auto',
       title: 'Getting Started with Content Generation',
-      content: `Ready to start creating content? Just click the "Create" button to begin!`,
+      content:
+        'Welcome to the content generation tool! This tour will guide you through the process.',
       locale: { next: "Let's go" },
-      data: {
-        onNext: async ({ close }) => {
-          close();
-          await generationPanel.open();
-        },
-      },
       disableBeacon: true,
       disableOverlayClose: true,
-    },
-    {
-      target: '[data-tour="gen:panel"]',
-      title: 'Your Content Generation Panel',
-      content:
-        'This is the content generation panel. From here, you can choose to create images or videos and bring your ideas to life.',
-      data: {
-        onPrev: async ({ prev }) => {
-          console.log('closing panel');
-          generationPanel.close();
-          prev();
-        },
-      },
-      disableBeacon: true,
-      disableOverlay: true,
-      placement: 'center',
     },
     {
       target: '[data-tour="gen:prompt"]',
@@ -200,44 +189,125 @@ const stepsMap: Record<string, StepWithData[]> = {
           <Text>
             Alternatively, you can remix existing images on the site. Click{' '}
             <Text weight={600} span>
-              <strong>Next</strong>
+              Next
             </Text>{' '}
             to learn more.
           </Text>
         </div>
       ),
       data: {
-        onNext: async ({ close }) => {
-          close();
-          await Router.push('/collections/1169354?tour=content-generation');
-          // open();
-        },
+        onNext: () => Router.push('/collections/1169354?tour=content-generation'),
+        waitForElement: { selector: '[data-tour="gen:remix"]', timeout: 30000 },
       },
     },
     {
       target: '[data-tour="gen:remix"]',
       title: 'Remix This Image',
       content: 'Click this button to remix an image and create something new',
+      data: {
+        onNext: () => generationPanel.open(),
+        waitForElement: { selector: '[data-tour="gen:submit"]' },
+      },
     },
     {
       target: '[data-tour="gen:submit"]',
+      title: 'Submit Your Prompt',
       content: 'You can submit your prompt by clicking this button and see the magic happen!',
     },
     {
-      target: '[data-tour="gen:results"]',
-      title: 'Your Generated Content',
-      content: 'You can change between tabs to check your generated images and videos.',
-    },
-    {
       target: '[data-tour="gen:reset"]',
+      title: 'All Set!',
       content: 'You can view this tour at anytime by clicking this icon.',
       locale: { last: 'Done' },
     },
   ],
-  'tour-2': [
+
+  'post-generation': [
     {
-      target: '[data-tour="2"]',
-      content: 'This is the second step',
+      target: '[data-tour="gen:queue"]',
+      title: 'Your Generation Queue',
+      content:
+        'This is where your generated media is stored, along with all the generation details.',
+      data: {
+        onNext: () => generationPanel.setView('queue'),
+      },
+      disableBeacon: true,
+    },
+    {
+      target: '[data-tour="gen:feed"]',
+      title: 'Your Generation Feed',
+      content: 'View all your generated media here in a single scrollable view.',
+      data: {
+        onNext: () => {
+          generationPanel.setView('feed');
+        },
+        waitForElement: { selector: '[data-tour="gen:select"]' },
+      },
+    },
+    {
+      target: '[data-tour="gen:select"]',
+      title: 'Selecting Content',
+      content: (
+        <Text>
+          You can select images from both the{' '}
+          <Text weight={600} span>
+            Queue
+          </Text>{' '}
+          and the{' '}
+          <Text weight={600} span>
+            Feed
+          </Text>{' '}
+          to post them on the site. Posting lets you share your creations with the community and
+          earn rewards like Buzz!
+        </Text>
+      ),
+      data: {
+        waitForElement: { selector: '[data-tour="gen:post"]' },
+      },
+    },
+    {
+      target: '[data-tour="gen:post"]',
+      title: 'Posting Content',
+      content: 'Click this button to post your selected content to the site.',
+      data: {
+        waitForElement: { selector: '[data-tour="post:title"]', timeout: 30000 },
+      },
+    },
+    {
+      target: '[data-tour="post:title"]',
+      title: 'Add a Title',
+      content:
+        'Add a title to your post to give it some context. This step is optional but helps personalize your creation.',
+      data: {
+        onPrev: () => generationPanel.open(),
+      },
+    },
+    {
+      target: '[data-tour="post:tag"]',
+      title: 'Add a Tag',
+      content:
+        'Tags help other users easily find relevant content. For example, if these are cat images, adding a "cat" tag would help categorize your content.',
+    },
+    {
+      target: '[data-tour="post:description"]',
+      title: 'Add a Description',
+      content:
+        'Descriptions provide additional details about your post, helping viewers understand your creation better.',
+      data: {
+        waitForElement: { selector: '[data-tour="post:rate-resource"]' },
+      },
+    },
+    {
+      target: '[data-tour="post:rate-resource"]',
+      title: 'Rate the Resource',
+      content:
+        'Rate the resource you used to generate this content. This helps the creator improve the quality of their model.',
+    },
+    {
+      target: '[data-tour="post:publish"]',
+      title: 'Publish Your Post',
+      content:
+        'Once you are ready, click this button to publish your post to the site and your creations with the community!',
     },
   ],
 };

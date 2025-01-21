@@ -102,7 +102,7 @@ export function EditResourceReview({
   const isThumbsDown = recommended === false;
 
   return (
-    <Card p={8} withBorder>
+    <Card p={8} data-tour="post:rate-resource" withBorder>
       <Stack spacing="xs">
         {modelId && modelVersionId ? (
           <Stack spacing={4}>

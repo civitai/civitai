@@ -205,6 +205,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               disabled={!canPublish || !!mutating}
               onClick={() => handlePublish()}
               loading={updatePostMutation.isLoading}
+              data-tour="post:publish"
             >
               {publishLabel}
             </Button>
@@ -215,6 +216,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
                 onClick={() => handlePublish()}
                 loading={updatePostMutation.isLoading}
                 className="flex-1"
+                data-tour="post:publish"
               >
                 {publishLabel}
               </Button>
