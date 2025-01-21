@@ -12,7 +12,7 @@ import { Feed } from './Feed';
 import { Queue } from './Queue';
 import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import React, { ForwardRefExoticComponent, RefAttributes } from 'react';
+import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
@@ -26,14 +26,16 @@ import { useTourContext } from '~/providers/TourProvider';
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { running, runTour } = useTourContext();
+  const { activeTour, runTour } = useTourContext();
 
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
 
+  const _opened = useGenerationStore((state) => state.opened);
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
   if (isImageFeedSeparate && view === 'generate') setView('queue');
+  const opened = _opened || isGeneratePage;
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
@@ -41,6 +43,15 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   );
 
   const isClient = useIsClient();
+
+  useEffect(() => {
+    if (activeTour && opened) {
+      runTour({ step: 0 });
+    }
+    // Only need to check for sidebar opened state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened]);
+
   if (!isClient) return null;
 
   return (
@@ -66,19 +77,11 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
             <HelpButton
               data-tour="gen:reset"
               onClick={async () => {
-                if (!running) {
-                  await router.replace(
-                    {
-                      query: {
-                        ...router.query,
-                        tour: view === 'generate' ? 'content-generation' : 'post-generation',
-                      },
-                    },
-                    undefined,
-                    { shallow: true }
-                  );
-                  runTour({ step: 0 });
-                }
+                const tourKey = view === 'generate' ? 'content-generation' : 'post-generation';
+                await router.replace({ query: { ...router.query, tour: tourKey } }, undefined, {
+                  shallow: true,
+                });
+                runTour({ key: tourKey, step: 0, forceRun: true });
               }}
             />
           </div>

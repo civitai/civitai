@@ -2,7 +2,7 @@ import { Text, useMantineTheme } from '@mantine/core';
 import { reset } from 'linkifyjs';
 import { useSearchParams } from 'next/navigation';
 import Router from 'next/router';
-import { createContext, useCallback, useContext, useRef, useState } from 'react';
+import { createContext, useCallback, useContext, useState } from 'react';
 import Joyride, {
   ACTIONS,
   Callback,
@@ -10,7 +10,6 @@ import Joyride, {
   Props as JoyrideProps,
   STATUS,
   Step,
-  StoreHelpers,
 } from 'react-joyride';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { StepData, TourPopover } from '~/components/Tour/TourPopover';
@@ -24,17 +23,21 @@ type StepWithData = Step & { data?: StepData };
 
 type TourState = {
   running: boolean;
-  active: boolean;
+  forceRun: boolean;
   currentStep: number;
-  runTour: (opts?: { step?: number }) => void;
+  runTour: (opts?: {
+    key?: keyof typeof availableTours;
+    step?: number;
+    forceRun?: boolean;
+  }) => void;
   closeTour: (opts?: { reset?: boolean }) => void;
+  activeTour?: string | null;
   steps?: StepWithData[];
-  helpers?: StoreHelpers | null;
 };
 
 const TourContext = createContext<TourState>({
   running: false,
-  active: false,
+  forceRun: false,
   currentStep: 0,
   runTour: () => null,
   closeTour: () => null,
@@ -60,11 +63,11 @@ export function TourProvider({ children, ...props }: Props) {
 
   const [state, setState] = useState<Omit<TourState, 'runTour' | 'closeTour' | 'helpers'>>({
     running: false,
-    active: !!tourKey,
+    forceRun: false,
+    activeTour: tourKey,
     currentStep: 0,
     steps: tourKey ? availableTours[tourKey] ?? [] : [],
   });
-  const tourHelpers = useRef<StoreHelpers | null>(null);
 
   const [completed = {}, setCompleted] = useStorage<{ [k: string]: boolean }>({
     key: 'completed-tours',
@@ -82,28 +85,34 @@ export function TourProvider({ children, ...props }: Props) {
     },
   });
 
-  const runTour = (opts?: { step?: number }) =>
+  const runTour: TourState['runTour'] = (opts) => {
     setState((old) => ({
       ...old,
       running: true,
+      activeTour: opts?.key ?? old.activeTour,
+      steps: opts?.key ? availableTours[opts.key] ?? [] : old.steps,
+      forceRun: opts?.forceRun ?? old.forceRun,
       currentStep: opts?.step ?? old.currentStep,
     }));
+  };
 
-  const closeTour = (args?: { reset?: boolean }) =>
+  const closeTour: TourState['closeTour'] = (args) => {
     setState((old) => ({
       ...old,
       running: false,
       currentStep: args?.reset ? 0 : old.currentStep,
     }));
+  };
 
   const handleJoyrideCallback = useCallback<Callback>(
     async (data) => {
       const { status, type, action, index, step } = data;
-      if (type === EVENTS.TOUR_END && completeStatus.includes(status) && tourKey) {
+      if (type === EVENTS.TOUR_END && completeStatus.includes(status) && state.activeTour) {
         updateUserSettingsMutation.mutate({
-          completedTour: { [tourKey]: true },
+          completedTour: { [state.activeTour]: true },
         });
-        setCompleted((old) => ({ ...old, [tourKey]: true }));
+        // Need to explicit typecast here because ts is dumb
+        setCompleted((old) => ({ ...old, [state.activeTour as string]: true }));
         closeTour({ reset: true });
         return;
       }
@@ -123,20 +132,32 @@ export function TourProvider({ children, ...props }: Props) {
         runTour({ step: nextStepIndex });
       }
     },
-    [tourKey, updateUserSettingsMutation]
+    [setCompleted, state.activeTour, updateUserSettingsMutation]
   );
 
-  const steps = tourKey ? availableTours[tourKey] || [] : [];
-  const alreadyCompleted = tourKey
-    ? (userSettings?.tourSettings?.completed?.[tourKey] ?? false) || (completed[tourKey] ?? false)
+  const alreadyCompleted = state.activeTour
+    ? (userSettings?.tourSettings?.completed?.[state.activeTour] ?? false) ||
+      (completed[state.activeTour] ?? false)
     : false;
 
+  console.log({
+    running: state.running,
+    forceRun: state.forceRun,
+    activeTour: state.activeTour,
+    steps: state.steps,
+    alreadyCompleted,
+    isInitialLoading,
+    userSettings,
+    completed,
+    value: (!alreadyCompleted && !isInitialLoading) || state.forceRun,
+  });
+
   return (
-    <TourContext.Provider value={{ ...state, runTour, closeTour, helpers: tourHelpers.current }}>
+    <TourContext.Provider value={{ ...state, runTour, closeTour }}>
       {children}
       <IsClient>
         <Joyride
-          steps={steps}
+          steps={state.steps}
           stepIndex={state.currentStep}
           callback={handleJoyrideCallback}
           styles={{
@@ -145,9 +166,8 @@ export function TourProvider({ children, ...props }: Props) {
               arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
             },
           }}
-          getHelpers={(helpers) => (tourHelpers.current = helpers)}
           tooltipComponent={TourPopover}
-          run={(!alreadyCompleted && !isInitialLoading) || state.running}
+          run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
           spotlightClicks
           showSkipButton
           continuous
