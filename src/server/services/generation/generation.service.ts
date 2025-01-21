@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { getGenerationConfig } from '~/server/common/constants';
 
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -48,16 +48,21 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-export function parseModelVersionId(assetId: string) {
-  const pattern = /^@civitai\/(\d+)$/;
-  const match = assetId.match(pattern);
-
-  if (match) {
-    return parseInt(match[1], 10);
-  }
-
-  return null;
-}
+type GenerationResourceSimple = {
+  id: number;
+  name: string;
+  trainedWords: string[];
+  modelId: number;
+  modelName: string;
+  modelType: ModelType;
+  baseModel: string;
+  strength: number;
+  minStrength: number;
+  maxStrength: number;
+  minor: boolean;
+  fileSizeKB: number;
+  available: boolean;
+};
 
 // const baseModelSetsArray = Object.values(baseModelSets);
 /** @deprecated using search index instead... */
@@ -290,7 +295,7 @@ async function getMediaGenerationData({
           return {
             ...item,
             hash: imageResource?.hash ?? undefined,
-            strength: imageResource?.strength ? imageResource.strength / 100 : item?.strength,
+            strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
           };
         })
       );
@@ -455,6 +460,8 @@ type GenerationResourceBase = {
   earlyAccessEndsAt?: Date;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig;
   canGenerate: boolean;
+  hasAccess: boolean;
+  covered: boolean;
   // settings
   clipSkip?: number;
   minStrength: number;
@@ -487,18 +494,20 @@ export async function getGenerationResourceData({
     isModerator?: boolean;
   };
 }): Promise<GenerationResource[]> {
+  if (!ids.length) return [];
   const { id: userId, isModerator } = user ?? {};
   function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
     return {
       ...item,
-      minStrength: settings.minStrength ?? -1,
-      maxStrength: settings.maxStrength ?? 2,
-      strength: settings.strength ?? 1,
+      minStrength: settings?.minStrength ?? -1,
+      maxStrength: settings?.maxStrength ?? 2,
+      strength: settings?.strength ?? 1,
       covered: item.covered || explicitCoveredModelVersionIds.includes(item.id),
-      hasAccess:
+      hasAccess: !!(
         ['Public', 'Unsearchable'].includes(item.availability) ||
         userId === item.model.userId ||
-        isModerator,
+        isModerator
+      ),
     };
   }
   return await resourceDataCache.fetch(ids).then(async (initialResult) => {
@@ -514,9 +523,17 @@ export async function getGenerationResourceData({
           modelId: { in: modelIds },
         },
         orderBy: { index: { sort: 'asc', nulls: 'last' } },
-        select: { id: true },
+        select: { id: true, baseModel: true, modelId: true },
       })
-      .then((data) => data.map((x) => x.id));
+      .then((data) =>
+        data
+          .filter((x) => {
+            const match = initialTransformed.find((initial) => initial.model.id === x.modelId);
+            if (!match) return false;
+            return match.baseModel === x.baseModel;
+          })
+          .map((x) => x.id)
+      );
 
     const substitutesTransformed = await resourceDataCache
       .fetch(substituteIds)
@@ -556,9 +573,9 @@ export async function getGenerationResourceData({
               ? item.earlyAccessConfig
               : undefined
             : undefined,
-        hasAccess:
-          item.covered &&
-          (item.hasAccess || entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess),
+        hasAccess: !!(
+          item.hasAccess || entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess
+        ),
       }))
     );
 
@@ -566,20 +583,22 @@ export async function getGenerationResourceData({
       [...initialWithAccess, ...substitutesWithAccess].filter((x) => x.hasAccess).map((x) => x.id)
     );
 
-    return initialWithAccess.map(({ covered, hasAccess, availability, ...item }) => {
+    return initialWithAccess.map(({ availability, ...item }) => {
       const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
-      const substitute = substitutesWithAccess.find((sub) => sub.model.id === item.model.id);
+      const substitute = substitutesWithAccess.find(
+        (sub) => sub.model.id === item.model.id && sub.hasAccess
+      );
       const payload = removeNulls({
         ...item,
-        canGenerate: covered && (hasAccess ?? false),
+        canGenerate: item.covered && item.hasAccess,
         fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile?.sizeKB) : undefined,
       });
 
       if (substitute) {
-        const { model, covered, hasAccess, availability, ...rest } = substitute;
+        const { model, availability, ...rest } = substitute;
         return {
           ...payload,
-          substitute: removeNulls({ ...rest, canGenerate: covered && (hasAccess ?? false) }),
+          substitute: removeNulls({ ...rest, canGenerate: item.covered && item.hasAccess }),
         };
       }
 
@@ -587,19 +606,3 @@ export async function getGenerationResourceData({
     });
   });
 }
-
-export type GenerationResourceSimple = {
-  id: number;
-  name: string;
-  trainedWords: string[];
-  modelId: number;
-  modelName: string;
-  modelType: ModelType;
-  baseModel: string;
-  strength: number;
-  minStrength: number;
-  maxStrength: number;
-  minor: boolean;
-  fileSizeKB: number;
-  available: boolean;
-};

@@ -1145,7 +1145,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       <Card
                         key={resource.id}
                         component={Link}
-                        href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+                        href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
                         radius={0}
                         py="xs"
                         sx={(theme) => ({
@@ -1160,9 +1160,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                         <Stack spacing={4}>
                           <Group position="apart" spacing={8} noWrap>
                             <Text size="xs" weight={500} lineClamp={2}>
-                              {resource.modelName}
+                              {resource.model.name}
                             </Text>
-                            <Badge size="xs">{getDisplayName(resource.modelType)}</Badge>
+                            <Badge size="xs">{getDisplayName(resource.model.type)}</Badge>
                           </Group>
                           <Text color="dimmed" size="xs">
                             {resource.name}

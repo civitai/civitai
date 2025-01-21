@@ -1,5 +1,4 @@
 import { DeepPartial } from 'react-hook-form';
-import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
@@ -11,7 +10,6 @@ import {
   generation,
   getGenerationConfig,
 } from '~/server/common/constants';
-import { imageSchema } from '~/server/schema/image.schema';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
@@ -32,38 +30,15 @@ import {
   useGenerationStore,
 } from '~/store/generation.store';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { uniqBy } from 'lodash-es';
 import { isDefined } from '~/utils/type-guards';
 import { showNotification } from '@mantine/notifications';
 import { fluxModeOptions } from '~/shared/constants/generation.constants';
 import { useDebouncer } from '~/utils/debouncer';
-import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
+import { generationResourceSchema } from '~/server/schema/generation.schema';
 
 // #region [schemas]
-const generationResourceSchema = workflowResourceSchema.extend({
-  name: z.string(),
-  trainedWords: z.string().array().default([]),
-  baseModel: z.string(),
-  earlyAccessEndsAt: z.date().optional(),
-  earlyAccessConfig: modelVersionEarlyAccessConfigSchema.optional(),
-  canGenerate: z.boolean(),
-  minStrength: z.number().default(-1),
-  maxStrength: z.number().default(2),
-  image: imageSchema.pick({ url: true }).optional(),
-});
-const extendedTextToImageResourceSchema = generationResourceSchema.extend({
-  model: z.object({
-    id: z.number(),
-    name: z.string(),
-    type: z.nativeEnum(ModelType),
-    nsfw: z.boolean().optional(),
-    poi: z.boolean().optional(),
-    minor: z.boolean().optional(),
-  }),
-  substitute: generationResourceSchema.optional(),
-});
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
@@ -71,9 +46,9 @@ export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true })
   .extend({
-    model: extendedTextToImageResourceSchema,
-    resources: extendedTextToImageResourceSchema.array().min(0).default([]),
-    vae: extendedTextToImageResourceSchema.optional(),
+    model: generationResourceSchema,
+    resources: generationResourceSchema.array().min(0).default([]),
+    vae: generationResourceSchema.optional(),
     prompt: z
       .string()
       .nonempty('Prompt cannot be empty')
@@ -240,7 +215,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
-    version: 1,
+    version: 1.1,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,

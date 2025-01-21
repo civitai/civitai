@@ -28,7 +28,6 @@ import {
   trainingDetailsBaseModelsXL,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
-import { Generation } from '~/server/services/generation/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import {
   defaultBase,
@@ -149,8 +148,7 @@ const ModelSelector = ({
             allowRemove={true}
             selectSource="training"
             value={selectedRun.customModel}
-            onChange={(val) => {
-              const gVal = val as Generation.Resource | undefined;
+            onChange={(gVal) => {
               if (!gVal) {
                 makeDefaultParams({
                   base: defaultBase,
@@ -158,7 +156,7 @@ const ModelSelector = ({
                   customModel: null,
                 });
               } else {
-                const { baseModel, modelType, modelId, id: mvId } = gVal;
+                const { baseModel, model, id: mvId } = gVal;
 
                 const castBase = (
                   [
@@ -175,7 +173,12 @@ const ModelSelector = ({
                   ? 'sd35'
                   : 'sd15';
 
-                const cLink = stringifyAIR({ baseModel, type: modelType, modelId, id: mvId });
+                const cLink = stringifyAIR({
+                  baseModel,
+                  type: model.type,
+                  modelId: model.id,
+                  id: mvId,
+                });
 
                 makeDefaultParams({
                   base: cLink,

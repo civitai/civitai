@@ -1452,7 +1452,7 @@ export type GenerationResourceDataModel = {
   clipSkip: number | null;
   vaeId: number | null;
   baseModel: string;
-  settings: RecommendedSettingsSchema;
+  settings: RecommendedSettingsSchema | null;
   availability: Availability;
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;

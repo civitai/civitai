@@ -8,7 +8,7 @@ import {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
-import { Generation } from '~/server/services/generation/generation.types';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 export const ResourceSelect = ({
   value,
@@ -23,8 +23,8 @@ export const ResourceSelect = ({
   hideVersion,
   ...inputWrapperProps
 }: {
-  value?: Generation.Resource;
-  onChange?: (value?: Generation.Resource) => void;
+  value?: GenerationResource;
+  onChange?: (value?: GenerationResource) => void;
   buttonLabel: React.ReactNode;
   modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
@@ -32,11 +32,11 @@ export const ResourceSelect = ({
   allowRemove?: boolean;
   selectSource?: ResourceSelectSource;
   hideVersion?: boolean;
-} & Omit<InputWrapperProps, 'children'> & { disabled?: boolean }) => {
+} & Omit<InputWrapperProps, 'children' | 'onChange'> & { disabled?: boolean }) => {
   const types = options.resources?.map((x) => x.type);
-  const _value = types && value && !types.includes(value.modelType) ? undefined : value;
+  const _value = types && value && !types.includes(value.model.type) ? undefined : value;
 
-  const handleAdd = (resource: Generation.Resource) => {
+  const handleAdd = (resource: GenerationResource) => {
     onChange?.(resource);
   };
 
@@ -44,7 +44,7 @@ export const ResourceSelect = ({
     onChange?.(undefined);
   };
 
-  const handleUpdate = (resource: Generation.Resource) => {
+  const handleUpdate = (resource: GenerationResource) => {
     onChange?.(resource);
   };
 

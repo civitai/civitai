@@ -700,6 +700,8 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       canGenerate: true,
+      hasAccess: true,
+      covered: true,
       model: {
         id: 4384,
         name: 'DreamShaper',
@@ -722,6 +724,8 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       canGenerate: true,
+      hasAccess: true,
+      covered: true,
       model: {
         id: 101055,
         name: 'SD XL',
@@ -744,6 +748,8 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       canGenerate: true,
+      hasAccess: true,
+      covered: true,
       model: {
         id: 257749,
         name: 'Pony Diffusion V6 XL',
@@ -766,6 +772,8 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       canGenerate: true,
+      hasAccess: true,
+      covered: true,
       model: {
         id: 795765,
         name: 'Illustrious-XL',
@@ -788,6 +796,8 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       canGenerate: true,
+      hasAccess: true,
+      covered: true,
       model: {
         id: 618692,
         name: 'FLUX',
@@ -810,6 +820,8 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       canGenerate: true,
+      hasAccess: true,
+      covered: true,
       model: {
         id: 878387,
         name: 'Stable Diffusion 3.5 Large',
@@ -832,6 +844,8 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       canGenerate: true,
+      hasAccess: true,
+      covered: true,
       model: {
         id: 896953,
         name: 'Stable Diffusion 3.5 Medium',
@@ -850,6 +864,8 @@ export const generationConfig = {
       minStrength: -1,
       maxStrength: 2,
       canGenerate: true,
+      hasAccess: true,
+      covered: true,
       model: {
         id: 147759,
         name: 'Remacri',
