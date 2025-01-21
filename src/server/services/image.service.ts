@@ -716,6 +716,7 @@ type GetAllImagesRaw = {
   baseModel?: string;
   availability: Availability;
   minor: boolean;
+  remixOfId?: number | null;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1181,6 +1182,7 @@ export const getAllImages = async (
           ELSE FALSE
         END
       ) as "onSite",
+      i."meta"->'extra'->'remixOfId' as "remixOfId",
       i."createdAt",
       GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
       i."mimeType",
@@ -1341,6 +1343,7 @@ export const getAllImages = async (
       modelVersionIds?: number[];
       modelVersionIdsManual?: number[];
       thumbnailUrl?: string;
+      remixOfId?: number | null;
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -1645,6 +1648,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     modelId,
     prioritizedUserIds,
     useCombinedNsfwLevel,
+    remixOfId,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1736,6 +1740,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  if (remixOfId) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
   }
 
   /*
@@ -2220,6 +2228,7 @@ export const getImage = async ({
           ELSE FALSE
         END
       ) as "onSite",
+      i."meta"->'extra'->'remixOfId' as "remixOfId",
       u.id as "userId",
       u.username,
       u.image as "userImage",
@@ -2264,9 +2273,14 @@ export const getImage = async ({
 
   const imageMetrics = await getImageMetricsObject([firstRawImage]);
   const match = imageMetrics[firstRawImage.id];
+  const imageCosmetics = await getCosmeticsForEntity({
+    ids: [firstRawImage.id],
+    entity: 'Image',
+  });
 
   const image = {
     ...firstRawImage,
+    cosmetic: imageCosmetics?.[firstRawImage.id] ?? null,
     user: {
       id: creatorId,
       username,
@@ -2384,6 +2398,7 @@ export type ImagesForModelVersions = {
   sizeKB?: number;
   onSite: boolean;
   hasMeta: boolean;
+  remixOfId?: number | null;
 };
 
 export const getImagesForModelVersion = async ({
@@ -2507,7 +2522,8 @@ export const getImagesForModelVersion = async ({
           THEN TRUE
           ELSE FALSE
         END
-      ) as "onSite"
+      ) as "onSite",
+      i."meta"->'extra'->'remixOfId' as "remixOfId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id
     JOIN "Post" p ON p.id = i."postId"
@@ -2657,6 +2673,7 @@ export const getImagesForPosts = async ({
       metadata: ImageMetadata | VideoMetadata | null;
       hasMeta: boolean;
       onSite: boolean;
+      remixOfId?: number | null;
     }[]
   >`
     SELECT
@@ -2687,7 +2704,8 @@ export const getImagesForPosts = async ({
           THEN TRUE
           ELSE FALSE
         END
-      ) as "onSite"
+      ) as "onSite",
+      i.metadata->>'remixOfId' as "remixOfId"
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
@@ -4436,6 +4454,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
     techniques,
     external,
     canRemix: !image.hideMeta && !!meta?.prompt,
+    remixOfId: meta?.extra?.remixOfId,
   };
 }
 

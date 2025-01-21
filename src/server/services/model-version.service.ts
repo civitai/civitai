@@ -1,10 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
@@ -23,9 +17,17 @@ import {
   modelVersionAccessCache,
   resourceDataCache,
 } from '~/server/redis/caches';
+import {
+  Availability,
+  CommercialUse,
+  ModelStatus,
+  ModelVersionEngagementType,
+} from '~/shared/utils/prisma/enums';
 
+import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
@@ -44,6 +46,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
@@ -58,9 +61,6 @@ import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { logToAxiom } from '~/server/logging/client';
-import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
