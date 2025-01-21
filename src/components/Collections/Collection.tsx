@@ -279,7 +279,6 @@ const ImageCollection = ({
       }}
       additionalMenuItemsAfter={(image) => {
         const isOwnerOrMod =
-
           permissions?.manage || currentUser?.id === collection.user.id || currentUser?.isModerator;
         return (
           <>
@@ -658,6 +657,11 @@ export function Collection({
                   <Stack>
                     <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
                       {collection.mode === CollectionMode.Contest &&
+                      // Respect the submission period:
+                      (!metadata.submissionEndDate ||
+                        new Date(metadata.submissionEndDate) > new Date()) &&
+                      (!metadata.submissionStartDate ||
+                        new Date(metadata.submissionStartDate) < new Date()) &&
                       [CollectionType.Image, CollectionType.Post].some(
                         (x) => x === collection.type
                       ) ? (
