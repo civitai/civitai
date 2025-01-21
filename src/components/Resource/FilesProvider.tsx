@@ -1,21 +1,21 @@
-import { constants, ModelFileType } from '~/server/common/constants';
-import { ModelUpsertInput } from '~/server/schema/model.schema';
-import { useState, createContext, useContext } from 'react';
-import { useS3UploadStore } from '~/store/s3-upload.store';
-import { isDefined } from '~/utils/type-guards';
-import { bytesToKB } from '~/utils/number-helpers';
+import { Anchor, Stack, Text } from '@mantine/core';
 import { randomId } from '@mantine/hooks';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { Stack, Text, Anchor } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
-import { ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
-import { UploadType } from '~/server/common/enums';
-import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
+import { createContext, useContext, useState } from 'react';
 import { z } from 'zod';
-import { getModelFileFormat } from '~/utils/file-helpers';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { constants, ModelFileType } from '~/server/common/constants';
+import { UploadType } from '~/server/common/enums';
 import type { ModelVersionById } from '~/server/controllers/model-version.controller';
+import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
+import { ModelUpsertInput } from '~/server/schema/model.schema';
+import { ModelStatus, ModelType } from '~/shared/utils/prisma/enums';
+import { useS3UploadStore } from '~/store/s3-upload.store';
+import { getModelFileFormat } from '~/utils/file-helpers';
+import { showErrorNotification } from '~/utils/notifications';
+import { bytesToKB } from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 type ZodErrorSchema = { _errors: string[] };
 type SchemaError = {
@@ -532,6 +532,11 @@ const dropzoneOptionsByModelType: Record<ModelType, DropzoneOptions> = {
       '.yml',
     ],
     acceptedModelFiles: ['Model', 'Text Encoder', 'Training Data'],
+    maxFiles: 4,
+  },
+  Detection: {
+    acceptedFileTypes: ['.pt'],
+    acceptedModelFiles: ['Model'],
     maxFiles: 4,
   },
   TextualInversion: {
