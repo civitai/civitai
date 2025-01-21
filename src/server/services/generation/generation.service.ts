@@ -454,12 +454,12 @@ type GenerationResourceBase = {
   baseModel: string;
   earlyAccessEndsAt?: Date;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig;
-  canGenerate?: boolean;
+  canGenerate: boolean;
   // settings
   clipSkip?: number;
-  minStrength?: number;
-  maxStrength?: number;
-  strength?: number;
+  minStrength: number;
+  maxStrength: number;
+  strength: number;
 };
 
 export type GenerationResource = GenerationResourceBase & {
@@ -467,10 +467,10 @@ export type GenerationResource = GenerationResourceBase & {
     id: number;
     name: string;
     type: ModelType;
-    nsfw: boolean;
-    poi: boolean;
-    minor: boolean;
-    userId: number;
+    nsfw?: boolean;
+    poi?: boolean;
+    minor?: boolean;
+    // userId: number;
   };
   substitute?: GenerationResourceBase;
 };
@@ -491,7 +491,9 @@ export async function getGenerationResourceData({
   function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
     return {
       ...item,
-      ...settings,
+      minStrength: settings.minStrength ?? -1,
+      maxStrength: settings.maxStrength ?? 2,
+      strength: settings.strength ?? 1,
       covered: item.covered || explicitCoveredModelVersionIds.includes(item.id),
       hasAccess:
         ['Public', 'Unsearchable'].includes(item.availability) ||
@@ -569,7 +571,7 @@ export async function getGenerationResourceData({
       const substitute = substitutesWithAccess.find((sub) => sub.model.id === item.model.id);
       const payload = removeNulls({
         ...item,
-        canGenerate: covered && hasAccess,
+        canGenerate: covered && (hasAccess ?? false),
         fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile?.sizeKB) : undefined,
       });
 
@@ -577,7 +579,7 @@ export async function getGenerationResourceData({
         const { model, covered, hasAccess, availability, ...rest } = substitute;
         return {
           ...payload,
-          substitute: removeNulls({ ...rest, canGenerate: covered && hasAccess }),
+          substitute: removeNulls({ ...rest, canGenerate: covered && (hasAccess ?? false) }),
         };
       }
 

@@ -4,11 +4,11 @@ import {
   BaseModelResourceTypes,
   SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
-import { GenerationResourceSimple } from '~/server/services/generation/generation.service';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 type ResourceSelectState = {
-  value?: GenerationResourceSimple[];
-  onChange?: (value: GenerationResourceSimple[]) => void;
+  value?: GenerationResource[];
+  onChange?: (value: GenerationResource[]) => void;
 };
 
 const ResourceSelectContext = createContext<ResourceSelectState | null>(null);
@@ -44,11 +44,11 @@ export function ResourceSelect<T extends SupportedBaseModel>({
   modelTypes: BaseModelResourceTypes[T][number]['type'][];
   multiple?: boolean;
   limit?: number;
-  value?: GenerationResourceSimple[];
-  onChange?: (value: GenerationResourceSimple[]) => void;
+  value?: GenerationResource[];
+  onChange?: (value: GenerationResource[]) => void;
   children: (args: {
-    resources: GenerationResourceSimple[];
-    addResource: (resource: GenerationResourceSimple) => void;
+    resources: GenerationResource[];
+    addResource: (resource: GenerationResource) => void;
     removeResource: (id: number) => void;
     openResourceSelect: (options?: ResourceSelectProps) => void;
   }) => React.ReactNode;
@@ -59,11 +59,11 @@ export function ResourceSelect<T extends SupportedBaseModel>({
 
   // const baseModelSet = getBaseModelSet(baseModel)
   const resources = uniqBy(
-    value?.filter((x) => (modelTypes as string[]).includes(x.modelType)) ?? [],
+    value?.filter((x) => (modelTypes as string[]).includes(x.model.type)) ?? [],
     'id'
   );
 
-  function handleChange(resources: GenerationResourceSimple[]) {
+  function handleChange(resources: GenerationResource[]) {
     onChange?.(resources);
   }
 
@@ -71,7 +71,7 @@ export function ResourceSelect<T extends SupportedBaseModel>({
     handleChange(resources.filter((x) => x.id !== id));
   }
 
-  function addResource(resource: GenerationResourceSimple) {
+  function addResource(resource: GenerationResource) {
     handleChange([...resources, resource]);
   }
 

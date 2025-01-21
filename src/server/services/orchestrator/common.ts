@@ -325,9 +325,7 @@ function combineResourcesWithInputResource(
 ) {
   return allResources.map((resource) => {
     const original = resources.find((x) => x.id === resource.id);
-    const { settings = {} } = resource;
-    settings.strength = original?.strength ?? undefined;
-    resource.settings = settings;
+    if (original?.strength) resource.strength = original.strength;
     return resource;
   });
 }

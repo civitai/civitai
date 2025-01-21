@@ -234,7 +234,7 @@ export function GenerationFormContent() {
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.available !== false);
+      .filter((x) => x.canGenerate !== false);
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
@@ -290,7 +290,7 @@ export function GenerationFormContent() {
   useEffect(() => {
     const subscription = form.watch(({ model, resources = [], vae, fluxMode }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
-        setHasMinorResources([model, ...resources, vae].filter((x) => x?.minor).length > 0);
+        setHasMinorResources([model, ...resources, vae].filter((x) => x?.model?.minor).length > 0);
       }
     });
     return () => {
@@ -335,7 +335,7 @@ export function GenerationFormContent() {
             cfgScaleMin = isDraft ? 1 : 2;
             cfgScaleMax = isDraft ? 1 : 20;
           }
-          const isFluxUltra = getIsFluxUltra({ modelId: model?.modelId, fluxMode });
+          const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
           if (!resourceTypes) return <></>;
@@ -422,14 +422,14 @@ export function GenerationFormContent() {
                 <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
                   {({ model, resources = [], vae, fluxMode }) => {
                     const selectedResources = [...resources, vae, model].filter(isDefined);
-                    const minorFlaggedResources = selectedResources.filter((x) => x.minor);
+                    const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
                     const unstableResources = selectedResources.filter((x) =>
                       allUnstableResources.includes(x.id)
                     );
                     const atLimit = resources.length >= status.limits.resources;
 
                     const disableAdditionalResources =
-                      model.modelId === fluxModelId &&
+                      model.model.id === fluxModelId &&
                       fluxMode !== 'urn:air:flux1:checkpoint:civitai:618692@691639';
 
                     return (
@@ -568,7 +568,7 @@ export function GenerationFormContent() {
                               <List size="xs">
                                 {unstableResources.map((resource) => (
                                   <List.Item key={resource.id}>
-                                    {resource.modelName} - {resource.name}
+                                    {resource.model.name} - {resource.name}
                                   </List.Item>
                                 ))}
                               </List>
@@ -590,7 +590,7 @@ export function GenerationFormContent() {
                               <List size="xs">
                                 {minorFlaggedResources.map((resource) => (
                                   <List.Item key={resource.id}>
-                                    {resource.modelName} - {resource.name}
+                                    {resource.model.name} - {resource.name}
                                   </List.Item>
                                 ))}
                               </List>

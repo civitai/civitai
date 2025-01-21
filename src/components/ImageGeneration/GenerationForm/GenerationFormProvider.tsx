@@ -39,27 +39,30 @@ import { isDefined } from '~/utils/type-guards';
 import { showNotification } from '@mantine/notifications';
 import { fluxModeOptions } from '~/shared/constants/generation.constants';
 import { useDebouncer } from '~/utils/debouncer';
+import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
 
 // #region [schemas]
-const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
+const generationResourceSchema = workflowResourceSchema.extend({
   name: z.string(),
   trainedWords: z.string().array().default([]),
   baseModel: z.string(),
   earlyAccessEndsAt: z.date().optional(),
-  earlyAccessConfig: z.record(z.any()).optional(),
-  canGenerate: z.boolean().optional(),
+  earlyAccessConfig: modelVersionEarlyAccessConfigSchema.optional(),
+  canGenerate: z.boolean(),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
   image: imageSchema.pick({ url: true }).optional(),
+});
+const extendedTextToImageResourceSchema = generationResourceSchema.extend({
   model: z.object({
     id: z.number(),
     name: z.string(),
     type: z.nativeEnum(ModelType),
-    nsfw: z.boolean().default(false),
-    poi: z.boolean().default(false),
-    minor: z.boolean().default(false),
-    userId: z.number(),
+    nsfw: z.boolean().optional(),
+    poi: z.boolean().optional(),
+    minor: z.boolean().optional(),
   }),
+  substitute: generationResourceSchema.optional(),
 });
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
@@ -101,7 +104,7 @@ const formSchema = textToImageParamsSchema
     fluxUltraRaw: z.boolean().optional(),
   })
   .transform(({ fluxUltraRaw, ...data }) => {
-    const isFluxUltra = getIsFluxUltra({ modelId: data.model.modelId, fluxMode: data.fluxMode });
+    const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
@@ -151,9 +154,13 @@ const defaultValues = generation.defaultValues;
 function formatGenerationData(data: GenerationData): PartialFormData {
   const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
-  let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
-  let vae = data.resources.find((x) => x.modelType === 'VAE');
-  const baseModel = params.baseModel ?? getBaseModelFromResources(data.resources);
+  let checkpoint = data.resources.find((x) => x.model.type === 'Checkpoint');
+  let vae = data.resources.find((x) => x.model.type === 'VAE');
+  const baseModel =
+    params.baseModel ??
+    getBaseModelFromResources(
+      data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+    );
 
   const config = getGenerationConfig(baseModel);
 
@@ -161,26 +168,30 @@ function formatGenerationData(data: GenerationData): PartialFormData {
   if (
     !checkpoint ||
     getBaseModelSetType(checkpoint.baseModel) !== baseModel ||
-    !checkpoint.available
+    !checkpoint.canGenerate
   ) {
     checkpoint = config.checkpoint;
   }
   // if current vae doesn't match baseModel, set vae to undefined
   if (
     !vae ||
-    !getBaseModelSetTypes({ modelType: vae.modelType, baseModel: vae.baseModel }).includes(
+    !getBaseModelSetTypes({ modelType: vae.model.type, baseModel: vae.baseModel }).includes(
       baseModel as SupportedBaseModel
     ) ||
-    !vae.available
+    !vae.canGenerate
   )
     vae = undefined;
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources.filter((resource) => {
-    if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE' || !resource.available)
+    if (
+      resource.model.type === 'Checkpoint' ||
+      resource.model.type === 'VAE' ||
+      !resource.canGenerate
+    )
       return false;
     const baseModelSetKeys = getBaseModelSetTypes({
-      modelType: resource.modelType,
+      modelType: resource.model.type,
       baseModel: resource.baseModel,
       defaultType: baseModel as SupportedBaseModel,
     });
@@ -362,7 +373,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     }
   }
 
-  function getDefaultValues(overrides: DeepPartialFormData): PartialFormData {
+  function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
     return sanitizeTextToImageParams(
       {

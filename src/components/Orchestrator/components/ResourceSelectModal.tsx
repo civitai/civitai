@@ -4,7 +4,7 @@ import { useMemo } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { BaseModel } from '~/server/common/constants';
-import { GenerationResourceSimple } from '~/server/services/generation/generation.service';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 export function ResourceSelectModal({
   title,
@@ -14,7 +14,7 @@ export function ResourceSelectModal({
   canGenerate,
 }: {
   title: React.ReactNode;
-  onAdd: (resource: GenerationResourceSimple) => void;
+  onAdd: (resource: GenerationResource) => void;
   baseModel?: BaseModel;
   modelTypes?: ModelType[];
   canGenerate?: boolean;
