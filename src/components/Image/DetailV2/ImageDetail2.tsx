@@ -45,8 +45,9 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -78,8 +79,6 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -476,6 +475,7 @@ export function ImageDetail2() {
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
                     </Card>
                     <ImageContestCollectionDetails
+                      key={currentUser?.id}
                       image={image}
                       isOwner={isOwner}
                       isModerator={currentUser?.isModerator}
