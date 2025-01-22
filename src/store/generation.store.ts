@@ -124,7 +124,6 @@ export const generationStore = {
 };
 
 function withSubstitute(resources: GenerationResource[]) {
-  console.log({ resources });
   return resources.map((item) => {
     const { substitute, ...rest } = item;
     if (!rest.canGenerate && substitute?.canGenerate) return { ...item, ...substitute };
