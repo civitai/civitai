@@ -314,7 +314,7 @@ const availableTours: Record<string, StepWithData[]> = {
       content:
         'Descriptions provide additional details about your post, helping viewers understand your creation better.',
       data: {
-        waitForElement: { selector: '[data-tour="post:rate-resource"]' },
+        waitForElement: { selector: '[data-tour="post:rate-resource"]', timeout: 30000 },
       },
     },
     {
