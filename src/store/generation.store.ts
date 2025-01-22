@@ -19,6 +19,8 @@ import { isDefined } from '~/utils/type-guards';
 export type RunType = 'run' | 'remix' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
+  counter: number;
+  loading: boolean;
   opened: boolean;
   view: GenerationPanelView;
   type: MediaType;
@@ -44,6 +46,8 @@ type GenerationState = {
 export const useGenerationStore = create<GenerationState>()(
   devtools(
     immer((set) => ({
+      counter: 0,
+      loading: false,
       opened: false,
       view: 'generate',
       type: 'image',
@@ -52,6 +56,7 @@ export const useGenerationStore = create<GenerationState>()(
           state.opened = true;
           if (input) {
             state.view = 'generate';
+            state.loading = true;
           }
         });
 
@@ -60,19 +65,28 @@ export const useGenerationStore = create<GenerationState>()(
           if (isMedia) {
             generationFormStore.setType(input.type as MediaType);
           }
-          const result = await fetchGenerationData(input);
-          if (isMedia) {
-            useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
-          }
+          try {
+            const result = await fetchGenerationData(input);
+            if (isMedia) {
+              useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
+            }
 
-          const { remixOf, ...data } = result;
-          set((state) => {
-            state.data = {
-              ...data,
-              resources: withSubstitute(data.resources),
-              runType: input.type === 'image' ? 'remix' : 'run',
-            };
-          });
+            const { remixOf, ...data } = result;
+            set((state) => {
+              state.data = {
+                ...data,
+                resources: withSubstitute(data.resources),
+                runType: input.type === 'image' ? 'remix' : 'run',
+              };
+              state.loading = false;
+              state.counter++;
+            });
+          } catch (e) {
+            set((state) => {
+              state.loading = false;
+            });
+            throw e;
+          }
         }
       },
       close: () =>
@@ -94,12 +108,14 @@ export const useGenerationStore = create<GenerationState>()(
         set((state) => {
           state.remixOf = remixOf;
           state.data = { ...data, resources: withSubstitute(data.resources), runType: 'replay' };
+          state.counter++;
           if (!location.pathname.includes('generate')) state.view = 'generate';
         });
       },
       clearData: () =>
         set((state) => {
           state.data = undefined;
+          state.counter++;
         }),
     })),
     { name: 'generation-store' }
