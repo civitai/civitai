@@ -10,12 +10,12 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useMemo, useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -32,9 +32,9 @@ import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { useImageStore } from '~/store/image.store';
-import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { useTourContext } from '~/providers/TourProvider';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
@@ -59,6 +59,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const showVotes = !!tags?.length && isScanned;
 
   const onSite = image.onSite;
+  const isRemix = !!image.remixOfId;
   const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
@@ -241,7 +242,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       </div>
                     </Alert>
                   )}
-                  {onSite && <OnsiteIndicator />}
+                  {onSite && <OnsiteIndicator isRemix={isRemix} />}
                 </div>
                 <div>
                   <Reactions

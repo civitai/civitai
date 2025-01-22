@@ -6,14 +6,16 @@ import {
   IconDownload,
   IconMessageCircle2,
 } from '@tabler/icons-react';
-import React from 'react';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
 } from '~/components/Buzz/InteractiveTipBuzzButton';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { RemixButton } from '~/components/Cards/components/RemixButton';
 import { useModelCardContext } from '~/components/Cards/ModelCardContext';
+import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
+import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
 import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import { UseQueryModelReturn } from '~/components/Model/model.utils';
 import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
@@ -26,9 +28,6 @@ import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { AspectRatioImageCard } from '~/components/CardTemplates/AspectRatioImageCard';
-import { ModelCardContextMenu } from '~/components/Cards/ModelCardContextMenu';
-import { RemixButton } from '~/components/Cards/components/RemixButton';
 
 export function ModelCard({ data }: Props) {
   const image = data.images[0];
@@ -78,6 +77,7 @@ export function ModelCard({ data }: Props) {
       contentId={data.id}
       image={data.images[0]}
       onSite={!!data.version.trainingStatus}
+      isRemix={!!data.images[0]?.remixOfId}
       header={
         <div className="flex w-full items-start justify-between">
           <div className="flex gap-1">

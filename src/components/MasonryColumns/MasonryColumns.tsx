@@ -57,32 +57,28 @@ export function MasonryColumns<TData>({
           )}
           style={columnCount > 1 ? { width: columnWidth } : undefined}
         >
+          {staticItem?.({ columnWidth, height: 450 })}
           {items.map(({ height, data }, index) => {
-            const key = data.type === 'data' ? itemId?.(data.data) ?? index : `ad_${index}`;
-            const showStaticItem = colIndex === 0 && index === 0 && staticItem;
-
-            return (
-              <React.Fragment key={key}>
-                {showStaticItem && staticItem({ columnWidth, height: 450 })}
-                {/* {data.type === 'data' &&
-                  createRenderElement(RenderComponent, index, data.data, columnWidth, height)} */}
-                {data.type === 'data' && (
+            switch (data.type) {
+              case 'data':
+                return (
                   <RenderComponent
+                    key={itemId?.(data.data) ?? index}
                     index={index}
                     data={data.data}
                     width={columnWidth}
                     height={height}
                   />
-                )}
-                {data.type === 'ad' && (
-                  <AdUnitRenderable>
+                );
+              case 'ad':
+                return (
+                  <AdUnitRenderable key={`ad_${index}`}>
                     <TwCard className="w-full items-center justify-center shadow">
                       <data.data.AdUnit />
                     </TwCard>
                   </AdUnitRenderable>
-                )}
-              </React.Fragment>
-            );
+                );
+            }
           })}
         </div>
       ))}

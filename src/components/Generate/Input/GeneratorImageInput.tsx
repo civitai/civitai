@@ -156,13 +156,14 @@ export function AccordionGeneratorImageInput({
   onChange?: (value?: string) => void;
 }) {
   const [checked, setChecked] = useLocalStorage({ key: 'byoi', defaultValue: value !== undefined });
+  const actuallyChecked = checked || !!value?.length;
 
   return (
     <Card withBorder p={0}>
       <Card.Section p="xs" className="flex items-center justify-between">
         <Text weight={500}>Start from an image</Text>
         <Switch
-          checked={checked}
+          checked={actuallyChecked}
           onChange={(e) => {
             const checked = e.target.checked;
             setChecked(e.target.checked);
@@ -170,7 +171,7 @@ export function AccordionGeneratorImageInput({
           }}
         />
       </Card.Section>
-      <Collapse in={checked}>
+      <Collapse in={actuallyChecked}>
         <Card.Section withBorder className="border-b-0">
           <Paper p="xs">
             <GeneratorImageInput value={value} onChange={onChange} />
