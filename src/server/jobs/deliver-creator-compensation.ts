@@ -19,13 +19,14 @@ export const updateCreatorResourceCompensation = createJob(
     if (!clickhouse) return;
 
     await clickhouse.$query`
-      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total)
+      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count)
       SELECT
         toStartOfDay(createdAt) as date,
         modelVersionId,
         FLOOR(SUM(comp)) as comp,
         FLOOR(SUM(tip)) AS tip,
-        comp + tip as total
+        comp + tip as total,
+        count(*) as count
       FROM (
         SELECT
         modelVersionId,
