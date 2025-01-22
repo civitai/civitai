@@ -1395,7 +1395,7 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
 };
 
 export const resourceDataCache = createCachedArray({
-  key: REDIS_KEYS.GENERATION.RESOURCE_DATA_2,
+  key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
     const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`

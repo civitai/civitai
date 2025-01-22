@@ -550,7 +550,6 @@ export async function getGenerationResourceData({
       )
       .map((x) => x.id);
 
-    // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
     const entityAccessArray = userId
       ? await hasEntityAccess({
           entityType: 'ModelVersion',
@@ -574,7 +573,11 @@ export async function getGenerationResourceData({
               : undefined
             : undefined,
         hasAccess: !!(
-          item.hasAccess || entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess
+          (
+            item.hasAccess ||
+            entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess ||
+            !!item.earlyAccessConfig?.generationTrialLimit
+          ) // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
         ),
       }))
     );
