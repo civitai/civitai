@@ -1759,7 +1759,7 @@ export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
     })
   ).map((x) => {
     x.type = 'VAE';
-    return x;
+    return { ...x, metadata: x.metadata as BasicFileMetadata };
   });
 
   return files;

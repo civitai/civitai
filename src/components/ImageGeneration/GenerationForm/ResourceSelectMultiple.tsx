@@ -4,14 +4,14 @@ import React, { forwardRef, useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { ResourceSelectCard } from '~/components/ImageGeneration/GenerationForm/ResourceSelectCard';
 import { withController } from '~/libs/form/hoc/withController';
-import { Generation } from '~/server/services/generation/generation.types';
 import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 type ResourceSelectMultipleProps = {
   limit?: number;
-  value?: Generation.Resource[];
-  onChange?: (value?: Generation.Resource[]) => void;
+  value?: GenerationResource[];
+  onChange?: (value?: GenerationResource[]) => void;
   buttonLabel: React.ReactNode;
   modalTitle?: React.ReactNode;
   buttonProps?: Omit<ButtonProps, 'onClick'>;
@@ -20,7 +20,7 @@ type ResourceSelectMultipleProps = {
   onCloseModal?: () => void;
   hideButton?: boolean;
   selectSource?: ResourceSelectSource;
-} & Omit<InputWrapperProps, 'children'>;
+} & Omit<InputWrapperProps, 'children' | 'onChange'>;
 
 export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectMultipleProps>(
   (
@@ -44,20 +44,29 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
     const types = options.resources?.map((x) => x.type);
 
     // _types used to set up groups
-    const _types = types ?? [...new Set(value?.map((x) => x.modelType))];
-    const _values = types ? [...value].filter((x) => types.includes(x.modelType)) : value;
+    const _types = types ?? [...new Set(value?.map((x) => x.model.type))];
+    const _values = types ? [...value].filter((x) => types.includes(x.model.type)) : value;
     const groups = _types
       .map((type) => ({
         type,
         label: getDisplayName(type),
-        resources: _values.filter((x) => x.modelType === type),
+        resources: _values.filter((x) => x.model.type === type),
       }))
       .filter((x) => !!x.resources.length);
     const canAdd = !limit || _values.length < limit;
 
-    const handleAdd = (resource: Generation.Resource) => {
+    const handleAdd = (resource: GenerationResource) => {
       if (!canAdd) return;
-      onChange?.([..._values, resource]);
+      if (
+        selectSource === 'generation' &&
+        resource &&
+        !resource.canGenerate &&
+        resource.substitute?.canGenerate
+      ) {
+        onChange?.([..._values, { ...resource, ...resource.substitute }]);
+      } else {
+        onChange?.([..._values, resource]);
+      }
       onCloseModal?.();
     };
 
@@ -67,7 +76,7 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
       onChange?.(filtered);
     };
 
-    const handleUpdate = (resource: Generation.Resource) => {
+    const handleUpdate = (resource: GenerationResource) => {
       const index = _values.findIndex((x) => x.id === resource.id);
       if (index > -1) {
         const emitValue = [..._values];

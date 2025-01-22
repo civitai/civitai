@@ -1,5 +1,6 @@
 import { DeepPartial } from 'react-hook-form';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { showNotification } from '@mantine/notifications';
+import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
@@ -11,11 +12,11 @@ import {
   generation,
   getGenerationConfig,
 } from '~/server/common/constants';
-import { imageSchema } from '~/server/schema/image.schema';
 import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImage.schema';
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
   SupportedBaseModel,
+  fluxModeOptions,
   getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
@@ -24,37 +25,20 @@ import {
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { removeEmpty } from '~/utils/object-helpers';
 import {
   fetchGenerationData,
   generationStore,
   useGenerationFormStore,
   useGenerationStore,
 } from '~/store/generation.store';
-import { auditPrompt } from '~/utils/metadata/audit';
-import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
-import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
-import { uniqBy } from 'lodash-es';
-import { isDefined } from '~/utils/type-guards';
-import { showNotification } from '@mantine/notifications';
-import { fluxModeOptions } from '~/shared/constants/generation.constants';
 import { useDebouncer } from '~/utils/debouncer';
+import { auditPrompt } from '~/utils/metadata/audit';
+import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
+import { removeEmpty } from '~/utils/object-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { generationResourceSchema } from '~/server/schema/generation.schema';
 
 // #region [schemas]
-const extendedTextToImageResourceSchema = workflowResourceSchema.extend({
-  name: z.string(),
-  trainedWords: z.string().array().default([]),
-  modelId: z.number(),
-  modelName: z.string(),
-  modelType: z.nativeEnum(ModelType),
-  minStrength: z.number().default(-1),
-  maxStrength: z.number().default(2),
-  covered: z.boolean().default(true),
-  baseModel: z.string(),
-  image: imageSchema.pick({ url: true }).optional(),
-  minor: z.boolean().default(false),
-  available: z.boolean().default(true),
-});
 
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
@@ -62,18 +46,9 @@ export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true })
   .extend({
-    model: extendedTextToImageResourceSchema,
-    // .refine(
-    //   (x) => x.available !== false,
-    //   'This resource is unavailable for generation'
-    // ),
-    resources: extendedTextToImageResourceSchema.array().min(0).default([]),
-    // .refine(
-    //   (resources) => !resources.length || resources.some((x) => x.available !== false),
-    //   'One or more resources are unavailable for generation'
-    // ),
-    vae: extendedTextToImageResourceSchema.optional(),
-    // .refine((x) => x?.available !== false, 'This resource is unavailable for generation'),
+    model: generationResourceSchema,
+    resources: generationResourceSchema.array().min(0).default([]),
+    vae: generationResourceSchema.optional(),
     prompt: z
       .string()
       .nonempty('Prompt cannot be empty')
@@ -99,14 +74,13 @@ const formSchema = textToImageParamsSchema
       }),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
+    remixPrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
     fluxUltraRaw: z.boolean().optional(),
-    // creatorTip: z.number().min(0).max(1).default(0.25).optional(),
-    // civitaiTip: z.number().min(0).max(1).optional(),
   })
   .transform(({ fluxUltraRaw, ...data }) => {
-    const isFluxUltra = getIsFluxUltra({ modelId: data.model.modelId, fluxMode: data.fluxMode });
+    const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
@@ -156,9 +130,13 @@ const defaultValues = generation.defaultValues;
 function formatGenerationData(data: GenerationData): PartialFormData {
   const { quantity, ...params } = data.params;
   // check for new model in resources, otherwise use stored model
-  let checkpoint = data.resources.find((x) => x.modelType === 'Checkpoint');
-  let vae = data.resources.find((x) => x.modelType === 'VAE');
-  const baseModel = params.baseModel ?? getBaseModelFromResources(data.resources);
+  let checkpoint = data.resources.find((x) => x.model.type === 'Checkpoint');
+  let vae = data.resources.find((x) => x.model.type === 'VAE');
+  const baseModel =
+    params.baseModel ??
+    getBaseModelFromResources(
+      data.resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+    );
 
   const config = getGenerationConfig(baseModel);
 
@@ -166,26 +144,30 @@ function formatGenerationData(data: GenerationData): PartialFormData {
   if (
     !checkpoint ||
     getBaseModelSetType(checkpoint.baseModel) !== baseModel ||
-    !checkpoint.available
+    !checkpoint.canGenerate
   ) {
     checkpoint = config.checkpoint;
   }
   // if current vae doesn't match baseModel, set vae to undefined
   if (
     !vae ||
-    !getBaseModelSetTypes({ modelType: vae.modelType, baseModel: vae.baseModel }).includes(
+    !getBaseModelSetTypes({ modelType: vae.model.type, baseModel: vae.baseModel }).includes(
       baseModel as SupportedBaseModel
     ) ||
-    !vae.available
+    !vae.canGenerate
   )
     vae = undefined;
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources.filter((resource) => {
-    if (resource.modelType === 'Checkpoint' || resource.modelType === 'VAE' || !resource.available)
+    if (
+      resource.model.type === 'Checkpoint' ||
+      resource.model.type === 'VAE' ||
+      !resource.canGenerate
+    )
       return false;
     const baseModelSetKeys = getBaseModelSetTypes({
-      modelType: resource.modelType,
+      modelType: resource.model.type,
       baseModel: resource.baseModel,
       defaultType: baseModel as SupportedBaseModel,
     });
@@ -225,7 +207,14 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const type = useGenerationFormStore((state) => state.type);
 
   const getValues = useCallback(
-    (storageValues: DeepPartialFormData) => getDefaultValues(storageValues),
+    (storageValues: DeepPartialFormData) => {
+      // Ensure we always get similarity accordingly.
+      if (storageValues.remixOfId && storageValues.prompt) {
+        checkSimilarity(storageValues.remixOfId, storageValues.prompt);
+      }
+
+      return getDefaultValues(storageValues);
+    },
     [currentUser, status] // eslint-disable-line
   );
 
@@ -234,11 +223,11 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
-    version: 1,
+    version: 1.1,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
-    exclude: ['remixSimilarity'],
+    exclude: ['remixSimilarity', 'remixPrompt'],
     storage: localStorage,
   });
 
@@ -248,6 +237,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         const similarity = calculateAdjustedCosineSimilarities(data.params.prompt, prompt);
         form.setValue('remixSimilarity', similarity);
       }
+
+      form.setValue('remixPrompt', data.params.prompt);
     });
   }
 
@@ -290,7 +281,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         checkSimilarity(remixOfId, params.prompt);
       }
 
-      if (runType === 'remix' && resources.length && resources.some((x) => !x.available)) {
+      if (runType === 'remix' && resources.length && resources.some((x) => !x.canGenerate)) {
         showNotification({
           color: 'yellow',
           title: 'Remix',
@@ -367,7 +358,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     }
   }
 
-  function getDefaultValues(overrides: DeepPartialFormData): PartialFormData {
+  function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
     return sanitizeTextToImageParams(
       {

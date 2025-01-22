@@ -262,7 +262,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         const queryKey = getQueryKey(trpc.model.getRecentlyRecommended);
         queryClient.setQueriesData<MyRecentlyRecommended>({ queryKey, exact: false }, (old) => {
           if (!old) return;
-          return uniq([...rawRecommendedResources.map((r) => r.modelId).filter(isDefined), ...old]);
+          return uniq([
+            ...rawRecommendedResources.map((r) => r.model.id).filter(isDefined),
+            ...old,
+          ]);
         });
       }
       onSubmit(result as ModelVersionUpsertInput);
@@ -766,13 +769,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               )}
               {hasVAE ? (
                 <>
-                  {/* <InputResourceSelect
-                    name="recommendedResources"
-                    type={ModelType.VAE}
-                    label={getDisplayName(ModelType.VAE)}
-                    buttonLabel="Add VAE"
-                    baseModel={baseModel}
-                  /> */}
                   <InputSelect
                     name="vaeId"
                     label="VAE"

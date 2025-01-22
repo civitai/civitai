@@ -36,12 +36,7 @@ export const textToImageParamsSchema = z.object({
   height: z.number(),
   // temp props?
   denoise: z.number().max(1).optional(),
-  image: z
-    .string()
-    .startsWith(
-      isProd ? 'https://orchestration.civitai.com' : 'https://orchestration-dev.civitai.com'
-    )
-    .optional(),
+  image: z.string().startsWith('https://orchestration').includes('.civitai.com').optional(),
   upscaleWidth: z.number().optional(),
   upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,

@@ -117,7 +117,11 @@ import { getDownloadUrl } from '~/utils/delivery-worker';
 import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import {
+  getGenerationResourceData,
+  getUnavailableResources,
+} from '../services/generation/generation.service';
+import { removeNulls } from '~/utils/object-helpers';
 
 // TODO.Briant - determine all the logic to check when getting model versions
 /*
@@ -177,6 +181,14 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       entityType: 'ModelVersion',
       isModerator: ctx.user?.isModerator,
       userId: ctx.user?.id,
+    });
+
+    const recommendedResourceIds =
+      model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.id)) ??
+      [];
+    const generationResources = await getGenerationResourceData({
+      ids: recommendedResourceIds,
+      user: ctx?.user,
     });
 
     return {
@@ -278,16 +290,13 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           meta: version.meta as ModelVersionMeta,
           trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
           settings: version.settings as RecommendedSettingsSchema | undefined,
-          recommendedResources: version.recommendedResources.map(({ resource, settings }) => ({
-            id: resource.id,
-            name: resource.name,
-            baseModel: resource.baseModel,
-            trainedWords: resource.trainedWords,
-            modelId: resource.model.id,
-            modelName: resource.model.name,
-            modelType: resource.model.type,
-            strength: (settings as RecommendedSettingsSchema)?.strength,
-          })),
+          recommendedResources: version.recommendedResources
+            .map((item) => {
+              const match = generationResources.find((x) => x.id === item.resource.id);
+              if (!match) return null;
+              return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
+            })
+            .filter(isDefined),
         };
       }),
     };
