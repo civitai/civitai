@@ -1,4 +1,6 @@
 import { DeepPartial } from 'react-hook-form';
+import { showNotification } from '@mantine/notifications';
+import { uniqBy } from 'lodash-es';
 import React, { createContext, useCallback, useContext, useEffect, useRef } from 'react';
 import { TypeOf, z } from 'zod';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
@@ -14,6 +16,7 @@ import { textToImageParamsSchema } from '~/server/schema/orchestrator/textToImag
 import { GenerationData } from '~/server/services/generation/generation.service';
 import {
   SupportedBaseModel,
+  fluxModeOptions,
   getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
@@ -22,20 +25,17 @@ import {
   getSizeFromFluxUltraAspectRatio,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { removeEmpty } from '~/utils/object-helpers';
 import {
   fetchGenerationData,
   generationStore,
   useGenerationFormStore,
   useGenerationStore,
 } from '~/store/generation.store';
+import { useDebouncer } from '~/utils/debouncer';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
-import { uniqBy } from 'lodash-es';
+import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { showNotification } from '@mantine/notifications';
-import { fluxModeOptions } from '~/shared/constants/generation.constants';
-import { useDebouncer } from '~/utils/debouncer';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
 
 // #region [schemas]
@@ -74,6 +74,7 @@ const formSchema = textToImageParamsSchema
       }),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
+    remixPrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
     fluxUltraRaw: z.boolean().optional(),
@@ -206,7 +207,14 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const type = useGenerationFormStore((state) => state.type);
 
   const getValues = useCallback(
-    (storageValues: DeepPartialFormData) => getDefaultValues(storageValues),
+    (storageValues: DeepPartialFormData) => {
+      // Ensure we always get similarity accordingly.
+      if (storageValues.remixOfId && storageValues.prompt) {
+        checkSimilarity(storageValues.remixOfId, storageValues.prompt);
+      }
+
+      return getDefaultValues(storageValues);
+    },
     [currentUser, status] // eslint-disable-line
   );
 
@@ -219,7 +227,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
-    exclude: ['remixSimilarity'],
+    exclude: ['remixSimilarity', 'remixPrompt'],
     storage: localStorage,
   });
 
@@ -229,6 +237,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         const similarity = calculateAdjustedCosineSimilarities(data.params.prompt, prompt);
         form.setValue('remixSimilarity', similarity);
       }
+
+      form.setValue('remixPrompt', data.params.prompt);
     });
   }
 

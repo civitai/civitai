@@ -49,7 +49,7 @@ type ImageProps = {
 
 type RoutedDialogProps<T extends DialogKey> = { name: T; state: DialogState<T> };
 
-type AspectRatioImageCardProps<T extends DialogKey> = {
+export type AspectRatioImageCardProps<T extends DialogKey> = {
   href?: string;
   aspectRatio?: AspectRatio;
   onClick?: React.MouseEventHandler;
@@ -61,6 +61,8 @@ type AspectRatioImageCardProps<T extends DialogKey> = {
   footerGradient?: boolean;
   onSite?: boolean;
   routedDialog?: RoutedDialogProps<T>;
+  target?: string;
+  isRemix?: boolean;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -79,6 +81,8 @@ export function AspectRatioImageCard<T extends DialogKey>({
   footerGradient,
   onSite,
   routedDialog,
+  target,
+  isRemix,
 }: AspectRatioImageCardProps<T>) {
   const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
 
@@ -93,7 +97,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
       ref={ref}
       style={!cosmetic ? wrapperStyle : undefined}
       className={clsx(className)}
-    >
+    > 
       <div className={clsx(styles.content, { [styles.inView]: inView })}>
         {inView && (
           <>
@@ -110,6 +114,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                       onClick={onClick}
                       routedDialog={routedDialog}
                       className={styles.linkOrClick}
+                      target={target}
                     >
                       {!safe ? (
                         <MediaHash {...image} />
@@ -170,10 +175,10 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 {footer}
               </div>
             )}
-            {onSite && <OnsiteIndicator />}
+            {onSite && <OnsiteIndicator isRemix={isRemix} />}
           </>
         )}
-      </div>
+      </div> 
     </CosmeticCard>
   );
 }
@@ -184,15 +189,17 @@ function LinkOrClick<T extends DialogKey>({
   children,
   routedDialog,
   className,
+  target,
 }: {
   href?: string;
   onClick?: React.MouseEventHandler;
   children: React.ReactElement;
   routedDialog?: RoutedDialogProps<T>;
   className?: string;
+  target?: string;
 }) {
   return href ? (
-    <NextLink href={href} className={className}>
+    <NextLink href={href} className={className} target={target}>
       {children}
     </NextLink>
   ) : routedDialog ? (

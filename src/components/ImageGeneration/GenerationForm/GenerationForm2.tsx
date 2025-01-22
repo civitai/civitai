@@ -25,17 +25,21 @@ import {
   IconCheck,
   IconInfoCircle,
   IconPlus,
+  IconRestore,
   IconX,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { clone } from 'lodash-es';
-import React, { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { create } from 'zustand';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   useGenerationStatus,
   useUnstableResources,
@@ -88,6 +92,7 @@ import {
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -95,8 +100,6 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
-import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 
 const useCostStore = create<{ cost?: number }>(() => ({}));
 
@@ -631,6 +634,88 @@ export function GenerationFormContent() {
                 )}
 
                 <div className="flex flex-col">
+                  <Watch {...form} fields={['remixSimilarity', 'remixOfId', 'remixPrompt']}>
+                    {({ remixSimilarity, remixOfId, remixPrompt }) => {
+                      if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
+
+                      return (
+                        <div className="radius-md my-2 flex flex-col gap-2 overflow-hidden">
+                          <div
+                            className={clsx('flex rounded-md', {
+                              'border-2 border-red-500': remixSimilarity < 0.75,
+                            })}
+                          >
+                            <div className=" flex-none">
+                              <ImageById
+                                imageId={remixOfId}
+                                className="h-28 rounded-none	rounded-l-md"
+                              />
+                            </div>
+                            <div className="h-28 flex-1">
+                              <Alert
+                                style={{
+                                  background:
+                                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
+                                  borderTopLeftRadius: 0,
+                                  borderBottomLeftRadius: 0,
+                                }}
+                                h="100%"
+                                py={0}
+                              >
+                                <Stack spacing={0} h="100%">
+                                  <Text weight="bold" size="sm" mt={2}>
+                                    Remixing
+                                  </Text>
+                                  {remixSimilarity >= 0.75 && (
+                                    <Text size="xs" lineClamp={3}>
+                                      {remixPrompt}
+                                    </Text>
+                                  )}
+                                  {remixSimilarity < 0.75 && (
+                                    <>
+                                      <Text size="xs" lh={1.2} mb={6}>
+                                        Your prompt has deviated sufficiently from the original that
+                                        this generation will be treated as a new image rather than a
+                                        remix
+                                      </Text>
+                                      <Group spacing="xs" grow noWrap>
+                                        <Button
+                                          variant="default"
+                                          onClick={() => form.setValue('prompt', remixPrompt)}
+                                          size="xs"
+                                          color="default"
+                                          fullWidth
+                                          h={30}
+                                          leftIcon={<IconRestore size={14} />}
+                                        >
+                                          Restore Prompt
+                                        </Button>
+                                        <Button
+                                          variant="light"
+                                          color="red"
+                                          size="xs"
+                                          onClick={() => {
+                                            form.setValue('remixOfId', undefined);
+                                            form.setValue('remixSimilarity', undefined);
+                                            form.setValue('remixPrompt', undefined);
+                                          }}
+                                          fullWidth
+                                          h={30}
+                                          leftIcon={<IconX size={14} />}
+                                        >
+                                          Stop Remixing
+                                        </Button>
+                                      </Group>
+                                    </>
+                                  )}
+                                </Stack>
+                              </Alert>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </Watch>
                   <Input.Wrapper
                     label={
                       <div className="mb-1 flex items-center gap-1">

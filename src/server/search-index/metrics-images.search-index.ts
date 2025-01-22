@@ -47,6 +47,7 @@ const filterableAttributes = [
   'publishedAtUnix',
   'existedAtUnix',
   'flags.promptNsfw',
+  'remixOfId',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -139,6 +140,7 @@ export type SearchBaseImage = {
   minor?: boolean;
   promptNsfw?: boolean;
   blockedFor: BlockedReason | null;
+  remixOfId?: number | null;
 };
 
 type Metrics = {
@@ -335,7 +337,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ELSE FALSE
           END
         ) as "onSite",
-        p."modelVersionId" as "postedToId"
+        p."modelVersionId" as "postedToId",
+        i."meta"->'extra'->'remixOfId' as "remixOfId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}

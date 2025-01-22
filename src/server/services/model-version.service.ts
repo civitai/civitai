@@ -21,8 +21,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 
+import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
@@ -42,6 +44,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
@@ -52,17 +55,12 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { fluxUltraAir, getBaseModelSet } from '~/shared/constants/generation.constants';
+import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { logToAxiom } from '~/server/logging/client';
-import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
-import { parseAIR } from '~/utils/string-helpers';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { generationResourceSelect } from '~/server/selectors/generation.selector';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
