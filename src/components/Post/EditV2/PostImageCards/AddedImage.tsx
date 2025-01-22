@@ -660,7 +660,11 @@ function EditDetail() {
           )}
           {/* #endregion */}
 
-          <div className={`flex w-full flex-1 flex-col gap-3 ${!showPreview ? '@sm:gap-4' : ''}`}>
+          <div
+            className={`flex w-full flex-1 flex-col gap-3 ${
+              !showPreview ? '@sm:w-4/6 @sm:gap-4' : ''
+            }`}
+          >
             {/*
           // #region [TOS Violation]
           */}
