@@ -1,19 +1,23 @@
 import { Prisma } from '@prisma/client';
-import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import { constants, ModelFileType } from '~/server/common/constants';
+import { EntityAccessPermission } from '~/server/common/enums';
 import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
 import { getVaeFiles } from '~/server/services/model.service';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import {
+  ModelFileVisibility,
+  ModelModifier,
+  ModelType,
+  ModelUsageControl,
+} from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
-import { EntityAccessPermission } from '~/server/common/enums';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -168,6 +172,7 @@ export const getFileForModelVersion = async ({
       createdAt: true,
       vaeId: true,
       requireAuth: true,
+      usageControl: true,
     },
   });
 
@@ -196,6 +201,10 @@ export const getFileForModelVersion = async ({
     (modelVersion?.model?.status === 'Published' && modelVersion?.status === 'Published');
 
   if (!canDownload) return { status: 'not-found' };
+
+  if (modelVersion?.usageControl !== ModelUsageControl.Download && !isMod && !isOwner) {
+    return { status: 'unauthorized' };
+  }
 
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
