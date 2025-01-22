@@ -734,6 +734,7 @@ export const getAllImages = async (
     limit,
     cursor,
     skip,
+    sort,
     postId,
     postIds,
     collectionId, // TODO - call this from separate method?
@@ -766,7 +767,7 @@ export const getAllImages = async (
     collectionTagId,
     excludedUserIds,
   } = input;
-  let { sort, browsingLevel, userId: targetUserId } = input;
+  let { browsingLevel, userId: targetUserId } = input;
 
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
@@ -1097,10 +1098,13 @@ export const getAllImages = async (
   }
 
   if (!!tools?.length) {
+    // Bring in images that contain the selected tools
     AND.push(Prisma.sql`EXISTS (
       SELECT 1
       FROM "ImageTool" it
-      WHERE it."imageId" = i.id AND it."toolId" IN (${Prisma.join(tools)})
+      WHERE it."imageId" = i.id
+      GROUP BY it."imageId"
+      HAVING array_agg(it."toolId" ORDER BY it."toolId") @> ARRAY[${Prisma.join(tools)}]::integer[]
     )`);
   }
   if (!!techniques?.length) {
