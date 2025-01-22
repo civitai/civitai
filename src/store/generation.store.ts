@@ -62,7 +62,7 @@ export const useGenerationStore = create<GenerationState>()(
           }
           const result = await fetchGenerationData(input);
           if (isMedia) {
-            useRemixStore.setState(result);
+            useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
           }
 
           const { remixOf, ...data } = result;
@@ -124,9 +124,11 @@ export const generationStore = {
 };
 
 function withSubstitute(resources: GenerationResource[]) {
+  console.log({ resources });
   return resources.map((item) => {
-    if (!item.canGenerate && item.substitute?.canGenerate) return { ...item, ...item.substitute };
-    return item;
+    const { substitute, ...rest } = item;
+    if (!rest.canGenerate && substitute?.canGenerate) return { ...item, ...substitute };
+    return rest;
   });
 }
 

@@ -595,10 +595,10 @@ export async function getGenerationResourceData({
       });
 
       if (substitute) {
-        const { model, availability, ...rest } = substitute;
+        const { model, availability, ...sub } = substitute;
         return {
           ...payload,
-          substitute: removeNulls({ ...rest, canGenerate: item.covered && item.hasAccess }),
+          substitute: removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess }),
         };
       }
 
