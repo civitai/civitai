@@ -3294,6 +3294,17 @@ model Appeal {
   @@index([status])
 }
 
+model WorkflowDefinition {
+  id          Int     @id @default(autoincrement())
+  label       String
+  description String?
+  index       Int?
+  disabled    Boolean @default(false)
+  message     String?
+  key         String
+  toolId      Int
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id
