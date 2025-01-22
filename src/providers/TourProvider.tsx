@@ -216,7 +216,11 @@ const availableTours: Record<string, StepWithData[]> = {
         </div>
       ),
       data: {
-        onNext: () => Router.push('/collections/1169354?tour=content-generation'),
+        onNext: () =>
+          Router.push({
+            pathname: '/collections/[collectionId]',
+            query: { collectionId: 107, tour: 'content-generation' },
+          }),
         waitForElement: { selector: '[data-tour="gen:remix"]', timeout: 30000 },
       },
     },
