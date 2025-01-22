@@ -5,7 +5,6 @@ import { useCallback, useMemo, useState } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
 import { useUnsupportedResources } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { Meta } from '~/components/Meta/Meta';
-import { Generation } from '~/server/services/generation/generation.types';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { GenerationGetResources } from '~/types/router';
 import { getDisplayName } from '~/utils/string-helpers';
@@ -33,15 +32,15 @@ export default function GenerationPage() {
     { enabled: unavailableResources.length > 0, keepPreviousData: true }
   );
 
-  const handleAddResource = async (resource: Generation.Resource) => {
-    if (unavailableResources.includes(resource.id)) return;
-    await toggleUnavailableResource(resource.id);
+  const handleAddResource = async (resourceId: number) => {
+    if (unavailableResources.includes(resourceId)) return;
+    await toggleUnavailableResource(resourceId);
   };
 
   const handleRemoveResource = useCallback(
-    async (resource: Generation.Resource) => {
-      if (!unavailableResources.includes(resource.id)) return;
-      await toggleUnavailableResource(resource.id);
+    async (resourceId: number) => {
+      if (!unavailableResources.includes(resourceId)) return;
+      await toggleUnavailableResource(resourceId);
     },
     [toggleUnavailableResource, unavailableResources]
   );
@@ -61,7 +60,7 @@ export default function GenerationPage() {
         mantineTableBodyCellProps: { align: 'right' },
         size: 80,
         Cell: ({ row: { original } }) => (
-          <ActionIcon color="red" onClick={() => handleRemoveResource(original)}>
+          <ActionIcon color="red" onClick={() => handleRemoveResource(original.id)}>
             <IconTrash />
           </ActionIcon>
         ),
@@ -82,7 +81,9 @@ export default function GenerationPage() {
             </Stack>
             <Button
               leftIcon={<IconPlus />}
-              onClick={() => openResourceSelectModal({ onSelect: handleAddResource })}
+              onClick={() =>
+                openResourceSelectModal({ onSelect: (resource) => handleAddResource(resource.id) })
+              }
             >
               Add
             </Button>

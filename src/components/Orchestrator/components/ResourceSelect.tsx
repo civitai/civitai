@@ -1,14 +1,10 @@
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { uniqBy } from 'lodash-es';
 import React, { createContext, useContext } from 'react';
-import { BaseModelSetType } from '~/server/common/constants';
 import {
   BaseModelResourceTypes,
-  GenerationResource,
   SupportedBaseModel,
-  baseModelResourceTypes,
-  getBaseModelSet,
 } from '~/shared/constants/generation.constants';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 type ResourceSelectState = {
   value?: GenerationResource[];
@@ -63,7 +59,7 @@ export function ResourceSelect<T extends SupportedBaseModel>({
 
   // const baseModelSet = getBaseModelSet(baseModel)
   const resources = uniqBy(
-    value?.filter((x) => (modelTypes as string[]).includes(x.modelType)) ?? [],
+    value?.filter((x) => (modelTypes as string[]).includes(x.model.type)) ?? [],
     'id'
   );
 

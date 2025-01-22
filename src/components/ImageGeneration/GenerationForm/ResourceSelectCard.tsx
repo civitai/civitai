@@ -30,7 +30,7 @@ type Props = {
 };
 
 export const ResourceSelectCard = (props: Props) => {
-  const isCheckpoint = props.resource.modelType === ModelType.Checkpoint;
+  const isCheckpoint = props.resource.model.type === ModelType.Checkpoint;
   const theme = useMantineTheme();
 
   return (
@@ -49,7 +49,7 @@ export const ResourceSelectCard = (props: Props) => {
 };
 
 function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion }: Props) {
-  const unavailable = selectSource !== 'generation' ? false : resource.covered === false;
+  const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
     <Group spacing="xs" position="apart" noWrap>
@@ -86,13 +86,13 @@ function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion 
               cursor: 'pointer',
               color: theme.colorScheme === 'dark' ? theme.white : theme.black,
             })}
-            href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+            href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
             color="initial"
             lineClamp={1}
             weight={590}
           >
-            {resource.modelName}
+            {resource.model.name}
           </Text>
           {!hideVersion && (
             <Text size="sm" color="dimmed">
@@ -120,9 +120,9 @@ function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion 
 }
 
 function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
-  const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.modelType);
+  const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
-  const unavailable = selectSource !== 'generation' ? false : resource.covered === false;
+  const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
 
   return (
     <Group spacing="xs" position="apart" noWrap>
@@ -142,17 +142,17 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
             <Text
               component={Link}
               sx={{ cursor: 'pointer' }}
-              href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+              href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
               onClick={() => generationPanel.close()}
               rel="nofollow noindex"
               size="sm"
               lineClamp={1}
               weight={590}
             >
-              {resource.modelName}
+              {resource.model.name}
             </Text>
           </Group>
-          {resource.modelName.toLowerCase() !== resource.name.toLowerCase() && (
+          {resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
             <Badge size="sm" color="dark.5" variant="filled" miw="42px">
               {resource.name}
             </Badge>
@@ -163,9 +163,9 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
           <div className="flex w-full items-center gap-2">
             <NumberSlider
               value={resource.strength}
-              onChange={(strength) => onUpdate({ ...resource, strength })}
-              min={!isSameMinMaxStrength ? resource.minStrength ?? -1 : -1}
-              max={!isSameMinMaxStrength ? resource.maxStrength ?? 2 : 2}
+              onChange={(strength) => onUpdate({ ...resource, strength: strength ?? 1 })}
+              min={!isSameMinMaxStrength ? resource.minStrength : -1}
+              max={!isSameMinMaxStrength ? resource.maxStrength : 2}
               step={0.05}
               sx={{ flex: 1 }}
               reverse

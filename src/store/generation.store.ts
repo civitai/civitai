@@ -2,9 +2,12 @@ import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
-import { GenerationData, RemixOfProps } from '~/server/services/generation/generation.service';
 import {
+  GenerationData,
   GenerationResource,
+  RemixOfProps,
+} from '~/server/services/generation/generation.service';
+import {
   engineDefinitions,
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
@@ -59,12 +62,16 @@ export const useGenerationStore = create<GenerationState>()(
           }
           const result = await fetchGenerationData(input);
           if (isMedia) {
-            useRemixStore.setState(result);
+            useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
           }
 
           const { remixOf, ...data } = result;
           set((state) => {
-            state.data = { ...data, runType: input.type === 'image' ? 'remix' : 'run' };
+            state.data = {
+              ...data,
+              resources: withSubstitute(data.resources),
+              runType: input.type === 'image' ? 'remix' : 'run',
+            };
           });
         }
       },
@@ -86,7 +93,7 @@ export const useGenerationStore = create<GenerationState>()(
         if (engine) useGenerationFormStore.setState({ engine });
         set((state) => {
           state.remixOf = remixOf;
-          state.data = { ...data, runType: 'replay' };
+          state.data = { ...data, resources: withSubstitute(data.resources), runType: 'replay' };
           if (!location.pathname.includes('generate')) state.view = 'generate';
         });
       },
@@ -115,6 +122,14 @@ export const generationStore = {
   //   return { remixOf, type };
   // },
 };
+
+function withSubstitute(resources: GenerationResource[]) {
+  return resources.map((item) => {
+    const { substitute, ...rest } = item;
+    if (!rest.canGenerate && substitute?.canGenerate) return { ...item, ...substitute };
+    return rest;
+  });
+}
 
 const dictionary: Record<string, GenerationData> = {};
 export const fetchGenerationData = async (input: GetGenerationDataInput) => {

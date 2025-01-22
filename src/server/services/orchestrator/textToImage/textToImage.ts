@@ -19,6 +19,7 @@ import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -32,12 +33,21 @@ export async function createTextToImageStep(
     ...input,
     workflowDefinition,
   });
+  const withAir = resources.map((resource) => ({
+    ...resource,
+    air: stringifyAIR({
+      baseModel: resource.baseModel,
+      type: resource.model.type,
+      modelId: resource.model.id,
+      id: resource.id,
+    }),
+  }));
 
   const scheduler = samplersToSchedulers[
     params.sampler as keyof typeof samplersToSchedulers
   ] as Scheduler;
-  const checkpoint = resources.filter((x) => x.model.type === 'Checkpoint')[0];
-  const additionalNetworks = resources
+  const checkpoint = withAir.filter((x) => x.model.type === 'Checkpoint')[0];
+  const additionalNetworks = withAir
     .filter((x) => x.model.type !== 'Checkpoint')
     .reduce<Record<string, ImageJobNetworkParams>>(
       (acc, resource) => ({

@@ -147,10 +147,10 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           resource: {
             select: {
               id: true,
-              name: true,
-              baseModel: true,
-              trainedWords: true,
-              model: { select: { id: true, name: true, type: true } },
+              // name: true,
+              // baseModel: true,
+              // trainedWords: true,
+              // model: { select: { id: true, name: true, type: true } },
             },
           },
           settings: true,

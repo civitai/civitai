@@ -1,10 +1,17 @@
 import { Prisma } from '@prisma/client';
+import {
+  Availability,
+  CommercialUse,
+  ModelStatus,
+  ModelType,
+  ModelVersionEngagementType,
+} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -12,17 +19,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import {
-  dataForModelsCache,
-  modelVersionAccessCache,
-  resourceDataCache,
-} from '~/server/redis/caches';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 
 import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -38,6 +35,7 @@ import {
   ModelVersionUpsertInput,
   PublishVersionInput,
   QueryModelVersionSchema,
+  RecommendedSettingsSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -61,6 +59,8 @@ import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { createCachedArray } from '~/server/utils/cache-helpers';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1390,4 +1390,78 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
 
   return trainingResults.workflowId ?? null;
+};
+
+export const resourceDataCache = createCachedArray({
+  key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
+  lookupFn: async (ids) => {
+    if (!ids.length) return {};
+    const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
+      SELECT
+        mv."id",
+        mv."name",
+        mv."trainedWords",
+        mv."baseModel",
+        mv."settings",
+        mv."availability",
+        mv."clipSkip",
+        mv."vaeId",
+        mv."earlyAccessEndsAt",
+        (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        gc."covered",
+        (
+          SELECT to_json(obj)
+          FROM (
+            SELECT
+              m."id",
+              m."name",
+              m."type",
+              m."nsfw",
+              m."poi",
+              m."minor",
+              m."userId"
+            FROM "Model" m
+            WHERE m.id = mv."modelId"
+          ) as obj
+        ) as model
+      FROM "ModelVersion" mv
+      LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
+      WHERE mv.id IN (${Prisma.join(ids)})
+    `;
+
+    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>(
+      (acc, result) => ({ ...acc, [result.id]: result }),
+      {}
+    );
+    return results;
+  },
+  idKey: 'id',
+  dontCacheFn: (data) => {
+    const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
+    return !cacheable;
+  },
+  ttl: CacheTTL.hour,
+});
+
+export type GenerationResourceDataModel = {
+  id: number;
+  name: string;
+  trainedWords: string[];
+  clipSkip: number | null;
+  vaeId: number | null;
+  baseModel: string;
+  settings: RecommendedSettingsSchema | null;
+  availability: Availability;
+  earlyAccessEndsAt: Date | null;
+  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
+  covered: boolean | null;
+  model: {
+    id: number;
+    name: string;
+    type: ModelType;
+    nsfw: boolean;
+    poi: boolean;
+    minor: boolean;
+    userId: number;
+  };
 };

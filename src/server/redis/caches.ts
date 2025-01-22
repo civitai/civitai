@@ -15,21 +15,13 @@ import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { ImageMetaProps } from '~/server/schema/image.schema';
-import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { generationResourceSelect } from '~/server/selectors/generation.selector';
 import { ProfileImage } from '~/server/selectors/image.selector';
-import { ModelFileModel, modelFileSelect } from '~/server/selectors/modelFile.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
-import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
-import { CachedObject, createCachedArray, createCachedObject } from '~/server/utils/cache-helpers';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { removeEmpty } from '~/utils/object-helpers';
+import { CachedObject, createCachedObject } from '~/server/utils/cache-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { fluxUltraAir } from '~/shared/constants/generation.constants';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
-import { parseAIR } from '~/utils/string-helpers';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -155,37 +147,6 @@ export const profilePictureCache = createCachedObject<ProfileImage>({
     return Object.fromEntries(profilePictures.map((x) => [x.userId, x]));
   },
   ttl: CacheTTL.day,
-});
-
-type CacheFilesForModelVersions = {
-  modelVersionId: number;
-  files: ModelFileModel[];
-};
-export const filesForModelVersionCache = createCachedObject<CacheFilesForModelVersions>({
-  key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
-  idKey: 'modelVersionId',
-  ttl: CacheTTL.sm,
-  async lookupFn(ids) {
-    let files = await dbRead.modelFile.findMany({
-      where: { modelVersionId: { in: ids } },
-      select: modelFileSelect,
-    });
-    files =
-      files?.map(({ metadata, ...file }) => {
-        return {
-          ...file,
-          metadata: reduceToBasicFileMetadata(metadata),
-        };
-      }) ?? [];
-
-    const records: Record<number, CacheFilesForModelVersions> = {};
-    for (const file of files) {
-      if (!records[file.modelVersionId])
-        records[file.modelVersionId] = { modelVersionId: file.modelVersionId, files: [] };
-      records[file.modelVersionId].files.push(file);
-    }
-    return records;
-  },
 });
 
 type CachedImagesForModelVersions = {
@@ -390,118 +351,6 @@ export const tagCache = createCachedObject<TagLookup>({
     return Object.fromEntries(tagBasicData.map((x) => [x.id, x]));
   },
   ttl: CacheTTL.day,
-});
-
-// const explicitCoveredModelAirs = [fluxUltraAir];
-// const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
-// export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
-// export const resourceDataCache = createCachedArray({
-//   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
-//   lookupFn: async (ids) => {
-//     if (!ids.length) return {};
-//     const explicitIds = ids.filter((id) => explicitCoveredModelVersionIds.includes(id));
-//     const OR: Prisma.ModelVersionWhereInput[] = [{ generationCoverage: { covered: true } }];
-//     if (explicitIds.length) OR.push({ id: { in: explicitIds } });
-//     const [modelVersions, modelVersionFiles] = await Promise.all([
-//       dbWrite.modelVersion.findMany({
-//         where: {
-//           id: { in: ids as number[] },
-//           OR,
-//         },
-//         select: generationResourceSelect,
-//       }),
-//       dbRead.modelFile.findMany({
-//         where: { modelVersionId: { in: ids }, visibility: 'Public' },
-//         select: { id: true, sizeKB: true, type: true, metadata: true, modelVersionId: true },
-//       }),
-//     ]);
-
-//     const dbResults = modelVersions.map(({ settings = {}, ...result }) => {
-//       const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
-//         id: number;
-//         sizeKB: number;
-//         type: string;
-//         modelVersionId: number;
-//         metadata: FileMetadata;
-//       }[];
-//       const primaryFile = getPrimaryFile(files);
-//       return removeEmpty({
-//         ...result,
-//         settings: settings as RecommendedSettingsSchema,
-//         fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile.sizeKB) : undefined,
-//         available:
-//           result.availability === 'Public' ||
-//           result.availability === 'EarlyAccess' ||
-//           // If it's private, we need to check access ofcs.
-//           result.availability === 'Private',
-//       });
-//     });
-
-//     const results = dbResults.reduce<Record<number, (typeof dbResults)[number]>>((acc, result) => {
-//       acc[result.id] = result;
-//       return acc;
-//     }, {});
-//     return results;
-//   },
-//   idKey: 'id',
-//   dontCacheFn: (data) => !data.available,
-//   ttl: CacheTTL.hour,
-// });
-
-const explicitCoveredModelAirs = [fluxUltraAir];
-export type ResourceData = AsyncReturnType<typeof resourceDataCache.fetch>[number];
-export const resourceDataCache = createCachedArray({
-  key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
-  lookupFn: async (ids) => {
-    if (!ids.length) return {};
-    const [modelVersions, modelVersionFiles] = await Promise.all([
-      dbWrite.modelVersion.findMany({
-        where: { id: { in: ids as number[] } },
-        select: generationResourceSelect,
-      }),
-      dbRead.modelFile.findMany({
-        where: { modelVersionId: { in: ids }, visibility: 'Public' },
-        select: { id: true, sizeKB: true, type: true, metadata: true, modelVersionId: true },
-      }),
-    ]);
-
-    const dbResults = modelVersions.map(({ generationCoverage, settings = {}, ...result }) => {
-      const covered =
-        explicitCoveredModelAirs.some((air) =>
-          air.includes(`civitai:${result.model.id}@${result.id}`)
-        ) ||
-        (generationCoverage?.covered ?? false);
-      const files = modelVersionFiles.filter((x) => x.modelVersionId === result.id) as {
-        id: number;
-        sizeKB: number;
-        type: string;
-        modelVersionId: number;
-        metadata: FileMetadata;
-      }[];
-      const primaryFile = getPrimaryFile(files);
-      return removeEmpty({
-        ...result,
-        settings: settings as RecommendedSettingsSchema,
-        covered,
-        fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile.sizeKB) : undefined,
-        available:
-          covered &&
-          (result.availability === 'Public' ||
-            result.availability === 'EarlyAccess' ||
-            // If it's private, we need to check access ofcs.
-            result.availability === 'Private'),
-      });
-    });
-
-    const results = dbResults.reduce<Record<number, (typeof dbResults)[number]>>((acc, result) => {
-      acc[result.id] = result;
-      return acc;
-    }, {});
-    return results;
-  },
-  idKey: 'id',
-  dontCacheFn: (data) => !data.available,
-  ttl: CacheTTL.hour,
 });
 
 type ModelVersionDetails = {

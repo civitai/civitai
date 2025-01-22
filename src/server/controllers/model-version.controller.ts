@@ -1,3 +1,4 @@
+import { getGenerationResourceData } from './../services/generation/generation.service';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { BaseModel, baseModelLicenses, BaseModelType, constants } from '~/server/common/constants';
@@ -57,6 +58,7 @@ import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
 import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { removeNulls } from '~/utils/object-helpers';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -67,7 +69,13 @@ export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: 
 };
 
 export type ModelVersionById = AsyncReturnType<typeof getModelVersionHandler>;
-export const getModelVersionHandler = async ({ input }: { input: GetModelVersionSchema }) => {
+export const getModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetModelVersionSchema;
+  ctx: Context;
+}) => {
   const { id, withFiles } = input;
 
   try {
@@ -113,10 +121,10 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
             resource: {
               select: {
                 id: true,
-                name: true,
-                trainedWords: true,
-                baseModel: true,
-                model: { select: { id: true, name: true, type: true } },
+                // name: true,
+                // trainedWords: true,
+                // baseModel: true,
+                // model: { select: { id: true, name: true, type: true } },
               },
             },
             settings: true,
@@ -142,6 +150,18 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
       },
     });
 
+    const recommendedResourceIds = version?.recommendedResources.map((x) => x.id) ?? [];
+    const generationResources = await getGenerationResourceData({
+      ids: recommendedResourceIds,
+      user: ctx?.user,
+    }).then((data) =>
+      data.map((item) => {
+        const settings = (version?.recommendedResources.find((x) => x.resource.id === item.id)
+          ?.settings ?? {}) as RecommendedSettingsSchema;
+        return { ...item, ...removeNulls(settings) };
+      })
+    );
+
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
 
     const unavailableGenResources = await getUnavailableResources();
@@ -159,16 +179,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
       >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
-      recommendedResources: version.recommendedResources.map(({ resource, settings }) => ({
-        id: resource.id,
-        name: resource.name,
-        baseModel: resource.baseModel,
-        modelId: resource.model.id,
-        modelName: resource.model.name,
-        modelType: resource.model.type,
-        trainedWords: resource.trainedWords,
-        strength: (settings as any)?.strength,
-      })),
+      recommendedResources: generationResources,
     };
   } catch (e) {
     if (e instanceof TRPCError) throw e;

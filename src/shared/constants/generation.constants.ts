@@ -7,9 +7,7 @@ import {
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
-import { ResourceData } from '~/server/redis/caches';
 import { GenerationLimits } from '~/server/schema/generation.schema';
-import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -262,11 +260,6 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   )?.[0] ?? defaultType) as BaseModelSetType;
 }
 
-export function getResourcesBaseModelSetType(resources: GenerationResource[]) {
-  const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
-  if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
-}
-
 export function getBaseModelSet(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
   return baseModelSets[baseModelSetType] ?? [];
@@ -290,31 +283,6 @@ export function getIsFlux(baseModel?: string) {
 export function getIsSD3(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
   return baseModelSetType === 'SD3' || baseModelSetType === 'SD3_5M';
-}
-
-export type GenerationResource = MakeUndefinedOptional<
-  ReturnType<typeof formatGenerationResources>[number]
->;
-export function formatGenerationResources(resources: Array<ResourceData>) {
-  return resources.map((resource) => {
-    const settings = resource.settings as RecommendedSettingsSchema;
-    return {
-      id: resource.id,
-      name: resource.name,
-      trainedWords: resource.trainedWords,
-      modelId: resource.model.id,
-      modelName: resource.model.name,
-      modelType: resource.model.type,
-      baseModel: resource.baseModel,
-      strength: settings?.strength ?? 1,
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
-      covered: true,
-      minor: resource.model.minor,
-      available: resource.available,
-      fileSizeKB: resource.fileSizeKB,
-    };
-  });
 }
 
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
@@ -490,6 +458,7 @@ export function getBaseModelResourceTypes(baseModel: string) {
 }
 
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
+export const fluxUltraAirId = 1088507;
 export const fluxModeOptions = [
   { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
   { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },

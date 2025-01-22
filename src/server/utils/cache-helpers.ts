@@ -78,7 +78,12 @@ export function createCachedArray<T extends object>({
       cacheResults.push(...batchResults.filter(isDefined));
     }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
-    const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
+    const cache = Object.fromEntries(
+      cacheArray.map((x) => {
+        if ('cachedAt' in x) delete x.cachedAt;
+        return [x[idKey], x];
+      })
+    );
 
     const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
     const cacheMisses = new Set<number>();

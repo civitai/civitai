@@ -150,7 +150,10 @@ export const ModelVersionEarlyAccessPurchase = ({
                   >
                     <Anchor>here</Anchor>
                   </GenerateButton>
-                  . By purchasing generation access, you will not be able to download this resource,
+                  .
+                </Text>
+                <Text size="xs" color="dimmed">
+                  By purchasing generation access, you will not be able to download this resource,
                   but you can make unlimited generations with it
                 </Text>
               </Stack>
