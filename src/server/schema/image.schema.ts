@@ -309,6 +309,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     skip: z.number().optional(),
     withTags: z.boolean().optional(),
     remixOfId: z.number().optional(),
+    remixesOnly: z.boolean().optional(),
+    nonRemixesOnly: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
