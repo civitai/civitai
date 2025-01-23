@@ -1,11 +1,10 @@
-import { getGenerationResourceData } from './../services/generation/generation.service';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { BaseModel, baseModelLicenses, BaseModelType, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
@@ -53,12 +52,13 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { removeNulls } from '~/utils/object-helpers';
 import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
-import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
-import { removeNulls } from '~/utils/object-helpers';
+import { getGenerationResourceData } from './../services/generation/generation.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -99,6 +99,7 @@ export const getModelVersionHandler = async ({
         trainingDetails: true,
         trainingStatus: true,
         uploadType: true,
+        usageControl: true,
         model: {
           select: {
             id: true,

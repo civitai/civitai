@@ -4,6 +4,7 @@ import {
   ModelVersionEarlyAccessConfig,
   ModelVersionEarlyAccessPurchase,
 } from '~/server/schema/model-version.schema';
+import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
 export const MIN_DONATION_GOAL = 1000;
@@ -42,10 +43,12 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
     { entityId: [modelVersionId], entityType: 'ModelVersion' },
     { enabled: !!modelVersion }
   );
+  const currentUser = useCurrentUser();
 
   if (!modelVersion) {
     return {
       isLoadingAccess,
+      isDownloadable: true, // By default assume it is as it's our default behavior.
       canDownload: false,
       canGenerate: false,
       earlyAccessEndsAt: undefined,
@@ -59,9 +62,15 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
   const isEarlyAccess =
     modelVersion?.earlyAccessEndsAt && modelVersion?.earlyAccessEndsAt > new Date();
   const earlyAccessConfig = modelVersion?.earlyAccessConfig as ModelVersionEarlyAccessConfig;
+  const isOwnerOrMod =
+    modelVersion?.model?.user?.id === currentUser?.id || currentUser?.isModerator;
+  const isDownloadable =
+    modelVersion?.files?.length > 0 &&
+    (modelVersion?.usageControl === ModelUsageControl.Download || isOwnerOrMod);
 
   return {
     isLoadingAccess,
+    isDownloadable,
     canDownload: !isEarlyAccess
       ? true
       : access?.hasAccess &&
