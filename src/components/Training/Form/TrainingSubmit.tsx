@@ -299,6 +299,23 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
         return;
       }
+
+      // specific check for flux batch
+      if (
+        r.baseType === 'flux' &&
+        r.params.engine === 'kohya' &&
+        r.params.trainBatchSize > 2 &&
+        r.params.resolution > 512
+      ) {
+        showErrorNotification({
+          error: new Error(
+            `Due to hardware constraints, batch size >2 is not supported for resolutions >512. Please lower the batch size (this will affect steps) or decrease the resolution.`
+          ),
+          title: 'Flux batch size too high',
+          autoClose: false,
+        });
+        return;
+      }
     }
 
     const performTransaction = () => {

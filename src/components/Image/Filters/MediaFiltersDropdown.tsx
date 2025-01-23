@@ -251,7 +251,7 @@ export function MediaFiltersDropdown({
           </>
         )}
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Chip
             {...chipProps}
             checked={mergedFilters.withMeta}
@@ -276,6 +276,20 @@ export function MediaFiltersDropdown({
             onChange={(checked) => handleChange({ fromPlatform: checked })}
           >
             <span>Made On-site</span>
+          </Chip>
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.nonRemixesOnly}
+            onChange={(checked) => handleChange({ nonRemixesOnly: checked, remixesOnly: !checked })}
+          >
+            <span>Originals Only</span>
+          </Chip>
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.remixesOnly}
+            onChange={(checked) => handleChange({ remixesOnly: checked, nonRemixesOnly: !checked })}
+          >
+            <span>Remixes Only</span>
           </Chip>
         </div>
 

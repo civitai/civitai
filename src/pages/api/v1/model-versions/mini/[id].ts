@@ -10,7 +10,7 @@ import { getUnavailableResources } from '~/server/services/generation/generation
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { Availability, ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/utils/string-helpers';
 
 const schema = z.object({ id: z.coerce.number() });
@@ -29,6 +29,7 @@ type VersionRow = {
   covered?: boolean;
   freeTrialLimit?: number;
   minor: boolean;
+  usageControl: ModelUsageControl;
 };
 type FileRow = {
   id: number;
@@ -68,6 +69,7 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       mv."earlyAccessEndsAt",
       mv."requireAuth",
+      mv."usageControl",
       (
         (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess')
         OR 
@@ -118,6 +120,11 @@ export default MixedAuthEndpoint(async function handler(
     const unavailableResources = await getUnavailableResources();
     const isUnavailable = unavailableResources.some((r) => r === modelVersion.id);
     if (isUnavailable) canGenerate = false;
+
+    // Only allow people with the right permission to generate with this model
+    if (modelVersion.usageControl === ModelUsageControl.InternalGeneration && !user?.isModerator) {
+      canGenerate = false;
+    }
   }
 
   const data = {
