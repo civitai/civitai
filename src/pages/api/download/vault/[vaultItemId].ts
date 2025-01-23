@@ -95,14 +95,17 @@ export default AuthedEndpoint(
     });
 
     if (
-      !access ||
-      !access.hasAccess ||
-      (access.permissions & EntityAccessPermission.EarlyAccessDownload) === 0
+      // If no model version is found, technically, it was deleted from the site and people with it in Vault CAN access it.
+      // This is the whole point of vault.
+      modelVersion &&
+      (!access ||
+        !access.hasAccess ||
+        (access.permissions & EntityAccessPermission.EarlyAccessDownload) === 0)
     ) {
       return onError(503, 'You do not have permission to download this model.');
     }
 
-    if (modelVersion?.usageControl !== ModelUsageControl.Download) {
+    if (modelVersion && modelVersion?.usageControl !== ModelUsageControl.Download) {
       return onError(503, 'This model does not allow downloads.');
     }
 
