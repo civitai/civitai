@@ -1557,6 +1557,7 @@ enum TagSource {
   ImageHash
   Hive
   MinorDetection
+  HiveDemographics
 }
 
 model TagsOnImage {

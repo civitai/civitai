@@ -65,7 +65,10 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
   const earlyAccessConfig = modelVersion?.earlyAccessConfig as ModelVersionEarlyAccessConfig;
   const isOwnerOrMod =
     modelVersion?.model?.user?.id === currentUser?.id || currentUser?.isModerator;
-  const isDownloadable = modelVersion?.usageControl === ModelUsageControl.Download || isOwnerOrMod;
+  const isDownloadable =
+    !modelVersion?.usageControl ||
+    modelVersion?.usageControl === ModelUsageControl.Download ||
+    isOwnerOrMod;
   const isSelectableInGenerator =
     modelVersion?.usageControl !== ModelUsageControl.InternalGeneration;
 

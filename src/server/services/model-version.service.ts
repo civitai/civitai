@@ -943,18 +943,13 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   const generationData = await clickhouse.$query<Row>`
     SELECT
-        resourceId as modelVersionId,
-        createdAt,
-        SUM(1) as generations
-    FROM (
-        SELECT
-            arrayJoin(resourcesUsed) as resourceId,
-            createdAt::date as createdAt
-        FROM orchestration.textToImageJobs
-        WHERE createdAt >= ${date}
-    )
-    WHERE resourceId IN (${modelVersions.map((x) => x.id)})
-    GROUP BY resourceId, createdAt
+      modelVersionId,
+      date as createdAt,
+      MAX(count) as generations
+    FROM buzz_resource_compensation
+    WHERE createdAt >= ${date}
+    AND modelVersionId IN (${modelVersions.map((x) => x.id)})
+    GROUP BY modelVersionId, date
     ORDER BY createdAt DESC, generations DESC;
   `;
 
