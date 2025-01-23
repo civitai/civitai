@@ -3309,6 +3309,33 @@ model WorkflowDefinition {
   @@index([key])
 }
 
+// model WorkflowDefinitionGroup {
+//   id          Int     @id @default(autoincrement())
+//   label       String
+//   description String?
+//   type        String // 'video' | 'image'
+//   disabled    Boolean @default(true)
+//   index       Int
+//   message     String?
+//   toolId      Int?
+
+//   children WorkflowDefinition[]
+// }
+
+// model WorkflowDefinition {
+//   id       Int     @id @default(autoincrement())
+//   index    Int
+//   disabled Boolean @default(true)
+//   message  String?
+//   key      String  @unique // used to match against hard coded generation workflows
+
+//   groupId Int
+//   group   WorkflowDefinitionGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+
+//   @@index([index])
+//   @@index([key])
+// }
+
 /// @view
 model QuestionRank {
   questionId              Int      @id

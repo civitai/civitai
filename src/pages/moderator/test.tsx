@@ -28,6 +28,7 @@ import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import createSlots from '~/libs/slots/create-slots';
 import { getRandomInt } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { CreateWorkflowDefinitionSchema } from '~/server/schema/workflow-definition.schema';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
@@ -89,8 +90,50 @@ const someObject = new Promise((resolve) =>
   })
 );
 
+const toCreate: CreateWorkflowDefinitionSchema[] = [
+  {
+    type: 'video',
+    label: 'Kling',
+    key: 'kling',
+    index: 0,
+    toolId: 166,
+  },
+  {
+    type: 'video',
+    label: 'Hailuo by MiniMax',
+    key: 'minimax',
+    index: 1,
+    toolId: 172,
+  },
+  {
+    type: 'video',
+    label: 'Haiper',
+    key: 'haiper',
+    index: 2,
+    toolId: 65,
+  },
+  {
+    type: 'video',
+    label: 'Mochi',
+    key: 'mochi',
+    index: 3,
+    toolId: 169,
+  },
+  {
+    type: 'image',
+    label: 'Text to Image',
+    key: 'txt2img',
+    index: 4,
+  },
+];
+
 export default function Test() {
   const [count, setCount] = useState(0);
+
+  const workflowDefinitions = useWorkflowDefinitions();
+  const { mutate } = trpc.workflowDefinition.createWorkflowDefinition.useMutation();
+
+  function handleCreateDefaults() {}
 
   useEffect(() => {
     throw new Error('custom error for testing');
