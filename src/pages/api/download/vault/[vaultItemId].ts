@@ -11,6 +11,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { getVaultWithStorage } from '~/server/services/vault.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { isRequestFromBrowser } from '~/server/utils/request-helpers';
+import { ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { getGetUrlByKey } from '~/utils/s3-utils';
 import { getVaultState } from '~/utils/vault';
@@ -83,6 +84,10 @@ export default AuthedEndpoint(
 
     if (!vaultItem) return onError(404, 'Vault item not found');
 
+    const modelVersion = await dbRead.modelVersion.findUnique({
+      where: { id: vaultItem.modelVersionId },
+    });
+
     const [access] = await hasEntityAccess({
       entityType: 'ModelVersion',
       entityIds: [vaultItem.modelVersionId],
@@ -95,6 +100,10 @@ export default AuthedEndpoint(
       (access.permissions & EntityAccessPermission.EarlyAccessDownload) === 0
     ) {
       return onError(503, 'You do not have permission to download this model.');
+    }
+
+    if (modelVersion?.usageControl !== ModelUsageControl.Download) {
+      return onError(503, 'This model does not allow downloads.');
     }
 
     const fileName = `${vaultItem.modelName}-${vaultItem.versionName}`;
