@@ -79,3 +79,7 @@ export const availabilitySchema = z.object({
 });
 
 export type AvailabilityInput = z.infer<typeof availabilitySchema>;
+
+export const reorderByIdsSchema = z.object({
+  ids: z.number().array(),
+});

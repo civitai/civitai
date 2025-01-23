@@ -2505,6 +2505,18 @@ export interface Appeal {
   buzzTransactionId: string | null;
 }
 
+export interface WorkflowDefinition {
+  id: number;
+  type: string;
+  label: string;
+  description: string | null;
+  index: number;
+  disabled: boolean;
+  message: string | null;
+  key: string;
+  toolId: number | null;
+}
+
 export interface QuestionRank {
   questionId: number;
   question?: Question;

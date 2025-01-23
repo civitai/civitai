@@ -72,6 +72,7 @@ import { userLinkRouter } from './user-link.router';
 import { userPaymentConfigurationRouter } from './user-payment-configuration.router';
 import { userRouter } from './user.router';
 import { vaultRouter } from './vault.router';
+import { workflowDefinitionRouter } from './workflowDefinitionRouter';
 
 export const appRouter = router({
   account: accountRouter,
@@ -146,6 +147,7 @@ export const appRouter = router({
   blocklist: blocklistRouter,
   dailyChallenge: dailyChallengeRouter,
   vimeo: vimeoRouter,
+  workflowDefinition: workflowDefinitionRouter,
 });
 
 // export type definition of API

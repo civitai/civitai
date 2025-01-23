@@ -3296,13 +3296,17 @@ model Appeal {
 
 model WorkflowDefinition {
   id          Int     @id @default(autoincrement())
+  type        String // 'video' | 'image'
   label       String
   description String?
-  index       Int?
-  disabled    Boolean @default(false)
+  index       Int
+  disabled    Boolean @default(true)
   message     String?
-  key         String
-  toolId      Int
+  key         String  @unique // used to match against hard coded generation workflows
+  toolId      Int?
+
+  @@index([index])
+  @@index([key])
 }
 
 /// @view
