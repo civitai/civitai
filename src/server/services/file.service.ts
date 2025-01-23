@@ -187,6 +187,7 @@ export const getFileForModelVersion = async ({
 
   const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
   const inEarlyAccess = deadline !== undefined && new Date() < deadline;
+  const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
 
   const archived = modelVersion.model.mode === ModelModifier.Archived;
   if (!noAuth && archived) return { status: 'archived' };
@@ -203,7 +204,7 @@ export const getFileForModelVersion = async ({
   if (!canDownload) return { status: 'not-found' };
 
   if (modelVersion?.usageControl !== ModelUsageControl.Download && !isMod && !isOwner) {
-    return { status: 'unauthorized' };
+    return { status: 'downloads-disabled' };
   }
 
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
@@ -271,6 +272,7 @@ export const getFileForModelVersion = async ({
       nsfw: modelVersion.model.nsfw,
       inEarlyAccess,
       metadata: file.metadata as FileMetadata,
+      isDownloadable,
     };
   } catch (error) {
     return { status: 'error' };
@@ -327,7 +329,7 @@ export function getDownloadFilename({
 
 type ModelVersionFileResult =
   | {
-      status: 'not-found' | 'unauthorized' | 'archived' | 'error';
+      status: 'not-found' | 'unauthorized' | 'archived' | 'downloads-disabled' | 'error';
     }
   | {
       status: 'early-access';
@@ -343,6 +345,7 @@ type ModelVersionFileResult =
       nsfw: boolean;
       inEarlyAccess: boolean;
       metadata: FileMetadata;
+      isDownloadable?: boolean;
     };
 
 type FileResult = {

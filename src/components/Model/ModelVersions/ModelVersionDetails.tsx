@@ -112,6 +112,7 @@ import {
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
+  ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
@@ -152,11 +153,15 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const {
     isLoadingAccess,
     isDownloadable,
+    isSelectableInGenerator,
     canDownload: hasDownloadPermissions,
     canGenerate: hasGeneratePermissions,
   } = useModelVersionPermission({
     modelVersionId: version.id,
   });
+
+  // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
+  const downloadsDisabled = version?.usageControl !== ModelUsageControl.Download;
 
   const { collection, setShowcaseCollection, settingShowcase } = useModelShowcaseCollection({
     modelId: model.id,
@@ -187,6 +192,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();
   const earlyAccessConfig = version?.earlyAccessConfig;
   const canGenerate =
+    isSelectableInGenerator &&
     features.imageGeneration &&
     version.canGenerate &&
     (!isEarlyAccess || !!earlyAccessConfig?.chargeForGeneration || hasGeneratePermissions);
@@ -338,9 +344,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       label: 'Stats',
       value: (
         <Group spacing={4}>
-          <IconBadge radius="xs" icon={<IconDownload size={14} />}>
-            <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
-          </IconBadge>
+          {!downloadsDisabled && (
+            <IconBadge radius="xs" icon={<IconDownload size={14} />}>
+              <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
+            </IconBadge>
+          )}
           {version.canGenerate && (
             <GenerateButton
               modelVersionId={version.id}
@@ -913,13 +921,20 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             baseModel={version.baseModel}
           />
 
-          {!isDownloadable && (
+          {(!isDownloadable || downloadsDisabled) && (
             <Alert title="Download disabled" color="yellow" icon={<IconDownload />}>
-              <Text>
-                The owner of this model has disabled downloads for this model.{' '}
-                {canGenerate &&
-                  'You can still generate images using this model in our generator, but will not be able to download the model files.'}
-              </Text>
+              {isDownloadable ? (
+                <Text>
+                  As the owner, you can still download this model, but other user will not be able
+                  to.
+                </Text>
+              ) : (
+                <Text>
+                  The owner of this model has disabled downloads for this model.{' '}
+                  {canGenerate &&
+                    'You can still generate images using this model in our generator, but will not be able to download the model files.'}
+                </Text>
+              )}
             </Alert>
           )}
 

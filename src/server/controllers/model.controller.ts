@@ -747,6 +747,7 @@ export const getDownloadCommandHandler = async ({
             nsfw: true,
           },
         },
+        usageControl: true,
         // images: {
         //   select: {
         //     image: { select: { url: true } },
@@ -773,6 +774,12 @@ export const getDownloadCommandHandler = async ({
       orderBy: { index: 'asc' },
     });
     if (!modelVersion) throw throwNotFoundError();
+
+    const isDownloadable = modelVersion.usageControl !== ModelUsageControl.Download;
+
+    if (!isDownloadable && !(modelVersion.model.userId === ctx.user?.id || ctx.user?.isModerator)) {
+      throw throwAuthorizationError();
+    }
 
     const [access] = await hasEntityAccess({
       entityType: 'ModelVersion',
@@ -812,13 +819,18 @@ export const getDownloadCommandHandler = async ({
 
     const now = new Date();
     await addUserDownload({ userId, modelVersionId: modelVersion.id, downloadAt: now });
-    ctx.track.modelVersionEvent({
-      type: 'Download',
-      modelId: modelVersion.model.id,
-      modelVersionId: modelVersion.id,
-      nsfw: modelVersion.model.nsfw,
-      time: now,
-    });
+
+    if (isDownloadable) {
+      // Best not to track for versions that are not downloadable.
+      // Safer for us.
+      ctx.track.modelVersionEvent({
+        type: 'Download',
+        modelId: modelVersion.model.id,
+        modelVersionId: modelVersion.id,
+        nsfw: modelVersion.model.nsfw,
+        time: now,
+      });
+    }
 
     const fileName = getDownloadFilename({ model, modelVersion, file });
     const { url } = await getDownloadUrl(file.url, fileName);

@@ -49,6 +49,7 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
     return {
       isLoadingAccess,
       isDownloadable: true, // By default assume it is as it's our default behavior.
+      isSelectableInGenerator: true, // By default assume it is as it's our default behavior.
       canDownload: false,
       canGenerate: false,
       earlyAccessEndsAt: undefined,
@@ -64,13 +65,14 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
   const earlyAccessConfig = modelVersion?.earlyAccessConfig as ModelVersionEarlyAccessConfig;
   const isOwnerOrMod =
     modelVersion?.model?.user?.id === currentUser?.id || currentUser?.isModerator;
-  const isDownloadable =
-    modelVersion?.files?.length > 0 &&
-    (modelVersion?.usageControl === ModelUsageControl.Download || isOwnerOrMod);
+  const isDownloadable = modelVersion?.usageControl === ModelUsageControl.Download || isOwnerOrMod;
+  const isSelectableInGenerator =
+    modelVersion?.usageControl !== ModelUsageControl.InternalGeneration;
 
   return {
     isLoadingAccess,
     isDownloadable,
+    isSelectableInGenerator,
     canDownload: !isEarlyAccess
       ? true
       : access?.hasAccess &&
