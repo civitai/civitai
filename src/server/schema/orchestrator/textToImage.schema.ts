@@ -1,7 +1,8 @@
 import { z } from 'zod';
-import { isProd } from '~/env/other';
-import { baseModelSetTypes, generation } from '~/server/common/constants';
+
+import { baseModelSets, generation } from '~/server/common/constants';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
@@ -31,7 +32,7 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
   fluxUltraAspectRatio: z.string().optional(),
-  baseModel: z.enum(baseModelSetTypes),
+  baseModel: zodEnumFromObjKeys(baseModelSets),
   width: z.number(),
   height: z.number(),
   // temp props?

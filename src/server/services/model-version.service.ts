@@ -842,8 +842,8 @@ export const getModelVersionsByModelType = async ({
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
     const baseModelSet = getBaseModelSet(baseModel);
-    if (baseModelSet.length)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+    if (baseModelSet.baseModels.length)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
   }
   if (query) {
     const pgQuery = '%' + query + '%';

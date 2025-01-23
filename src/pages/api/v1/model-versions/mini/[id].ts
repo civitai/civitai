@@ -72,9 +72,9 @@ export default MixedAuthEndpoint(async function handler(
       mv."usageControl",
       (
         (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess')
-        OR 
+        OR
         (mv."availability" = 'Private')
-      
+
       ) AS "checkPermission",
       (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
       (
@@ -133,12 +133,13 @@ export default MixedAuthEndpoint(async function handler(
     modelName: modelVersion.modelName,
     baseModel: modelVersion.baseModel,
     availability: modelVersion.availability,
-    size: primaryFile.sizeKB,
+    size: primaryFile.sizeKB, // nullable
+    // nullable - hashes
     hashes: {
-      AutoV2: primaryFile.hash,
+      AutoV2: primaryFile.hash, // nullable
     },
-    downloadUrls: [downloadUrl],
-    format,
+    downloadUrls: [downloadUrl], // nullable
+    format, // nullable
     canGenerate,
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,

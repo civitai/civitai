@@ -432,79 +432,77 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
-export type BaseModelSetType = (typeof baseModelSetTypes)[number];
-export const baseModelSetTypes = [
-  'SD1',
-  'SD2',
-  'SD3',
-  'SD3_5M',
-  'SDXL',
-  'SDXLDistilled',
-  'SCascade',
-  'Pony',
-  'PixArtA',
-  'PixArtE',
-  'Lumina',
-  'Kolors',
-  'HyDit1',
-  'ODOR',
-  'Flux1',
-  'Illustrious',
-  'Other',
-  'Mochi',
-  'LTXV',
-  'CogVideoX',
-] as const;
+class BaseModelSet<TBaseModel, THidden extends TBaseModel> {
+  name: string;
+  baseModels: StringLiteral<TBaseModel>[];
+  hidden?: StringLiteral<THidden>[];
+  constructor(args: {
+    name: string;
+    baseModels: StringLiteral<TBaseModel>[];
+    hidden?: StringLiteral<THidden>[];
+  }) {
+    this.name = args.name;
+    this.baseModels = args.baseModels;
+    this.hidden = args.hidden;
+  }
+}
 
-const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
-export const baseModelSets = defineBaseModelSets({
-  SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
-  SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-  SD3: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
-  SD3_5M: ['SD 3.5 Medium'],
-  Flux1: ['Flux.1 S', 'Flux.1 D'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
-  SDXLDistilled: ['SDXL Distilled'],
-  PixArtA: ['PixArt a'],
-  PixArtE: ['PixArt E'],
-  Lumina: ['Lumina'],
-  Kolors: ['Kolors'],
-  HyDit1: ['Hunyuan 1'],
-  HyV1: ['Hunyuan Video'],
-  SCascade: ['Stable Cascade'],
-  Pony: ['Pony'],
-  ODOR: ['ODOR'],
-  Illustrious: ['Illustrious'],
-  Other: ['Other'],
-  Mochi: ['Mochi'],
-  LTXV: ['LTXV'],
-  CogVideoX: ['CogVideoX'],
-});
+export const baseModelSets = {
+  SD1: new BaseModelSet({
+    name: 'Stable Diffusion',
+    baseModels: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
+  }),
+  SD2: new BaseModelSet({
+    name: 'Stable Diffusion',
+    baseModels: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
+    hidden: ['SD 2.1 768', 'SD 2.1 Unclip', 'SD 2.0 768'],
+  }),
+  SD3: new BaseModelSet({
+    name: 'Stable Diffusion',
+    baseModels: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
+  }),
+  SD3_5M: new BaseModelSet({
+    name: 'Stable Diffusion',
+    baseModels: ['SD 3.5 Medium'],
+  }),
+  Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'] }),
+  SDXL: new BaseModelSet({
+    name: 'Stable Diffusion XL',
+    baseModels: [
+      'SDXL 0.9',
+      'SDXL 1.0',
+      'SDXL 1.0 LCM',
+      'SDXL Lightning',
+      'SDXL Hyper',
+      'SDXL Turbo',
+    ],
+    hidden: ['SDXL 0.9', 'SDXL Turbo', 'SDXL 1.0 LCM'],
+  }),
+  SDXLDistilled: new BaseModelSet({
+    name: 'Stable Diffusion XL',
+    baseModels: ['SDXL Distilled'],
+    hidden: ['SDXL Distilled'],
+  }),
+  PixArtA: new BaseModelSet({ name: 'PixArt alpha', baseModels: ['PixArt a'] }),
+  PixArtE: new BaseModelSet({ name: 'PixArt sigma', baseModels: ['PixArt E'] }),
+  Lumina: new BaseModelSet({ name: 'Lumina', baseModels: ['Lumina'] }),
+  Kolors: new BaseModelSet({ name: 'Kolors', baseModels: ['Kolors'] }),
+  HyDit1: new BaseModelSet({ name: 'Hunyuan DiT', baseModels: ['Hunyuan 1'] }),
+  HyV1: new BaseModelSet({ name: 'Hunyuan Video', baseModels: ['Hunyuan Video'] }),
+  SCascade: new BaseModelSet({ name: 'Stable Cascade', baseModels: ['Stable Cascade'] }),
+  ODOR: new BaseModelSet({ name: 'ODOR', baseModels: ['Odor'], hidden: ['Odor'] }),
+  Pony: new BaseModelSet({ name: 'Stable Diffusion', baseModels: ['Pony'] }),
+  Illustrious: new BaseModelSet({ name: 'Illustrious', baseModels: ['Illustrious'] }),
+  Other: new BaseModelSet({ name: 'Other', baseModels: ['Other'] }),
+  Mochi: new BaseModelSet({ name: 'Mochi', baseModels: ['Mochi'] }),
+  LTXV: new BaseModelSet({ name: 'LTXV', baseModels: ['LTXV'] }),
+  CogVideoX: new BaseModelSet({ name: 'CogVideoX', baseModels: ['CogVideoX'] }),
+};
 
-const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
-export const baseModelSetNames = defineBaseModelSetNames({
-  SD1: 'Stable Diffusion',
-  SD2: 'Stable Diffusion',
-  SD3: 'Stable Diffusion',
-  SD3_5M: 'Stable Diffusion',
-  Flux1: 'Flux',
-  SDXL: 'Stable Diffusion XL',
-  SDXLDistilled: 'Stable Diffusion XL',
-  PixArtA: 'PixArt alpha',
-  PixArtE: 'PixArt sigma',
-  Lumina: 'Lumina',
-  Kolors: 'Kolors',
-  HyDit1: 'Hunyuan DiT',
-  HyV1: 'Hunyuan Video',
-  SCascade: 'Stable Cascade',
-  Pony: 'Stable Diffusion',
-  ODOR: 'ODOR',
-  Illustrious: 'Illustrious',
-  Other: 'Other',
-  Mochi: 'Mochi',
-  LTXV: 'LTXV',
-  CogVideoX: 'CogVideoX',
-});
+type BaseModelSets = typeof baseModelSets;
+export type BaseModelSetType = keyof BaseModelSets;
+// export const baseModelSetTypes = Object.keys(baseModelSets) as BaseModelSetType[];
+// type BaseModels = BaseModelSets[BaseModelSetType]['baseModels'][number];
 
 type LicenseDetails = {
   url: string;
