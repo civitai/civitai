@@ -145,7 +145,9 @@ export default PublicEndpoint(
     // Track download
     try {
       if (!fileResult.isDownloadable) {
-        throw new Error('File not downloadable. Either moderator or owner download. Ignore.');
+        throw new Error(
+          'File not downloadable. Either a moderator or the resource owner disabled downloads for this version'
+        );
       }
 
       const now = new Date();

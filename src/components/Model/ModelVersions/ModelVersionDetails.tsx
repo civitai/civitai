@@ -849,7 +849,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       </div>
                     </Tooltip>
                   )}
-                  {hasDownloadPermissions && (
+                  {hasDownloadPermissions && !downloadsDisabled && (
                     <ToggleVaultButton modelVersionId={version.id}>
                       {({ isLoading, isInVault, toggleVaultItem }) => (
                         <Tooltip

@@ -340,7 +340,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 name="usageControl"
                 label="Usage Control"
                 description="Determines what other users can do with your model. You can change this setting at any time."
-                placeholder="Select how this model version can be used"
+                placeholder="Select how this resource can be used"
                 withAsterisk
                 style={{ flex: 1 }}
                 onChange={(value) => {
@@ -356,7 +356,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                 data={Object.values(ModelUsageControl)
                   .map((x) => ({
                     value: x,
-                    label: getDisplayName(x),
+                    label: getDisplayName(x, {
+                      overwrites: {
+                        [ModelUsageControl.Download]: 'Download & On-Site Generation',
+                        [ModelUsageControl.Generation]: 'On-Site Generation Only',
+                        [ModelUsageControl.InternalGeneration]: 'Internal API Generation Only',
+                      },
+                    }),
                   }))
                   .filter(
                     // We don't want random people accessing this.
