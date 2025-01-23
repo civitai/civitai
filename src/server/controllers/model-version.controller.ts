@@ -52,7 +52,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { removeNulls } from '~/utils/object-helpers';
 import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
@@ -217,6 +217,15 @@ export const upsertModelVersionHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
+    if (!ctx.features.generationOnlyModels && input.usageControl !== ModelUsageControl.Download) {
+      // People without access to thje generationOnlyModels feature can only create download models
+      input.usageControl = ModelUsageControl.Download;
+    }
+
+    if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
+      throw throwBadRequestError('Only moderators can manage internal generation models');
+    }
+
     if (input.trainingDetails === null) {
       input.trainingDetails = undefined;
     }
@@ -241,6 +250,15 @@ export const upsertModelVersionHandler = async ({
           'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
         );
       }
+    }
+
+    if (
+      input?.usageControl !== ModelUsageControl.Download &&
+      input?.earlyAccessConfig?.chargeForDownload
+    ) {
+      throw throwBadRequestError(
+        'Cannot charge for download if downloads are disabled for this model version'
+      );
     }
 
     const version = await upsertModelVersion({

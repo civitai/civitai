@@ -334,44 +334,49 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             maxLength={25}
           />
 
-          <InputSelect
-            name="usageControl"
-            label="Usage Control"
-            description="Determines what other users can do with your model. You can change this setting at any time."
-            placeholder="Select how this model version can be used"
-            withAsterisk
-            style={{ flex: 1 }}
-            onChange={(value) => {
-              if (earlyAccessConfig && value !== ModelUsageControl.Download) {
-                // Reset download values:
-                form.setValue('earlyAccessConfig', {
-                  ...earlyAccessConfig,
-                  chargeForDownload: false,
-                  downloadPrice: undefined,
-                });
-              }
-            }}
-            data={Object.values(ModelUsageControl)
-              .map((x) => ({
-                value: x,
-                label: getDisplayName(x),
-              }))
-              .filter(
-                // We don't want random people accessing this.
-                (x) => x.value !== ModelUsageControl.InternalGeneration || x.value === usageControl
-              )}
-          />
+          {features.generationOnlyModels && (
+            <>
+              <InputSelect
+                name="usageControl"
+                label="Usage Control"
+                description="Determines what other users can do with your model. You can change this setting at any time."
+                placeholder="Select how this model version can be used"
+                withAsterisk
+                style={{ flex: 1 }}
+                onChange={(value) => {
+                  if (earlyAccessConfig && value !== ModelUsageControl.Download) {
+                    // Reset download values:
+                    form.setValue('earlyAccessConfig', {
+                      ...earlyAccessConfig,
+                      chargeForDownload: false,
+                      downloadPrice: undefined,
+                    });
+                  }
+                }}
+                data={Object.values(ModelUsageControl)
+                  .map((x) => ({
+                    value: x,
+                    label: getDisplayName(x),
+                  }))
+                  .filter(
+                    // We don't want random people accessing this.
+                    (x) =>
+                      x.value !== ModelUsageControl.InternalGeneration || x.value === usageControl
+                  )}
+              />
 
-          <Alert color="blue" title="Usage Control">
-            {modelDownloadEnabled ? (
-              <Text>People will be able to download & generate with this model version.</Text>
-            ) : (
-              <Text>
-                People will be able to generate with this model version, but will not be able to
-                download it.
-              </Text>
-            )}
-          </Alert>
+              <Alert color="blue" title="Usage Control">
+                {modelDownloadEnabled ? (
+                  <Text>People will be able to download & generate with this model version.</Text>
+                ) : (
+                  <Text>
+                    People will be able to generate with this model version, but will not be able to
+                    download it.
+                  </Text>
+                )}
+              </Alert>
+            </>
+          )}
 
           {showEarlyAccessInput && (
             <Stack spacing={0}>
