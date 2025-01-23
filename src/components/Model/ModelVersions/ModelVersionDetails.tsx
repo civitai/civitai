@@ -161,7 +161,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   });
 
   // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
-  const downloadsDisabled = version?.usageControl !== ModelUsageControl.Download;
+  const downloadsDisabled =
+    !!version?.usageControl && version?.usageControl !== ModelUsageControl.Download;
 
   const { collection, setShowcaseCollection, settingShowcase } = useModelShowcaseCollection({
     modelId: model.id,
@@ -1034,7 +1035,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               <Accordion.Item value="collection-showcase">
                 <Accordion.Control
                   disabled={settingShowcase}
-                  className="aria-expanded:border-b aria-expanded:border-solid aria-expanded:border-gray-2 dark:aria-expanded:border-dark-4"
+                  className="aria-expanded:border-gray-2 dark:aria-expanded:border-dark-4 aria-expanded:border-b aria-expanded:border-solid"
                 >
                   <div className="flex items-center justify-between">
                     <div>
