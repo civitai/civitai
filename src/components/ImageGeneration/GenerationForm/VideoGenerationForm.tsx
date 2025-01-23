@@ -55,6 +55,10 @@ import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/Gene
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { uniqBy } from 'lodash-es';
+import {
+  lightricksAspectRatios,
+  lightricksDuration,
+} from '~/server/orchestrator/lightricks/lightricks.schema';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -174,6 +178,8 @@ function EngineForm() {
       return <MinimaxTxt2VidGenerationForm />;
     case 'minimax-img2vid':
       return <MinimaxImg2VidGenerationForm />;
+    case 'lightricks-txt2vid':
+      return <LightricksTxt2VidGenerationForm />;
     default:
       return null;
   }
@@ -241,7 +247,7 @@ function KlingTextToVideoForm() {
             </InfoPopover>
           </div>
         }
-        min={0}
+        min={0.1}
         max={1}
         step={0.1}
         precision={1}
@@ -302,7 +308,6 @@ function KlingImageToVideoForm() {
             </InfoPopover>
           </div>
         }
-        description="A value above 0.7 may cause visual errors due to conflicts between the image and the text"
         min={0}
         max={1}
         step={0.1}
@@ -399,6 +404,85 @@ function MinimaxImg2VidGenerationForm() {
     <FormWrapper engine="minimax">
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+    </FormWrapper>
+  );
+}
+
+function LightricksTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="lightricks">
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <InputAspectRatioColonDelimited
+        name="aspectRatio"
+        label="Aspect Ratio"
+        options={lightricksAspectRatios}
+      />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={lightricksDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={0.1}
+        max={1}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+
+      <InputNumberSlider
+        name="steps"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Steps</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              The number of iterations spent generating a video.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={20}
+        max={30}
+        reverse
+      />
     </FormWrapper>
   );
 }
@@ -550,7 +634,6 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   );
 
   const { workflow } = useWorkflowContext();
-  // console.log({ query, workflow, engine });
 
   const cost = data?.cost?.total ?? 0;
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query

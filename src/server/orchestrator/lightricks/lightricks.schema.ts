@@ -12,6 +12,8 @@ export const lightricksAspectRatios = ['16:9', '1:1', '9:16'] as const;
 export const lightricksDuration = [5, 10] as const;
 
 const lightricksTxt2VidSchema = textEnhancementSchema.extend({
+  engine: z.literal('lightricks'),
+  workflow: z.string(),
   negativePrompt: negativePromptSchema,
   aspectRatio: z.enum(lightricksAspectRatios).default('1:1').catch('1:1'),
   duration: numberEnum(lightricksDuration).default(5).catch(5),
