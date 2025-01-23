@@ -44,7 +44,7 @@ const generationResourceSchemaBase = z.object({
   name: z.string(),
   trainedWords: z.string().array().default([]),
   baseModel: z.string(),
-  earlyAccessEndsAt: z.date().optional(),
+  earlyAccessEndsAt: z.coerce.date().optional(),
   earlyAccessConfig: modelVersionEarlyAccessConfigSchema.optional(),
   canGenerate: z.boolean(),
   minStrength: z.number().default(-1),
