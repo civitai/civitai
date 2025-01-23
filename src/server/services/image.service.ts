@@ -471,7 +471,7 @@ const defaultScanTypes = [
   ...(env.MINOR_SCANNER === 'custom'
     ? [ImageScanType.MinorDetection]
     : env.MINOR_SCANNER === 'hive'
-    ? [ImageScanType.HiveDemographic]
+    ? [ImageScanType.HiveDemographics]
     : []),
 ];
 
