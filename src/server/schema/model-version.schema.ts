@@ -1,11 +1,3 @@
-import {
-  ModelStatus,
-  ModelType,
-  ModelUploadType,
-  ModelVersionMonetizationType,
-  ModelVersionSponsorshipSettingsType,
-  TrainingStatus,
-} from '~/shared/utils/prisma/enums';
 import { v4 as uuidv4 } from 'uuid';
 import { z } from 'zod';
 import {
@@ -18,6 +10,15 @@ import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import {
+  ModelStatus,
+  ModelType,
+  ModelUploadType,
+  ModelUsageControl,
+  ModelVersionMonetizationType,
+  ModelVersionSponsorshipSettingsType,
+  TrainingStatus,
+} from '~/shared/utils/prisma/enums';
 import { isAir } from '~/utils/string-helpers';
 import { trainingBaseModelType } from '~/utils/training';
 
@@ -220,6 +221,7 @@ export const modelVersionUpsertSchema2 = z.object({
     })
     .nullish(),
   uploadType: z.nativeEnum(ModelUploadType).optional(),
+  usageControl: z.nativeEnum(ModelUsageControl).optional(),
 });
 
 export type GetModelVersionSchema = z.infer<typeof getModelVersionSchema>;

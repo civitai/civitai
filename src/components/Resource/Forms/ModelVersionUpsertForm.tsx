@@ -56,7 +56,7 @@ import {
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { MyRecentlyRecommended } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -195,6 +195,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     monetization: version?.monetization ?? null,
     requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
+    usageControl: version?.usageControl ?? ModelUsageControl.Download,
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -209,6 +210,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   ]) as number[];
   const { isDirty } = form.formState;
   const earlyAccessConfig = form.watch('earlyAccessConfig');
+  const usageControl = form.watch('usageControl');
   const canSave = true;
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
@@ -318,6 +320,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     ? MAX_EARLY_ACCCESS
     : version?.earlyAccessConfig?.timeframe ?? 0;
   const resourceLabel = getDisplayName(model?.type ?? '');
+  const modelDownloadEnabled = usageControl === ModelUsageControl.Download;
 
   return (
     <>
@@ -330,6 +333,56 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             withAsterisk
             maxLength={25}
           />
+
+          {features.generationOnlyModels && (
+            <>
+              <InputSelect
+                name="usageControl"
+                label="Usage Control"
+                description="Determines what other users can do with your model. You can change this setting at any time."
+                placeholder="Select how this resource can be used"
+                withAsterisk
+                style={{ flex: 1 }}
+                onChange={(value) => {
+                  if (earlyAccessConfig && value !== ModelUsageControl.Download) {
+                    // Reset download values:
+                    form.setValue('earlyAccessConfig', {
+                      ...earlyAccessConfig,
+                      chargeForDownload: false,
+                      downloadPrice: undefined,
+                    });
+                  }
+                }}
+                data={Object.values(ModelUsageControl)
+                  .map((x) => ({
+                    value: x,
+                    label: getDisplayName(x, {
+                      overwrites: {
+                        [ModelUsageControl.Download]: 'Download & On-Site Generation',
+                        [ModelUsageControl.Generation]: 'On-Site Generation Only',
+                        [ModelUsageControl.InternalGeneration]: 'Internal API Generation Only',
+                      },
+                    }),
+                  }))
+                  .filter(
+                    // We don't want random people accessing this.
+                    (x) =>
+                      x.value !== ModelUsageControl.InternalGeneration || x.value === usageControl
+                  )}
+              />
+
+              <Alert color="blue" title="Usage Control">
+                {modelDownloadEnabled ? (
+                  <Text>People will be able to download & generate with this model version.</Text>
+                ) : (
+                  <Text>
+                    People will be able to generate with this model version, but will not be able to
+                    download it.
+                  </Text>
+                )}
+              </Alert>
+            </>
+          )}
 
           {showEarlyAccessInput && (
             <Stack spacing={0}>
@@ -388,10 +441,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     e.target.checked
                       ? {
                           timeframe: constants.earlyAccess.timeframeValues[0],
-                          chargeForDownload: true,
-                          downloadPrice: 5000,
-                          chargeForGeneration: false,
-                          generationPrice: undefined,
+                          chargeForDownload: modelDownloadEnabled ? true : false,
+                          downloadPrice: modelDownloadEnabled ? 5000 : undefined,
+                          chargeForGeneration: !modelDownloadEnabled ? true : false,
+                          generationPrice: !modelDownloadEnabled ? 2500 : undefined,
                           generationTrialLimit: 10,
                           donationGoalEnabled: false,
                           donationGoal: undefined,
@@ -472,44 +525,46 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                     )}
                   </Input.Wrapper>
                   <Stack mt="sm">
-                    <Card withBorder>
-                      <Card.Section withBorder>
-                        <Group py="sm" px="md" position="apart" noWrap>
-                          <div>
-                            <Text weight={500} size="sm">
-                              Allow users to pay for download (Includes ability to generate)
-                            </Text>
-                            <Text size="xs">
-                              This will require users to pay buzz to download your {resourceLabel}{' '}
-                              during the early access period
-                            </Text>
-                          </div>
-                          <InputSwitch
-                            name="earlyAccessConfig.chargeForDownload"
-                            disabled={isEarlyAccessOver}
-                          />
-                        </Group>
-                      </Card.Section>
-                      {earlyAccessConfig?.chargeForDownload && (
-                        <Card.Section py="sm" px="md">
-                          <InputNumber
-                            name="earlyAccessConfig.downloadPrice"
-                            label="Download price"
-                            description=" How much buzz would you like to charge for your version download?"
-                            min={100}
-                            max={
-                              isPublished
-                                ? version?.earlyAccessConfig?.downloadPrice
-                                : MAX_DONATION_GOAL
-                            }
-                            step={100}
-                            icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                            withAsterisk
-                            disabled={isEarlyAccessOver}
-                          />
+                    {modelDownloadEnabled && (
+                      <Card withBorder>
+                        <Card.Section withBorder>
+                          <Group py="sm" px="md" position="apart" noWrap>
+                            <div>
+                              <Text weight={500} size="sm">
+                                Allow users to pay for download (Includes ability to generate)
+                              </Text>
+                              <Text size="xs">
+                                This will require users to pay buzz to download your {resourceLabel}{' '}
+                                during the early access period
+                              </Text>
+                            </div>
+                            <InputSwitch
+                              name="earlyAccessConfig.chargeForDownload"
+                              disabled={isEarlyAccessOver}
+                            />
+                          </Group>
                         </Card.Section>
-                      )}
-                    </Card>
+                        {earlyAccessConfig?.chargeForDownload && (
+                          <Card.Section py="sm" px="md">
+                            <InputNumber
+                              name="earlyAccessConfig.downloadPrice"
+                              label="Download price"
+                              description=" How much buzz would you like to charge for your version download?"
+                              min={100}
+                              max={
+                                isPublished
+                                  ? version?.earlyAccessConfig?.downloadPrice
+                                  : MAX_DONATION_GOAL
+                              }
+                              step={100}
+                              icon={<CurrencyIcon currency="BUZZ" size={16} />}
+                              withAsterisk
+                              disabled={isEarlyAccessOver}
+                            />
+                          </Card.Section>
+                        )}
+                      </Card>
+                    )}
                     <Card withBorder>
                       <Card.Section withBorder>
                         <Group py="sm" px="md" position="apart" noWrap>
@@ -795,22 +850,24 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
               )}
             </Group>
           </Stack>
-          <Stack spacing={8}>
-            <Divider label="Additional options" />
+          {modelDownloadEnabled && (
+            <Stack spacing={8}>
+              <Divider label="Additional options" />
 
-            <InputSwitch
-              name="requireAuth"
-              label="Require users to be logged in to download this asset"
-              description={
-                <>
-                  This limits a bots ability to download the files associated with this resource.
-                  <br />
-                  This will also require third-party applications to utilize a user API key to
-                  download the asset files.
-                </>
-              }
-            />
-          </Stack>
+              <InputSwitch
+                name="requireAuth"
+                label="Require users to be logged in to download this asset"
+                description={
+                  <>
+                    This limits a bots ability to download the files associated with this resource.
+                    <br />
+                    This will also require third-party applications to utilize a user API key to
+                    download the asset files.
+                  </>
+                }
+              />
+            </Stack>
+          )}
         </Stack>
         {children({ loading: upsertVersionMutation.isLoading, canSave })}
       </Form>

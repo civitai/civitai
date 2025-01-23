@@ -66,11 +66,16 @@ const nameOverrides: Record<string, string> = {
   minimax: 'Hailou by MiniMax',
 };
 
-export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
+export function getDisplayName(
+  value: string,
+  options?: { splitNumbers?: boolean; overwrites?: Record<string, string> }
+) {
   const { splitNumbers = true } = options ?? {};
   if (!value) return '';
 
-  return nameOverrides[value] ?? splitUppercase(value, { splitNumbers });
+  return (
+    options?.overwrites?.[value] ?? nameOverrides[value] ?? splitUppercase(value, { splitNumbers })
+  );
 }
 
 export function getInitials(value: string) {
