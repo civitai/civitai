@@ -111,7 +111,7 @@ export function TourProvider({ children, ...props }: Props) {
         updateUserSettingsMutation.mutate({
           completedTour: { [state.activeTour]: true },
         });
-        // Need to explicit typecast here because ts is dumb
+        // Need to explicitly typecast here because ts is dumb
         setCompleted((old) => ({ ...old, [state.activeTour as string]: true }));
         closeTour({ reset: true });
         return;
@@ -121,12 +121,13 @@ export function TourProvider({ children, ...props }: Props) {
         const isPrevAction = action === ACTIONS.PREV;
         const nextStepIndex = index + (isPrevAction ? -1 : 1);
 
-        if (isPrevAction) await (step.data as StepData)?.onPrev?.();
-        else await (step.data as StepData)?.onNext?.();
+        closeTour();
 
-        if (step.data?.waitForElement) {
-          closeTour();
-          await waitForElement({ ...step.data.waitForElement }).catch(console.error);
+        try {
+          if (isPrevAction) await (step.data as StepData)?.onPrev?.();
+          else await (step.data as StepData)?.onNext?.();
+        } catch {
+          return;
         }
 
         runTour({ step: nextStepIndex });
@@ -144,10 +145,10 @@ export function TourProvider({ children, ...props }: Props) {
     running: state.running,
     forceRun: state.forceRun,
     activeTour: state.activeTour,
+    currentStep: state.currentStep,
     steps: state.steps,
     alreadyCompleted,
     isInitialLoading,
-    userSettings,
     completed,
     value: (!alreadyCompleted && !isInitialLoading) || state.forceRun,
   });
@@ -187,7 +188,7 @@ const availableTours: Record<string, StepWithData[]> = {
   'content-generation': [
     {
       target: '[data-tour="gen:start"]',
-      placement: 'auto',
+      placement: 'center',
       title: 'Getting Started with Content Generation',
       content:
         'Welcome to the content generation tool! This tour will guide you through the process.',
@@ -215,34 +216,36 @@ const availableTours: Record<string, StepWithData[]> = {
           </Text>
         </div>
       ),
+      disableBeacon: true,
       data: {
-        onNext: () =>
+        onNext: async () => {
           Router.push({
             pathname: '/collections/[collectionId]',
             query: { collectionId: 107, tour: 'content-generation' },
-          }),
-        waitForElement: { selector: '[data-tour="gen:remix"]', timeout: 30000 },
+          });
+
+          await waitForElement({ selector: '[data-tour="gen:remix"]', timeout: 30000 });
+        },
       },
     },
     {
       target: '[data-tour="gen:remix"]',
       title: 'Remix This Image',
       content: 'Click this button to remix an image and create something new',
-      data: {
-        onNext: () => generationPanel.open(),
-        waitForElement: { selector: '[data-tour="gen:submit"]' },
-      },
+      hideFooter: true,
     },
     {
       target: '[data-tour="gen:submit"]',
       title: 'Submit Your Prompt',
       content: 'You can submit your prompt by clicking this button and see the magic happen!',
+      placement: 'top',
     },
     {
       target: '[data-tour="gen:reset"]',
       title: 'All Set!',
       content: 'You can view this tour at anytime by clicking this icon.',
       locale: { last: 'Done' },
+      placement: 'top',
     },
   ],
 
@@ -253,7 +256,7 @@ const availableTours: Record<string, StepWithData[]> = {
       content:
         'This is where your generated media is stored, along with all the generation details.',
       data: {
-        onNext: () => generationPanel.setView('queue'),
+        onNext: async () => generationPanel.setView('queue'),
       },
       disableBeacon: true,
     },
@@ -262,10 +265,10 @@ const availableTours: Record<string, StepWithData[]> = {
       title: 'Your Generation Feed',
       content: 'View all your generated media here in a single scrollable view.',
       data: {
-        onNext: () => {
+        onNext: async () => {
           generationPanel.setView('feed');
+          await waitForElement({ selector: '[data-tour="gen:select"]' });
         },
-        waitForElement: { selector: '[data-tour="gen:select"]' },
       },
     },
     {
@@ -285,16 +288,22 @@ const availableTours: Record<string, StepWithData[]> = {
           earn rewards like Buzz!
         </Text>
       ),
+      hideFooter: true,
       data: {
-        waitForElement: { selector: '[data-tour="gen:post"]' },
+        onNext: async () => {
+          await waitForElement({ selector: '[data-tour="gen:post"]' });
+        },
       },
     },
     {
       target: '[data-tour="gen:post"]',
       title: 'Posting Content',
       content: 'Click this button to post your selected content to the site.',
+      hideFooter: true,
       data: {
-        waitForElement: { selector: '[data-tour="post:title"]', timeout: 30000 },
+        onNext: async () => {
+          await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 });
+        },
       },
     },
     {
@@ -302,8 +311,12 @@ const availableTours: Record<string, StepWithData[]> = {
       title: 'Add a Title',
       content:
         'Add a title to your post to give it some context. This step is optional but helps personalize your creation.',
+      hideBackButton: true,
       data: {
-        onPrev: () => generationPanel.open(),
+        onPrev: async () => {
+          generationPanel.open();
+          await waitForElement({ selector: '[data-tour="gen:select"]' });
+        },
       },
     },
     {
@@ -318,7 +331,12 @@ const availableTours: Record<string, StepWithData[]> = {
       content:
         'Descriptions provide additional details about your post, helping viewers understand your creation better.',
       data: {
-        waitForElement: { selector: '[data-tour="post:rate-resource"]', timeout: 30000 },
+        onNext: async () => {
+          await waitForElement({
+            selector: '[data-tour="post:rate-resource"]',
+            timeout: 30000,
+          });
+        },
       },
     },
     {

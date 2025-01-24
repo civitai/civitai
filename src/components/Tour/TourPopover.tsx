@@ -4,8 +4,8 @@ import React, { useCallback } from 'react';
 import { TooltipRenderProps } from 'react-joyride';
 
 export interface StepData {
-  onNext?: VoidFunction | Awaited<VoidFunction>;
-  onPrev?: VoidFunction | Awaited<VoidFunction>;
+  onNext?: () => Promise<void>;
+  onPrev?: () => Promise<void>;
   waitForElement?: { selector: string; timeout?: number };
 }
 
@@ -39,44 +39,48 @@ export function TourPopover(props: TooltipRenderProps) {
   );
 
   return (
-    <Paper {...tooltipProps} className="flex flex-col gap-4" p="sm" radius="md" maw="400px">
+    <Paper {...tooltipProps} className="flex flex-col gap-4" p="sm" radius="md" maw="375px">
       <Group position="apart" align="flex-start" noWrap>
         {step.title && (
           <Text size="lg" lineClamp={2}>
             {step.title}
           </Text>
         )}
-        <CloseButton {...closeProps} ml="auto" />
+        {!step.hideCloseButton && <CloseButton {...closeProps} ml="auto" />}
       </Group>
       <Text>{step.content}</Text>
-      <Group position="apart" noWrap>
-        <Button {...skipProps} variant="subtle" size="xs" color="gray">
-          {skipProps.title}
-        </Button>
-        {continuous && (
-          <Group spacing={8} noWrap>
-            {index > 0 && (
-              <Button
-                {...backProps}
-                onClick={handlePrevClick}
-                variant="subtle"
-                size="xs"
-                leftIcon={<IconChevronLeft size={16} />}
-              >
-                {backProps.title ?? 'Back'}
-              </Button>
-            )}
-            <Button
-              {...primaryProps}
-              onClick={handleNextClick}
-              size="xs"
-              rightIcon={!isLastStep ? <IconChevronRight size={16} /> : null}
-            >
-              {isLastStep ? 'Done' : primaryProps.title}
+      {!step.hideFooter && (
+        <Group position="apart" noWrap>
+          {step.showSkipButton !== false && (
+            <Button {...skipProps} variant="subtle" size="xs" color="gray">
+              {skipProps.title}
             </Button>
-          </Group>
-        )}
-      </Group>
+          )}
+          {continuous && (
+            <Group spacing={8} noWrap>
+              {index > 0 && !step.hideBackButton && (
+                <Button
+                  {...backProps}
+                  onClick={handlePrevClick}
+                  variant="subtle"
+                  size="xs"
+                  leftIcon={<IconChevronLeft size={16} />}
+                >
+                  {backProps.title ?? 'Back'}
+                </Button>
+              )}
+              <Button
+                {...primaryProps}
+                onClick={handleNextClick}
+                size="xs"
+                rightIcon={!isLastStep ? <IconChevronRight size={16} /> : null}
+              >
+                {isLastStep ? 'Done' : primaryProps.title}
+              </Button>
+            </Group>
+          )}
+        </Group>
+      )}
     </Paper>
   );
 }
