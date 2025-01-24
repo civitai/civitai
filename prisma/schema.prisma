@@ -3197,6 +3197,7 @@ model Tool {
   supported   Boolean     @default(false)
   company     String?
   metadata    Json        @default("{}")
+  alias       String?
 }
 
 model ImageTool {

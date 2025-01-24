@@ -2425,6 +2425,7 @@ export interface Tool {
   supported: boolean;
   company: string | null;
   metadata: JsonValue;
+  alias: string | null;
 }
 
 export interface ImageTool {

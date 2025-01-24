@@ -50,6 +50,13 @@ export async function getAllTools(input?: GetAllToolsSchema) {
   };
 }
 
+export async function getToolByAlias(alias: string) {
+  return dbRead.tool.findFirst({
+    where: { alias: { equals: alias, mode: 'insensitive' } },
+    select: { id: true },
+  });
+}
+
 export async function getToolByName(name: string) {
   return dbRead.tool.findFirst({
     where: { name: { equals: name, mode: 'insensitive' } },
