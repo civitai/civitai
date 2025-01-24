@@ -2517,8 +2517,7 @@ export interface WorkflowDefinition {
   index: number;
   disabled: boolean;
   message: string | null;
-  key: string;
-  toolId: number | null;
+  alias: string;
 }
 
 export interface QuestionRank {

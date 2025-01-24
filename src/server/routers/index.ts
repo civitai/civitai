@@ -72,7 +72,7 @@ import { userLinkRouter } from './user-link.router';
 import { userPaymentConfigurationRouter } from './user-payment-configuration.router';
 import { userRouter } from './user.router';
 import { vaultRouter } from './vault.router';
-import { workflowDefinitionRouter } from './workflowDefinitionRouter';
+import { workflowDefinitionRouter } from './workflow-definition.router';
 
 export const appRouter = router({
   account: accountRouter,

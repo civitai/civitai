@@ -3311,11 +3311,10 @@ model WorkflowDefinition {
   index       Int
   disabled    Boolean @default(true)
   message     String?
-  key         String  @unique // used to match against hard coded generation workflows
-  toolId      Int?
+  alias       String  @unique // used to match against hard coded generation workflows
 
   @@index([index])
-  @@index([key])
+  @@index([alias])
 }
 
 // model WorkflowDefinitionGroup {

@@ -6,8 +6,7 @@ export const createWorkflowDefinitionSchema = z.object({
   label: z.string(),
   description: z.string().optional(),
   index: z.number(),
-  key: z.string(),
-  toolId: z.number().optional(),
+  alias: z.string(),
   disabled: z.boolean().optional(),
   message: z.string().optional(),
 });

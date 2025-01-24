@@ -29,6 +29,7 @@ import createSlots from '~/libs/slots/create-slots';
 import { getRandomInt } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { CreateWorkflowDefinitionSchema } from '~/server/schema/workflow-definition.schema';
+import { useWorkflowDefinitions } from '~/components/Generation/hooks/useWorkflowDefinitions';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
@@ -94,35 +95,31 @@ const toCreate: CreateWorkflowDefinitionSchema[] = [
   {
     type: 'video',
     label: 'Kling',
-    key: 'kling',
+    alias: 'kling',
     index: 0,
-    toolId: 166,
   },
   {
     type: 'video',
     label: 'Hailuo by MiniMax',
-    key: 'minimax',
+    alias: 'minimax',
     index: 1,
-    toolId: 172,
   },
   {
     type: 'video',
     label: 'Haiper',
-    key: 'haiper',
+    alias: 'haiper',
     index: 2,
-    toolId: 65,
   },
   {
     type: 'video',
     label: 'Mochi',
-    key: 'mochi',
+    alias: 'mochi',
     index: 3,
-    toolId: 169,
   },
   {
     type: 'image',
     label: 'Text to Image',
-    key: 'txt2img',
+    alias: 'txt2img',
     index: 4,
   },
 ];
@@ -130,10 +127,12 @@ const toCreate: CreateWorkflowDefinitionSchema[] = [
 export default function Test() {
   const [count, setCount] = useState(0);
 
-  const workflowDefinitions = useWorkflowDefinitions();
+  const workflowDefinitions = useWorkflowDefinitions('image');
   const { mutate } = trpc.workflowDefinition.createWorkflowDefinition.useMutation();
 
-  function handleCreateDefaults() {}
+  function handleCreateDefaults() {
+    //
+  }
 
   useEffect(() => {
     throw new Error('custom error for testing');
