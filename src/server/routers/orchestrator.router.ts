@@ -192,6 +192,7 @@ export const orchestratorRouter = router({
         if (args.params.workflow === 'txt2img')
           step = await createTextToImageStep({ ...args, whatIf: true });
         else step = await createComfyStep({ ...args, whatIf: true });
+        console.log(args.tips);
 
         const workflow = await submitWorkflow({
           token: args.token,

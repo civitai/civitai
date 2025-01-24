@@ -187,9 +187,6 @@ export function GenerationFormContent() {
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
     const { cost = 0 } = useCostStore.getState();
-    const tips = useTipStore.getState();
-    let creatorTip = tips.creatorTip;
-    const civitaiTip = tips.civitaiTip;
 
     const {
       model,
@@ -204,6 +201,15 @@ export function GenerationFormContent() {
     } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
+
+    const tips = getTextToImageTips({
+      ...useTipStore.getState(),
+      creatorComp: features.creatorComp,
+      baseModel: params.baseModel,
+      additionalNetworksCount: [...additionalResources, vae]
+        .map((x) => (x ? x.id : undefined))
+        .filter(isDefined).length,
+    });
 
     // const {
     //   sourceImage,
@@ -250,9 +256,7 @@ export function GenerationFormContent() {
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
             // ...imageDetails,
           },
-          tips: featureFlags.creatorComp
-            ? { creators: creatorTip, civitai: civitaiTip }
-            : undefined,
+          tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
         });
       } catch (e) {
@@ -1120,11 +1124,11 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
-                <InputSelect
+                {/* <InputSelect
                   label="Request Priority"
                   name="priority"
                   data={Object.values(Priority)}
-                />
+                /> */}
               </div>
               <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
@@ -1277,7 +1281,6 @@ function ReadySection() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { civitaiTip, creatorTip } = useTipStore();
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
@@ -1292,17 +1295,14 @@ function SubmitButton(props: { isLoading?: boolean }) {
     }
   }, [data?.cost]); // eslint-disable-line
 
-  const cost = data?.cost?.base ?? 0;
-  const totalTip =
-    Math.ceil(cost * (hasCreatorTip ? creatorTip : 0)) + Math.ceil(cost * civitaiTip);
-  const totalCost = features.creatorComp ? cost + totalTip : cost;
+  const total = data?.cost?.total;
 
   const generateButton = (
     <GenerateButton
       type="submit"
       className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
-      cost={totalCost}
+      cost={total}
       error={
         !isInitialLoading && isError
           ? error
@@ -1324,7 +1324,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
           workflowCost={data?.cost ?? {}}
           hideCreatorTip={!hasCreatorTip}
         >
-          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>
+          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!total}>
             <IconInfoCircle stroke={2.5} />
           </ActionIcon>
         </GenerationCostPopover>

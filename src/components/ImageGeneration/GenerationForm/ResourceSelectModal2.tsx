@@ -654,9 +654,7 @@ function ResourceSelectCard({
   const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
   const [flipped, setFlipped] = useState(false);
 
-  const { data: featuredModels } = trpc.model.getFeaturedModels.useQuery();
-
-  const handleSelect = () => {
+  const handleSelect = async () => {
     const version = versions.find((x) => x.id === selected);
     if (!version) return;
     const { id } = version;

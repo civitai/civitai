@@ -52,6 +52,7 @@ const generationResourceSchemaBase = z.object({
   image: imageSchema.pick({ url: true }).optional(),
   covered: z.boolean(),
   hasAccess: z.boolean(),
+  additionalResourceCost: z.boolean().optional(),
 });
 export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
 export const generationResourceSchema = generationResourceSchemaBase.extend({

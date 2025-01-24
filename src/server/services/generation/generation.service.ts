@@ -453,27 +453,6 @@ export async function toggleUnavailableResource({
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
-export async function getShouldChargeForResources(
-  args: {
-    modelType: ModelType;
-    modelId: number;
-    fileSizeKB?: number;
-  }[]
-) {
-  const featuredModels = await getFeaturedModels();
-  return args.reduce<Record<string, boolean>>(
-    (acc, { modelType, modelId, fileSizeKB }) => ({
-      ...acc,
-      [modelId]: fileSizeKB
-        ? !FREE_RESOURCE_TYPES.includes(modelType) &&
-          !featuredModels.includes(modelId) &&
-          fileSizeKB > 10 * 1024
-        : false,
-    }),
-    {}
-  );
-}
-
 type GenerationResourceBase = {
   id: number;
   name: string;
@@ -485,6 +464,7 @@ type GenerationResourceBase = {
   canGenerate: boolean;
   hasAccess: boolean;
   covered: boolean;
+  additionalResourceCost?: boolean;
   // settings
   clipSkip?: number;
   minStrength: number;
@@ -519,13 +499,18 @@ export async function getGenerationResourceData({
 }): Promise<GenerationResource[]> {
   if (!ids.length) return [];
   const { id: userId, isModerator } = user ?? {};
+  const unavailableResources = await getUnavailableResources();
+  const featuredModels = await getFeaturedModels();
+
   function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
+    const isUnavailable = unavailableResources.includes(item.model.id);
+
     return {
       ...item,
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
       strength: settings?.strength ?? 1,
-      covered: item.covered || explicitCoveredModelVersionIds.includes(item.id),
+      covered: (item.covered || explicitCoveredModelVersionIds.includes(item.id)) && !isUnavailable,
       hasAccess: !!(
         ['Public', 'Unsearchable'].includes(item.availability) ||
         userId === item.model.userId ||
@@ -587,22 +572,24 @@ export async function getGenerationResourceData({
       initialTransformed,
       substitutesTransformed,
     ].map((tupleItem) =>
-      tupleItem.map((item) => ({
-        ...item,
-        earlyAccessConfig:
-          item.availability === 'EarlyAccess' && item.earlyAccessConfig
-            ? Object.keys(item.earlyAccessConfig).length
-              ? item.earlyAccessConfig
-              : undefined
-            : undefined,
-        hasAccess: !!(
-          (
-            item.hasAccess ||
-            entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess ||
-            !!item.earlyAccessConfig?.generationTrialLimit
-          ) // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
-        ),
-      }))
+      tupleItem.map((item) => {
+        return {
+          ...item,
+          earlyAccessConfig:
+            item.availability === 'EarlyAccess' && item.earlyAccessConfig
+              ? Object.keys(item.earlyAccessConfig).length
+                ? item.earlyAccessConfig
+                : undefined
+              : undefined,
+          hasAccess: !!(
+            (
+              item.hasAccess ||
+              entityAccessArray.find((e) => e.entityId === item.id)?.hasAccess ||
+              !!item.earlyAccessConfig?.generationTrialLimit
+            ) // TODO - get the number of remaining early access downloads if early access allows limited number of free generations
+          ),
+        };
+      })
     );
 
     const modelFilesCached = await getFilesForModelVersionCache(
@@ -614,10 +601,18 @@ export async function getGenerationResourceData({
       const substitute = substitutesWithAccess.find(
         (sub) => sub.model.id === item.model.id && sub.hasAccess
       );
+      const fileSizeKB = primaryFile?.sizeKB;
+      const additionalResourceCost = fileSizeKB
+        ? !FREE_RESOURCE_TYPES.includes(item.model.type) &&
+          !featuredModels.includes(item.model.id) &&
+          fileSizeKB > 10 * 1024
+        : false;
+
       const payload = removeNulls({
         ...item,
         canGenerate: item.covered && item.hasAccess,
-        fileSizeKB: primaryFile?.sizeKB ? Math.round(primaryFile?.sizeKB) : undefined,
+        fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
+        additionalResourceCost,
       });
 
       if (substitute) {

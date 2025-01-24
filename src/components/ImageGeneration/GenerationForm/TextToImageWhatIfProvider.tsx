@@ -2,11 +2,8 @@ import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { generation, generationConfig } from '~/server/common/constants';
-import {
-  TextToImageInput,
-  generateImageWhatIfSchema,
-} from '~/server/schema/orchestrator/textToImage.schema';
+import { generationConfig } from '~/server/common/constants';
+import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   getBaseModelSetType,
   getIsFlux,
@@ -21,6 +18,8 @@ import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
+import { useTipStore } from '~/store/tip.store';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -41,6 +40,9 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const defaultModel =
     generationConfig[getBaseModelSetType(watched.baseModel) as keyof typeof generationConfig]
       ?.checkpoint ?? watched.model;
+
+  const features = useFeatureFlags();
+  const storeTips = useTipStore();
 
   const query = useMemo(() => {
     const { model, resources = [], vae, ...params } = watched;
@@ -65,14 +67,23 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       .map((x) => (x ? x.id : undefined))
       .filter(isDefined);
 
+    const tips = getTextToImageTips({
+      ...storeTips,
+      creatorComp: features.creatorComp,
+      baseModel: params.baseModel,
+      additionalNetworksCount: resources.length,
+    });
+    console.log(tips);
+
     return {
+      tips,
       resources: [modelId, ...additionalResources],
       params: {
         ...params,
         ...whatIfQueryOverrides,
       } as TextToImageInput,
     };
-  }, [watched, defaultModel.id]);
+  }, [watched, defaultModel.id, storeTips]);
 
   useEffect(() => {
     // enable after timeout to prevent multiple requests as form data is set
@@ -86,4 +97,27 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   });
 
   return <Context.Provider value={result}>{children}</Context.Provider>;
+}
+
+function getTextToImageTips({
+  civitaiTip,
+  creatorTip,
+  creatorComp,
+  baseModel,
+  additionalNetworksCount,
+}: {
+  civitaiTip: number;
+  creatorTip: number;
+  creatorComp: boolean;
+  baseModel?: string;
+  additionalNetworksCount: number;
+}) {
+  if (!creatorComp) return;
+  const isFlux = getIsFlux(baseModel);
+  const isSD3 = getIsSD3(baseModel);
+  const hasCreatorTip = (!isFlux && !isSD3) || additionalNetworksCount > 0;
+  return {
+    creators: hasCreatorTip ? creatorTip : 0,
+    civitai: civitaiTip,
+  };
 }
