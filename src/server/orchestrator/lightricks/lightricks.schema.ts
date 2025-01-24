@@ -5,6 +5,7 @@ import {
   negativePromptSchema,
   seedSchema,
   textEnhancementSchema,
+  promptSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 
@@ -26,6 +27,7 @@ const lightricksTxt2VidSchema = textEnhancementSchema.extend({
 const lightricksImg2VidSchema = imageEnhancementSchema.extend({
   engine: z.literal('lightricks'),
   workflow: z.string(),
+  prompt: promptSchema,
   negativePrompt: negativePromptSchema,
   duration: numberEnum(lightricksDuration).default(5).catch(5),
   cfgScale: z.number().min(0.1).max(1).default(0.5).catch(0.5),
