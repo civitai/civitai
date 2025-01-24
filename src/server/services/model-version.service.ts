@@ -1433,7 +1433,7 @@ export const resourceDataCache = createCachedArray({
   idKey: 'id',
   dontCacheFn: (data) => {
     const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
-    return !cacheable;
+    return !cacheable || !data.covered;
   },
   ttl: CacheTTL.hour,
 });
