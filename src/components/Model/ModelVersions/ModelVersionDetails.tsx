@@ -926,8 +926,12 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             <Alert title="Download disabled" color="yellow" icon={<IconDownload />}>
               {isDownloadable ? (
                 <Text>
-                  As the owner, you can still download this model, but other user will not be able
-                  to.
+                  As the owner, you can still download this model. Other users will not be able to.
+                  Click{' '}
+                  <Link href={`/models/${version.modelId}/model-versions/${version.id}/edit`}>
+                    here
+                  </Link>{' '}
+                  to change this behavior
                 </Text>
               ) : (
                 <Text>
@@ -1035,7 +1039,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               <Accordion.Item value="collection-showcase">
                 <Accordion.Control
                   disabled={settingShowcase}
-                  className="aria-expanded:border-gray-2 dark:aria-expanded:border-dark-4 aria-expanded:border-b aria-expanded:border-solid"
+                  className="aria-expanded:border-b aria-expanded:border-solid aria-expanded:border-gray-2 dark:aria-expanded:border-dark-4"
                 >
                   <div className="flex items-center justify-between">
                     <div>
