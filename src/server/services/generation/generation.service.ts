@@ -130,8 +130,8 @@ export const getGenerationResources = async (
       if (baseModel) {
         // const baseModelSet = baseModelSetsArray.find((x) => x.includes(baseModel as BaseModel));
         const baseModelSet = getBaseModelSet(baseModel);
-        if (baseModelSet.length)
-          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+        if (baseModelSet.baseModels.length)
+          sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
       }
 
       let orderBy = 'mv.index';

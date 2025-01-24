@@ -64,6 +64,19 @@ const schema = z.object({
       hasMinor: z.boolean().optional(),
     })
     .nullish(),
+  result: z
+    .object({
+      age: z.number(),
+      tags: tagSchema.array(),
+      dimensions: z.object({
+        top: z.number(),
+        bottom: z.number(),
+        left: z.number(),
+        right: z.number(),
+      }),
+    })
+    .array()
+    .nullish(),
 });
 
 function shouldIgnore(tag: string, source: TagSource) {
@@ -142,7 +155,14 @@ async function isBlocked(hash: string) {
   return count > 0;
 }
 
-async function handleSuccess({ id, tags: incomingTags = [], source, context, hash }: BodyProps) {
+async function handleSuccess({
+  id,
+  tags: incomingTags = [],
+  source,
+  context,
+  hash,
+  result,
+}: BodyProps) {
   if (hash && (await isBlocked(hash))) {
     await dbWrite.image.update({
       where: { id },
@@ -164,12 +184,38 @@ async function handleSuccess({ id, tags: incomingTags = [], source, context, has
     return;
   }
 
-  if (source === TagSource.MinorDetection) {
+  if (source === TagSource.HiveDemographics || source === TagSource.MinorDetection) {
     const update: Record<string, any> = {
       [source]: Date.now(),
     };
     const additionalUpdates: string[] = [];
-    if (context?.hasMinor) {
+    let hasMinor = false;
+
+    // Process hive demographics
+    if (source === TagSource.HiveDemographics) {
+      if (!result) return;
+
+      const age = Math.min(...result.map((x) => x.age));
+      if (age < 18) hasMinor = true;
+      update.age = Math.round(age);
+      update.demographics = result.map((x) => {
+        const demographic: Record<string, any> = {
+          age: Math.round(x.age),
+          dimensions: x.dimensions,
+        };
+
+        for (const tag of x.tags) {
+          if (['male', 'female'].includes(tag.tag)) {
+            demographic.gender = tag.tag;
+            break;
+          }
+        }
+
+        return demographic;
+      });
+    } else hasMinor = context?.hasMinor ?? false;
+
+    if (hasMinor) {
       update.hasMinor = true;
       additionalUpdates.push(
         `"needsReview" = CASE WHEN i."nsfwLevel" > ${NsfwLevel.PG} AND i."nsfwLevel" < ${NsfwLevel.Blocked} THEN 'minor' ELSE i."needsReview" END`

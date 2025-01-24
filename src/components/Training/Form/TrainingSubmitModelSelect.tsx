@@ -160,16 +160,16 @@ const ModelSelector = ({
 
                 const castBase = (
                   [
-                    ...baseModelSets.SDXL,
-                    ...baseModelSets.SDXLDistilled,
-                    ...baseModelSets.Pony,
-                    ...baseModelSets.Illustrious,
+                    ...baseModelSets.SDXL.baseModels,
+                    ...baseModelSets.SDXLDistilled.baseModels,
+                    ...baseModelSets.Pony.baseModels,
+                    ...baseModelSets.Illustrious.baseModels,
                   ] as string[]
                 ).includes(baseModel)
                   ? 'sdxl'
-                  : ([...baseModelSets.Flux1] as string[]).includes(baseModel)
+                  : ([...baseModelSets.Flux1.baseModels] as string[]).includes(baseModel)
                   ? 'flux'
-                  : ([...baseModelSets.SD3] as string[]).includes(baseModel)
+                  : ([...baseModelSets.SD3.baseModels] as string[]).includes(baseModel)
                   ? 'sd35'
                   : 'sd15';
 

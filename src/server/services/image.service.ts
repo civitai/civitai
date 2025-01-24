@@ -471,7 +471,7 @@ const defaultScanTypes = [
   ...(env.MINOR_SCANNER === 'custom'
     ? [ImageScanType.MinorDetection]
     : env.MINOR_SCANNER === 'hive'
-    ? [ImageScanType.HiveDemographic]
+    ? [ImageScanType.HiveDemographics]
     : []),
 ];
 
@@ -1649,6 +1649,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     prioritizedUserIds,
     useCombinedNsfwLevel,
     remixOfId,
+    remixesOnly,
+    nonRemixesOnly,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1744,6 +1746,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (remixOfId) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
+  }
+
+  if (remixesOnly && !nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', '>= 0'));
+  }
+
+  if (nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
   /*

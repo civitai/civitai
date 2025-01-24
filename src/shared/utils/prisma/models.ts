@@ -26,6 +26,8 @@ export type CheckpointType = "Trained" | "Merge";
 
 export type ModelUploadType = "Created" | "Trained";
 
+export type ModelUsageControl = "Download" | "Generation" | "InternalGeneration";
+
 export type ModelModifier = "Archived" | "TakenDown";
 
 export type ContentType = "Image" | "Character" | "Text" | "Audio";
@@ -76,7 +78,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -647,6 +649,7 @@ export interface ModelVersion {
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig: JsonValue | null;
   uploadType: ModelUploadType;
+  usageControl: ModelUsageControl;
   monetization?: ModelVersionMonetization | null;
   metrics?: ModelVersionMetric[];
   files?: ModelFile[];
@@ -2422,6 +2425,7 @@ export interface Tool {
   supported: boolean;
   company: string | null;
   metadata: JsonValue;
+  alias: string | null;
 }
 
 export interface ImageTool {
