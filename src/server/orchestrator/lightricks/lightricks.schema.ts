@@ -23,6 +23,17 @@ const lightricksTxt2VidSchema = textEnhancementSchema.extend({
   seed: seedSchema,
 });
 
+const lightricksImg2VidSchema = imageEnhancementSchema.extend({
+  engine: z.literal('lightricks'),
+  workflow: z.string(),
+  negativePrompt: negativePromptSchema,
+  duration: numberEnum(lightricksDuration).default(5).catch(5),
+  cfgScale: z.number().min(0.1).max(1).default(0.5).catch(0.5),
+  steps: z.number().min(20).max(30).default(25).catch(25),
+  frameRate: z.number().optional(),
+  seed: seedSchema,
+});
+
 const lightricksTxt2VidConfig = new VideoGenerationConfig({
   subType: 'txt2vid',
   engine: 'lightricks',
@@ -30,7 +41,14 @@ const lightricksTxt2VidConfig = new VideoGenerationConfig({
   metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
 });
 
-export const lightricksVideoGenerationConfig = [lightricksTxt2VidConfig];
+const lightricksImg2VidConfig = new VideoGenerationConfig({
+  subType: 'img2vid',
+  engine: 'lightricks',
+  schema: lightricksImg2VidSchema,
+  metadataDisplayProps: ['cfgScale', 'steps', 'duration', 'seed'],
+});
+
+export const lightricksVideoGenerationConfig = [lightricksTxt2VidConfig, lightricksImg2VidConfig];
 
 // type Test = Prettify<LightricksVideoGenInput>;
 
