@@ -31,7 +31,6 @@ import {
 import clsx from 'clsx';
 import { clone } from 'lodash-es';
 import { useEffect, useMemo, useState } from 'react';
-import { create } from 'zustand';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
@@ -102,7 +101,11 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Priority } from '@civitai/client';
 
-const useCostStore = create<{ cost?: number }>(() => ({}));
+let total = 0;
+const tips = {
+  creators: 0,
+  civitai: 0,
+};
 
 // #region [form component]
 export function GenerationFormContent() {
@@ -186,7 +189,7 @@ export function GenerationFormContent() {
 
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
-    const { cost = 0 } = useCostStore.getState();
+    // const { cost = 0 } = useCostStore.getState();
 
     const {
       model,
@@ -202,15 +205,6 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
-    const tips = getTextToImageTips({
-      ...useTipStore.getState(),
-      creatorComp: features.creatorComp,
-      baseModel: params.baseModel,
-      additionalNetworksCount: [...additionalResources, vae]
-        .map((x) => (x ? x.id : undefined))
-        .filter(isDefined).length,
-    });
-
     // const {
     //   sourceImage,
     //   width = params.width,
@@ -223,7 +217,6 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
-      if (additionalResources.length === 0) creatorTip = 0;
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
@@ -236,10 +229,6 @@ export function GenerationFormContent() {
       for (const key in params) {
         if (keys.includes(key)) delete params[key as keyof typeof params];
       }
-    }
-    const isSD3 = getIsSD3(params.baseModel);
-    if (isSD3) {
-      if (additionalResources.length === 0) creatorTip = 0;
     }
 
     const resources = [modelClone, ...additionalResources, vae]
@@ -269,8 +258,7 @@ export function GenerationFormContent() {
     }
 
     setPromptWarning(null);
-    const totalCost = cost + creatorTip * cost + civitaiTip * cost;
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(total, performTransaction);
 
     if (filters.marker) {
       setFilters({ marker: undefined });
@@ -1284,18 +1272,31 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [baseModel, resources] = form.watch(['baseModel', 'resources']);
+  const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
-  const hasCreatorTip = (!isFlux && !isSD3) || resources?.length > 0;
+  const hasCreatorTip =
+    (!isFlux && !isSD3) ||
+    [...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
-  useEffect(() => {
-    if (data) {
-      useCostStore.setState({ cost: data.cost?.base ?? 0 });
-    }
-  }, [data?.cost]); // eslint-disable-line
+  const { creatorTip, civitaiTip } = useTipStore();
+  if (!features.creatorComp) {
+    tips.creators = 0;
+    tips.civitai = 0;
+  } else {
+    tips.creators = hasCreatorTip ? creatorTip : 0;
+    tips.civitai = civitaiTip;
+  }
 
-  const total = data?.cost?.total;
+  const base = data?.cost?.base ?? 0;
+  const totalTip = Math.ceil(base * tips.creators) + Math.ceil(base * tips.civitai);
+  total = (data?.cost?.total ?? 0) + totalTip;
+
+  // useEffect(() => {
+  //   if (data) {
+  //     useCostStore.setState({ cost: data.cost?.total ?? 0 });
+  //   }
+  // }, [data?.cost]); // eslint-disable-line
 
   const generateButton = (
     <GenerateButton

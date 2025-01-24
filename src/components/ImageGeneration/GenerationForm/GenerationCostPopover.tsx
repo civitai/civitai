@@ -69,13 +69,7 @@ export function GenerationCostPopover({
     });
   };
 
-  const trueBaseCost = workflowCost.base
-    ? workflowCost.base -
-      Object.values(workflowCost.fixed ?? {}).reduce((acc, value) => {
-        if (typeof value === 'number') return acc + value;
-        return acc;
-      }, 0)
-    : 0;
+  const baseCost = workflowCost.base ?? 0;
 
   const items: DescriptionTableProps['items'] = [
     {
@@ -107,6 +101,16 @@ export function GenerationCostPopover({
       className: classes.tableCell,
     },
     {
+      label: <div className="font-bold">Base Cost</div>,
+      value: (
+        <Group spacing={4} position="right" className="font-bold" noWrap>
+          {baseCost ?? '0'}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      className: cx(classes.tableCell, classes.baseCostCell),
+    },
+    {
       label: 'Additional Resource Cost',
       value: (
         <Group spacing={4} position="right" noWrap>
@@ -127,16 +131,6 @@ export function GenerationCostPopover({
       ),
       visible: !!workflowCost.fixed?.priority,
       className: classes.tableCell,
-    },
-    {
-      label: <div className="font-bold">Base Cost</div>,
-      value: (
-        <Group spacing={4} position="right" className="font-bold" noWrap>
-          {workflowCost.base ?? '0'}
-          <CurrencyIcon currency="BUZZ" size={16} />
-        </Group>
-      ),
-      className: cx(classes.tableCell, classes.baseCostCell),
     },
     {
       label: (
@@ -162,7 +156,7 @@ export function GenerationCostPopover({
       ),
       value: (
         <Group spacing={4} position="right" noWrap>
-          {Math.ceil((trueBaseCost * creatorTip) / 100)}
+          {`${Math.ceil((baseCost * creatorTip) / 100)}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -173,7 +167,7 @@ export function GenerationCostPopover({
       label: 'Creator Tip',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {workflowCost.tips?.creators ?? '0'}
+          {`${workflowCost.tips?.creators}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -205,7 +199,7 @@ export function GenerationCostPopover({
       ),
       value: (
         <Group spacing={4} position="right" noWrap>
-          {Math.ceil((trueBaseCost * civitaiTip) / 100)}
+          {`${Math.ceil((baseCost * civitaiTip) / 100)}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -216,7 +210,7 @@ export function GenerationCostPopover({
       label: 'Civitai Tip',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {trueBaseCost}
+          {baseCost ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),

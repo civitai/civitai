@@ -453,6 +453,27 @@ export async function toggleUnavailableResource({
 }
 
 const FREE_RESOURCE_TYPES: ModelType[] = ['VAE', 'Checkpoint'];
+export async function getShouldChargeForResources(
+  args: {
+    modelType: ModelType;
+    modelId: number;
+    fileSizeKB?: number;
+  }[]
+) {
+  const featuredModels = await getFeaturedModels();
+  return args.reduce<Record<string, boolean>>(
+    (acc, { modelType, modelId, fileSizeKB }) => ({
+      ...acc,
+      [modelId]: fileSizeKB
+        ? !FREE_RESOURCE_TYPES.includes(modelType) &&
+          !featuredModels.includes(modelId) &&
+          fileSizeKB > 10 * 1024
+        : false,
+    }),
+    {}
+  );
+}
+
 type GenerationResourceBase = {
   id: number;
   name: string;

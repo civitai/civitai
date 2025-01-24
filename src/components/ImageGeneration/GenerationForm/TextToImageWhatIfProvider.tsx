@@ -19,7 +19,7 @@ import { parseAIR } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 import { useTipStore } from '~/store/tip.store';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+// import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -41,7 +41,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     generationConfig[getBaseModelSetType(watched.baseModel) as keyof typeof generationConfig]
       ?.checkpoint ?? watched.model;
 
-  const features = useFeatureFlags();
+  // const features = useFeatureFlags();
   const storeTips = useTipStore();
 
   const query = useMemo(() => {
@@ -67,16 +67,14 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       .map((x) => (x ? x.id : undefined))
       .filter(isDefined);
 
-    const tips = getTextToImageTips({
-      ...storeTips,
-      creatorComp: features.creatorComp,
-      baseModel: params.baseModel,
-      additionalNetworksCount: resources.length,
-    });
-    console.log(tips);
+    // const tips = getTextToImageTips({
+    //   ...storeTips,
+    //   creatorComp: features.creatorComp,
+    //   baseModel: params.baseModel,
+    //   additionalNetworksCount: resources.length,
+    // });
 
     return {
-      tips,
       resources: [modelId, ...additionalResources],
       params: {
         ...params,
@@ -99,7 +97,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   return <Context.Provider value={result}>{children}</Context.Provider>;
 }
 
-function getTextToImageTips({
+export function getTextToImageTips({
   civitaiTip,
   creatorTip,
   creatorComp,
@@ -112,7 +110,11 @@ function getTextToImageTips({
   baseModel?: string;
   additionalNetworksCount: number;
 }) {
-  if (!creatorComp) return;
+  if (!creatorComp)
+    return {
+      creators: 0,
+      civitai: 0,
+    };
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
   const hasCreatorTip = (!isFlux && !isSD3) || additionalNetworksCount > 0;
