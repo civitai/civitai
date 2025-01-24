@@ -196,7 +196,7 @@ async function handleSuccess({
       if (!result) return;
 
       const age = Math.min(...result.map((x) => x.age));
-      if (age < 20) hasMinor = true;
+      if (age < 18) hasMinor = true;
       update.age = Math.round(age);
       update.demographics = result.map((x) => {
         const demographic: Record<string, any> = {
