@@ -122,7 +122,8 @@ export function MediaFiltersDropdown({
     (!!mergedFilters.tools?.length ? 1 : 0) +
     (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
-    (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0);
+    (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -138,6 +139,8 @@ export function MediaFiltersDropdown({
       techniques: [],
       period: MetricTimeframe.AllTime,
       baseModels: [],
+      remixesOnly: false,
+      nonRemixesOnly: false,
     };
 
     if (onChange) onChange(reset);
