@@ -90,6 +90,11 @@ export const imageGenerationSchema = z.object({
   'Clip skip': z.coerce.number().optional(),
   comfy: z.union([z.string().optional(), comfyMetaSchema.optional()]).optional(), // stored as stringified JSON
   external: externalMetaSchema.optional(),
+  extra: z
+    .object({
+      remixOfId: z.number().optional(),
+    })
+    .optional(),
 });
 
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
@@ -303,6 +308,9 @@ export const getInfiniteImagesSchema = baseQuerySchema
     reviewId: z.number().optional(),
     skip: z.number().optional(),
     withTags: z.boolean().optional(),
+    remixOfId: z.number().optional(),
+    remixesOnly: z.boolean().optional(),
+    nonRemixesOnly: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {

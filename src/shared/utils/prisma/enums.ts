@@ -64,6 +64,7 @@ export const ModelType = {
   Poses: 'Poses',
   Wildcards: 'Wildcards',
   Workflows: 'Workflows',
+  Detection: 'Detection',
   Other: 'Other',
 } as const;
 
@@ -127,6 +128,14 @@ export const ModelUploadType = {
 } as const;
 
 export type ModelUploadType = (typeof ModelUploadType)[keyof typeof ModelUploadType];
+
+export const ModelUsageControl = {
+  Download: 'Download',
+  Generation: 'Generation',
+  InternalGeneration: 'InternalGeneration',
+} as const;
+
+export type ModelUsageControl = (typeof ModelUsageControl)[keyof typeof ModelUsageControl];
 
 export const ModelModifier = {
   Archived: 'Archived',
@@ -356,6 +365,7 @@ export const TagSource = {
   ImageHash: 'ImageHash',
   Hive: 'Hive',
   MinorDetection: 'MinorDetection',
+  HiveDemographics: 'HiveDemographics',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];

@@ -3,6 +3,7 @@ import {
   Availability,
   CommercialUse,
   ModelStatus,
+  ModelType,
   ModelVersionEngagementType,
 } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
@@ -10,7 +11,7 @@ import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -18,14 +19,12 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import {
-  dataForModelsCache,
-  modelVersionAccessCache,
-  resourceDataCache,
-} from '~/server/redis/caches';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 
+import { logToAxiom } from '~/server/logging/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
@@ -36,6 +35,7 @@ import {
   ModelVersionUpsertInput,
   PublishVersionInput,
   QueryModelVersionSchema,
+  RecommendedSettingsSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -44,6 +44,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
@@ -58,9 +59,8 @@ import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { logToAxiom } from '~/server/logging/client';
-import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { createCachedArray } from '~/server/utils/cache-helpers';
+import { REDIS_KEYS } from '~/server/redis/client';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -842,8 +842,8 @@ export const getModelVersionsByModelType = async ({
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
     const baseModelSet = getBaseModelSet(baseModel);
-    if (baseModelSet.length)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+    if (baseModelSet.baseModels.length)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
   }
   if (query) {
     const pgQuery = '%' + query + '%';
@@ -943,18 +943,13 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   const generationData = await clickhouse.$query<Row>`
     SELECT
-        resourceId as modelVersionId,
-        createdAt,
-        SUM(1) as generations
-    FROM (
-        SELECT
-            arrayJoin(resourcesUsed) as resourceId,
-            createdAt::date as createdAt
-        FROM orchestration.textToImageJobs
-        WHERE createdAt >= ${date}
-    )
-    WHERE resourceId IN (${modelVersions.map((x) => x.id)})
-    GROUP BY resourceId, createdAt
+      modelVersionId,
+      date as createdAt,
+      MAX(count) as generations
+    FROM buzz_resource_compensation
+    WHERE createdAt >= ${date}
+    AND modelVersionId IN (${modelVersions.map((x) => x.id)})
+    GROUP BY modelVersionId, date
     ORDER BY createdAt DESC, generations DESC;
   `;
 
@@ -1390,4 +1385,78 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
 
   return trainingResults.workflowId ?? null;
+};
+
+export const resourceDataCache = createCachedArray({
+  key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
+  lookupFn: async (ids) => {
+    if (!ids.length) return {};
+    const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
+      SELECT
+        mv."id",
+        mv."name",
+        mv."trainedWords",
+        mv."baseModel",
+        mv."settings",
+        mv."availability",
+        mv."clipSkip",
+        mv."vaeId",
+        mv."earlyAccessEndsAt",
+        (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        gc."covered",
+        (
+          SELECT to_json(obj)
+          FROM (
+            SELECT
+              m."id",
+              m."name",
+              m."type",
+              m."nsfw",
+              m."poi",
+              m."minor",
+              m."userId"
+            FROM "Model" m
+            WHERE m.id = mv."modelId"
+          ) as obj
+        ) as model
+      FROM "ModelVersion" mv
+      LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
+      WHERE mv.id IN (${Prisma.join(ids)})
+    `;
+
+    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>(
+      (acc, result) => ({ ...acc, [result.id]: result }),
+      {}
+    );
+    return results;
+  },
+  idKey: 'id',
+  dontCacheFn: (data) => {
+    const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
+    return !cacheable;
+  },
+  ttl: CacheTTL.hour,
+});
+
+export type GenerationResourceDataModel = {
+  id: number;
+  name: string;
+  trainedWords: string[];
+  clipSkip: number | null;
+  vaeId: number | null;
+  baseModel: string;
+  settings: RecommendedSettingsSchema | null;
+  availability: Availability;
+  earlyAccessEndsAt: Date | null;
+  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
+  covered: boolean | null;
+  model: {
+    id: number;
+    name: string;
+    type: ModelType;
+    nsfw: boolean;
+    poi: boolean;
+    minor: boolean;
+    userId: number;
+  };
 };

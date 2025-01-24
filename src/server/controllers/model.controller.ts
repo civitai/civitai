@@ -112,12 +112,17 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
+  ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
+import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import {
+  getGenerationResourceData,
+  getUnavailableResources,
+} from '../services/generation/generation.service';
 
 // TODO.Briant - determine all the logic to check when getting model versions
 /*
@@ -179,6 +184,14 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       userId: ctx.user?.id,
     });
 
+    const recommendedResourceIds =
+      model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.id)) ??
+      [];
+    const generationResources = await getGenerationResourceData({
+      ids: recommendedResourceIds,
+      user: ctx?.user,
+    });
+
     return {
       ...model,
       metrics: undefined,
@@ -217,13 +230,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           earlyAccessDeadline = undefined;
 
         const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
-
+        const isDownloadable = version.usageControl === ModelUsageControl.Download || isOwner;
         const canDownload =
+          isDownloadable &&
           model.mode !== ModelModifier.Archived &&
           entityAccessForVersion?.hasAccess &&
           (!earlyAccessDeadline ||
             (entityAccessForVersion?.permissions ?? 0) >=
               EntityAccessPermission.EarlyAccessDownload);
+
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
@@ -231,16 +246,19 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
         version.files.push(...vaeFile);
-        const files = version.files
-          .filter((x) => x.visibility === 'Public' || canManage)
-          .sort((a, b) => {
-            const aType = a.type as ModelFileType;
-            const bType = b.type as ModelFileType;
+        const files = isDownloadable
+          ? version.files
+              .filter((x) => x.visibility === 'Public' || canManage)
+              .sort((a, b) => {
+                const aType = a.type as ModelFileType;
+                const bType = b.type as ModelFileType;
 
-            if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
-            else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
-            else return 0;
-          });
+                if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
+                else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType])
+                  return 1;
+                else return 0;
+              })
+          : [];
 
         const hashes = version.files
           .filter((file) =>
@@ -278,16 +296,13 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           meta: version.meta as ModelVersionMeta,
           trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
           settings: version.settings as RecommendedSettingsSchema | undefined,
-          recommendedResources: version.recommendedResources.map(({ resource, settings }) => ({
-            id: resource.id,
-            name: resource.name,
-            baseModel: resource.baseModel,
-            trainedWords: resource.trainedWords,
-            modelId: resource.model.id,
-            modelName: resource.model.name,
-            modelType: resource.model.type,
-            strength: (settings as RecommendedSettingsSchema)?.strength,
-          })),
+          recommendedResources: version.recommendedResources
+            .map((item) => {
+              const match = generationResources.find((x) => x.id === item.resource.id);
+              if (!match) return null;
+              return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
+            })
+            .filter(isDefined),
         };
       }),
     };
@@ -732,6 +747,7 @@ export const getDownloadCommandHandler = async ({
             nsfw: true,
           },
         },
+        usageControl: true,
         // images: {
         //   select: {
         //     image: { select: { url: true } },
@@ -758,6 +774,12 @@ export const getDownloadCommandHandler = async ({
       orderBy: { index: 'asc' },
     });
     if (!modelVersion) throw throwNotFoundError();
+
+    const isDownloadable = modelVersion.usageControl !== ModelUsageControl.Download;
+
+    if (!isDownloadable && !(modelVersion.model.userId === ctx.user?.id || ctx.user?.isModerator)) {
+      throw throwAuthorizationError();
+    }
 
     const [access] = await hasEntityAccess({
       entityType: 'ModelVersion',
@@ -797,13 +819,18 @@ export const getDownloadCommandHandler = async ({
 
     const now = new Date();
     await addUserDownload({ userId, modelVersionId: modelVersion.id, downloadAt: now });
-    ctx.track.modelVersionEvent({
-      type: 'Download',
-      modelId: modelVersion.model.id,
-      modelVersionId: modelVersion.id,
-      nsfw: modelVersion.model.nsfw,
-      time: now,
-    });
+
+    if (isDownloadable) {
+      // Best not to track for versions that are not downloadable.
+      // Safer for us.
+      ctx.track.modelVersionEvent({
+        type: 'Download',
+        modelId: modelVersion.model.id,
+        modelVersionId: modelVersion.id,
+        nsfw: modelVersion.model.nsfw,
+        time: now,
+      });
+    }
 
     const fileName = getDownloadFilename({ model, modelVersion, file });
     const { url } = await getDownloadUrl(file.url, fileName);

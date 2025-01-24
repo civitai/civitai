@@ -18,6 +18,7 @@ import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -47,7 +48,18 @@ export async function createComfyStep(
     scheduler,
     seed: params.seed ?? -1,
   });
-  applyResources(comfyWorkflow, resources);
+  applyResources(
+    comfyWorkflow,
+    resources.map((resource) => ({
+      ...resource,
+      air: stringifyAIR({
+        baseModel: resource.baseModel,
+        type: resource.model.type,
+        modelId: resource.model.id,
+        id: resource.id,
+      }),
+    }))
+  );
 
   const imageMetadata = JSON.stringify({
     prompt: params.prompt,

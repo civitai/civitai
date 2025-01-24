@@ -122,6 +122,13 @@ export default PublicEndpoint(
           getLoginLink({ reason: 'download-auth', returnUrl: `/model-versions/${modelVersionId}` })
         );
     }
+
+    if (fileResult.status === 'downloads-disabled')
+      return res.status(401).json({
+        error: 'Unauthorized',
+        message: 'The creator of this asset has disabled downloads on this file',
+      });
+
     if (fileResult.status !== 'success') return errorResponse(500, 'Error getting file');
 
     // Check for misalignment
@@ -137,6 +144,12 @@ export default PublicEndpoint(
 
     // Track download
     try {
+      if (!fileResult.isDownloadable) {
+        throw new Error(
+          'File not downloadable. Either a moderator or the resource owner disabled downloads for this version'
+        );
+      }
+
       const now = new Date();
 
       const tracker = new Tracker(req, res);
