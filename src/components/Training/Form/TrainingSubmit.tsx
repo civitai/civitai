@@ -300,18 +300,18 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         return;
       }
 
-      // specific check for flux batch
+      // specific check for batch
       if (
-        r.baseType === 'flux' &&
+        ['flux', 'sd35'].includes(r.baseType) &&
         r.params.engine === 'kohya' &&
         r.params.trainBatchSize > 2 &&
         r.params.resolution > 512
       ) {
         showErrorNotification({
           error: new Error(
-            `Due to hardware constraints, batch size >2 is not supported for resolutions >512. Please lower the batch size (this will affect steps) or decrease the resolution.`
+            `Due to hardware constraints, batch sizes >2 are not supported for resolutions >512. Please lower the batch size (this will affect steps) or decrease the resolution.`
           ),
-          title: 'Flux batch size too high',
+          title: 'Batch size too high',
           autoClose: false,
         });
         return;

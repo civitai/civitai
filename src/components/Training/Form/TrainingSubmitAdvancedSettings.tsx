@@ -489,7 +489,7 @@ export const AdvancedSettings = ({
                                 </Tooltip>
                               )}
                             {ts.name === 'trainBatchSize' &&
-                              selectedRun.baseType === 'flux' &&
+                              ['flux', 'sd35'].includes(selectedRun.baseType) &&
                               selectedRun.params.engine === 'kohya' &&
                               selectedRun.params.trainBatchSize > 2 &&
                               selectedRun.params.resolution > 512 && (
