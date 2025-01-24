@@ -284,9 +284,7 @@ export function MediaFiltersDropdown({
             {...chipProps}
             checked={mergedFilters.nonRemixesOnly}
             onChange={(checked) => {
-              if (checked) {
-                handleChange({ nonRemixesOnly: checked, remixesOnly: checked ? false : undefined });
-              }
+              handleChange({ nonRemixesOnly: checked, remixesOnly: checked ? false : undefined });
             }}
           >
             <span>Originals Only</span>
