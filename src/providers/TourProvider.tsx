@@ -7,6 +7,7 @@ import Joyride, {
   ACTIONS,
   Callback,
   EVENTS,
+  LIFECYCLE,
   Props as JoyrideProps,
   STATUS,
   Step,
@@ -32,6 +33,7 @@ type TourState = {
   }) => void;
   closeTour: (opts?: { reset?: boolean }) => void;
   activeTour?: string | null;
+  tooltipOpened?: boolean;
   steps?: StepWithData[];
 };
 
@@ -106,7 +108,13 @@ export function TourProvider({ children, ...props }: Props) {
 
   const handleJoyrideCallback = useCallback<Callback>(
     async (data) => {
-      const { status, type, action, index, step } = data;
+      const { status, type, action, index, step, lifecycle } = data;
+      const target = document.querySelector(step.target as string);
+      if (target && lifecycle === LIFECYCLE.READY) target.classList.add('tour-highlight');
+      if (target && lifecycle === LIFECYCLE.COMPLETE) target.classList.remove('tour-highlight');
+
+      setState((old) => ({ ...old, tooltipOpened: lifecycle === LIFECYCLE.TOOLTIP }));
+
       if (type === EVENTS.TOUR_END && completeStatus.includes(status) && state.activeTour) {
         updateUserSettingsMutation.mutate({
           completedTour: { [state.activeTour]: true },
@@ -114,6 +122,7 @@ export function TourProvider({ children, ...props }: Props) {
         // Need to explicitly typecast here because ts is dumb
         setCompleted((old) => ({ ...old, [state.activeTour as string]: true }));
         closeTour({ reset: true });
+
         return;
       }
 
@@ -121,12 +130,16 @@ export function TourProvider({ children, ...props }: Props) {
         const isPrevAction = action === ACTIONS.PREV;
         const nextStepIndex = index + (isPrevAction ? -1 : 1);
 
-        closeTour();
-
         try {
-          if (isPrevAction) await (step.data as StepData)?.onPrev?.();
-          else await (step.data as StepData)?.onNext?.();
+          if (isPrevAction && step.data?.onPrev) {
+            closeTour();
+            await (step.data as StepData)?.onPrev?.();
+          } else if (step.data?.onNext) {
+            closeTour();
+            await (step.data as StepData)?.onNext?.();
+          }
         } catch {
+          closeTour({ reset: true });
           return;
         }
 
@@ -141,18 +154,6 @@ export function TourProvider({ children, ...props }: Props) {
       (completed[state.activeTour] ?? false)
     : false;
 
-  console.log({
-    running: state.running,
-    forceRun: state.forceRun,
-    activeTour: state.activeTour,
-    currentStep: state.currentStep,
-    steps: state.steps,
-    alreadyCompleted,
-    isInitialLoading,
-    completed,
-    value: (!alreadyCompleted && !isInitialLoading) || state.forceRun,
-  });
-
   return (
     <TourContext.Provider value={{ ...state, runTour, closeTour }}>
       {children}
@@ -166,12 +167,16 @@ export function TourProvider({ children, ...props }: Props) {
               zIndex: 10000,
               arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
             },
+            spotlight: {
+              border: `2px solid ${theme.colors.cyan[4]}`,
+            },
           }}
           tooltipComponent={TourPopover}
           run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
-          spotlightClicks
+          disableScrollParentFix
           showSkipButton
           continuous
+          debug
           {...props}
         />
       </IsClient>
@@ -201,6 +206,7 @@ const availableTours: Record<string, StepWithData[]> = {
       title: 'Start Here',
       content:
         'You can type a prompt here to generate an image. Try something simple, like "a blue robot", to get started.',
+      spotlightClicks: true,
     },
     {
       target: '[data-tour="gen:prompt"]',
@@ -233,12 +239,14 @@ const availableTours: Record<string, StepWithData[]> = {
       title: 'Remix This Image',
       content: 'Click this button to remix an image and create something new',
       hideFooter: true,
+      spotlightClicks: true,
     },
     {
       target: '[data-tour="gen:submit"]',
       title: 'Submit Your Prompt',
       content: 'You can submit your prompt by clicking this button and see the magic happen!',
       placement: 'top',
+      spotlightClicks: true,
     },
     {
       target: '[data-tour="gen:reset"]',
@@ -258,7 +266,6 @@ const availableTours: Record<string, StepWithData[]> = {
       data: {
         onNext: async () => generationPanel.setView('queue'),
       },
-      disableBeacon: true,
     },
     {
       target: '[data-tour="gen:feed"]',
@@ -289,6 +296,7 @@ const availableTours: Record<string, StepWithData[]> = {
         </Text>
       ),
       hideFooter: true,
+      spotlightClicks: true,
       data: {
         onNext: async () => {
           await waitForElement({ selector: '[data-tour="gen:post"]' });
@@ -300,6 +308,7 @@ const availableTours: Record<string, StepWithData[]> = {
       title: 'Posting Content',
       content: 'Click this button to post your selected content to the site.',
       hideFooter: true,
+      disableOverlayClose: true,
       data: {
         onNext: async () => {
           await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 });
@@ -312,6 +321,7 @@ const availableTours: Record<string, StepWithData[]> = {
       content:
         'Add a title to your post to give it some context. This step is optional but helps personalize your creation.',
       hideBackButton: true,
+      spotlightClicks: true,
       data: {
         onPrev: async () => {
           generationPanel.open();
@@ -348,6 +358,7 @@ const availableTours: Record<string, StepWithData[]> = {
     {
       target: '[data-tour="post:publish"]',
       title: 'Publish Your Post',
+      spotlightClicks: true,
       content:
         'Once you are ready, click this button to publish your post to the site and your creations with the community!',
     },

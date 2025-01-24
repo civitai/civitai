@@ -1,5 +1,5 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
-import { ActionIcon, Checkbox, createStyles, Group, Menu, Modal } from '@mantine/core';
+import { ActionIcon, Checkbox, createStyles, Menu, Modal } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -77,15 +77,11 @@ export function GeneratedImage({
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
 
-  const { running, runTour } = useTourContext();
+  const { tooltipOpened, runTour } = useTourContext();
 
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
-      {
-        workflowId: request.id,
-        stepName: step.name,
-        imageId: image.id,
-      },
+      { workflowId: request.id, stepName: step.name, imageId: image.id },
       checked
     );
   const { copied, copy } = useClipboard();
@@ -303,7 +299,7 @@ export function GeneratedImage({
                 checked={selected}
                 onChange={(e) => {
                   toggleSelect(e.target.checked);
-                  if (running) runTour({ step: 3 });
+                  if (tooltipOpened && e.target.checked) runTour({ step: 3 });
                 }}
               />
             </label>

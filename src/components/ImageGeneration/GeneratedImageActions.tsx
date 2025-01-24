@@ -32,7 +32,7 @@ export function GeneratedImageActions({
 }) {
   const router = useRouter();
   const { images, data } = useGetTextToImageRequests();
-  const { running, runTour } = useTourContext();
+  const { tooltipOpened, runTour } = useTourContext();
   const selectableImages = images.filter((x) => x.status === 'succeeded');
   const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
@@ -106,7 +106,7 @@ export function GeneratedImageActions({
       orchestratorMediaTransmitter.setUrls(key, imageData);
       const post = await createPostMutation.mutateAsync({});
       // updateImages({}) // tODO - show that this image has been posted?
-      if (running) runTour({ step: 4 });
+      if (tooltipOpened) runTour({ step: 4 });
       await router.push({
         pathname: '/posts/[postId]/edit',
         query: { ...router.query, postId: post.id, src: key },

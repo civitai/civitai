@@ -22,6 +22,7 @@ import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/providers/TourProvider';
+import { div } from 'motion/dist/react-m';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
@@ -76,6 +77,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
             <ChallengeIndicator />
             <HelpButton
               data-tour="gen:reset"
+              tooltip="Need help? Start the tour!"
               onClick={async () => {
                 const tourKey = view === 'generate' ? 'content-generation' : 'post-generation';
                 await router.replace({ query: { ...router.query, tour: tourKey } }, undefined, {
@@ -95,7 +97,9 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
                   <Tooltip label={label} position="bottom" color="dark" openDelay={200} offset={10}>
-                    <Icon size={16} data-tour={`gen:${key}`} />
+                    <div data-tour={`gen:${key}`}>
+                      <Icon size={16} />
+                    </div>
                   </Tooltip>
                 ),
                 value: key,

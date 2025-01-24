@@ -463,3 +463,7 @@ div[id*='google_ads_iframe'][id$='outstream_0__container__'] {
   height: 0;
   width: 0;
 }
+
+.tour-highlight[data-active-step="true"], .tour-highlight:has([data-active-step="true"]) {
+  border: 2px solid #1971c2;
+}

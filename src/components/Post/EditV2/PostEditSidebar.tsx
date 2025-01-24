@@ -23,6 +23,7 @@ import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { useTourContext } from '~/providers/TourProvider';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -53,6 +54,8 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     { id: post.id },
     { enabled: !!collectionId }
   );
+
+  const { closeTour } = useTourContext();
   // #endregion
 
   // #region [mutations]
@@ -109,6 +112,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
 
   const handlePublish = (date?: Date, confirmPublish = params.confirmPublish) => {
     confirmPublish ? handleShowConfirmPublish(date) : publish(date);
+    closeTour({ reset: true });
   };
 
   const handleScheduleClick = () => {
