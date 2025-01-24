@@ -842,8 +842,8 @@ export const getModelVersionsByModelType = async ({
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
     const baseModelSet = getBaseModelSet(baseModel);
-    if (baseModelSet.length)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+    if (baseModelSet.baseModels.length)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
   }
   if (query) {
     const pgQuery = '%' + query + '%';
@@ -943,18 +943,13 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   const generationData = await clickhouse.$query<Row>`
     SELECT
-        resourceId as modelVersionId,
-        createdAt,
-        SUM(1) as generations
-    FROM (
-        SELECT
-            arrayJoin(resourcesUsed) as resourceId,
-            createdAt::date as createdAt
-        FROM orchestration.textToImageJobs
-        WHERE createdAt >= ${date}
-    )
-    WHERE resourceId IN (${modelVersions.map((x) => x.id)})
-    GROUP BY resourceId, createdAt
+      modelVersionId,
+      date as createdAt,
+      MAX(count) as generations
+    FROM buzz_resource_compensation
+    WHERE createdAt >= ${date}
+    AND modelVersionId IN (${modelVersions.map((x) => x.id)})
+    GROUP BY modelVersionId, date
     ORDER BY createdAt DESC, generations DESC;
   `;
 
@@ -1438,7 +1433,7 @@ export const resourceDataCache = createCachedArray({
   idKey: 'id',
   dontCacheFn: (data) => {
     const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
-    return !cacheable;
+    return !cacheable || !data.covered;
   },
   ttl: CacheTTL.hour,
 });

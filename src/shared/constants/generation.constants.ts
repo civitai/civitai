@@ -256,7 +256,8 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   defaultType ??= 'SD1';
   if (!baseModel) return defaultType;
   return (Object.entries(baseModelSets).find(
-    ([key, baseModels]) => key === baseModel || (baseModels as string[]).includes(baseModel)
+    ([key, baseModelSet]) =>
+      key === baseModel || (baseModelSet.baseModels as string[]).includes(baseModel)
   )?.[0] ?? defaultType) as BaseModelSetType;
 }
 
@@ -383,78 +384,90 @@ export type BaseModelResourceTypes = typeof baseModelResourceTypes;
 export type SupportedBaseModel = keyof BaseModelResourceTypes;
 export const baseModelResourceTypes = {
   SD1: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.VAE, baseModels: [...baseModelSets.SD1] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.VAE, baseModels: [...baseModelSets.SD1.baseModels] },
   ],
   SDXL: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SDXL, 'SD 1.5'] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL.baseModels] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SDXL.baseModels, 'SD 1.5'] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SDXL.baseModels] },
+    { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL.baseModels] },
+    { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL.baseModels] },
+    { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL.baseModels] },
   ],
   Pony: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony.baseModels] },
     {
       type: ModelType.TextualInversion,
-      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
+      baseModels: [
+        ...baseModelSets.Pony.baseModels,
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        'SD 1.5',
+      ],
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
-      baseModels: [...baseModelSets.SDXL],
+      baseModels: [...baseModelSets.SDXL.baseModels],
     },
   ],
   Illustrious: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious.baseModels] },
     {
       type: ModelType.TextualInversion,
-      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
+      baseModels: [
+        ...baseModelSets.Illustrious.baseModels,
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        'SD 1.5',
+      ],
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
-      baseModels: [...baseModelSets.SDXL],
+      baseModels: [...baseModelSets.SDXL.baseModels],
     },
   ],
   Flux1: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1.baseModels] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1.baseModels] },
   ],
   SD3: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3.baseModels] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3.baseModels] },
   ],
   SD3_5M: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3_5M] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3_5M] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3_5M.baseModels] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3_5M.baseModels] },
   ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {

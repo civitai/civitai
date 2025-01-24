@@ -471,7 +471,7 @@ const defaultScanTypes = [
   ...(env.MINOR_SCANNER === 'custom'
     ? [ImageScanType.MinorDetection]
     : env.MINOR_SCANNER === 'hive'
-    ? [ImageScanType.HiveDemographic]
+    ? [ImageScanType.HiveDemographics]
     : []),
 ];
 
@@ -713,6 +713,7 @@ type GetAllImagesRaw = {
   availability: Availability;
   minor: boolean;
   remixOfId?: number | null;
+  hasPositivePrompt?: boolean;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -1174,6 +1175,14 @@ export const getAllImages = async (
       ) AS "hasMeta",
       (
         CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
+      (
+        CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
             OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
               ${Prisma.join(workflows)}
@@ -1344,6 +1353,7 @@ export const getAllImages = async (
       modelVersionIdsManual?: number[];
       thumbnailUrl?: string;
       remixOfId?: number | null;
+      hasPositivePrompt?: boolean;
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -1649,6 +1659,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     prioritizedUserIds,
     useCombinedNsfwLevel,
     remixOfId,
+    remixesOnly,
+    nonRemixesOnly,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1744,6 +1756,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (remixOfId) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
+  }
+
+  if (remixesOnly && !nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', '>= 0'));
+  }
+
+  if (nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
   /*
@@ -2220,6 +2240,14 @@ export const getImage = async ({
       ) AS "hasMeta",
       (
         CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
+      (
+        CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
             OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
               ${Prisma.join(workflows)}
@@ -2360,6 +2388,7 @@ export type ImagesForModelVersions = {
   onSite: boolean;
   hasMeta: boolean;
   remixOfId?: number | null;
+  hasPositivePrompt?: boolean;
 };
 
 export const getImagesForModelVersion = async ({
@@ -2474,6 +2503,14 @@ export const getImagesForModelVersion = async ({
           ELSE TRUE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
@@ -2635,6 +2672,7 @@ export const getImagesForPosts = async ({
       hasMeta: boolean;
       onSite: boolean;
       remixOfId?: number | null;
+      hasPositivePrompt?: boolean;
     }[]
   >`
     SELECT
@@ -2656,6 +2694,14 @@ export const getImagesForPosts = async ({
           ELSE TRUE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
@@ -2834,6 +2880,7 @@ type GetImageConnectionRaw = {
   metadata: ImageMetadata | VideoMetadata;
   entityId: number;
   hasMeta: boolean;
+  hasPositivePrompt?: boolean;
 };
 
 export const getImagesByEntity = async ({
@@ -2919,6 +2966,14 @@ export const getImagesByEntity = async ({
           ELSE TRUE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       t."entityId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id`;

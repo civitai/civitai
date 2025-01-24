@@ -122,7 +122,8 @@ export function MediaFiltersDropdown({
     (!!mergedFilters.tools?.length ? 1 : 0) +
     (!!mergedFilters.techniques?.length ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0) +
-    (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0);
+    (!hideBaseModels ? mergedFilters.baseModels?.length ?? 0 : 0) +
+    (!!mergedFilters.remixesOnly || !!mergedFilters.nonRemixesOnly ? 1 : 0);
 
   const clearFilters = useCallback(() => {
     const reset = {
@@ -138,6 +139,8 @@ export function MediaFiltersDropdown({
       techniques: [],
       period: MetricTimeframe.AllTime,
       baseModels: [],
+      remixesOnly: false,
+      nonRemixesOnly: false,
     };
 
     if (onChange) onChange(reset);
@@ -251,7 +254,7 @@ export function MediaFiltersDropdown({
           </>
         )}
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
           <Chip
             {...chipProps}
             checked={mergedFilters.withMeta}
@@ -276,6 +279,24 @@ export function MediaFiltersDropdown({
             onChange={(checked) => handleChange({ fromPlatform: checked })}
           >
             <span>Made On-site</span>
+          </Chip>
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.nonRemixesOnly}
+            onChange={(checked) => {
+              handleChange({ nonRemixesOnly: checked, remixesOnly: checked ? false : undefined });
+            }}
+          >
+            <span>Originals Only</span>
+          </Chip>
+          <Chip
+            {...chipProps}
+            checked={mergedFilters.remixesOnly}
+            onChange={(checked) =>
+              handleChange({ remixesOnly: checked, nonRemixesOnly: checked ? false : undefined })
+            }
+          >
+            <span>Remixes Only</span>
           </Chip>
         </div>
 

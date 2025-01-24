@@ -115,6 +115,7 @@ const featureFlags = createFeatureFlags({
   announcements: ['granted'],
   blocklists: ['granted'],
   toolSearch: ['public'],
+  generationOnlyModels: ['mod', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
