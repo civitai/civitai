@@ -280,14 +280,20 @@ export function MediaFiltersDropdown({
           <Chip
             {...chipProps}
             checked={mergedFilters.nonRemixesOnly}
-            onChange={(checked) => handleChange({ nonRemixesOnly: checked, remixesOnly: !checked })}
+            onChange={(checked) => {
+              if (checked) {
+                handleChange({ nonRemixesOnly: checked, remixesOnly: checked ? false : undefined });
+              }
+            }}
           >
             <span>Originals Only</span>
           </Chip>
           <Chip
             {...chipProps}
             checked={mergedFilters.remixesOnly}
-            onChange={(checked) => handleChange({ remixesOnly: checked, nonRemixesOnly: !checked })}
+            onChange={(checked) =>
+              handleChange({ remixesOnly: checked, nonRemixesOnly: checked ? false : undefined })
+            }
           >
             <span>Remixes Only</span>
           </Chip>
