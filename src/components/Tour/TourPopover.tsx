@@ -4,8 +4,8 @@ import React, { useCallback } from 'react';
 import { TooltipRenderProps } from 'react-joyride';
 
 export interface StepData {
-  onNext?: () => Promise<void>;
-  onPrev?: () => Promise<void>;
+  onNext?: (opts?: { isMobile?: boolean }) => Promise<void>;
+  onPrev?: (opts?: { isMobile?: boolean }) => Promise<void>;
   waitForElement?: { selector: string; timeout?: number };
 }
 
@@ -25,7 +25,7 @@ export function TourPopover(props: TooltipRenderProps) {
   const handlePrevClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
     async (e) => {
       backProps.onClick(e);
-      await (step.data as StepData)?.onPrev?.();
+      await (step.data as StepData)?.onPrev?.({ isMobile: false });
     },
     [backProps, step.data]
   );
@@ -33,7 +33,7 @@ export function TourPopover(props: TooltipRenderProps) {
   const handleNextClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
     async (e) => {
       primaryProps.onClick(e);
-      await (step.data as StepData)?.onNext?.();
+      await (step.data as StepData)?.onNext?.({ isMobile: false });
     },
     [primaryProps, step.data]
   );

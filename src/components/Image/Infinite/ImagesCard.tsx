@@ -163,7 +163,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           color="white"
                           variant="filled"
                           data-activity="remix:image-card"
-                          data-tour="gen:remix"
+                          data-tour={image.type === MediaType.image ? 'gen:remix' : undefined}
                           onClick={handleRemixClick}
                         >
                           <IconBrush stroke={2.5} size={16} />

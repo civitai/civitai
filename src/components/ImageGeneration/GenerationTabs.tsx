@@ -22,7 +22,6 @@ import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { useTourContext } from '~/providers/TourProvider';
-import { div } from 'motion/dist/react-m';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
