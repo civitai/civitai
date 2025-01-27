@@ -3094,10 +3094,12 @@ export const createEntityImages = async ({
   const batches = chunk(imageRecords, 50);
   for (const batch of batches) {
     if (shouldAddImageResources) {
-      await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
+      const tasks = batch.map((image) => () => createImageResources({ imageId: image.id, tx }));
+      await limitConcurrency(tasks, 10);
     }
 
-    await Promise.all(batch.map((image) => ingestImage({ image, tx })));
+    const tasks = batch.map((image) => () => ingestImage({ image, tx }));
+    await limitConcurrency(tasks, 10);
   }
 
   if (entityType && entityId) {
