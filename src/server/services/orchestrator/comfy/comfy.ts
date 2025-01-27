@@ -111,7 +111,7 @@ export async function createComfy(
       tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
-      experimental: true,
+      experimental: env.ORCHESTRATOR_EXPERIMENTAL,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,

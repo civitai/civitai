@@ -199,7 +199,7 @@ export const orchestratorRouter = router({
           body: {
             steps: [step],
             tips: args.tips,
-            experimental: true,
+            experimental: env.ORCHESTRATOR_EXPERIMENTAL,
           },
           query: {
             whatif: true,
