@@ -1,10 +1,6 @@
 import { Prisma } from '@prisma/client';
-import {
-  BuzzWithdrawalRequestStatus,
-  UserPaymentConfigurationProvider,
-} from '~/shared/utils/prisma/enums';
 import { v4 as uuid } from 'uuid';
-import { GenerationRequestStatus, NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory } from '~/server/common/enums';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -12,6 +8,10 @@ import {
   payToTipaltiAccount,
   revertStripeConnectTransfer,
 } from '~/server/services/user-payment-configuration.service';
+import {
+  BuzzWithdrawalRequestStatus,
+  UserPaymentConfigurationProvider,
+} from '~/shared/utils/prisma/enums';
 import { getBuzzWithdrawalDetails } from '~/utils/number-helpers';
 import { constants } from '../common/constants';
 import { dbRead, dbWrite } from '../db/client';
@@ -158,14 +158,19 @@ export const getPaginatedBuzzWithdrawalRequests = async (
 ) => {
   const { limit = DEFAULT_PAGE_SIZE, page, username, status, requestId } = input || {};
   const { take, skip } = getPagination(limit, page);
-  let userId = input.userId;
+  let userId: number | { in: number[] } | undefined = input.userId;
 
   if (username && !userId) {
-    const user = await dbRead.user.findUniqueOrThrow({
-      where: { username },
-    });
+    // The list here is much shorter:
+    const userIds = await dbRead.$queryRaw<{ id: number }[]>`
+      SELECT DISTINCT (u.id) FROM "BuzzWithdrawalRequest" bwr 
+      JOIN "User" u ON bwr."userId" = u.id 
+      WHERE u.username ILIKE ${username + '%'}
+    `;
 
-    userId = user.id;
+    console.log(userIds);
+
+    userId = { in: userIds.map((u) => u.id) };
   }
 
   const where: Prisma.BuzzWithdrawalRequestFindManyArgs['where'] = {

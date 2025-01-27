@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Center,
@@ -14,21 +15,14 @@ import {
   Table,
   Text,
   Textarea,
+  TextInput,
   ThemeIcon,
   Title,
   Tooltip,
   TooltipProps,
-  TextInput,
-  Anchor,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
-import {
-  BuzzWithdrawalRequestStatus,
-  Currency,
-  UserPaymentConfigurationProvider,
-} from '~/shared/utils/prisma/enums';
-import { IconCashBanknote, IconExternalLink, IconInfoTriangleFilled } from '@tabler/icons-react';
-import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
+import { IconCashBanknote, IconCashBanknoteOff, IconCheck, IconCloudOff, IconExternalLink, IconInfoTriangleFilled, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { BuzzWithdrawalRequestFilterDropdown } from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestFiltersDropdown';
 import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
@@ -42,6 +36,11 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
+import {
+  BuzzWithdrawalRequestStatus,
+  Currency,
+  UserPaymentConfigurationProvider,
+} from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
