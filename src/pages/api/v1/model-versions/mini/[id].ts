@@ -6,7 +6,10 @@ import { Session } from 'next-auth';
 import { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import {
+  getUnavailableResources,
+  getShouldChargeForResources,
+} from '~/server/services/generation/generation.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -127,6 +130,15 @@ export default MixedAuthEndpoint(async function handler(
     }
   }
 
+  // Check if should charge
+  const shouldChargeResult = await getShouldChargeForResources([
+    {
+      modelType: modelVersion.type,
+      modelId: modelVersion.modelId,
+      fileSizeKB: primaryFile.sizeKB,
+    },
+  ]);
+
   const data = {
     air,
     versionName: modelVersion.versionName,
@@ -145,6 +157,7 @@ export default MixedAuthEndpoint(async function handler(
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
   };
   res.status(200).json(data);

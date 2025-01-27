@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import { uniq, uniqBy } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { v4 as uuid } from 'uuid';
+import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
   ArticleSort,
   CollectionReviewSort,
@@ -47,10 +48,12 @@ import { getArticles } from '~/server/services/article.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { getAllImages, ImagesInfiniteModel, ingestImage } from '~/server/services/image.service';
 import {
+  bustFeaturedModelsCache,
   getModelsWithImagesAndModelVersions,
   GetModelsWithImagesAndModelVersions,
 } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { getPostsInfinite, PostsInfiniteModel } from '~/server/services/post.service';
 import {
   throwAuthorizationError,
@@ -619,6 +622,16 @@ export const saveItemInCollections = async ({
   }
 
   await dbWrite.$transaction(transactions);
+
+  // Check for updates to featured models
+  if (input.modelId && collections.some((c) => c.id === FEATURED_MODEL_COLLECTION_ID)) {
+    await bustFeaturedModelsCache();
+    const versions = await dbRead.modelVersion.findMany({
+      where: { id: input.modelId },
+      select: { id: true },
+    });
+    await bustOrchestratorModelCache(versions.map((x) => x.id));
+  }
 
   // Clear cache for homeBlocks
   await Promise.all(

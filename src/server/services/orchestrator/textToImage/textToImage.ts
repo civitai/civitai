@@ -24,12 +24,14 @@ import { stringifyAIR } from '~/utils/string-helpers';
 export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
+    whatIf?: boolean;
   }
 ) {
-  input.params.seed =
-    input.params.seed ?? getRandomInt(input.params.quantity, maxRandomSeed) - input.params.quantity;
-  const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
-  const { resources, params, priority } = await parseGenerateImageInput({
+  const { priority, ...inputParams } = input.params;
+  inputParams.seed =
+    inputParams.seed ?? getRandomInt(inputParams.quantity, maxRandomSeed) - inputParams.quantity;
+  const workflowDefinition = await getWorkflowDefinition(inputParams.workflow);
+  const { resources, params } = await parseGenerateImageInput({
     ...input,
     workflowDefinition,
   });
@@ -71,6 +73,7 @@ export async function createTextToImageStep(
 
   return {
     $type: 'textToImage',
+    priority,
     input: {
       model: checkpoint.air,
       additionalNetworks,
@@ -81,10 +84,9 @@ export async function createTextToImageStep(
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata: {
       resources: input.resources,
-      params: input.params,
+      params: inputParams,
       remixOfId: input.remixOfId,
     },
-    priority,
   } as TextToImageStepTemplate;
 }
 
@@ -103,8 +105,7 @@ export async function createTextToImage(
       tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
-      // @ts-ignore: ignoring until we update the civitai-client package
-      experimental: false,
+      experimental: env.ORCHESTRATOR_EXPERIMENTAL,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,

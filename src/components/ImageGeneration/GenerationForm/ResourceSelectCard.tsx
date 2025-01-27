@@ -5,12 +5,14 @@ import {
   Group,
   Overlay,
   Paper,
+  Popover,
   Stack,
   Text,
   ThemeIcon,
   useMantineTheme,
+  Anchor,
 } from '@mantine/core';
-import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconReplace, IconWeight, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -152,11 +154,30 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
               {resource.model.name}
             </Text>
           </Group>
-          {resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
-            <Badge size="sm" color="dark.5" variant="filled" miw="42px">
-              {resource.name}
-            </Badge>
-          )}
+          <div className="flex gap-1">
+            {resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
+              <Badge size="sm" color="dark.5" variant="filled" miw="42px">
+                {resource.name}
+              </Badge>
+            )}
+            {resource.additionalResourceCost && selectSource === 'generation' && (
+              <Popover position="bottom" withArrow width={200}>
+                <Popover.Target>
+                  <ActionIcon size={18} color="blue" variant="filled">
+                    <IconWeight size={14} />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Text size="sm">
+                    This resource carries an additional{' '}
+                    <Anchor component={Link} href="/articles/7929">
+                      buzz cost
+                    </Anchor>
+                  </Text>
+                </Popover.Dropdown>
+              </Popover>
+            )}
+          </div>
         </Group>
         {/* LORA */}
         {hasStrength && onUpdate && !unavailable && (
