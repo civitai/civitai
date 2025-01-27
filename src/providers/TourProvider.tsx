@@ -71,8 +71,6 @@ export function TourProvider({ children, ...props }: Props) {
     steps: tourKey ? availableTours[tourKey] ?? [] : [],
   });
 
-  console.log('render TourProvider', { tourKey, ...state });
-
   const [completed = {}, setCompleted] = useStorage<{ [k: string]: boolean }>({
     key: 'completed-tours',
     type: 'localStorage',

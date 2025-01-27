@@ -14,7 +14,6 @@ export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);
   const router = useRouter();
   const { activeTour, runTour, running, currentStep, tooltipOpened } = useTourContext();
-  console.log('render GenerationSidebar', { activeTour, running, currentStep, tooltipOpened });
   // TODO - see if we can elevate this to `BaseLayout` and set visibility hidden to content behind sidebar
   const [fullScreen, setFullScreen] = useState(false);
   const isGeneratePage = router.pathname.startsWith('/generate');
@@ -40,7 +39,6 @@ export function GenerationSidebar() {
   }, [opened, updateShowDrawer]);
 
   useEffect(() => {
-    console.log('Running effect', { activeTour, opened, running });
     if (activeTour && opened) {
       runTour({ step: 0 });
     }
