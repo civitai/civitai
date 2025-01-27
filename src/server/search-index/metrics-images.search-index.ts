@@ -335,7 +335,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             THEN TRUE
             ELSE FALSE
           END
-        ) AS "hasPositivePrompt"
+        ) AS "hasPositivePrompt",
         (
           CASE
             WHEN i.meta->>'civitaiResources' IS NOT NULL
