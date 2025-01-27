@@ -170,11 +170,11 @@ export const getServerSideProps = createServerSideProps({
           entityId: modelVersionIdParsed as number,
           entityType: 'ModelVersion',
         });
-        await ssg.common.getEntityClubRequirement.prefetch({
-          entityId: modelVersionIdParsed as number,
-          entityType: 'ModelVersion',
-        });
-        await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
+        // await ssg.common.getEntityClubRequirement.prefetch({
+        //   entityId: modelVersionIdParsed as number,
+        //   entityType: 'ModelVersion',
+        // });
+        // await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
       await ssg.model.getById.prefetch({ id });
       await ssg.model.getCollectionShowcase.prefetch({ id });
