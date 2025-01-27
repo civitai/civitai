@@ -1,4 +1,4 @@
-export type Task = () => Promise<void>;
+export type Task = () => Promise<unknown>;
 type TaskGenerator = () => Task | null;
 
 function isTaskGenerator(arg: any): arg is TaskGenerator {
