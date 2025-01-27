@@ -1,7 +1,6 @@
-import { Text, useMantineTheme } from '@mantine/core';
-import { reset } from 'linkifyjs';
+import { useMantineTheme } from '@mantine/core';
+import { steps } from 'motion/dist/react';
 import { useSearchParams } from 'next/navigation';
-import Router from 'next/router';
 import { createContext, useCallback, useContext, useState } from 'react';
 import Joyride, {
   ACTIONS,
@@ -10,27 +9,20 @@ import Joyride, {
   LIFECYCLE,
   Props as JoyrideProps,
   STATUS,
-  Step,
 } from 'react-joyride';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { StepData, TourPopover } from '~/components/Tour/TourPopover';
+import { TourPopover } from '~/components/Tour/TourPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
-import { generationPanel } from '~/store/generation.store';
-import { waitForElement } from '~/utils/html-helpers';
+import { StepData, StepWithData } from '~/types/tour';
+import { TourKey, tourSteps } from '~/utils/tours';
 import { trpc } from '~/utils/trpc';
-
-type StepWithData = Step & { data?: StepData };
 
 type TourState = {
   running: boolean;
   forceRun: boolean;
   currentStep: number;
-  runTour: (opts?: {
-    key?: keyof typeof availableTours;
-    step?: number;
-    forceRun?: boolean;
-  }) => void;
+  runTour: (opts?: { key?: TourKey; step?: number; forceRun?: boolean }) => void;
   closeTour: (opts?: { reset?: boolean }) => void;
   activeTour?: string | null;
   tooltipOpened?: boolean;
@@ -61,14 +53,14 @@ export function TourProvider({ children, ...props }: Props) {
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
   const theme = useMantineTheme();
-  const tourKey = searchParams.get('tour');
+  const tourKey = searchParams.get('tour') as TourKey | null;
 
   const [state, setState] = useState<Omit<TourState, 'runTour' | 'closeTour' | 'helpers'>>({
     running: false,
     forceRun: false,
     activeTour: tourKey,
     currentStep: 0,
-    steps: tourKey ? availableTours[tourKey] ?? [] : [],
+    steps: tourKey ? tourSteps[tourKey] ?? [] : [],
   });
 
   const [completed = {}, setCompleted] = useStorage<{ [k: string]: boolean }>({
@@ -92,7 +84,7 @@ export function TourProvider({ children, ...props }: Props) {
       ...old,
       running: true,
       activeTour: opts?.key ?? old.activeTour,
-      steps: opts?.key ? availableTours[opts.key] ?? [] : old.steps,
+      steps: opts?.key ? tourSteps[opts.key] ?? [] : old.steps,
       forceRun: opts?.forceRun ?? old.forceRun,
       currentStep: opts?.step ?? old.currentStep,
     }));
@@ -114,6 +106,11 @@ export function TourProvider({ children, ...props }: Props) {
       if (target && lifecycle === LIFECYCLE.COMPLETE) target.classList.remove('tour-highlight');
 
       setState((old) => ({ ...old, tooltipOpened: lifecycle === LIFECYCLE.TOOLTIP }));
+
+      if (action === ACTIONS.START && !target) {
+        // If the target is not found, skip it
+        setState((old) => ({ ...old, steps: old.steps?.filter((x) => x.target !== step.target) }));
+      }
 
       if (type === EVENTS.TOUR_END && completeStatus.includes(status) && state.activeTour) {
         updateUserSettingsMutation.mutate({
@@ -184,182 +181,4 @@ export function TourProvider({ children, ...props }: Props) {
 type Props = Omit<JoyrideProps, 'callback' | 'steps'> & {
   children: React.ReactNode;
   steps?: StepWithData[];
-};
-
-const availableTours: Record<string, StepWithData[]> = {
-  'content-generation': [
-    {
-      target: '[data-tour="gen:start"]',
-      placement: 'center',
-      title: 'Getting Started with Content Generation',
-      content:
-        'Welcome to the content generation tool! This tour will guide you through the process.',
-      locale: { next: "Let's go" },
-      disableBeacon: true,
-      disableOverlayClose: true,
-    },
-    {
-      target: '[data-tour="gen:prompt"]',
-      title: 'Start Here',
-      content:
-        'You can type a prompt here to generate an image. Try something simple, like "a blue robot", to get started.',
-    },
-    {
-      target: '[data-tour="gen:prompt"]',
-      title: 'Remix Content',
-      content: (
-        <div className="flex flex-col gap-2">
-          <Text>
-            Alternatively, you can remix existing images on the site. Click{' '}
-            <Text weight={600} span>
-              Next
-            </Text>{' '}
-            to learn more.
-          </Text>
-        </div>
-      ),
-      disableBeacon: true,
-      data: {
-        onNext: async () => {
-          Router.push({
-            pathname: '/collections/[collectionId]',
-            query: { collectionId: 107, tour: 'content-generation' },
-          });
-          // if window width is mobile size, the sidebar will be hidden
-          if (window.innerWidth < 768) generationPanel.close();
-
-          await waitForElement({ selector: '[data-tour="gen:remix"]', timeout: 30000 });
-        },
-      },
-    },
-    {
-      target: '[data-tour="gen:remix"]',
-      title: 'Remix This Image',
-      content: 'Click this button to remix an image and create something new',
-      hideFooter: true,
-      disableBeacon: true,
-      data: {
-        onNext: async () => {
-          await waitForElement({ selector: '[data-tour="gen:submit"]' });
-        },
-      },
-    },
-    {
-      target: '[data-tour="gen:submit"]',
-      title: 'Submit Your Prompt',
-      content: 'You can submit your prompt by clicking this button and see the magic happen!',
-    },
-    {
-      target: '[data-tour="gen:reset"]',
-      title: 'All Set!',
-      content: 'You can view this tour at anytime by clicking this icon.',
-      locale: { last: 'Done' },
-    },
-  ],
-
-  'post-generation': [
-    {
-      target: '[data-tour="gen:queue"]',
-      title: 'Your Generation Queue',
-      content:
-        'This is where your generated media is stored, along with all the generation details.',
-      data: {
-        onNext: async () => generationPanel.setView('queue'),
-      },
-      disableBeacon: true,
-      placement: 'bottom',
-    },
-    {
-      target: '[data-tour="gen:feed"]',
-      title: 'Your Generation Feed',
-      content: 'View all your generated media here in a single scrollable view.',
-      data: {
-        onNext: async () => {
-          generationPanel.setView('feed');
-          await waitForElement({ selector: '[data-tour="gen:select"]' });
-        },
-      },
-    },
-    {
-      target: '[data-tour="gen:select"]',
-      title: 'Selecting Content',
-      content: (
-        <Text>
-          You can select images from both the{' '}
-          <Text weight={600} span>
-            Queue
-          </Text>{' '}
-          and the{' '}
-          <Text weight={600} span>
-            Feed
-          </Text>{' '}
-          to post them on the site. Posting lets you share your creations with the community and
-          earn rewards like Buzz!
-        </Text>
-      ),
-      hideFooter: true,
-      data: {
-        onNext: async () => {
-          await waitForElement({ selector: '[data-tour="gen:post"]' });
-        },
-      },
-    },
-    {
-      target: '[data-tour="gen:post"]',
-      title: 'Posting Content',
-      content: 'Click this button to post your selected content to the site.',
-      hideFooter: true,
-      disableOverlayClose: true,
-      data: {
-        onNext: async () => {
-          await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 });
-        },
-      },
-    },
-    {
-      target: '[data-tour="post:title"]',
-      title: 'Add a Title',
-      content:
-        'Add a title to your post to give it some context. This step is optional but helps personalize your creation.',
-      hideBackButton: true,
-      data: {
-        onPrev: async () => {
-          generationPanel.open();
-          await waitForElement({ selector: '[data-tour="gen:select"]' });
-        },
-      },
-    },
-    {
-      target: '[data-tour="post:tag"]',
-      title: 'Add a Tag',
-      content:
-        'Tags help other users easily find relevant content. For example, if these are cat images, adding a "cat" tag would help categorize your content.',
-    },
-    {
-      target: '[data-tour="post:description"]',
-      title: 'Add a Description',
-      content:
-        'Descriptions provide additional details about your post, helping viewers understand your creation better.',
-      data: {
-        onNext: async () => {
-          await waitForElement({
-            selector: '[data-tour="post:rate-resource"]',
-            timeout: 30000,
-          });
-        },
-      },
-    },
-    {
-      target: '[data-tour="post:rate-resource"]',
-      title: 'Rate the Resource',
-      content:
-        'Rate the resource you used to generate this content. This helps the creator improve the quality of their model.',
-    },
-    {
-      target: '[data-tour="post:publish"]',
-      title: 'Publish Your Post',
-      content:
-        'Once you are ready, click this button to publish your post to the site and your creations with the community!',
-    },
-  ],
 };

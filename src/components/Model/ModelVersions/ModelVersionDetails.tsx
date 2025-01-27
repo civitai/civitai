@@ -331,6 +331,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           )}
         </Group>
       ),
+      rowProps: { 'data-tour': 'model:type' },
     },
     {
       label: 'Stats',
@@ -636,7 +637,12 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           ) : showPublishButton ? (
             <Stack spacing={4}>
               {version.canGenerate && isOwnerOrMod && (
-                <GenerateButton modelVersionId={version.id} data-activity="create:model" py={8} />
+                <GenerateButton
+                  data-tour="model:create"
+                  modelVersionId={version.id}
+                  data-activity="create:model"
+                  py={8}
+                />
               )}
               <Button.Group>
                 <Button
@@ -678,6 +684,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
                   {canGenerate && (
                     <GenerateButton
+                      data-tour="model:create"
                       modelVersionId={version.id}
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
@@ -735,6 +742,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                   {displayCivitaiLink || canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
+                        data-tour="model:download"
                         canDownload={canDownload}
                         downloadPrice={
                           !hasDownloadPermissions &&
@@ -754,6 +762,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       <Menu position="bottom-end">
                         <Menu.Target>
                           <DownloadButton
+                            data-tour="model:download"
                             canDownload={canDownload}
                             downloadPrice={
                               !hasDownloadPermissions &&
@@ -772,6 +781,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     )
                   ) : (
                     <DownloadButton
+                      data-tour="model:download"
                       component="a"
                       {...getDownloadProps(primaryFile)}
                       canDownload={canDownload}
@@ -821,7 +831,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 
                   {onFavoriteClick && (
                     <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                      <div>
+                      <div data-tour="model:like">
                         <LoginRedirect reason="favorite-model">
                           <Button
                             onClick={() =>

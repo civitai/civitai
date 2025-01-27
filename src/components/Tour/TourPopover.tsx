@@ -2,12 +2,7 @@ import { Button, CloseButton, Group, Paper, Text } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import React, { useCallback } from 'react';
 import { TooltipRenderProps } from 'react-joyride';
-
-export interface StepData {
-  onNext?: (opts?: { isMobile?: boolean }) => Promise<void>;
-  onPrev?: (opts?: { isMobile?: boolean }) => Promise<void>;
-  waitForElement?: { selector: string; timeout?: number };
-}
+import { StepData } from '~/types/tour';
 
 export function TourPopover(props: TooltipRenderProps) {
   const {
@@ -48,7 +43,7 @@ export function TourPopover(props: TooltipRenderProps) {
         )}
         {!step.hideCloseButton && <CloseButton {...closeProps} ml="auto" />}
       </Group>
-      <Text>{step.content}</Text>
+      {typeof step.content === 'string' ? <Text>{step.content}</Text> : step.content}
       {!step.hideFooter && (
         <Group position="apart" noWrap>
           {step.showSkipButton !== false && (

@@ -45,8 +45,8 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   const isClient = useIsClient();
 
   useEffect(() => {
-    if (activeTour && opened) {
-      runTour({ step: 0 });
+    if (activeTour === 'post-generation' && opened) {
+      runTour({ key: 'post-generation', step: 0 });
     }
     // Only need to check for sidebar opened state
     // eslint-disable-next-line react-hooks/exhaustive-deps
