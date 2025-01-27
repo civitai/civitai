@@ -63,16 +63,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     if (isSD3 && model?.id) {
       modelId = model.id;
     }
-    const additionalResources = [...resources, vae]
-      .map((x) => (x ? x.id : undefined))
-      .filter(isDefined);
-
-    // const tips = getTextToImageTips({
-    //   ...storeTips,
-    //   creatorComp: features.creatorComp,
-    //   baseModel: params.baseModel,
-    //   additionalNetworksCount: resources.length,
-    // });
+    const additionalResources = resources.map((x) => (x ? x.id : undefined)).filter(isDefined);
 
     return {
       resources: [modelId, ...additionalResources],
@@ -95,31 +86,4 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   });
 
   return <Context.Provider value={result}>{children}</Context.Provider>;
-}
-
-export function getTextToImageTips({
-  civitaiTip,
-  creatorTip,
-  creatorComp,
-  baseModel,
-  additionalNetworksCount,
-}: {
-  civitaiTip: number;
-  creatorTip: number;
-  creatorComp: boolean;
-  baseModel?: string;
-  additionalNetworksCount: number;
-}) {
-  if (!creatorComp)
-    return {
-      creators: 0,
-      civitai: 0,
-    };
-  const isFlux = getIsFlux(baseModel);
-  const isSD3 = getIsSD3(baseModel);
-  const hasCreatorTip = (!isFlux && !isSD3) || additionalNetworksCount > 0;
-  return {
-    creators: hasCreatorTip ? creatorTip : 0,
-    civitai: civitaiTip,
-  };
 }

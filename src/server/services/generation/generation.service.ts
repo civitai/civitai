@@ -48,6 +48,7 @@ import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { isDefined } from '~/utils/type-guards';
+import { env } from '~/env/server';
 
 type GenerationResourceSimple = {
   id: number;
@@ -623,11 +624,13 @@ export async function getGenerationResourceData({
         (sub) => sub.model.id === item.model.id && sub.hasAccess
       );
       const fileSizeKB = primaryFile?.sizeKB;
-      const additionalResourceCost = fileSizeKB
-        ? !FREE_RESOURCE_TYPES.includes(item.model.type) &&
+      let additionalResourceCost = false;
+      if (env.ORCHESTRATOR_EXPERIMENTAL && fileSizeKB) {
+        additionalResourceCost =
+          !FREE_RESOURCE_TYPES.includes(item.model.type) &&
           !featuredModels.includes(item.model.id) &&
-          fileSizeKB > 10 * 1024
-        : false;
+          fileSizeKB > 10 * 1024;
+      }
 
       const payload = removeNulls({
         ...item,
