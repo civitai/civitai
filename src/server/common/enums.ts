@@ -325,9 +325,9 @@ export enum ToolSort {
   ZA = 'ZA',
 }
 
-export const BuzzWithdrawalRequestSort = {
-  Newest: 'Newest',
-  Oldest: 'Oldest',
-  HighestAmount: 'Highest Amount',
-  LowestAmount: 'Lowest Amount',
-};
+export enum BuzzWithdrawalRequestSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+  HighestAmount = 'Highest Amount',
+  LowestAmount = 'Lowest Amount',
+}

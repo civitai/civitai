@@ -154,7 +154,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
   const [filters, setFilters] = useState<Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>>({
     page: 1,
     sort: BuzzWithdrawalRequestSort.Newest,
-    from: dayjs().subtract(1, 'month').toDate(),
+    from: dayjs().startOf('month').toDate(),
     to: new Date(),
   });
   const [debouncedFilters] = useDebouncedValue(filters, 500);
@@ -260,13 +260,13 @@ export default function ModeratorBuzzWithdrawalRequests() {
         </Text>
       </Stack>
       <Stack mb="md">
-        <Group align="end">
+        <Group className="ml-auto">
           <SortFilter
             type="buzzWithdrawalRequests"
             variant="button"
             value={filters.sort}
             buttonProps={{ compact: false }}
-            onChange={(x) => setFilters({ sort: x as BuzzWithdrawalRequestSort })}
+            onChange={(x) => setFilters({ ...filters, sort: x as BuzzWithdrawalRequestSort })}
           />
           <BuzzWithdrawalRequestFilterDropdown
             setFilters={(f) => setFilters({ ...filters, ...f })}

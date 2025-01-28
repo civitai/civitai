@@ -168,8 +168,6 @@ export const getPaginatedBuzzWithdrawalRequests = async (
       WHERE u.username ILIKE ${username + '%'}
     `;
 
-    console.log(userIds);
-
     userId = { in: userIds.map((u) => u.id) };
   }
 
@@ -190,6 +188,13 @@ export const getPaginatedBuzzWithdrawalRequests = async (
     status: (status?.length ?? 0) > 0 ? { in: status } : undefined,
     userId,
     id: requestId,
+    createdAt:
+      input.from || input.to
+        ? {
+            ...(input.from ? { gte: input.from } : {}),
+            ...(input.to ? { lte: input.to } : {}),
+          }
+        : undefined,
   };
 
   const items = await dbRead.buzzWithdrawalRequest.findMany({

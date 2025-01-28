@@ -55,6 +55,7 @@ export function SortFilter(props: SortFilterProps) {
 }
 
 type DumbProps = {
+  // Dumb props should work without needing to create a full filter attribute.
   type: FilterSubTypes;
   value:
     | ModelSort
