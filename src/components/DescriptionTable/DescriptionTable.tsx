@@ -1,4 +1,5 @@
 import { Box, Group, Paper, PaperProps, Table, TableProps, Text } from '@mantine/core';
+import { title } from 'process';
 import React from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 
@@ -29,7 +30,7 @@ export function DescriptionTable({
     }
 
     rows.push(
-      <Box component="tr" key={i}>
+      <Box component="tr" key={i} {...item.rowProps}>
         <Box
           component="td"
           className={item.className}
@@ -82,6 +83,7 @@ export type Props = Omit<TableProps, 'title'> & {
     visible?: boolean;
     info?: React.ReactNode;
     className?: string;
+    rowProps?: MixedObject;
   }>;
   title?: React.ReactNode;
   labelWidth?: React.CSSProperties['width'];

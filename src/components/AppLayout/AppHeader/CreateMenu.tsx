@@ -18,12 +18,12 @@ export function CreateMenu() {
     <Menu
       position="bottom"
       offset={5}
-      withArrow
       trigger="hover"
       openDelay={400}
       zIndex={constants.imageGeneration.drawerZIndex + 2}
-      withinPortal
       disabled={isMobile}
+      withinPortal
+      withArrow
     >
       <Menu.Target>
         {features.imageGeneration ? (

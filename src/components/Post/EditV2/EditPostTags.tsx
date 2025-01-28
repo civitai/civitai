@@ -236,7 +236,7 @@ function TagPicker() {
         sx={{ minHeight: 32, display: 'flex', alignItems: 'center', cursor: 'pointer' }}
       >
         {!editing ? (
-          <Group spacing={4}>
+          <Group spacing={4} data-tour="post:tag">
             <IconPlus size={16} />
             <Text>Tag</Text>
           </Group>

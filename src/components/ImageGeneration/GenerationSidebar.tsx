@@ -6,12 +6,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { ContainerProvider } from '~/components/ContainerProvider/ContainerProvider';
 import { ResizableSidebar } from '~/components/Resizable/ResizableSidebar';
 import { useResizeStore } from '~/components/Resizable/useResize';
+import { useTourContext } from '~/providers/TourProvider';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
 const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
 export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);
   const router = useRouter();
+  const { activeTour, runTour } = useTourContext();
   // TODO - see if we can elevate this to `BaseLayout` and set visibility hidden to content behind sidebar
   const [fullScreen, setFullScreen] = useState(false);
   const isGeneratePage = router.pathname.startsWith('/generate');
@@ -36,6 +38,14 @@ export function GenerationSidebar() {
     }
   }, [opened, updateShowDrawer]);
 
+  useEffect(() => {
+    if (activeTour === 'content-generation' && opened) {
+      runTour({ key: 'content-generation', step: 0 });
+    }
+    // Only need to check for sidebar opened state
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [opened]);
+
   useWindowEvent('resize', updateShowDrawer);
 
   if (!opened) return null;
@@ -43,6 +53,7 @@ export function GenerationSidebar() {
   return (
     <ResizableSidebar
       name="generation-sidebar"
+      data-tour="gen:start"
       resizePosition="right"
       minWidth={350}
       maxWidth={800}

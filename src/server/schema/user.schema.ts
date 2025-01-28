@@ -193,6 +193,10 @@ export const reportProhibitedRequestSchema = z.object({
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
 export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 
+const tourSettingsSchema = z.object({
+  completed: z.record(z.boolean()).optional(),
+});
+
 export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
@@ -211,6 +215,7 @@ export const userSettingsSchema = z.object({
     .omit({ pinnedPosts: true, images: true })
     .partial()
     .optional(),
+  tourSettings: tourSettingsSchema.optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -226,6 +231,7 @@ export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
+  completedTour: z.record(z.boolean()).optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });

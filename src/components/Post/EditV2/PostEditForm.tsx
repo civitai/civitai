@@ -62,6 +62,7 @@ export function PostEditForm() {
   return (
     <Form form={form} className="flex flex-col gap-3">
       <InputTextArea
+        data-tour="post:title"
         name="title"
         placeholder="Add a title..."
         size="xl"
@@ -78,6 +79,7 @@ export function PostEditForm() {
         // @ts-ignore - `includeControls` does not export types.
         includeControls={controls}
         editorSize="md"
+        data-tour="post:description"
       />
     </Form>
   );

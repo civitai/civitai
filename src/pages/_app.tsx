@@ -63,6 +63,7 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
+import { TourProvider } from '~/providers/TourProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -156,17 +157,19 @@ function MyApp(props: CustomAppProps) {
                                           >
                                             <BrowserRouterProvider>
                                               <IntersectionObserverProvider>
-                                                <BaseLayout>
-                                                  {isProd && <TrackPageView />}
-                                                  <ChatContextProvider>
-                                                    <CustomModalsProvider>
-                                                      {getLayout(<Component {...pageProps} />)}
-                                                      {/* <StripeSetupSuccessProvider /> */}
-                                                      <DialogProvider />
-                                                      <RoutedDialogProvider />
-                                                    </CustomModalsProvider>
-                                                  </ChatContextProvider>
-                                                </BaseLayout>
+                                                <TourProvider>
+                                                  <BaseLayout>
+                                                    {isProd && <TrackPageView />}
+                                                    <ChatContextProvider>
+                                                      <CustomModalsProvider>
+                                                        {getLayout(<Component {...pageProps} />)}
+                                                        {/* <StripeSetupSuccessProvider /> */}
+                                                        <DialogProvider />
+                                                        <RoutedDialogProvider />
+                                                      </CustomModalsProvider>
+                                                    </ChatContextProvider>
+                                                  </BaseLayout>
+                                                </TourProvider>
                                               </IntersectionObserverProvider>
                                             </BrowserRouterProvider>
                                           </NotificationsProvider>

@@ -756,7 +756,9 @@ export function GenerationFormContent() {
                           >
                             <InputPrompt
                               name="prompt"
+                              data-tour="gen:prompt"
                               placeholder="Your prompt goes here..."
+                              className="tour-highlight"
                               autosize
                               unstyled
                               styles={(theme) => ({
@@ -1294,6 +1296,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const generateButton = (
     <GenerateButton
       type="submit"
+      data-tour="gen:submit"
       className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
       cost={totalCost}
