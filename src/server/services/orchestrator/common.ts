@@ -310,24 +310,20 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
-  if (step.$type === 'comfy') return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
-  else if (step.$type === 'textToImage')
-    return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
-      id: x.version,
-      strength: x.networkParams.strength,
-    }));
-  else return [];
+  return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
 }
 
 function combineResourcesWithInputResource(
   allResources: GenerationResource[],
   resources: { id: number; strength?: number | null }[]
 ) {
-  return allResources.map((resource) => {
-    const original = resources.find((x) => x.id === resource.id);
-    if (original?.strength) resource.strength = original.strength;
-    return resource;
-  });
+  return allResources
+    .map((resource) => {
+      const original = resources.find((x) => x.id === resource.id);
+      if (!original) return null;
+      return { ...resource, ...original };
+    })
+    .filter(isDefined);
 }
 
 export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
@@ -361,17 +357,17 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
   });
 }
 
-// TODO - remove this 30 days after launch
-function getTextToImageAirs(inputs: TextToImageInput[]) {
-  return Object.entries(
-    inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
-      if (input.model) acc[input.model] = {};
-      const additionalNetworks = input.additionalNetworks ?? {};
-      for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
-      return acc;
-    }, {})
-  ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
-}
+// // TODO - remove this 30 days after launch
+// function getTextToImageAirs(inputs: TextToImageInput[]) {
+//   return Object.entries(
+//     inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
+//       if (input.model) acc[input.model] = {};
+//       const additionalNetworks = input.additionalNetworks ?? {};
+//       for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
+//       return acc;
+//     }, {})
+//   ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
+// }
 
 export type WorkflowStepFormatted = ReturnType<typeof formatWorkflowStep>;
 function formatWorkflowStep(args: {
@@ -501,11 +497,9 @@ function formatTextToImageStep({
 }) {
   const { input, output, jobs } = step as TextToImageStep;
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  const stepResources = getTextToImageAirs([input]);
+  const stepResources = getResources(step);
 
-  const resources = combineResourcesWithInputResource(allResources, getResources(step)).filter(
-    (resource) => stepResources.some((x) => x.version === resource.id)
-  );
+  const resources = combineResourcesWithInputResource(allResources, stepResources);
   const versionIds = resources.map((x) => x.id);
 
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
@@ -694,9 +688,7 @@ export function formatComfyStep({
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
-    resources: combineResourcesWithInputResource(resources, stepResources).filter((resource) =>
-      stepResources.some((x) => x.id === resource.id)
-    ),
+    resources: combineResourcesWithInputResource(resources, stepResources),
   };
 }
 
