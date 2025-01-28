@@ -9,7 +9,7 @@ import { reportProhibitedRequestHandler } from '~/server/controllers/user.contro
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
 import {
   generateImageSchema,
@@ -50,14 +50,14 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
-const TOKEN_STORE: 'redis' | 'cookie' = true ? 'cookie' : 'redis';
+const TOKEN_STORE: 'redis' | 'cookie' = false ? 'cookie' : 'redis';
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const redisKey = user.id.toString();
   let token: string | null =
     TOKEN_STORE === 'redis'
-      ? await redis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
+      ? await sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
       : getEncryptedCookie(ctx, generationServiceCookie.name);
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
@@ -71,8 +71,8 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
     });
     if (TOKEN_STORE === 'redis') {
       await Promise.all([
-        redis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
-        redis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
+        sysRedis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
+        sysRedis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
       ]);
     } else
       setEncryptedCookie(ctx, {

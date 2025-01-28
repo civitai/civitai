@@ -342,6 +342,7 @@ export const REDIS_SYS_KEYS = {
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
+    TOKENS: 'generation:tokens',
   },
   TRAINING: {
     STATUS: 'training:status',
