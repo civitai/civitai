@@ -58,7 +58,7 @@ export const buzzWithdrawalRequestHistoryMetadataSchema = z
 
 export type UpdateBuzzWithdrawalRequestSchema = z.infer<typeof updateBuzzWithdrawalRequestSchema>;
 export const updateBuzzWithdrawalRequestSchema = z.object({
-  requestId: z.string(),
+  requestIds: z.array(z.string()),
   status: z.nativeEnum(BuzzWithdrawalRequestStatus),
   note: z.string().optional(),
   metadata: buzzWithdrawalRequestHistoryMetadataSchema.optional(),

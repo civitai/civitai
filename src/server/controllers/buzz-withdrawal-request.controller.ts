@@ -93,6 +93,11 @@ export function updateBuzzWithdrawalRequestHandler({
       throw throwAuthorizationError('You do not have permission to perform this action');
     }
 
+    if (!ctx.user.isModerator) {
+      // Ensure this user has permission to do this:
+      throw throwAuthorizationError('You do not have permission to perform this action');
+    }
+
     return updateBuzzWithdrawalRequest({ userId: ctx.user.id, ...input });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
