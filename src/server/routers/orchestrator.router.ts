@@ -50,13 +50,13 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
-const TOKEN_STORE: 'redis' | 'cookie' = 'cookie';
+const TOKEN_STORE: 'redis' | 'cookie' = true ? 'cookie' : 'redis';
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const redisKey = user.id.toString();
   let token: string | null =
-    TOKEN_STORE === 'cookie'
+    TOKEN_STORE === 'redis'
       ? await redis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
       : getEncryptedCookie(ctx, generationServiceCookie.name);
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
@@ -69,7 +69,7 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
       type: 'System',
       userId: user.id,
     });
-    if (TOKEN_STORE === 'cookie') {
+    if (TOKEN_STORE === 'redis') {
       await Promise.all([
         redis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
         redis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
