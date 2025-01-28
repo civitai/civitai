@@ -64,3 +64,10 @@ export const updateBuzzWithdrawalRequestSchema = z.object({
   metadata: buzzWithdrawalRequestHistoryMetadataSchema.optional(),
   refundFees: z.number().optional(),
 });
+export type BuzzWithdrawalRequestServiceStatus = z.infer<
+  typeof buzzWithdrawalRequestServiceStatusSchema
+>;
+export const buzzWithdrawalRequestServiceStatusSchema = z.object({
+  maxAmount: z.number().optional(),
+  message: z.string().optional(),
+});
