@@ -12,7 +12,7 @@ import {
   useMantineTheme,
   Anchor,
 } from '@mantine/core';
-import { IconAlertTriangle, IconReplace, IconWeight, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBolt, IconReplace, IconWeight, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -125,6 +125,7 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
+  const theme = useMantineTheme();
 
   return (
     <Group spacing="xs" position="apart" noWrap>
@@ -160,6 +161,7 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
                 {resource.name}
               </Badge>
             )}
+
             {resource.additionalResourceCost && selectSource === 'generation' && (
               <Popover position="bottom" withArrow width={200}>
                 <Popover.Target>
@@ -174,6 +176,18 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
                       buzz cost
                     </Anchor>
                   </Text>
+                </Popover.Dropdown>
+              </Popover>
+            )}
+            {resource.earlyAccessEndsAt && (
+              <Popover position="bottom" withArrow width={200}>
+                <Popover.Target>
+                  <ActionIcon size={18} color="yellow.7" variant="filled">
+                    <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Text size="sm">This resource is in early access</Text>
                 </Popover.Dropdown>
               </Popover>
             )}

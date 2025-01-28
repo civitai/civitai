@@ -178,7 +178,8 @@ export const orchestratorRouter = router({
     }),
   getImageWhatIf: orchestratorGuardedProcedure
     .input(generateImageWhatIfSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    // can't use edge cache due to values dependent on individual users
+    // .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(async ({ ctx, input }) => {
       try {
         const args = {
@@ -192,7 +193,6 @@ export const orchestratorRouter = router({
         if (args.params.workflow === 'txt2img')
           step = await createTextToImageStep({ ...args, whatIf: true });
         else step = await createComfyStep({ ...args, whatIf: true });
-        console.log(args.tips);
 
         const workflow = await submitWorkflow({
           token: args.token,

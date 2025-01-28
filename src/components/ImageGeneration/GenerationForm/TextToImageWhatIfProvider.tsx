@@ -18,7 +18,6 @@ import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
-import { useTipStore } from '~/store/tip.store';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
@@ -40,9 +39,6 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
   const defaultModel =
     generationConfig[getBaseModelSetType(watched.baseModel) as keyof typeof generationConfig]
       ?.checkpoint ?? watched.model;
-
-  // const features = useFeatureFlags();
-  const storeTips = useTipStore();
 
   const query = useMemo(() => {
     const { model, resources = [], vae, ...params } = watched;
@@ -72,7 +68,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
         ...whatIfQueryOverrides,
       } as TextToImageInput,
     };
-  }, [watched, defaultModel.id, storeTips]);
+  }, [watched, defaultModel.id]);
 
   useEffect(() => {
     // enable after timeout to prevent multiple requests as form data is set
