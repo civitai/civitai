@@ -321,7 +321,7 @@ function combineResourcesWithInputResource(
     .map((resource) => {
       const original = resources.find((x) => x.id === resource.id);
       if (!original) return null;
-      return { ...resource, ...original };
+      return { ...resource, strength: original.strength ?? resource.strength };
     })
     .filter(isDefined);
 }
