@@ -31,7 +31,6 @@ import {
 import clsx from 'clsx';
 import { clone } from 'lodash-es';
 import { useEffect, useMemo, useState } from 'react';
-import { create } from 'zustand';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
@@ -100,8 +99,13 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { Priority } from '@civitai/client';
 
-const useCostStore = create<{ cost?: number }>(() => ({}));
+let total = 0;
+const tips = {
+  creators: 0,
+  civitai: 0,
+};
 
 // #region [form component]
 export function GenerationFormContent() {
@@ -185,10 +189,7 @@ export function GenerationFormContent() {
 
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
-    const { cost = 0 } = useCostStore.getState();
-    const tips = useTipStore.getState();
-    let creatorTip = tips.creatorTip;
-    const civitaiTip = tips.civitaiTip;
+    // const { cost = 0 } = useCostStore.getState();
 
     const {
       model,
@@ -216,7 +217,6 @@ export function GenerationFormContent() {
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
-      if (additionalResources.length === 0) creatorTip = 0;
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
@@ -229,10 +229,6 @@ export function GenerationFormContent() {
       for (const key in params) {
         if (keys.includes(key)) delete params[key as keyof typeof params];
       }
-    }
-    const isSD3 = getIsSD3(params.baseModel);
-    if (isSD3) {
-      if (additionalResources.length === 0) creatorTip = 0;
     }
 
     const resources = [modelClone, ...additionalResources, vae]
@@ -249,9 +245,7 @@ export function GenerationFormContent() {
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
             // ...imageDetails,
           },
-          tips: featureFlags.creatorComp
-            ? { creators: creatorTip, civitai: civitaiTip }
-            : undefined,
+          tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
         });
       } catch (e) {
@@ -264,8 +258,7 @@ export function GenerationFormContent() {
     }
 
     setPromptWarning(null);
-    const totalCost = cost + creatorTip * cost + civitaiTip * cost;
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(total, performTransaction);
 
     if (filters.marker) {
       setFilters({ marker: undefined });
@@ -1119,6 +1112,11 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
+                {/* <InputSelect
+                  label="Request Priority"
+                  name="priority"
+                  data={Object.values(Priority)}
+                /> */}
               </div>
               <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
@@ -1271,32 +1269,41 @@ function ReadySection() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { civitaiTip, creatorTip } = useTipStore();
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [baseModel, resources] = form.watch(['baseModel', 'resources']);
+  const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
-  const hasCreatorTip = (!isFlux && !isSD3) || resources?.length > 0;
+  const hasCreatorTip =
+    (!isFlux && !isSD3) ||
+    [...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
-  useEffect(() => {
-    if (data) {
-      useCostStore.setState({ cost: data.cost?.base ?? 0 });
-    }
-  }, [data?.cost]); // eslint-disable-line
+  const { creatorTip, civitaiTip } = useTipStore();
+  if (!features.creatorComp) {
+    tips.creators = 0;
+    tips.civitai = 0;
+  } else {
+    tips.creators = hasCreatorTip ? creatorTip : 0;
+    tips.civitai = civitaiTip;
+  }
 
-  const cost = data?.cost?.base ?? 0;
-  const totalTip =
-    Math.ceil(cost * (hasCreatorTip ? creatorTip : 0)) + Math.ceil(cost * civitaiTip);
-  const totalCost = features.creatorComp ? cost + totalTip : cost;
+  const base = data?.cost?.base ?? 0;
+  const totalTip = Math.ceil(base * tips.creators) + Math.ceil(base * tips.civitai);
+  total = (data?.cost?.total ?? 0) + totalTip;
+
+  // useEffect(() => {
+  //   if (data) {
+  //     useCostStore.setState({ cost: data.cost?.total ?? 0 });
+  //   }
+  // }, [data?.cost]); // eslint-disable-line
 
   const generateButton = (
     <GenerateButton
       type="submit"
       className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
-      cost={totalCost}
+      cost={total}
       error={
         !isInitialLoading && isError
           ? error
@@ -1318,7 +1325,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
           workflowCost={data?.cost ?? {}}
           hideCreatorTip={!hasCreatorTip}
         >
-          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>
+          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!total}>
             <IconInfoCircle stroke={2.5} />
           </ActionIcon>
         </GenerationCostPopover>

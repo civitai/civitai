@@ -39,13 +39,6 @@ const featureFlags = createFeatureFlags({
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
-  // imageGeneration: {
-  //   toggleable: true,
-  //   default: true,
-  //   displayName: 'Image Generation',
-  //   description: `Generate images with any supported AI resource.`,
-  //   availability: ['public'],
-  // },
   largerGenerationImages: {
     toggleable: true,
     default: false,

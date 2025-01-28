@@ -189,14 +189,17 @@ export const orchestratorRouter = router({
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate;
-        if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
-        else step = await createComfyStep(args);
+        if (args.params.workflow === 'txt2img')
+          step = await createTextToImageStep({ ...args, whatIf: true });
+        else step = await createComfyStep({ ...args, whatIf: true });
+        console.log(args.tips);
 
         const workflow = await submitWorkflow({
           token: args.token,
           body: {
             steps: [step],
             tips: args.tips,
+            experimental: env.ORCHESTRATOR_EXPERIMENTAL,
           },
           query: {
             whatif: true,
@@ -221,8 +224,13 @@ export const orchestratorRouter = router({
           }
         }
 
+        const fixedTotal = workflow?.cost?.fixed
+          ? Object.values(workflow.cost.fixed).reduce((acc, value) => acc + value, 0)
+          : 0;
+        const trueBaseCost = workflow?.cost?.base ? workflow.cost.base - fixedTotal : 0;
+
         return {
-          cost: workflow.cost,
+          cost: { ...workflow.cost, base: trueBaseCost },
           ready,
           eta,
           position,
