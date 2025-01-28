@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { v4 as uuid } from 'uuid';
-import { NotificationCategory } from '~/server/common/enums';
+import { BuzzWithdrawalRequestSort, NotificationCategory } from '~/server/common/enums';
 import { GetByIdStringInput } from '~/server/schema/base.schema';
 import { createNotification } from '~/server/services/notification.service';
 import {
@@ -173,6 +173,19 @@ export const getPaginatedBuzzWithdrawalRequests = async (
     userId = { in: userIds.map((u) => u.id) };
   }
 
+  let orderBy: Prisma.BuzzWithdrawalRequestFindManyArgs['orderBy'] = {};
+  if (input.sort) {
+    if (input.sort === BuzzWithdrawalRequestSort.Newest) {
+      orderBy = { createdAt: 'desc' };
+    } else if (input.sort === BuzzWithdrawalRequestSort.Oldest) {
+      orderBy = { createdAt: 'asc' };
+    } else if (input.sort === BuzzWithdrawalRequestSort.HighestAmount) {
+      orderBy = { requestedBuzzAmount: 'desc' };
+    } else if (input.sort === BuzzWithdrawalRequestSort.LowestAmount) {
+      orderBy = { requestedBuzzAmount: 'asc' };
+    }
+  }
+
   const where: Prisma.BuzzWithdrawalRequestFindManyArgs['where'] = {
     status: (status?.length ?? 0) > 0 ? { in: status } : undefined,
     userId,
@@ -184,7 +197,7 @@ export const getPaginatedBuzzWithdrawalRequests = async (
     take,
     skip,
     select: buzzWithdrawalRequestModerationDetails,
-    orderBy: { createdAt: 'desc' },
+    orderBy,
   });
 
   const count = await dbRead.buzzWithdrawalRequest.count({ where });

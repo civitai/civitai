@@ -1,6 +1,5 @@
 import { ButtonProps } from '@mantine/core';
 import { useRouter } from 'next/router';
-import React from 'react';
 import { SelectMenu, SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -8,6 +7,7 @@ import { FilterSubTypes, useFiltersContext, useSetFilters } from '~/providers/Fi
 import {
   ArticleSort,
   BountySort,
+  BuzzWithdrawalRequestSort,
   ClubSort,
   CollectionSort,
   ImageSort,
@@ -46,6 +46,7 @@ const sortOptions = {
   threads: Object.values(ThreadSort),
   markers: Object.values(MarkerSort),
   tools: Object.values(ToolSort),
+  buzzWithdrawalRequests: Object.values(BuzzWithdrawalRequestSort),
 };
 
 export function SortFilter(props: SortFilterProps) {
@@ -66,7 +67,8 @@ type DumbProps = {
     | ClubSort
     | MarkerSort
     | ThreadSort
-    | ToolSort;
+    | ToolSort
+    | BuzzWithdrawalRequestSort;
   onChange: (
     value:
       | ModelSort
@@ -80,6 +82,7 @@ type DumbProps = {
       | MarkerSort
       | ThreadSort
       | ToolSort
+      | BuzzWithdrawalRequestSort
   ) => void;
 } & SortFilterComponentProps;
 

@@ -21,8 +21,18 @@ import {
   Tooltip,
   TooltipProps,
 } from '@mantine/core';
+import { DatePicker } from '@mantine/dates';
 import { useDebouncedValue } from '@mantine/hooks';
-import { IconCashBanknote, IconCashBanknoteOff, IconCheck, IconCloudOff, IconExternalLink, IconInfoTriangleFilled, IconX } from '@tabler/icons-react';
+import {
+  IconCashBanknote,
+  IconCashBanknoteOff,
+  IconCheck,
+  IconCloudOff,
+  IconExternalLink,
+  IconInfoTriangleFilled,
+  IconX,
+} from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { useState } from 'react';
 import { BuzzWithdrawalRequestFilterDropdown } from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestFiltersDropdown';
 import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
@@ -33,8 +43,10 @@ import {
 import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { SortFilter } from '~/components/Filters';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { BuzzWithdrawalRequestSort } from '~/server/common/enums';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
 import {
   BuzzWithdrawalRequestStatus,
@@ -141,6 +153,9 @@ export default function ModeratorBuzzWithdrawalRequests() {
   const features = useFeatureFlags();
   const [filters, setFilters] = useState<Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>>({
     page: 1,
+    sort: BuzzWithdrawalRequestSort.Newest,
+    from: dayjs().subtract(1, 'month').toDate(),
+    to: new Date(),
   });
   const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { requests, pagination, isLoading, isRefetching } =
@@ -244,8 +259,39 @@ export default function ModeratorBuzzWithdrawalRequests() {
           request&rsquo;s details and history as well as the user&rsquo;s account details.
         </Text>
       </Stack>
-      <Group position="apart" mb="md">
+      <Stack mb="md">
+        <Group align="end">
+          <SortFilter
+            type="buzzWithdrawalRequests"
+            variant="button"
+            value={filters.sort}
+            buttonProps={{ compact: false }}
+            onChange={(x) => setFilters({ sort: x as BuzzWithdrawalRequestSort })}
+          />
+          <BuzzWithdrawalRequestFilterDropdown
+            setFilters={(f) => setFilters({ ...filters, ...f })}
+            filters={filters}
+          />
+        </Group>
         <Group>
+          <DatePicker
+            label="From"
+            placeholder="Start date"
+            value={filters.from ?? undefined}
+            onChange={(date) => {
+              setFilters({ ...filters, from: date ?? undefined });
+            }}
+            clearButtonLabel="Clear"
+          />
+          <DatePicker
+            label="To"
+            placeholder="End date"
+            value={filters.to ?? undefined}
+            onChange={(date) => {
+              setFilters({ ...filters, to: date ?? undefined });
+            }}
+            clearButtonLabel="Clear"
+          />
           <TextInput
             label="Filter by username"
             value={filters.username ?? ''}
@@ -259,11 +305,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
             size="sm"
           />
         </Group>
-        <BuzzWithdrawalRequestFilterDropdown
-          setFilters={(f) => setFilters({ ...filters, ...f })}
-          filters={filters}
-        />
-      </Group>
+      </Stack>
       {isLoading ? (
         <Center p="xl">
           <Loader />

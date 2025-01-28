@@ -324,3 +324,10 @@ export enum ToolSort {
   AZ = 'AZ',
   ZA = 'ZA',
 }
+
+export const BuzzWithdrawalRequestSort = {
+  Newest: 'Newest',
+  Oldest: 'Oldest',
+  HighestAmount: 'Highest Amount',
+  LowestAmount: 'Lowest Amount',
+};

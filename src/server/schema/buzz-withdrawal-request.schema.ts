@@ -1,10 +1,11 @@
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
+import { BuzzWithdrawalRequestSort } from '~/server/common/enums';
 import {
   BuzzWithdrawalRequestStatus,
   UserPaymentConfigurationProvider,
 } from '~/shared/utils/prisma/enums';
 import { paginationSchema } from './base.schema';
-import { constants } from '~/server/common/constants';
 
 export type CreateBuzzWithdrawalRequestSchema = z.infer<typeof createBuzzWithdrawalRequestSchema>;
 export const createBuzzWithdrawalRequestSchema = z.object({
@@ -36,6 +37,9 @@ export const getPaginatedBuzzWithdrawalRequestSchema =
       userId: z.number().optional(),
       requestId: z.string().optional(),
       status: z.array(z.nativeEnum(BuzzWithdrawalRequestStatus)).optional(),
+      sort: z.nativeEnum(BuzzWithdrawalRequestSort).default(BuzzWithdrawalRequestSort.Newest),
+      from: z.date().optional(),
+      to: z.date().optional(),
     })
   );
 
