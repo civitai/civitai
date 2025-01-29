@@ -40,7 +40,12 @@ export const buzzWithdrawalRequestRouter = router({
     .mutation(updateBuzzWithdrawalRequestHandler),
   getServiceStatus: protectedProcedure.query(async () => {
     const status = buzzWithdrawalRequestServiceStatusSchema.parse(
-      JSON.parse((await sysRedis.hGet(REDIS_SYS_KEYS.BUZZ_WITHDRAWAL_REQUEST.STATUS)) ?? '{}')
+      JSON.parse(
+        (await sysRedis.hGet(
+          REDIS_SYS_KEYS.SYSTEM.FEATURES,
+          REDIS_SYS_KEYS.BUZZ_WITHDRAWAL_REQUEST.STATUS
+        )) ?? '{}'
+      )
     );
 
     return status as BuzzWithdrawalRequestServiceStatus;
