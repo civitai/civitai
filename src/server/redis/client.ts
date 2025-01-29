@@ -383,6 +383,9 @@ export const REDIS_SYS_KEYS = {
     INVALID_TOKENS: 'session:invalid-tokens',
   },
   JOB: 'job',
+  BUZZ_WITHDRAWAL_REQUEST: {
+    STATUS: 'buzz-withdrawal-request:status',
+  },
 } as const;
 
 // Cached data
