@@ -55,7 +55,10 @@ import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/Res
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
-import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useSubmitCreateImage,
+  useInvalidateWhatIf,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -119,6 +122,7 @@ export function GenerationFormContent() {
   );
 
   const form = useGenerationForm();
+  const invalidateWhatIf = useInvalidateWhatIf();
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
   const [opened, setOpened] = useState(false);
@@ -238,6 +242,7 @@ export function GenerationFormContent() {
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
+        const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
         await mutateAsync({
           resources,
           params: {
@@ -248,6 +253,9 @@ export function GenerationFormContent() {
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
         });
+        if (hasEarlyAccess) {
+          invalidateWhatIf();
+        }
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
@@ -1201,6 +1209,7 @@ export function GenerationFormContent() {
                     {reviewed && (
                       <>
                         <QueueSnackbar />
+                        <WhatIfAlert />
                         <div className="flex gap-2">
                           <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
                             <Text className="pr-6 text-center text-xs font-semibold" color="dimmed">
@@ -1267,6 +1276,17 @@ function ReadySection() {
 
 // #endregion
 
+function WhatIfAlert() {
+  const { error } = useTextToImageWhatIfContext();
+  if (!error) return null;
+
+  return (
+    <Alert color="yellow">
+      {(error as any).message ?? 'Error calculating cost. Please try updating your values'}
+    </Alert>
+  );
+}
+
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
@@ -1292,25 +1312,13 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const totalTip = Math.ceil(base * tips.creators) + Math.ceil(base * tips.civitai);
   total = (data?.cost?.total ?? 0) + totalTip;
 
-  // useEffect(() => {
-  //   if (data) {
-  //     useCostStore.setState({ cost: data.cost?.total ?? 0 });
-  //   }
-  // }, [data?.cost]); // eslint-disable-line
-
   const generateButton = (
     <GenerateButton
       type="submit"
       className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
       cost={total}
-      error={
-        !isInitialLoading && isError
-          ? error
-            ? (error as any).message
-            : 'Error calculating cost. Please try updating your values'
-          : undefined
-      }
+      disabled={isError}
     />
   );
 

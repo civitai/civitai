@@ -93,7 +93,9 @@ export async function submitWorkflow({
     query,
   });
   if (!data) {
-    const message = error.detail;
+    const e = error as any;
+    const message = e.errors ? e.errors.messages.join('\n') : e.detail;
+
     if (!isProd) {
       console.log('----Workflow Error----');
       console.log({ token });
