@@ -455,8 +455,8 @@ function LightricksTxt2VidGenerationForm() {
             </InfoPopover>
           </div>
         }
-        min={0.1}
-        max={1}
+        min={3}
+        max={3.5}
         step={0.1}
         precision={1}
         reverse
@@ -485,6 +485,7 @@ function LightricksTxt2VidGenerationForm() {
         max={30}
         reverse
       />
+      <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
 }
@@ -523,8 +524,8 @@ function LightricksImg2VidGenerationForm() {
             </InfoPopover>
           </div>
         }
-        min={0.1}
-        max={1}
+        min={3}
+        max={3.5}
         step={0.1}
         precision={1}
         reverse
@@ -553,6 +554,7 @@ function LightricksImg2VidGenerationForm() {
         max={30}
         reverse
       />
+      <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
 }
