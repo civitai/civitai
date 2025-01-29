@@ -38,7 +38,7 @@ export async function createBuzzWithdrawalRequestHandler({
     );
 
     if (status.maxAmount && input.amount > status.maxAmount * constants.buzz.buzzDollarRatio) {
-      throw new Error('You requested an amount highger than the current allowed maximum.');
+      throw new Error('You requested an amount higher than the current allowed maximum.');
     }
 
     return createBuzzWithdrawalRequest({ userId: ctx.user.id, ...input });

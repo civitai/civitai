@@ -430,7 +430,6 @@ export default function ModeratorBuzzWithdrawalRequests() {
                 ].some((t) => t === request.status);
 
                 const isSelected = selection.values.includes(request.id);
-                console.log({ isSelected, selection });
 
                 return (
                   <tr key={request.id}>
@@ -501,7 +500,6 @@ export default function ModeratorBuzzWithdrawalRequests() {
                         <Checkbox
                           checked={isSelected}
                           onChange={(event) => {
-                            console.log('clickeo si');
                             setSelection((curr) => ({
                               ...curr,
                               values: !isSelected
@@ -514,7 +512,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
                         />
                       ) : (
                         <Group noWrap>
-                          {buttons.map((btn) => btn)}
+                          {buttons}
                           <BuzzWithdrawalRequestHistory history={request.history} />
                         </Group>
                       )}
