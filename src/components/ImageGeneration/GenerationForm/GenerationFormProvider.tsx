@@ -157,6 +157,9 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     !vae.canGenerate
   )
     vae = undefined;
+
+  if (params.sampler === 'undefined') params.sampler = defaultValues.sampler;
+
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources.filter((resource) => {
@@ -213,6 +216,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         checkSimilarity(storageValues.remixOfId, storageValues.prompt);
       }
 
+      console.log({ storageValues });
       return getDefaultValues(storageValues);
     },
     [currentUser, status] // eslint-disable-line
@@ -360,6 +364,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
+    console.log(defaultValues.sampler);
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
