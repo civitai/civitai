@@ -6,16 +6,21 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageSort } from '~/server/common/enums';
 import { useQueryImages } from '../image.utils';
 
+const MAX_SHOWN_IMAGES = 6;
+
 export const ImageRemixesDetails = ({ imageId }: { imageId: number }) => {
   const { images, hasNextPage } = useQueryImages({
     remixOfId: imageId,
     period: 'AllTime',
     sort: ImageSort.MostReactions,
-    limit: 6,
+    // Fetch more than the max show images mainly due to filter settings.
+    limit: 25,
     useIndex: true,
   });
 
   if ((images?.length ?? 0) === 0) return null;
+
+  const data = images.slice(0, MAX_SHOWN_IMAGES);
 
   return (
     <Card className="flex flex-col gap-3 rounded-xl">
@@ -27,7 +32,7 @@ export const ImageRemixesDetails = ({ imageId }: { imageId: number }) => {
       </div>
 
       <div className="grid grid-cols-3 gap-4">
-        {images.map((image) => (
+        {data.map((image) => (
           <div key={image.id}>
             <RoutedDialogLink
               name="imageDetail"
@@ -40,7 +45,7 @@ export const ImageRemixesDetails = ({ imageId }: { imageId: number }) => {
           </div>
         ))}
       </div>
-      {hasNextPage && (
+      {(hasNextPage || images.length > MAX_SHOWN_IMAGES) && (
         <Button
           component={Link}
           variant="outline"

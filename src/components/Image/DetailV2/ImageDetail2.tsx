@@ -58,8 +58,6 @@ import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCaro
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
-import { ImageRemixesDetails } from '~/components/Image/DetailV2/ImageRemixesDetails';
-import { ImageRemixOfDetails } from '~/components/Image/DetailV2/ImageRemixOfDetails';
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
@@ -469,8 +467,8 @@ export function ImageDetail2() {
                     )}
                     <ImageProcess imageId={image.id} />
                     <ImageGenerationData imageId={image.id} />
-                    <ImageRemixOfDetails imageId={image.id} />
-                    <ImageRemixesDetails imageId={image.id} />
+                    {/* <ImageRemixOfDetails imageId={image.id} />
+                    <ImageRemixesDetails imageId={image.id} /> */}
                     <Card className="flex flex-col gap-3 rounded-xl">
                       <Text className="flex items-center gap-2 text-xl font-semibold">
                         <IconBrandWechat />

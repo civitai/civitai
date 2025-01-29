@@ -181,6 +181,7 @@ function getBaseClient(type: 'cache' | 'system', legacyMode = false) {
     },
     legacyMode,
     pingInterval: 4 * 60 * 1000,
+    disableClientInfo: true, // this is for twemproxy, DONT REMOVE
   });
   baseClient.on('error', (err) => log(`Redis Error: ${err}`));
   baseClient.on('connect', () => log('Redis connected'));
@@ -341,6 +342,7 @@ export const REDIS_SYS_KEYS = {
     STATUS: 'generation:status',
     WORKFLOWS: 'generation:workflows',
     ENGINES: 'generation:engines',
+    TOKENS: 'generation:tokens',
   },
   TRAINING: {
     STATUS: 'training:status',
@@ -381,6 +383,9 @@ export const REDIS_SYS_KEYS = {
     INVALID_TOKENS: 'session:invalid-tokens',
   },
   JOB: 'job',
+  BUZZ_WITHDRAWAL_REQUEST: {
+    STATUS: 'buzz-withdrawal-request:status',
+  },
 } as const;
 
 // Cached data
@@ -433,6 +438,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
+    FEATURED_MODELS: 'packed:featured-models',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',

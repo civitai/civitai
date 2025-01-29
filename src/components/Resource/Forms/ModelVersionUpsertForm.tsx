@@ -195,7 +195,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     monetization: version?.monetization ?? null,
     requireAuth: version?.requireAuth ?? true,
     recommendedResources: version?.recommendedResources ?? [],
-    usageControl: version?.usageControl ?? ModelUsageControl.Download,
+    // Being extra safe here and ensuring this value exists.
+    usageControl: !!version?.usageControl
+      ? version?.usageControl ?? ModelUsageControl.Download
+      : ModelUsageControl.Download,
   };
 
   const form = useForm({ schema, defaultValues, shouldUnregister: false, mode: 'onChange' });
@@ -304,7 +307,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
     // TODO: Update to model scores.
     .map(([, days]) =>
-      days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta }) ? days : null
+      currentUser?.isModerator || days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta })
+        ? days
+        : null
     )
     .filter(isDefined);
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
@@ -320,7 +325,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     ? MAX_EARLY_ACCCESS
     : version?.earlyAccessConfig?.timeframe ?? 0;
   const resourceLabel = getDisplayName(model?.type ?? '');
-  const modelDownloadEnabled = usageControl === ModelUsageControl.Download;
+  const modelDownloadEnabled = !usageControl || usageControl === ModelUsageControl.Download;
 
   return (
     <>
