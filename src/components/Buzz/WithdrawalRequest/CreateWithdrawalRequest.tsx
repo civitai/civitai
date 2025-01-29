@@ -115,12 +115,12 @@ export const CreateWithdrawalRequest = () => {
                     icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
                     format={undefined}
                     currency={Currency.BUZZ}
-                    min={
+                    min={constants.buzz.minBuzzWithdrawal}
+                    max={
                       status?.maxAmount
                         ? status?.maxAmount * constants.buzz.buzzDollarRatio
-                        : constants.buzz.minBuzzWithdrawal
+                        : constants.buzz.maxBuzzWithdrawal
                     }
-                    max={constants.buzz.maxBuzzWithdrawal}
                     step={constants.buzz.buzzDollarRatio}
                   />
 
