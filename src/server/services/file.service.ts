@@ -211,18 +211,17 @@ export const getFileForModelVersion = async ({
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
   if (!(entityAccess?.hasAccess ?? true)) {
-    // Check the early access scenario:
-    if (
-      !noAuth &&
-      (entityAccess.permissions & EntityAccessPermission.EarlyAccessDownload) != 0 &&
-      !isMod &&
-      !isOwner &&
-      inEarlyAccess
-    ) {
-      return { status: 'early-access', details: { deadline } };
-    }
-
     return { status: 'unauthorized' };
+  }
+
+  // Check the early access scenario:
+  if (
+    inEarlyAccess &&
+    (entityAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
+    !isMod &&
+    !isOwner
+  ) {
+    return { status: 'early-access', details: { deadline } };
   }
 
   // Get the correct file
