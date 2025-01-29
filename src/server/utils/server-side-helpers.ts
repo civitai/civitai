@@ -43,7 +43,7 @@ export function createServerSideProps<P>({
     const isClient = context.req.url?.startsWith('/_next/data') ?? false;
     const session =
       ((context.req as any)['session'] as Session | null) ??
-      (useSession ? await getServerAuthSession(context) : null);
+      (useSession || !isClient ? await getServerAuthSession(context) : null);
     const features = getFeatureFlagsLazy({ user: session?.user, req: context.req });
 
     const ssg =
