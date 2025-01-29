@@ -225,7 +225,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       colorScheme,
       cookies: parsedCookies,
       // cookieKeys: Object.keys(cookies),
-      // session,
+      session,
       flags,
       seed: Date.now(),
       hasAuthCookie,
