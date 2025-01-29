@@ -37,9 +37,6 @@ export function AppLayout({
   notFound?: boolean;
   announcements?: boolean;
 }) {
-  const currentUser = useCurrentUser();
-  const router = useRouter();
-
   return (
     <div className="flex h-full flex-1 flex-col">
       <AppHeader fixed={false} renderSearchComponent={renderSearchComponent} />
@@ -65,9 +62,17 @@ export function AppLayout({
           )}
         </div>
       )}
-      {!currentUser?.isPaidMember && !router.asPath.includes('/moderator') && <AdhesiveAd />}
+      <AdhesiveFooter />
     </div>
   );
+}
+
+function AdhesiveFooter() {
+  const currentUser = useCurrentUser();
+  const router = useRouter();
+
+  if (currentUser?.isPaidMember || router.asPath.includes('/moderator')) return null;
+  return <AdhesiveAd />;
 }
 
 export function MainContent({

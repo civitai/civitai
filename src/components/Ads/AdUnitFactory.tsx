@@ -110,8 +110,8 @@ function AdWrapper({
   preserveLayout?: boolean;
   onDismount?: OnDismount;
 }) {
-  const router = useRouter();
-  const key = router.asPath.split('?')[0];
+  // const router = useRouter();
+  // const key = router.asPath.split('?')[0];
   const { adsBlocked, ready, isMember } = useAdsContext();
 
   const { classes } = useAdWrapperStyles({ sizes, lutSizes, maxHeight, maxWidth });
@@ -135,7 +135,7 @@ function AdWrapper({
             <SupportUsImage sizes={adSizes ?? undefined} />
           ) : ready && adSizes !== undefined ? (
             <AdUnitContent
-              key={key}
+              // key={key}
               adUnit={adUnit}
               sizes={adSizes ?? undefined}
               id={id}
