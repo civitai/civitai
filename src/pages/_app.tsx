@@ -63,6 +63,8 @@ import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
+import { getToken } from 'next-auth/jwt';
+import { civitaiTokenCookieName } from '~/libs/auth';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -195,51 +197,13 @@ function MyApp(props: CustomAppProps) {
   );
 }
 
-MyApp.getInitialProps = async (appContext: AppContext) => {
-  const initialProps = await App.getInitialProps(appContext);
-  if (!appContext.ctx.req) return initialProps;
-
-  // const url = appContext.ctx.req?.url;
-  // console.log({ url });
-  // const isClient = !url || url?.startsWith('/_next/data');
-
-  const { pageProps, ...appProps } = initialProps;
-  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
-  const cookies = getCookies(appContext.ctx);
-  const parsedCookies = parseCookies(cookies);
-
-  const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-  const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
-  // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
-
-  // Pass this via the request so we can use it in SSR
-  if (session) {
-    (appContext.ctx.req as any)['session'] = session;
-    // (appContext.ctx.req as any)['flags'] = flags;
-  }
-
-  return {
-    pageProps: {
-      ...pageProps,
-      colorScheme,
-      cookies: parsedCookies,
-      // cookieKeys: Object.keys(cookies),
-      session,
-      flags,
-      seed: Date.now(),
-      hasAuthCookie,
-    },
-    ...appProps,
-  };
-};
-
 // MyApp.getInitialProps = async (appContext: AppContext) => {
 //   const initialProps = await App.getInitialProps(appContext);
-//   const request = appContext.ctx.req;
-//   if (!request) return initialProps;
+//   if (!appContext.ctx.req) return initialProps;
 
-//   // const url = appContext.ctx?.req?.url;
+//   // const url = appContext.ctx.req?.url;
+//   // console.log({ url });
+//   // const isClient = !url || url?.startsWith('/_next/data');
 
 //   const { pageProps, ...appProps } = initialProps;
 //   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
@@ -247,16 +211,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 //   const parsedCookies = parseCookies(cookies);
 
 //   const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
-//   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+//   const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
 //   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
 //   const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
-//   const token = await getToken({
-//     req: appContext.ctx.req as any,
-//     secret: process.env.NEXTAUTH_SECRET,
-//     cookieName: civitaiTokenCookieName,
-//   });
 
-//   const session = token?.user ? { user: token.user } : null;
 //   // Pass this via the request so we can use it in SSR
 //   if (session) {
 //     (appContext.ctx.req as any)['session'] = session;
@@ -277,5 +235,49 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 //     ...appProps,
 //   };
 // };
+
+MyApp.getInitialProps = async (appContext: AppContext) => {
+  const initialProps = await App.getInitialProps(appContext);
+  const request = appContext.ctx.req;
+  if (!request) return initialProps;
+
+  // const url = appContext.ctx?.req?.url;
+
+  const { pageProps, ...appProps } = initialProps;
+  const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
+  const cookies = getCookies(appContext.ctx);
+  const parsedCookies = parseCookies(cookies);
+
+  const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+  // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+  // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+  const flags = getFeatureFlags({ host: request?.headers.host });
+  const token = await getToken({
+    req: appContext.ctx.req as any,
+    secret: process.env.NEXTAUTH_SECRET,
+    cookieName: civitaiTokenCookieName,
+  });
+
+  const session = token?.user ? { user: token.user } : null;
+  // Pass this via the request so we can use it in SSR
+  if (session) {
+    (appContext.ctx.req as any)['session'] = session;
+    // (appContext.ctx.req as any)['flags'] = flags;
+  }
+
+  return {
+    pageProps: {
+      ...pageProps,
+      colorScheme,
+      cookies: parsedCookies,
+      // cookieKeys: Object.keys(cookies),
+      session,
+      flags,
+      seed: Date.now(),
+      hasAuthCookie,
+    },
+    ...appProps,
+  };
+};
 
 export default trpc.withTRPC(MyApp);
