@@ -134,7 +134,7 @@ export default function ResourceSelectModal({
     data: featuredModels,
     isFetching: isLoadingFeatured,
     // isError: isErrorFeatured,
-  } = trpc.model.getFeaturedModels.useQuery({ take }, { enabled: selectedTab === 'featured' });
+  } = trpc.model.getFeaturedModels.useQuery();
 
   const {
     steps,

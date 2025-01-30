@@ -1,3 +1,4 @@
+import { Priority } from '@civitai/client';
 import { z } from 'zod';
 
 import { baseModelSets, generation } from '~/server/common/constants';
@@ -45,6 +46,7 @@ export const textToImageParamsSchema = z.object({
   fluxUltraRaw: z.boolean().optional(),
   experimental: z.boolean().optional(),
   engine: z.string().optional(),
+  priority: z.nativeEnum(Priority).default('low'),
 });
 
 // #endregion
@@ -92,7 +94,7 @@ export const generateImageSchema = z.object({
       creators: z.number().min(0).max(1).default(0),
       civitai: z.number().min(0).max(1).default(0),
     })
-    .optional(),
+    .default({ creators: 0, civitai: 0 }),
 });
 
 export const generateImageWhatIfSchema = generateImageSchema.extend({

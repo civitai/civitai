@@ -1,26 +1,21 @@
-import { Line } from 'react-chartjs-2';
+import { Center, Loader, MultiSelect, Paper, Stack, Text, Title } from '@mantine/core';
 import {
   CategoryScale,
   Chart as ChartJS,
-  LinearScale,
-  LineElement,
-  PointElement,
+  ChartOptions,
   Tooltip as ChartTooltip,
   Colors,
   Legend,
-  ChartOptions,
+  LinearScale,
+  LineElement,
+  PointElement,
 } from 'chart.js';
 import dayjs from 'dayjs';
-import { trpc } from '~/utils/trpc';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useMemo, useState } from 'react';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { Paper, Stack, Title, Text, MultiSelect, Loader, Center } from '@mantine/core';
-import { constants } from '~/server/common/constants';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { Line } from 'react-chartjs-2';
+import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { maxDate } from '~/utils/date-helpers';
-import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
-import { StripeConnectStatus } from '~/server/common/enums';
+import { trpc } from '~/utils/trpc';
 
 ChartJS.register(
   CategoryScale,
@@ -36,16 +31,10 @@ const DEFAULT_TIMEFRAME = 30;
 
 export const GeneratedImagesReward = () => {
   const [filteredVersionIds, setFilteredVersionIds] = useState<number[]>([]);
-  const { userPaymentConfiguration } = useUserPaymentConfiguration();
   const { data: modelVersions = [], isLoading } =
-    trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery(
-      { timeframe: DEFAULT_TIMEFRAME },
-      {
-        enabled:
-          !!userPaymentConfiguration &&
-          userPaymentConfiguration?.stripeAccountStatus === StripeConnectStatus.Approved,
-      }
-    );
+    trpc.modelVersion.modelVersionsGeneratedImagesOnTimeframe.useQuery({
+      timeframe: DEFAULT_TIMEFRAME,
+    });
 
   const { classes, theme } = useBuzzDashboardStyles();
   const labelColor = theme.colorScheme === 'dark' ? theme.colors.gray[0] : theme.colors.dark[5];
@@ -131,7 +120,7 @@ export const GeneratedImagesReward = () => {
     }));
   }, [modelVersions]);
 
-  if (userPaymentConfiguration?.stripeAccountStatus !== StripeConnectStatus.Approved) {
+  if (modelVersions.length === 0) {
     return null;
   }
 
@@ -141,16 +130,12 @@ export const GeneratedImagesReward = () => {
         <Title order={3}>Images generated with your models</Title>
         <Stack spacing={0}>
           <Text>
-            As a member of the Civitai Creators Program, we will give you buzz for images generated
-            with your models.
+            This chart shows the number of images generated with your resources over the past 30
+            days.
           </Text>
           <Text>
-            For every 1,000 images generated with your resource, you will receive{' '}
-            <CurrencyBadge
-              currency={Currency.BUZZ}
-              unitAmount={constants.creatorsProgram.rewards.generatedImageWithResource * 1000}
-            />{' '}
-            at the end of the month.
+            You can use this information to gain insight into the popularity of your models and
+            their usage
           </Text>
         </Stack>
         {!isLoading && modelVersions.length > 0 ? (

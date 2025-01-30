@@ -3,25 +3,6 @@ import { useEffect, useState } from 'react';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 
-export function AdhesiveAd({
-  closeable,
-  preserveLayout,
-}: {
-  closeable?: boolean;
-  preserveLayout?: boolean;
-}) {
-  const [closed, setClosed] = useState(false);
-
-  if (closed) return null;
-
-  return (
-    <AdhesiveAdContent
-      onClose={closeable !== false ? () => setClosed(true) : undefined}
-      preserveLayout={preserveLayout}
-    />
-  );
-}
-
 function AdhesiveAdContent({
   onClose,
   preserveLayout = false,
@@ -61,5 +42,24 @@ function AdhesiveAdContent({
         )}
       </div>
     </AdUnitRenderable>
+  );
+}
+
+export function AdhesiveAd({
+  closeable,
+  preserveLayout,
+}: {
+  closeable?: boolean;
+  preserveLayout?: boolean;
+}) {
+  const [closed, setClosed] = useState(false);
+
+  if (closed) return null;
+
+  return (
+    <AdhesiveAdContent
+      onClose={closeable !== false ? () => setClosed(true) : undefined}
+      preserveLayout={preserveLayout}
+    />
   );
 }

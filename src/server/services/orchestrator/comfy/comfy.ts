@@ -23,13 +23,15 @@ import { stringifyAIR } from '~/utils/string-helpers';
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
+    whatIf?: boolean;
   }
 ) {
-  input.params.seed =
-    input.params.seed ?? getRandomInt(input.params.quantity, maxRandomSeed) - input.params.quantity;
+  const { priority, ...inputParams } = input.params;
+  inputParams.seed =
+    inputParams.seed ?? getRandomInt(inputParams.quantity, maxRandomSeed) - inputParams.quantity;
 
-  const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
-  const { resources, params, priority } = await parseGenerateImageInput({
+  const workflowDefinition = await getWorkflowDefinition(inputParams.workflow);
+  const { resources, params } = await parseGenerateImageInput({
     ...input,
     workflowDefinition,
   });
@@ -40,12 +42,13 @@ export async function createComfyStep(
       (params.sampler as keyof typeof samplersToComfySamplers) ?? 'DPM++ 2M Karras'
     ];
 
-  const comfyWorkflow = await populateWorkflowDefinition(input.params.workflow, {
+  const comfyWorkflow = await populateWorkflowDefinition(inputParams.workflow, {
     ...params,
     sampler,
     scheduler,
-    seed: params.seed ?? -1,
+    seed: inputParams.seed,
   });
+
   applyResources(
     comfyWorkflow,
     resources.map((resource) => ({
@@ -77,6 +80,7 @@ export async function createComfyStep(
 
   return {
     $type: 'comfy',
+    priority,
     input: {
       quantity: params.quantity,
       comfyWorkflow,
@@ -88,7 +92,6 @@ export async function createComfyStep(
       params: input.params,
       remixOfId: input.remixOfId,
     },
-    priority,
   } as ComfyStepTemplate;
 }
 
@@ -109,8 +112,7 @@ export async function createComfy(
       tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
-      // @ts-ignore: ignoring until we update the civitai-client package
-      experimental: false,
+      experimental: env.ORCHESTRATOR_EXPERIMENTAL,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,

@@ -69,6 +69,9 @@ src/pages/api/admin/*.json
 trace/trace.json
 trace/types.json
 
+# Local files
+/src/local
+
 # Playwright
 node_modules/
 /test-results/

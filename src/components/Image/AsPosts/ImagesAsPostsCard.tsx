@@ -353,25 +353,26 @@ export function ImagesAsPostsCard({
                               image={image}
                               additionalMenuItems={moderationOptions(image)}
                             />
-                            {features.imageGeneration && image.hasMeta && (
-                              <HoverActionButton
-                                label="Remix"
-                                size={30}
-                                color="white"
-                                variant="filled"
-                                data-activity="remix:model-gallery"
-                                onClick={(e) => {
-                                  e.preventDefault();
-                                  e.stopPropagation();
-                                  generationPanel.open({
-                                    type: image.type,
-                                    id: image.id,
-                                  });
-                                }}
-                              >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            )}
+                            {features.imageGeneration &&
+                              (image.hasPositivePrompt ?? image.hasMeta) && (
+                                <HoverActionButton
+                                  label="Remix"
+                                  size={30}
+                                  color="white"
+                                  variant="filled"
+                                  data-activity="remix:model-gallery"
+                                  onClick={(e) => {
+                                    e.preventDefault();
+                                    e.stopPropagation();
+                                    generationPanel.open({
+                                      type: image.type,
+                                      id: image.id,
+                                    });
+                                  }}
+                                >
+                                  <IconBrush stroke={2.5} size={16} />
+                                </HoverActionButton>
+                              )}
                           </Stack>
                         )}
                         <RoutedDialogLink
@@ -476,25 +477,26 @@ export function ImagesAsPostsCard({
                                         image={image}
                                         additionalMenuItems={moderationOptions(image)}
                                       />
-                                      {features.imageGeneration && image.hasMeta && (
-                                        <HoverActionButton
-                                          label="Remix"
-                                          size={30}
-                                          color="white"
-                                          variant="filled"
-                                          data-activity="remix:model-gallery"
-                                          onClick={(e) => {
-                                            e.preventDefault();
-                                            e.stopPropagation();
-                                            generationPanel.open({
-                                              type: image.type,
-                                              id: image.id,
-                                            });
-                                          }}
-                                        >
-                                          <IconBrush stroke={2.5} size={16} />
-                                        </HoverActionButton>
-                                      )}
+                                      {features.imageGeneration &&
+                                        (image.hasPositivePrompt ?? image.hasMeta) && (
+                                          <HoverActionButton
+                                            label="Remix"
+                                            size={30}
+                                            color="white"
+                                            variant="filled"
+                                            data-activity="remix:model-gallery"
+                                            onClick={(e) => {
+                                              e.preventDefault();
+                                              e.stopPropagation();
+                                              generationPanel.open({
+                                                type: image.type,
+                                                id: image.id,
+                                              });
+                                            }}
+                                          >
+                                            <IconBrush stroke={2.5} size={16} />
+                                          </HoverActionButton>
+                                        )}
                                     </Stack>
                                   )}
                                   <RoutedDialogLink

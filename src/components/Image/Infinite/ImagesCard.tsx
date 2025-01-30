@@ -150,7 +150,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                   {safe && (
                     <div className="absolute right-2 top-2 flex flex-col gap-2">
                       {!isBlocked && <ImageContextMenu image={image} />}
-                      {features.imageGeneration && image.hasMeta && (
+                      {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
                         <HoverActionButton
                           label="Remix"
                           size={30}

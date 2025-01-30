@@ -141,6 +141,7 @@ export type SearchBaseImage = {
   promptNsfw?: boolean;
   blockedFor: BlockedReason | null;
   remixOfId?: number | null;
+  hasPositivePrompt?: boolean;
 };
 
 type Metrics = {
@@ -327,6 +328,14 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ELSE FALSE
           END
         ) AS "hasMeta",
+        (
+          CASE
+            WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+              AND i.meta->>'prompt' IS NOT NULL
+            THEN TRUE
+            ELSE FALSE
+          END
+        ) AS "hasPositivePrompt",
         (
           CASE
             WHEN i.meta->>'civitaiResources' IS NOT NULL
