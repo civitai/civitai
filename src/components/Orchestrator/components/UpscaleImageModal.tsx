@@ -11,8 +11,8 @@ import { GenerateButton } from '~/components/Orchestrator/components/GenerateBut
 import { Form, useForm } from '~/libs/form';
 import { generationConfig } from '~/server/common/constants';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 import {
-  GenerationResource,
   getBaseModelSetType,
   getRoundedUpscaleSize,
   whatIfQueryOverrides,

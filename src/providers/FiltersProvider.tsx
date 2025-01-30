@@ -7,6 +7,7 @@ import {
   ArticleSort,
   BountySort,
   BountyStatus,
+  BuzzWithdrawalRequestSort,
   ClubSort,
   CollectionSort,
   ImageSort,
@@ -77,6 +78,8 @@ const imageFilterSchema = z.object({
   tools: z.number().array().optional(),
   techniques: z.number().array().optional(),
   baseModels: z.enum(constants.baseModels).array().optional(),
+  remixesOnly: z.boolean().optional(),
+  nonRemixesOnly: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
@@ -162,6 +165,10 @@ const toolFilterSchema = z.object({
   sort: z.nativeEnum(ToolSort).default(ToolSort.Newest),
   type: z.nativeEnum(ToolType).optional(),
 });
+type BuzzWithdrawalRequestFilterSchema = z.infer<typeof buzzWithdrawalRequestFilterSchema>;
+const buzzWithdrawalRequestFilterSchema = z.object({
+  sort: z.nativeEnum(BuzzWithdrawalRequestSort).default(BuzzWithdrawalRequestSort.Newest),
+});
 
 type StorageState = {
   models: ModelFilterSchema;
@@ -177,6 +184,7 @@ type StorageState = {
   threads: ThreadFilterSchema;
   markers: MarkerFilterSchema;
   tools: ToolFilterSchema;
+  buzzWithdrawalRequests: BuzzWithdrawalRequestFilterSchema;
 };
 export type FilterSubTypes = keyof StorageState;
 
@@ -201,6 +209,7 @@ type StoreState = FilterState & {
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
   setMarkerFilters: (filters: Partial<MarkerFilterSchema>) => void;
   setToolFilters: (filters: Partial<ToolFilterSchema>) => void;
+  setBuzzWithdrawalRequestFilters: (filters: Partial<BuzzWithdrawalRequestFilterSchema>) => void;
 };
 
 type LocalStorageSchema = Record<keyof StorageState, { key: string; schema: z.AnyZodObject }>;
@@ -218,6 +227,10 @@ const localStorageSchemas: LocalStorageSchema = {
   threads: { key: 'thread-filters', schema: threadFilterSchema },
   markers: { key: 'marker-filters', schema: markerFilterSchema },
   tools: { key: 'tool-filters', schema: toolFilterSchema },
+  buzzWithdrawalRequests: {
+    key: 'buzz-withdrawal-request-filters',
+    schema: buzzWithdrawalRequestFilterSchema,
+  },
 };
 
 const getInitialValues = <TSchema extends z.AnyZodObject>({
@@ -294,6 +307,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'markers', data, state })),
       setToolFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'tools', data, state })),
+      setBuzzWithdrawalRequestFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'buzzWithdrawalRequests', data, state })),
     }))
   );
 
@@ -346,6 +361,7 @@ export function useSetFilters(type: FilterSubTypes) {
           threads: state.setThreadFilters,
           markers: state.setMarkerFilters,
           tools: state.setToolFilters,
+          buzzWithdrawalRequests: state.setBuzzWithdrawalRequestFilters,
         }[type]),
       [type]
     )

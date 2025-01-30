@@ -1291,9 +1291,16 @@ export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: DeepNonNullable
     const { id } = ctx.user;
     const { features = {} } = await getUserSettings(id);
 
+    // filter toggleable features from user settings
+    const filteredUserFeatures = Object.keys(features).reduce(
+      (acc, key) =>
+        toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
+      {} as FeatureAccess
+    );
+
     return {
       ...defaultToggleableFeatures,
-      ...features,
+      ...filteredUserFeatures,
     } as FeatureAccess;
   } catch (error) {
     throw throwDbError(error);

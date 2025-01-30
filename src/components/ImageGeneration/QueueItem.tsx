@@ -40,7 +40,7 @@ import {
   useDeleteTextToImageRequest,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
-import { Generation } from '~/server/services/generation/generation.types';
+
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
@@ -56,6 +56,7 @@ import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationFo
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -390,10 +391,10 @@ const useStyle = createStyles((theme) => ({
   },
 }));
 
-const ResourceBadge = (props: Generation.Resource) => {
+const ResourceBadge = (props: GenerationResource) => {
   const { unstableResources } = useUnstableResources();
 
-  const { modelId, modelName, id, name } = props;
+  const { model, id, name } = props;
   const unstable = unstableResources?.includes(id);
 
   const badge = (
@@ -402,10 +403,10 @@ const ResourceBadge = (props: Generation.Resource) => {
       color={unstable ? 'yellow' : undefined}
       sx={{ maxWidth: 200, cursor: 'pointer' }}
       component={Link}
-      href={`/models/${modelId}?modelVersionId=${id}`}
+      href={`/models/${model.id}?modelVersionId=${id}`}
       onClick={() => generationPanel.close()}
     >
-      {modelName} - {name}
+      {model.name} - {name}
     </Badge>
   );
 

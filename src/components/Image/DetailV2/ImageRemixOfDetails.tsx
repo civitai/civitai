@@ -1,17 +1,27 @@
 import { Card, Text } from '@mantine/core';
 import { IconHierarchy } from '@tabler/icons-react';
 import { ImageCard } from '~/components/Cards/ImageCard';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { trpc } from '~/utils/trpc';
 
 export const ImageRemixOfDetails = ({ imageId }: { imageId: number }) => {
   const { data: imageGenerationData } = trpc.image.getGenerationData.useQuery({ id: imageId });
   const { remixOfId } = imageGenerationData ?? {};
-  const { data: image, isLoading } = trpc.image.get.useQuery(
+  const { data, isLoading } = trpc.image.get.useQuery(
     { id: remixOfId as number },
     { enabled: !!remixOfId }
   );
 
-  if (!remixOfId || !image) return null;
+  // Avoids showing not available levels:
+  const { items: images } = useApplyHiddenPreferences({
+    type: 'images',
+    data: data ? [data] : [],
+    allowLowerLevels: true,
+  });
+
+  const [image] = images;
+
+  if (!remixOfId || isLoading || !image) return null;
 
   return (
     <Card className="flex flex-col gap-3 rounded-xl">

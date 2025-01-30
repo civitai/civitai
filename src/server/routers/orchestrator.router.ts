@@ -9,7 +9,7 @@ import { reportProhibitedRequestHandler } from '~/server/controllers/user.contro
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
 import {
   generateImageSchema,
@@ -50,14 +50,14 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
-const TOKEN_STORE: 'redis' | 'cookie' = 'redis';
+const TOKEN_STORE: 'redis' | 'cookie' = false ? 'cookie' : 'redis';
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const redisKey = user.id.toString();
   let token: string | null =
     TOKEN_STORE === 'redis'
-      ? await redis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
+      ? await sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
       : getEncryptedCookie(ctx, generationServiceCookie.name);
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
@@ -71,8 +71,8 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
     });
     if (TOKEN_STORE === 'redis') {
       await Promise.all([
-        redis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
-        redis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
+        sysRedis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
+        sysRedis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
       ]);
     } else
       setEncryptedCookie(ctx, {
@@ -178,7 +178,8 @@ export const orchestratorRouter = router({
     }),
   getImageWhatIf: orchestratorGuardedProcedure
     .input(generateImageWhatIfSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    // can't use edge cache due to values dependent on individual users
+    // .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(async ({ ctx, input }) => {
       try {
         const args = {
@@ -189,14 +190,16 @@ export const orchestratorRouter = router({
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate;
-        if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
-        else step = await createComfyStep(args);
+        if (args.params.workflow === 'txt2img')
+          step = await createTextToImageStep({ ...args, whatIf: true });
+        else step = await createComfyStep({ ...args, whatIf: true });
 
         const workflow = await submitWorkflow({
           token: args.token,
           body: {
             steps: [step],
             tips: args.tips,
+            experimental: env.ORCHESTRATOR_EXPERIMENTAL,
           },
           query: {
             whatif: true,
@@ -221,8 +224,13 @@ export const orchestratorRouter = router({
           }
         }
 
+        const fixedTotal = workflow?.cost?.fixed
+          ? Object.values(workflow.cost.fixed).reduce((acc, value) => acc + value, 0)
+          : 0;
+        const trueBaseCost = workflow?.cost?.base ? workflow.cost.base - fixedTotal : 0;
+
         return {
-          cost: workflow.cost,
+          cost: { ...workflow.cost, base: trueBaseCost },
           ready,
           eta,
           position,

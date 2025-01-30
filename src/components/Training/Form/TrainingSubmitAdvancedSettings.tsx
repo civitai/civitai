@@ -39,6 +39,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import { showInfoNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
 import { discountInfo, isValidRapid, rapidEta } from '~/utils/training';
 
 export const AdvancedSettings = ({
@@ -480,7 +481,24 @@ export const AdvancedSettings = ({
                             </Text>
                             {ts.name === 'targetSteps' &&
                               selectedRun.params.targetSteps > maxSteps && (
-                                <IconAlertTriangle color="orange" size={16} />
+                                <Tooltip
+                                  label={`Max steps too high. Limit: ${numberWithCommas(maxSteps)}`}
+                                  position="bottom"
+                                >
+                                  <IconAlertTriangle color="orange" size={16} />
+                                </Tooltip>
+                              )}
+                            {ts.name === 'trainBatchSize' &&
+                              ['flux', 'sd35'].includes(selectedRun.baseType) &&
+                              selectedRun.params.engine === 'kohya' &&
+                              selectedRun.params.trainBatchSize > 2 &&
+                              selectedRun.params.resolution > 512 && (
+                                <Tooltip
+                                  label={`Batch size too high for resolution (max of 2 for >512)`}
+                                  position="bottom"
+                                >
+                                  <IconAlertTriangle color="orange" size={16} />
+                                </Tooltip>
                               )}
                           </Group>
                           {/*TODO re-enable when x-flux is back*/}

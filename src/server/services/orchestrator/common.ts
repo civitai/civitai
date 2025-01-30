@@ -19,7 +19,6 @@ import { generation } from '~/server/common/constants';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
 import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
-import { resourceDataCache } from '~/server/redis/caches';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GenerationStatus, generationStatusSchema } from '~/server/schema/generation.schema';
 import {
@@ -28,6 +27,10 @@ import {
   TextToImageParams,
 } from '~/server/schema/orchestrator/textToImage.schema';
 import { UserTier } from '~/server/schema/user.schema';
+import {
+  GenerationResource,
+  getGenerationResourceData,
+} from '~/server/services/generation/generation.service';
 import { NormalizedGeneratedImage } from '~/server/services/orchestrator';
 import {
   GeneratedImageWorkflow,
@@ -40,7 +43,7 @@ import {
   allInjectableResourceIds,
   fluxModeOptions,
   fluxUltraAir,
-  formatGenerationResources,
+  fluxUltraAirId,
   getBaseModelResourceTypes,
   getBaseModelSetType,
   getInjectablResources,
@@ -56,7 +59,7 @@ import {
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
+import { parseAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
@@ -80,27 +83,15 @@ export async function getGenerationStatus() {
   return status as GenerationStatus;
 }
 
-export type AirResourceData = AsyncReturnType<typeof getResourceDataWithAirs>[number];
-export async function getResourceDataWithAirs(versionIds: number[]) {
-  const resources = await resourceDataCache.fetch(versionIds);
-  return resources.map((resource) => ({
-    ...resource,
-    air: stringifyAIR({
-      baseModel: resource.baseModel,
-      type: resource.model.type,
-      modelId: resource.model.id,
-      id: resource.id,
-    }),
-  }));
-}
-
-export async function getResourceDataWithInjects<T extends AirResourceData>(
-  modelVersionIds: number[],
-  cb?: (resource: AirResourceData) => T
-) {
-  const ids = [...modelVersionIds, ...allInjectableResourceIds];
-  const results = await getResourceDataWithAirs(ids);
-  const allResources = (cb ? results.map(cb) : results) as T[];
+// TODO - pass user data
+export async function getResourceDataWithInjects<T extends GenerationResource>(args: {
+  ids: number[];
+  user?: SessionUser;
+  cb?: (resource: GenerationResource) => T;
+}) {
+  const ids = [...args.ids, ...allInjectableResourceIds];
+  const results = await getGenerationResourceData({ ids, user: args.user });
+  const allResources = (args.cb ? results.map(args.cb) : results) as T[];
 
   return {
     resources: allResources.filter((x) => !allInjectableResourceIds.includes(x.id)),
@@ -113,9 +104,11 @@ export async function parseGenerateImageInput({
   params: originalParams,
   resources: originalResources,
   workflowDefinition,
+  whatIf,
 }: z.infer<typeof generateImageSchema> & {
   user: SessionUser;
   workflowDefinition: WorkflowDefinition;
+  whatIf?: boolean;
 }) {
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
@@ -163,14 +156,15 @@ export async function parseGenerateImageInput({
   if (!status.available && !user.isModerator)
     throw throwBadRequestError('Generation is currently disabled');
 
-  const resourceData = await getResourceDataWithInjects(
-    originalResources.map((x) => x.id),
-    (resource) => ({
+  const resourceData = await getResourceDataWithInjects({
+    ids: originalResources.map((x) => x.id),
+    user,
+    cb: (resource) => ({
       ...resource,
       ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
-    })
-  );
+    }),
+  });
 
   if (
     resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
@@ -194,11 +188,11 @@ export async function parseGenerateImageInput({
     throw throwBadRequestError(`Draft mode is currently disabled for ${params.baseModel} models`);
 
   // handle missing coverage
-  if (!resourceData.resources.every((x) => x.available) && params.workflow !== 'img2img-upscale')
+  if (!resourceData.resources.every((x) => x.canGenerate) && params.workflow !== 'img2img-upscale')
     throw throwBadRequestError(
       `Some of your resources are not available for generation: ${resourceData.resources
-        .filter((x) => !x.available)
-        .map((x) => x.air)
+        .filter((x) => !x.canGenerate)
+        .map((x) => x.name)
         .join(', ')}`
     );
 
@@ -223,15 +217,17 @@ export async function parseGenerateImageInput({
   // #endregion
 
   // handle moderate prompt
-  const moderationResult = await extModeration.moderatePrompt(params.prompt).catch((error) => {
-    logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-    return { flagged: false, categories: [] as string[] };
-  });
+  if (!whatIf) {
+    const moderationResult = await extModeration.moderatePrompt(params.prompt).catch((error) => {
+      logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
+      return { flagged: false, categories: [] as string[] };
+    });
 
-  if (moderationResult.flagged) {
-    throw throwBadRequestError(
-      `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
-    );
+    if (moderationResult.flagged) {
+      throw throwBadRequestError(
+        `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
+      );
+    }
   }
 
   const hasMinorResource = availableResources.some((resource) => resource.model.minor);
@@ -262,24 +258,26 @@ export async function parseGenerateImageInput({
   const positivePrompts = [params.prompt];
   const negativePrompts = [params.negativePrompt];
   const resourcesToInject: typeof resourceData.injectable = [];
-  for (const item of injectable) {
-    const resource = resourceData.injectable.find((x) => x.id === item.id);
-    if (!resource) continue;
-    resourcesToInject.push(resource);
+  if (!whatIf) {
+    for (const item of injectable) {
+      const resource = resourceData.injectable.find((x) => x.id === item.id);
+      if (!resource) continue;
+      resourcesToInject.push(resource);
 
-    const triggerWord = resource.trainedWords?.[0];
-    if (triggerWord) {
-      if (item.triggerType === 'negative') negativePrompts.unshift(triggerWord);
-      if (item.triggerType === 'positive') positivePrompts.unshift(triggerWord);
-    }
+      const triggerWord = resource.trainedWords?.[0];
+      if (triggerWord) {
+        if (item.triggerType === 'negative') negativePrompts.unshift(triggerWord);
+        if (item.triggerType === 'positive') positivePrompts.unshift(triggerWord);
+      }
 
-    if (item.sanitize) {
-      const sanitized = item.sanitize(params);
-      for (const key in sanitized) {
-        // only assign to step metadata if no value has already been assigned
-        Object.assign(params, {
-          [key as keyof TextToImageParams]: sanitized[key as keyof TextToImageParams],
-        });
+      if (item.sanitize) {
+        const sanitized = item.sanitize(params);
+        for (const key in sanitized) {
+          // only assign to step metadata if no value has already been assigned
+          Object.assign(params, {
+            [key as keyof TextToImageParams]: sanitized[key as keyof TextToImageParams],
+          });
+        }
       }
     }
   }
@@ -313,39 +311,49 @@ export async function parseGenerateImageInput({
       upscaleWidth: upscale?.width,
       upscaleHeight: upscale?.height,
     }),
-    priority: getUserPriority(status, user),
+    // priority: getUserPriority(status, user),
   };
 }
 
 function getResources(step: WorkflowStep) {
-  if (step.$type === 'comfy') return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
-  else if (step.$type === 'textToImage')
+  if (step.$type === 'textToImage')
     return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
       id: x.version,
       strength: x.networkParams.strength,
     }));
-  else return [];
+  return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
+}
+
+function getTextToImageAirs(inputs: TextToImageInput[]) {
+  return Object.entries(
+    inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
+      if (input.model) acc[input.model] = {};
+      const additionalNetworks = input.additionalNetworks ?? {};
+      for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
+      return acc;
+    }, {})
+  ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
 }
 
 function combineResourcesWithInputResource(
-  allResources: AirResourceData[],
+  allResources: GenerationResource[],
   resources: { id: number; strength?: number | null }[]
 ) {
-  return allResources.map((resource) => {
-    const original = resources.find((x) => x.id === resource.id);
-    const { settings = {} } = resource;
-    settings.strength = original?.strength;
-    resource.settings = settings;
-    return resource;
-  });
+  return allResources
+    .map((resource) => {
+      const original = resources.find((x) => x.id === resource.id);
+      if (!original) return null;
+      return { ...resource, strength: original.strength ?? resource.strength };
+    })
+    .filter(isDefined);
 }
 
-export async function formatGenerationResponse(workflows: Workflow[]) {
+export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
   const versionIds = allResources.map((x) => x.id);
-  const { resources, injectable } = await getResourceDataWithInjects(versionIds);
+  const { resources, injectable } = await getResourceDataWithInjects({ ids: versionIds, user });
 
   return workflows.map((workflow) => {
     return {
@@ -371,23 +379,23 @@ export async function formatGenerationResponse(workflows: Workflow[]) {
   });
 }
 
-// TODO - remove this 30 days after launch
-function getTextToImageAirs(inputs: TextToImageInput[]) {
-  return Object.entries(
-    inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
-      if (input.model) acc[input.model] = {};
-      const additionalNetworks = input.additionalNetworks ?? {};
-      for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
-      return acc;
-    }, {})
-  ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
-}
+// // TODO - remove this 30 days after launch
+// function getTextToImageAirs(inputs: TextToImageInput[]) {
+//   return Object.entries(
+//     inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
+//       if (input.model) acc[input.model] = {};
+//       const additionalNetworks = input.additionalNetworks ?? {};
+//       for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
+//       return acc;
+//     }, {})
+//   ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
+// }
 
 export type WorkflowStepFormatted = ReturnType<typeof formatWorkflowStep>;
 function formatWorkflowStep(args: {
   workflowId: string;
   step: WorkflowStep;
-  resources: AirResourceData[];
+  resources: GenerationResource[];
 }) {
   const { step } = args;
   switch (step.$type) {
@@ -506,16 +514,14 @@ function formatTextToImageStep({
   workflowId,
 }: {
   step: WorkflowStep;
-  resources?: AirResourceData[];
+  resources?: GenerationResource[];
   workflowId: string;
 }) {
   const { input, output, jobs } = step as TextToImageStep;
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  const stepResources = getTextToImageAirs([input]);
+  const stepResources = getResources(step);
 
-  const resources = combineResourcesWithInputResource(allResources, getResources(step)).filter(
-    (resource) => stepResources.some((x) => x.version === resource.id)
-  );
+  const resources = combineResourcesWithInputResource(allResources, stepResources);
   const versionIds = resources.map((x) => x.id);
 
   const checkpoint = resources.find((x) => x.model.type === 'Checkpoint');
@@ -530,8 +536,13 @@ function formatTextToImageStep({
     const triggerWord = resource.trainedWords?.[0];
     if (triggerWord) {
       if (item?.triggerType === 'negative')
-        negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
-      if (item?.triggerType === 'positive') prompt = prompt.replace(`${triggerWord}, `, '');
+        while (negativePrompt.startsWith(triggerWord)) {
+          negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+        }
+      if (item?.triggerType === 'positive')
+        while (prompt.startsWith(triggerWord)) {
+          prompt = prompt.replace(`${triggerWord}, `, '');
+        }
     }
   }
 
@@ -616,7 +627,7 @@ function formatTextToImageStep({
     fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
   } as TextToImageParams;
 
-  if (resources.some((x) => x.air === fluxUltraAir)) {
+  if (resources.some((x) => x.id === fluxUltraAirId)) {
     delete params.steps;
     delete params.cfgScale;
     delete params.clipSkip;
@@ -634,7 +645,7 @@ function formatTextToImageStep({
     images,
     status: step.status,
     metadata: metadata,
-    resources: formatGenerationResources(resources.filter((x) => !injectableIds.includes(x.id))),
+    resources: resources.filter((x) => !injectableIds.includes(x.id)),
   };
 }
 
@@ -644,7 +655,7 @@ export function formatComfyStep({
   workflowId,
 }: {
   step: WorkflowStep;
-  resources?: AirResourceData[];
+  resources?: GenerationResource[];
   workflowId: string;
 }) {
   const { output, jobs, metadata = {} } = step as ComfyStep;
@@ -704,24 +715,21 @@ export function formatComfyStep({
     images,
     status: step.status,
     metadata: metadata as GeneratedImageStepMetadata,
-    resources: formatGenerationResources(
-      combineResourcesWithInputResource(resources, stepResources).filter((resource) =>
-        stepResources.some((x) => x.id === resource.id)
-      )
-    ),
+    resources: combineResourcesWithInputResource(resources, stepResources),
   };
 }
 
 export type GeneratedImageWorkflowModel = AsyncReturnType<
   typeof queryGeneratedImageWorkflows
 >['items'][0];
-export async function queryGeneratedImageWorkflows(
-  props: Parameters<typeof queryWorkflows>[0] & { token: string }
-) {
+export async function queryGeneratedImageWorkflows({
+  user,
+  ...props
+}: Parameters<typeof queryWorkflows>[0] & { token: string; user?: SessionUser }) {
   const { nextCursor, items } = await queryWorkflows(props);
 
   return {
-    items: await formatGenerationResponse(items as GeneratedImageWorkflow[]),
+    items: await formatGenerationResponse(items as GeneratedImageWorkflow[], user),
     nextCursor,
   };
 }

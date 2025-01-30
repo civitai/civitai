@@ -3,7 +3,6 @@ import {
   Anchor,
   Center,
   Container,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -65,12 +64,6 @@ export const getServerSideProps = createServerSideProps({
   },
 });
 
-const useStyles = createStyles((theme) => ({
-  tileCard: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-  },
-}));
-
 export default function UserBuzzDashboard() {
   const currentUser = useCurrentUser();
   const { classes } = useBuzzDashboardStyles();
@@ -87,13 +80,11 @@ export default function UserBuzzDashboard() {
       component: RedeemCodeModal,
       props: { code: query.redeem as string },
     });
-  }, []);
+  }, [query.redeem]);
 
   const { data: rewards = [], isLoading: loadingRewards } = trpc.user.userRewardDetails.useQuery(
     undefined,
-    {
-      enabled: !!currentUser,
-    }
+    { enabled: !!currentUser }
   );
 
   const { multipliers, multipliersLoading } = useUserMultipliers();

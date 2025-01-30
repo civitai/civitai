@@ -1,15 +1,15 @@
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
 import {
   CreateBuzzWithdrawalRequestSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
   UpdateBuzzWithdrawalRequestSchema,
 } from '~/server/schema/buzz-withdrawal-request.schema';
-import { trpc } from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
-import { GetByIdStringInput } from '~/server/schema/base.schema';
-import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { BuzzWithdrawalGetPaginatedItem } from '~/types/router';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 export const useQueryOwnedBuzzWithdrawalRequests = (
   filters?: Partial<GetPaginatedOwnedBuzzWithdrawalRequestSchema>,
@@ -124,4 +124,13 @@ export const useQueryBuzzWithdrawalRequests = (
   }
 
   return { requests: [] as BuzzWithdrawalGetPaginatedItem[], pagination: null, ...rest };
+};
+
+export const useBuzzWithdrawalRequestStatus = () => {
+  const { data, ...rest } = trpc.buzzWithdrawalRequest.getServiceStatus.useQuery();
+
+  return {
+    ...rest,
+    data,
+  };
 };

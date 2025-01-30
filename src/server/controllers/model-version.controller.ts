@@ -1,10 +1,10 @@
-import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { BaseModel, baseModelLicenses, BaseModelType, constants } from '~/server/common/constants';
 import { Context } from '~/server/createContext';
 import { eventEngine } from '~/server/events';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { GetByIdInput } from '~/server/schema/base.schema';
+import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionSchema,
@@ -52,11 +52,13 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { removeNulls } from '~/utils/object-helpers';
 import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
-import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import { getGenerationResourceData } from './../services/generation/generation.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -67,7 +69,13 @@ export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: 
 };
 
 export type ModelVersionById = AsyncReturnType<typeof getModelVersionHandler>;
-export const getModelVersionHandler = async ({ input }: { input: GetModelVersionSchema }) => {
+export const getModelVersionHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetModelVersionSchema;
+  ctx: Context;
+}) => {
   const { id, withFiles } = input;
 
   try {
@@ -91,6 +99,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         trainingDetails: true,
         trainingStatus: true,
         uploadType: true,
+        usageControl: true,
         model: {
           select: {
             id: true,
@@ -113,10 +122,10 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
             resource: {
               select: {
                 id: true,
-                name: true,
-                trainedWords: true,
-                baseModel: true,
-                model: { select: { id: true, name: true, type: true } },
+                // name: true,
+                // trainedWords: true,
+                // baseModel: true,
+                // model: { select: { id: true, name: true, type: true } },
               },
             },
             settings: true,
@@ -142,6 +151,18 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
       },
     });
 
+    const recommendedResourceIds = version?.recommendedResources.map((x) => x.id) ?? [];
+    const generationResources = await getGenerationResourceData({
+      ids: recommendedResourceIds,
+      user: ctx?.user,
+    }).then((data) =>
+      data.map((item) => {
+        const settings = (version?.recommendedResources.find((x) => x.resource.id === item.id)
+          ?.settings ?? {}) as RecommendedSettingsSchema;
+        return { ...item, ...removeNulls(settings) };
+      })
+    );
+
     if (!version) throw throwNotFoundError(`No version with id ${input.id}`);
 
     const unavailableGenResources = await getUnavailableResources();
@@ -159,16 +180,7 @@ export const getModelVersionHandler = async ({ input }: { input: GetModelVersion
         Omit<ModelFileModel, 'metadata'> & { metadata: FileMetadata }
       >,
       settings: version.settings as RecommendedSettingsSchema | undefined,
-      recommendedResources: version.recommendedResources.map(({ resource, settings }) => ({
-        id: resource.id,
-        name: resource.name,
-        baseModel: resource.baseModel,
-        modelId: resource.model.id,
-        modelName: resource.model.name,
-        modelType: resource.model.type,
-        trainedWords: resource.trainedWords,
-        strength: (settings as any)?.strength,
-      })),
+      recommendedResources: generationResources,
     };
   } catch (e) {
     if (e instanceof TRPCError) throw e;
@@ -205,6 +217,15 @@ export const upsertModelVersionHandler = async ({
   try {
     const { id: userId } = ctx.user;
 
+    if (!ctx.features.generationOnlyModels && input.usageControl !== ModelUsageControl.Download) {
+      // People without access to thje generationOnlyModels feature can only create download models
+      input.usageControl = ModelUsageControl.Download;
+    }
+
+    if (input.usageControl === ModelUsageControl.InternalGeneration && !ctx.user.isModerator) {
+      throw throwBadRequestError('Only moderators can manage internal generation models');
+    }
+
     if (input.trainingDetails === null) {
       input.trainingDetails = undefined;
     }
@@ -212,7 +233,7 @@ export const upsertModelVersionHandler = async ({
     if (!!input.earlyAccessConfig?.timeframe) {
       const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta });
 
-      if (input.earlyAccessConfig?.timeframe > maxDays) {
+      if (!ctx.user.isModerator && input.earlyAccessConfig?.timeframe > maxDays) {
         throw throwBadRequestError('Early access days exceeds user limit');
       }
     }
@@ -222,6 +243,7 @@ export const upsertModelVersionHandler = async ({
       const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: ctx.user.id });
 
       if (
+        !ctx.user.isModerator &&
         activeEarlyAccess.length >= getMaxEarlyAccessModels({ userMeta: ctx.user.meta }) &&
         (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
       ) {
@@ -229,6 +251,15 @@ export const upsertModelVersionHandler = async ({
           'Sorry, you have exceeded the maximum number of early access models you can have at the time.'
         );
       }
+    }
+
+    if (
+      input?.usageControl !== ModelUsageControl.Download &&
+      input?.earlyAccessConfig?.chargeForDownload
+    ) {
+      throw throwBadRequestError(
+        'Cannot charge for download if downloads are disabled for this model version'
+      );
     }
 
     const version = await upsertModelVersion({

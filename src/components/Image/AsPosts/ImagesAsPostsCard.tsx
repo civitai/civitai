@@ -370,19 +370,22 @@ export function ImagesAsPostsCard({
                               image={image}
                               additionalMenuItems={moderationOptions(image)}
                             />
-                            {features.imageGeneration && image.hasMeta && (
-                              <HoverActionButton
-                                label="Remix"
-                                size={30}
-                                color="white"
-                                variant="filled"
-                                data-activity="remix:model-gallery"
-                                data-tour={image.type === MediaType.image ? 'gen:remix' : undefined}
-                                onClick={handleRemixClick(image)}
-                              >
-                                <IconBrush stroke={2.5} size={16} />
-                              </HoverActionButton>
-                            )}
+                            {features.imageGeneration &&
+                              (image.hasPositivePrompt ?? image.hasMeta) && (
+                                <HoverActionButton
+                                  label="Remix"
+                                  size={30}
+                                  color="white"
+                                  variant="filled"
+                                  data-activity="remix:model-gallery"
+                                  data-tour={
+                                    image.type === MediaType.image ? 'gen:remix' : undefined
+                                  }
+                                  onClick={handleRemixClick(image)}
+                                >
+                                  <IconBrush stroke={2.5} size={16} />
+                                </HoverActionButton>
+                              )}
                           </Stack>
                         )}
                         <RoutedDialogLink
@@ -487,21 +490,24 @@ export function ImagesAsPostsCard({
                                         image={image}
                                         additionalMenuItems={moderationOptions(image)}
                                       />
-                                      {features.imageGeneration && image.hasMeta && (
-                                        <HoverActionButton
-                                          label="Remix"
-                                          size={30}
-                                          color="white"
-                                          variant="filled"
-                                          data-activity="remix:model-gallery"
-                                          data-tour={
-                                            image.type === MediaType.image ? 'gen:remix' : undefined
-                                          }
-                                          onClick={handleRemixClick(image)}
-                                        >
-                                          <IconBrush stroke={2.5} size={16} />
-                                        </HoverActionButton>
-                                      )}
+                                      {features.imageGeneration &&
+                                        (image.hasPositivePrompt ?? image.hasMeta) && (
+                                          <HoverActionButton
+                                            label="Remix"
+                                            size={30}
+                                            color="white"
+                                            variant="filled"
+                                            data-activity="remix:model-gallery"
+                                            data-tour={
+                                              image.type === MediaType.image
+                                                ? 'gen:remix'
+                                                : undefined
+                                            }
+                                            onClick={handleRemixClick(image)}
+                                          >
+                                            <IconBrush stroke={2.5} size={16} />
+                                          </HoverActionButton>
+                                        )}
                                     </Stack>
                                   )}
                                   <RoutedDialogLink

@@ -92,7 +92,7 @@ export enum ImageScanType {
   Hash,
   Hive,
   MinorDetection,
-  HiveDemographic,
+  HiveDemographics,
 }
 
 export enum CommentV2Sort {
@@ -323,4 +323,11 @@ export enum ToolSort {
   Oldest = 'Oldest',
   AZ = 'AZ',
   ZA = 'ZA',
+}
+
+export enum BuzzWithdrawalRequestSort {
+  Newest = 'Newest',
+  Oldest = 'Oldest',
+  HighestAmount = 'Highest Amount',
+  LowestAmount = 'Lowest Amount',
 }

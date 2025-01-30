@@ -31,7 +31,6 @@ import {
   imageMetaCache,
   imageMetadataCache,
   imagesForModelVersionsCache,
-  resourceDataCache,
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
@@ -106,10 +105,7 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import {
-  formatGenerationResources,
-  generationFormWorkflowConfigurations,
-} from '~/shared/constants/generation.constants';
+import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 import { Flags } from '~/shared/utils';
 import {
   AppealStatus,
@@ -475,7 +471,7 @@ const defaultScanTypes = [
   ...(env.MINOR_SCANNER === 'custom'
     ? [ImageScanType.MinorDetection]
     : env.MINOR_SCANNER === 'hive'
-    ? [ImageScanType.HiveDemographic]
+    ? [ImageScanType.HiveDemographics]
     : []),
 ];
 
@@ -717,6 +713,7 @@ type GetAllImagesRaw = {
   availability: Availability;
   minor: boolean;
   remixOfId?: number | null;
+  hasPositivePrompt?: boolean;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -734,6 +731,7 @@ export const getAllImages = async (
     limit,
     cursor,
     skip,
+    sort,
     postId,
     postIds,
     collectionId, // TODO - call this from separate method?
@@ -766,7 +764,7 @@ export const getAllImages = async (
     collectionTagId,
     excludedUserIds,
   } = input;
-  let { sort, browsingLevel, userId: targetUserId } = input;
+  let { browsingLevel, userId: targetUserId } = input;
 
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
@@ -1097,10 +1095,13 @@ export const getAllImages = async (
   }
 
   if (!!tools?.length) {
+    // Bring in images that contain the selected tools
     AND.push(Prisma.sql`EXISTS (
       SELECT 1
       FROM "ImageTool" it
-      WHERE it."imageId" = i.id AND it."toolId" IN (${Prisma.join(tools)})
+      WHERE it."imageId" = i.id
+      GROUP BY it."imageId"
+      HAVING array_agg(it."toolId" ORDER BY it."toolId") @> ARRAY[${Prisma.join(tools)}]::integer[]
     )`);
   }
   if (!!techniques?.length) {
@@ -1172,6 +1173,14 @@ export const getAllImages = async (
           ELSE TRUE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
@@ -1344,6 +1353,7 @@ export const getAllImages = async (
       modelVersionIdsManual?: number[];
       thumbnailUrl?: string;
       remixOfId?: number | null;
+      hasPositivePrompt?: boolean;
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -1649,6 +1659,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     prioritizedUserIds,
     useCombinedNsfwLevel,
     remixOfId,
+    remixesOnly,
+    nonRemixesOnly,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1744,6 +1756,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (remixOfId) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
+  }
+
+  if (remixesOnly && !nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', '>= 0'));
+  }
+
+  if (nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
   /*
@@ -2220,6 +2240,14 @@ export const getImage = async ({
       ) AS "hasMeta",
       (
         CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
+      (
+        CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
             OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
               ${Prisma.join(workflows)}
@@ -2341,45 +2369,6 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
   return resources;
 };
 
-export async function getImageGenerationResources(id: number) {
-  const imageResources = await dbRead.imageResource.findMany({
-    where: { imageId: id },
-    select: { imageId: true, modelVersionId: true, hash: true, strength: true },
-  });
-  const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const resourceData = await resourceDataCache.fetch(versionIds);
-
-  // TODO - determine a good way to return resources when some resources are unavailable
-  const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
-  if (index > -1 && !resourceData[index].available) {
-    const checkpoint = resourceData[index];
-    const latestVersion = await dbRead.modelVersion.findFirst({
-      where: {
-        modelId: checkpoint.model.id,
-        availability: { in: ['Public', 'EarlyAccess'] },
-        generationCoverage: { covered: true },
-      },
-      select: { id: true },
-      orderBy: { index: 'asc' },
-    });
-    if (latestVersion) {
-      const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
-      if (newCheckpoint) resourceData[index] = newCheckpoint;
-    }
-  }
-
-  return formatGenerationResources(resourceData)
-    .map((resource) => {
-      const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
-      return {
-        ...resource,
-        hash: imageResource?.hash ?? undefined,
-        strength: imageResource?.strength ? imageResource.strength / 100 : resource.strength,
-      };
-    })
-    .filter((x) => x.available);
-}
-
 export type ImagesForModelVersions = {
   id: number;
   userId: number;
@@ -2399,6 +2388,7 @@ export type ImagesForModelVersions = {
   onSite: boolean;
   hasMeta: boolean;
   remixOfId?: number | null;
+  hasPositivePrompt?: boolean;
 };
 
 export const getImagesForModelVersion = async ({
@@ -2513,6 +2503,14 @@ export const getImagesForModelVersion = async ({
           ELSE TRUE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
@@ -2674,6 +2672,7 @@ export const getImagesForPosts = async ({
       hasMeta: boolean;
       onSite: boolean;
       remixOfId?: number | null;
+      hasPositivePrompt?: boolean;
     }[]
   >`
     SELECT
@@ -2695,6 +2694,14 @@ export const getImagesForPosts = async ({
           ELSE TRUE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       (
         CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
@@ -2873,6 +2880,7 @@ type GetImageConnectionRaw = {
   metadata: ImageMetadata | VideoMetadata;
   entityId: number;
   hasMeta: boolean;
+  hasPositivePrompt?: boolean;
 };
 
 export const getImagesByEntity = async ({
@@ -2958,6 +2966,14 @@ export const getImagesByEntity = async ({
           ELSE TRUE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       t."entityId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id`;
@@ -3078,10 +3094,12 @@ export const createEntityImages = async ({
   const batches = chunk(imageRecords, 50);
   for (const batch of batches) {
     if (shouldAddImageResources) {
-      await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
+      const tasks = batch.map((image) => () => createImageResources({ imageId: image.id, tx }));
+      await limitConcurrency(tasks, 10);
     }
 
-    await Promise.all(batch.map((image) => ingestImage({ image, tx })));
+    const tasks = batch.map((image) => () => ingestImage({ image, tx }));
+    await limitConcurrency(tasks, 10);
   }
 
   if (entityType && entityId) {

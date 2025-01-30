@@ -7,9 +7,7 @@ import {
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
-import { ResourceData } from '~/server/redis/caches';
 import { GenerationLimits } from '~/server/schema/generation.schema';
-import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -258,13 +256,9 @@ export function getBaseModelSetType(baseModel?: string, defaultType?: BaseModelS
   defaultType ??= 'SD1';
   if (!baseModel) return defaultType;
   return (Object.entries(baseModelSets).find(
-    ([key, baseModels]) => key === baseModel || (baseModels as string[]).includes(baseModel)
+    ([key, baseModelSet]) =>
+      key === baseModel || (baseModelSet.baseModels as string[]).includes(baseModel)
   )?.[0] ?? defaultType) as BaseModelSetType;
-}
-
-export function getResourcesBaseModelSetType(resources: GenerationResource[]) {
-  const checkpoint = resources.find((x) => x.modelType === 'Checkpoint');
-  if (checkpoint) return getBaseModelSetType(checkpoint.baseModel);
 }
 
 export function getBaseModelSet(baseModel?: string) {
@@ -290,31 +284,6 @@ export function getIsFlux(baseModel?: string) {
 export function getIsSD3(baseModel?: string) {
   const baseModelSetType = getBaseModelSetType(baseModel);
   return baseModelSetType === 'SD3' || baseModelSetType === 'SD3_5M';
-}
-
-export type GenerationResource = MakeUndefinedOptional<
-  ReturnType<typeof formatGenerationResources>[number]
->;
-export function formatGenerationResources(resources: Array<ResourceData>) {
-  return resources.map((resource) => {
-    const settings = resource.settings as RecommendedSettingsSchema;
-    return {
-      id: resource.id,
-      name: resource.name,
-      trainedWords: resource.trainedWords,
-      modelId: resource.model.id,
-      modelName: resource.model.name,
-      modelType: resource.model.type,
-      baseModel: resource.baseModel,
-      strength: settings?.strength ?? 1,
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
-      covered: true,
-      minor: resource.model.minor,
-      available: resource.available,
-      fileSizeKB: resource.fileSizeKB,
-    };
-  });
 }
 
 export function getBaseModelFromResources<T extends { modelType: ModelType; baseModel: string }>(
@@ -415,72 +384,90 @@ export type BaseModelResourceTypes = typeof baseModelResourceTypes;
 export type SupportedBaseModel = keyof BaseModelResourceTypes;
 export const baseModelResourceTypes = {
   SD1: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1] },
-    { type: ModelType.VAE, baseModels: [...baseModelSets.SD1] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.DoRA, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.LoCon, baseModels: [...baseModelSets.SD1.baseModels] },
+    { type: ModelType.VAE, baseModels: [...baseModelSets.SD1.baseModels] },
   ],
   SDXL: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SDXL, 'SD 1.5'] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL] },
-    { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL.baseModels] },
+    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SDXL.baseModels, 'SD 1.5'] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SDXL.baseModels] },
+    { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL.baseModels] },
+    { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL.baseModels] },
+    { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL.baseModels] },
   ],
   Pony: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.Pony, 'SD 1.5'] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony.baseModels] },
+    {
+      type: ModelType.TextualInversion,
+      baseModels: [
+        ...baseModelSets.Pony.baseModels,
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        'SD 1.5',
+      ],
+    },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Pony, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
-      baseModels: [...baseModelSets.SDXL],
+      baseModels: [...baseModelSets.SDXL.baseModels],
     },
   ],
   Illustrious: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.Illustrious, 'SD 1.5'] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious.baseModels] },
+    {
+      type: ModelType.TextualInversion,
+      baseModels: [
+        ...baseModelSets.Illustrious.baseModels,
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        'SD 1.5',
+      ],
+    },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Illustrious, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
-      baseModels: [...baseModelSets.SDXL],
+      baseModels: [...baseModelSets.SDXL.baseModels],
     },
   ],
   Flux1: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1.baseModels] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1.baseModels] },
   ],
   SD3: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3.baseModels] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3.baseModels] },
   ],
   SD3_5M: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3_5M] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3_5M] },
+    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3_5M.baseModels] },
+    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3_5M.baseModels] },
   ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
@@ -490,6 +477,7 @@ export function getBaseModelResourceTypes(baseModel: string) {
 }
 
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
+export const fluxUltraAirId = 1088507;
 export const fluxModeOptions = [
   { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
   { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },

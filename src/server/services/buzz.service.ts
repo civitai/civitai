@@ -928,7 +928,7 @@ export async function getTransactionsReport({
       ? dayjs().startOf('day').subtract(7, 'day')
       : input.window === 'week'
       ? dayjs().startOf('day').subtract(1, 'month')
-      : dayjs().startOf('year');
+      : dayjs().startOf('day').subtract(1, 'year');
   // End date is always the start of the next day
   const endDate = dayjs().add(1, 'day').startOf('day');
 

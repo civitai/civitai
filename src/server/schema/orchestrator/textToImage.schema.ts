@@ -1,7 +1,9 @@
+import { Priority } from '@civitai/client';
 import { z } from 'zod';
-import { isProd } from '~/env/other';
-import { baseModelSetTypes, generation } from '~/server/common/constants';
+
+import { baseModelSets, generation } from '~/server/common/constants';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
@@ -31,17 +33,12 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
   fluxUltraAspectRatio: z.string().optional(),
-  baseModel: z.enum(baseModelSetTypes),
+  baseModel: zodEnumFromObjKeys(baseModelSets),
   width: z.number(),
   height: z.number(),
   // temp props?
   denoise: z.number().max(1).optional(),
-  image: z
-    .string()
-    .startsWith(
-      isProd ? 'https://orchestration.civitai.com' : 'https://orchestration-dev.civitai.com'
-    )
-    .optional(),
+  image: z.string().startsWith('https://orchestration').includes('.civitai.com').optional(),
   upscaleWidth: z.number().optional(),
   upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,
@@ -49,6 +46,7 @@ export const textToImageParamsSchema = z.object({
   fluxUltraRaw: z.boolean().optional(),
   experimental: z.boolean().optional(),
   engine: z.string().optional(),
+  priority: z.nativeEnum(Priority).default('low'),
 });
 
 // #endregion
@@ -96,7 +94,7 @@ export const generateImageSchema = z.object({
       creators: z.number().min(0).max(1).default(0),
       civitai: z.number().min(0).max(1).default(0),
     })
-    .optional(),
+    .default({ creators: 0, civitai: 0 }),
 });
 
 export const generateImageWhatIfSchema = generateImageSchema.extend({

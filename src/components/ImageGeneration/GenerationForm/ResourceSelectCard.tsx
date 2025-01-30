@@ -5,12 +5,14 @@ import {
   Group,
   Overlay,
   Paper,
+  Popover,
   Stack,
   Text,
   ThemeIcon,
   useMantineTheme,
+  Anchor,
 } from '@mantine/core';
-import { IconAlertTriangle, IconReplace, IconX } from '@tabler/icons-react';
+import { IconAlertTriangle, IconBolt, IconReplace, IconWeight, IconX } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -30,7 +32,7 @@ type Props = {
 };
 
 export const ResourceSelectCard = (props: Props) => {
-  const isCheckpoint = props.resource.modelType === ModelType.Checkpoint;
+  const isCheckpoint = props.resource.model.type === ModelType.Checkpoint;
   const theme = useMantineTheme();
 
   return (
@@ -49,7 +51,7 @@ export const ResourceSelectCard = (props: Props) => {
 };
 
 function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion }: Props) {
-  const unavailable = selectSource !== 'generation' ? false : resource.covered === false;
+  const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
     <Group spacing="xs" position="apart" noWrap>
@@ -86,13 +88,13 @@ function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion 
               cursor: 'pointer',
               color: theme.colorScheme === 'dark' ? theme.white : theme.black,
             })}
-            href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+            href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
             color="initial"
             lineClamp={1}
             weight={590}
           >
-            {resource.modelName}
+            {resource.model.name}
           </Text>
           {!hideVersion && (
             <Text size="sm" color="dimmed">
@@ -120,9 +122,10 @@ function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion 
 }
 
 function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
-  const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.modelType);
+  const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
-  const unavailable = selectSource !== 'generation' ? false : resource.covered === false;
+  const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
+  const theme = useMantineTheme();
 
   return (
     <Group spacing="xs" position="apart" noWrap>
@@ -142,30 +145,62 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
             <Text
               component={Link}
               sx={{ cursor: 'pointer' }}
-              href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+              href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
               onClick={() => generationPanel.close()}
               rel="nofollow noindex"
               size="sm"
               lineClamp={1}
               weight={590}
             >
-              {resource.modelName}
+              {resource.model.name}
             </Text>
           </Group>
-          {resource.modelName.toLowerCase() !== resource.name.toLowerCase() && (
-            <Badge size="sm" color="dark.5" variant="filled" miw="42px">
-              {resource.name}
-            </Badge>
-          )}
+          <div className="flex gap-1">
+            {resource.model.name.toLowerCase() !== resource.name.toLowerCase() && (
+              <Badge size="sm" color="dark.5" variant="filled" miw="42px">
+                {resource.name}
+              </Badge>
+            )}
+
+            {resource.additionalResourceCost && selectSource === 'generation' && (
+              <Popover position="bottom" withArrow width={200}>
+                <Popover.Target>
+                  <ActionIcon size={18} color="blue" variant="filled">
+                    <IconWeight size={14} />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Text size="sm">
+                    This resource carries an additional{' '}
+                    <Anchor component={Link} href="/articles/7929">
+                      buzz cost
+                    </Anchor>
+                  </Text>
+                </Popover.Dropdown>
+              </Popover>
+            )}
+            {resource.earlyAccessEndsAt && (
+              <Popover position="bottom" withArrow width={200}>
+                <Popover.Target>
+                  <ActionIcon size={18} color="yellow.7" variant="filled">
+                    <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
+                  </ActionIcon>
+                </Popover.Target>
+                <Popover.Dropdown>
+                  <Text size="sm">This resource is in early access</Text>
+                </Popover.Dropdown>
+              </Popover>
+            )}
+          </div>
         </Group>
         {/* LORA */}
         {hasStrength && onUpdate && !unavailable && (
           <div className="flex w-full items-center gap-2">
             <NumberSlider
               value={resource.strength}
-              onChange={(strength) => onUpdate({ ...resource, strength })}
-              min={!isSameMinMaxStrength ? resource.minStrength ?? -1 : -1}
-              max={!isSameMinMaxStrength ? resource.maxStrength ?? 2 : 2}
+              onChange={(strength) => onUpdate({ ...resource, strength: strength ?? 1 })}
+              min={!isSameMinMaxStrength ? resource.minStrength : -1}
+              max={!isSameMinMaxStrength ? resource.maxStrength : 2}
               step={0.05}
               sx={{ flex: 1 }}
               reverse

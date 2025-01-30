@@ -1,8 +1,10 @@
 import {
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Center,
+  Checkbox,
   Container,
   Divider,
   Group,
@@ -14,21 +16,24 @@ import {
   Table,
   Text,
   Textarea,
+  TextInput,
   ThemeIcon,
   Title,
   Tooltip,
   TooltipProps,
-  TextInput,
-  Anchor,
 } from '@mantine/core';
+import { DatePicker } from '@mantine/dates';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
-  BuzzWithdrawalRequestStatus,
-  Currency,
-  UserPaymentConfigurationProvider,
-} from '~/shared/utils/prisma/enums';
-import { IconCashBanknote, IconExternalLink, IconInfoTriangleFilled } from '@tabler/icons-react';
-import { IconCashBanknoteOff, IconCheck, IconCloudOff, IconX } from '@tabler/icons-react';
+  IconCashBanknote,
+  IconCashBanknoteOff,
+  IconCheck,
+  IconCloudOff,
+  IconExternalLink,
+  IconInfoTriangleFilled,
+  IconX,
+} from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { useState } from 'react';
 import { BuzzWithdrawalRequestFilterDropdown } from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestFiltersDropdown';
 import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
@@ -39,9 +44,16 @@ import {
 import { WithdrawalRequestBadgeColor } from '~/components/Buzz/buzz.styles';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { SortFilter } from '~/components/Filters';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { BuzzWithdrawalRequestSort } from '~/server/common/enums';
 import { GetPaginatedBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
+import {
+  BuzzWithdrawalRequestStatus,
+  Currency,
+  UserPaymentConfigurationProvider,
+} from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 
@@ -63,10 +75,10 @@ const tooltipProps: Partial<TooltipProps> = {
 };
 
 const UpdateBuzzWithdrawalRequest = ({
-  requestId,
+  requestIds,
   status,
 }: {
-  requestId: string;
+  requestIds: string[];
   status: BuzzWithdrawalRequestStatus;
 }) => {
   const dialog = useDialogContext();
@@ -86,7 +98,7 @@ const UpdateBuzzWithdrawalRequest = ({
 
   const handleSubmit = async () => {
     await updateBuzzWithdrawalRequest({
-      requestId,
+      requestIds,
       status,
       note,
     });
@@ -104,7 +116,11 @@ const UpdateBuzzWithdrawalRequest = ({
       <Divider mx="-lg" mb="md" />
       <Stack>
         <Text>
-          You are about to set withdrawal request to{' '}
+          You are about to set{' '}
+          <Text component="span" weight="bold">
+            ({requestIds.length})
+          </Text>{' '}
+          withdrawal request to{' '}
           <Text component="span" weight="bold" color={WithdrawalRequestBadgeColor[status]}>
             {getDisplayName(status)}
           </Text>
@@ -118,6 +134,7 @@ const UpdateBuzzWithdrawalRequest = ({
             rows={2}
             value={note}
             onChange={(event) => setNote(event.currentTarget.value)}
+            description="If multiple requests are being updated, this note will be added to all of them."
           />
         </Stack>
         <Group ml="auto">
@@ -142,19 +159,33 @@ export default function ModeratorBuzzWithdrawalRequests() {
   const features = useFeatureFlags();
   const [filters, setFilters] = useState<Omit<GetPaginatedBuzzWithdrawalRequestSchema, 'limit'>>({
     page: 1,
+    sort: BuzzWithdrawalRequestSort.Newest,
+    from: dayjs().startOf('month').toDate(),
+    to: new Date(),
   });
+  const [selection, setSelection] = useState<{
+    enabled: boolean;
+    values: string[];
+  }>({
+    enabled: false,
+    values: [],
+  });
+
+  const selectionEnabled = selection.enabled;
   const [debouncedFilters] = useDebouncedValue(filters, 500);
   const { requests, pagination, isLoading, isRefetching } =
     useQueryBuzzWithdrawalRequests(debouncedFilters);
 
-  const handleUpdateRequest = (requestId: string, status: BuzzWithdrawalRequestStatus) => {
+  const handleUpdateRequest = (requestIds: string[], status: BuzzWithdrawalRequestStatus) => {
     dialogStore.trigger({
       component: UpdateBuzzWithdrawalRequest,
-      props: { requestId, status },
+      props: { requestIds, status },
     });
+
+    setSelection({ enabled: false, values: [] });
   };
 
-  const approveBtn = (requestId: string) => {
+  const approveBtn = (requestIds: string[]) => {
     return (
       <Tooltip
         label="Approve withdrawal request. Money will not be sent by performing this action."
@@ -163,7 +194,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
       >
         <ActionIcon
           onClick={() => {
-            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Approved);
+            handleUpdateRequest(requestIds, BuzzWithdrawalRequestStatus.Approved);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Approved]}
         >
@@ -172,12 +203,12 @@ export default function ModeratorBuzzWithdrawalRequests() {
       </Tooltip>
     );
   };
-  const rejectBtn = (requestId: string) => {
+  const rejectBtn = (requestIds: string[]) => {
     return (
       <Tooltip label="Reject withdrawal request." key="reject-btn" {...tooltipProps}>
         <ActionIcon
           onClick={() => {
-            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Rejected);
+            handleUpdateRequest(requestIds, BuzzWithdrawalRequestStatus.Rejected);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Rejected]}
         >
@@ -192,7 +223,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
       <Tooltip label="Revert stripe transfer. Use with care" key="revert-btn" {...tooltipProps}>
         <ActionIcon
           onClick={() => {
-            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Reverted);
+            handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.Reverted);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Reverted]}
           key="revert-btn"
@@ -212,7 +243,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
       >
         <ActionIcon
           onClick={() => {
-            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.Transferred);
+            handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.Transferred);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.Transferred]}
         >
@@ -227,7 +258,7 @@ export default function ModeratorBuzzWithdrawalRequests() {
       <Tooltip label="Resolved externally" key="externally-resolved-btn" {...tooltipProps}>
         <ActionIcon
           onClick={() => {
-            handleUpdateRequest(requestId, BuzzWithdrawalRequestStatus.ExternallyResolved);
+            handleUpdateRequest([requestId], BuzzWithdrawalRequestStatus.ExternallyResolved);
           }}
           color={WithdrawalRequestBadgeColor[BuzzWithdrawalRequestStatus.ExternallyResolved]}
         >
@@ -245,26 +276,95 @@ export default function ModeratorBuzzWithdrawalRequests() {
           request&rsquo;s details and history as well as the user&rsquo;s account details.
         </Text>
       </Stack>
-      <Group position="apart" mb="md">
-        <Group>
-          <TextInput
-            label="Filter by username"
-            value={filters.username ?? ''}
-            onChange={(e) => setFilters({ ...filters, username: e.target.value || undefined })}
-            size="sm"
+      <Stack mb="md">
+        <Group className="ml-auto">
+          <SortFilter
+            type="buzzWithdrawalRequests"
+            variant="button"
+            value={filters.sort}
+            buttonProps={{ compact: false, disabled: selectionEnabled }}
+            onChange={(x) => setFilters({ ...filters, sort: x as BuzzWithdrawalRequestSort })}
           />
-          <TextInput
-            label="Filter by request ID"
-            value={filters.requestId ?? ''}
-            onChange={(e) => setFilters({ ...filters, requestId: e.target.value || undefined })}
-            size="sm"
+          <BuzzWithdrawalRequestFilterDropdown
+            setFilters={(f) => setFilters({ ...filters, ...f })}
+            filters={filters}
+            disabled={selectionEnabled}
           />
+
+          <Button
+            variant="light"
+            onClick={() =>
+              setSelection((curr) => ({ ...curr, enabled: !curr.enabled, values: [] }))
+            }
+            radius="lg"
+          >
+            {selectionEnabled ? 'Cancel' : 'Bulk-Select'}
+          </Button>
+
+          {selection.values.length > 0 && (
+            <Group>
+              <Button
+                variant="light"
+                color="green"
+                onClick={() =>
+                  handleUpdateRequest(selection.values, BuzzWithdrawalRequestStatus.Approved)
+                }
+                radius="lg"
+              >
+                Approve ({selection.values.length})
+              </Button>
+              <Button
+                variant="light"
+                color="red"
+                onClick={() =>
+                  handleUpdateRequest(selection.values, BuzzWithdrawalRequestStatus.Rejected)
+                }
+                radius="lg"
+              >
+                Reject ({selection.values.length})
+              </Button>
+            </Group>
+          )}
         </Group>
-        <BuzzWithdrawalRequestFilterDropdown
-          setFilters={(f) => setFilters({ ...filters, ...f })}
-          filters={filters}
-        />
-      </Group>
+        <Group position="apart">
+          <Group>
+            <DatePicker
+              label="From"
+              placeholder="Start date"
+              value={filters.from ?? undefined}
+              onChange={(date) => {
+                setFilters({ ...filters, from: date ?? undefined });
+              }}
+              clearButtonLabel="Clear"
+              disabled={selectionEnabled}
+            />
+            <DatePicker
+              label="To"
+              placeholder="End date"
+              value={filters.to ?? undefined}
+              onChange={(date) => {
+                setFilters({ ...filters, to: date ?? undefined });
+              }}
+              clearButtonLabel="Clear"
+              disabled={selectionEnabled}
+            />
+            <TextInput
+              label="Filter by username"
+              value={filters.username ?? ''}
+              onChange={(e) => setFilters({ ...filters, username: e.target.value || undefined })}
+              size="sm"
+              disabled={selectionEnabled}
+            />
+            <TextInput
+              label="Filter by request ID"
+              value={filters.requestId ?? ''}
+              onChange={(e) => setFilters({ ...filters, requestId: e.target.value || undefined })}
+              size="sm"
+              disabled={selectionEnabled}
+            />
+          </Group>
+        </Group>
+      </Stack>
       {isLoading ? (
         <Center p="xl">
           <Loader />
@@ -295,16 +395,16 @@ export default function ModeratorBuzzWithdrawalRequests() {
                   request.status === BuzzWithdrawalRequestStatus.Requested
                     ? request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
                       ? [
-                          approveBtn(request.id),
-                          rejectBtn(request.id),
+                          approveBtn([request.id]),
+                          rejectBtn([request.id]),
                           externallyResolvedBtn(request.id),
                         ]
-                      : [approveBtn(request.id), rejectBtn(request.id), transferBtn(request.id)]
+                      : [approveBtn([request.id]), rejectBtn([request.id]), transferBtn(request.id)]
                     : request.status === BuzzWithdrawalRequestStatus.Approved
                     ? request.requestedToProvider === UserPaymentConfigurationProvider.Tipalti
                       ? [externallyResolvedBtn(request.id)]
                       : [
-                          rejectBtn(request.id),
+                          rejectBtn([request.id]),
                           transferBtn(request.id),
                           externallyResolvedBtn(request.id),
                         ]
@@ -328,6 +428,8 @@ export default function ModeratorBuzzWithdrawalRequests() {
                   BuzzWithdrawalRequestStatus.Transferred,
                   BuzzWithdrawalRequestStatus.Reverted,
                 ].some((t) => t === request.status);
+
+                const isSelected = selection.values.includes(request.id);
 
                 return (
                   <tr key={request.id}>
@@ -394,10 +496,26 @@ export default function ModeratorBuzzWithdrawalRequests() {
                       </Badge>
                     </td>
                     <td align="right">
-                      <Group noWrap>
-                        {buttons.map((btn) => btn)}
-                        <BuzzWithdrawalRequestHistory history={request.history} />
-                      </Group>
+                      {selectionEnabled ? (
+                        <Checkbox
+                          checked={isSelected}
+                          onChange={(event) => {
+                            setSelection((curr) => ({
+                              ...curr,
+                              values: !isSelected
+                                ? [...curr.values, request.id]
+                                : curr.values.filter((v) => v !== request.id),
+                            }));
+                          }}
+                          disabled={request.status !== BuzzWithdrawalRequestStatus.Requested}
+                          radius="lg"
+                        />
+                      ) : (
+                        <Group noWrap>
+                          {buttons}
+                          <BuzzWithdrawalRequestHistory history={request.history} />
+                        </Group>
+                      )}
                     </td>
                   </tr>
                 );

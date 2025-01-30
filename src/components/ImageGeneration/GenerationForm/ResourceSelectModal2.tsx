@@ -82,8 +82,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { Generation } from '~/server/services/generation/generation.types';
-import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -93,10 +92,13 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { GenerationResource } from '~/server/services/generation/generation.service';
+import { fetchGenerationData } from '~/store/generation.store';
+import { showErrorNotification } from '~/utils/notifications';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
-  onSelect: (value: Generation.Resource) => void;
+  onSelect: (value: GenerationResource) => void;
   onClose?: () => void;
   options?: ResourceSelectOptions;
   selectSource?: ResourceSelectSource;
@@ -132,7 +134,7 @@ export default function ResourceSelectModal({
     data: featuredModels,
     isFetching: isLoadingFeatured,
     // isError: isErrorFeatured,
-  } = trpc.model.getFeaturedModels.useQuery({ take }, { enabled: selectedTab === 'featured' });
+  } = trpc.model.getFeaturedModels.useQuery();
 
   const {
     steps,
@@ -222,7 +224,7 @@ export default function ResourceSelectModal({
     if (selectSource === 'generation') {
       if (!!steps) {
         const usedResources = uniq(
-          steps.flatMap(({ resources }) => resources.map((r) => r.modelId))
+          steps.flatMap(({ resources }) => resources.map((r) => r.model.id))
         );
         filters.push(`id IN [${usedResources.join(',')}]`);
       }
@@ -327,6 +329,7 @@ export default function ResourceSelectModal({
                 canGenerate={canGenerate}
                 excludeIds={excludeIds}
                 likes={likedModels}
+                selectSource={selectSource}
               />
             )}
           </InstantSearch>
@@ -377,9 +380,11 @@ function ResourceHitList({
   resources,
   excludeIds,
   likes,
+  selectSource,
 }: ResourceSelectOptions &
   Required<Pick<ResourceSelectOptions, 'resources' | 'excludeIds'>> & {
     likes: number[] | undefined;
+    selectSource?: ResourceSelectSource;
   }) {
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
@@ -475,6 +480,7 @@ function ResourceHitList({
               key={model.id}
               data={model}
               isFavorite={!!likes && likes.includes(model.id)}
+              selectSource={selectSource}
             />
           ))}
       </div>
@@ -627,14 +633,17 @@ const TopRightIcons = ({
 function ResourceSelectCard({
   data,
   isFavorite,
+  selectSource,
 }: {
   data: SearchIndexDataMap['models'][number];
   isFavorite: boolean;
+  selectSource?: ResourceSelectSource;
 }) {
   // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
   const { onSelect } = useResourceSelectContext();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const [loading, setLoading] = useState(false);
 
   const image = data.images[0];
   const { classes, cx, theme } = useCardStyles({
@@ -645,29 +654,26 @@ function ResourceSelectCard({
   const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
   const [flipped, setFlipped] = useState(false);
 
-  const handleSelect = () => {
+  const handleSelect = async () => {
     const version = versions.find((x) => x.id === selected);
     if (!version) return;
-    const { id, name, trainedWords, baseModel, settings } = version;
+    const { id } = version;
 
-    onSelect({
-      id,
-      name,
-      trainedWords,
-      baseModel,
-      modelId: data.id,
-      modelName: data.name,
-      modelType: data.type,
-      minor: data.minor,
-      image: image,
-      covered: data.canGenerate,
-      // TODO - update generation panel resource select to include details about early access
-      available:
-        data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
-      strength: settings?.strength ?? 1,
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
+    setLoading(true);
+    await fetchGenerationData({ type: 'modelVersion', id }).then((data) => {
+      const resource = data.resources[0];
+      if (selectSource !== 'generation') {
+        onSelect({ ...resource, image });
+      } else {
+        if (resource?.canGenerate || resource.substitute?.canGenerate)
+          onSelect({ ...resource, image });
+        else
+          showErrorNotification({
+            error: new Error('This model is no longer available for generation'),
+          });
+      }
     });
+    setLoading(false);
   };
 
   const favoriteMutation = useToggleFavoriteMutation();
@@ -948,6 +954,7 @@ function ResourceSelectCard({
               styles={{ input: { cursor: versions.length <= 1 ? 'auto !important' : undefined } }}
             />
             <Button
+              loading={loading}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();

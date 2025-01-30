@@ -38,7 +38,7 @@ import {
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
-import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
+import { getToolByDomain, getToolByName, getToolByAlias } from '~/server/services/tool.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
@@ -569,8 +569,6 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     collectionItemExists = !!collectionItem;
   }
 
-  console.log(collectionItemExists);
-
   return { ...post, collectionTagId, images, collectionItemExists };
 };
 
@@ -847,7 +845,7 @@ export const addPostImage = async ({
   let toolId: number | undefined;
   const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
   if (meta && 'engine' in meta) {
-    toolId = (await getToolByName(meta.engine as string))?.id;
+    toolId = (await getToolByAlias(meta.engine as string))?.id;
   } else if (sourceName || sourceHomepage) {
     if (sourceName) {
       toolId = (await getToolByName(sourceName))?.id;

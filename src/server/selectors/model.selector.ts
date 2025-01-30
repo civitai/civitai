@@ -125,6 +125,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       requireAuth: true,
       nsfwLevel: true,
       uploadType: true,
+      usageControl: true,
       metrics: {
         where: { timeframe: 'AllTime' },
         select: {
@@ -147,10 +148,10 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           resource: {
             select: {
               id: true,
-              name: true,
-              baseModel: true,
-              trainedWords: true,
-              model: { select: { id: true, name: true, type: true } },
+              // name: true,
+              // baseModel: true,
+              // trainedWords: true,
+              // model: { select: { id: true, name: true, type: true } },
             },
           },
           settings: true,

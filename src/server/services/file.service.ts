@@ -1,19 +1,23 @@
 import { Prisma } from '@prisma/client';
-import { ModelFileVisibility, ModelModifier, ModelType } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import { constants, ModelFileType } from '~/server/common/constants';
+import { EntityAccessPermission } from '~/server/common/enums';
 import { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
 import { getVaeFiles } from '~/server/services/model.service';
-import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
+import {
+  ModelFileVisibility,
+  ModelModifier,
+  ModelType,
+  ModelUsageControl,
+} from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 import { removeEmpty } from '~/utils/object-helpers';
 import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from './common.service';
-import { EntityAccessPermission } from '~/server/common/enums';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
   if (!id && (!ids || ids.length === 0)) {
@@ -168,6 +172,7 @@ export const getFileForModelVersion = async ({
       createdAt: true,
       vaeId: true,
       requireAuth: true,
+      usageControl: true,
     },
   });
 
@@ -182,6 +187,7 @@ export const getFileForModelVersion = async ({
 
   const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
   const inEarlyAccess = deadline !== undefined && new Date() < deadline;
+  const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
 
   const archived = modelVersion.model.mode === ModelModifier.Archived;
   if (!noAuth && archived) return { status: 'archived' };
@@ -197,22 +203,25 @@ export const getFileForModelVersion = async ({
 
   if (!canDownload) return { status: 'not-found' };
 
+  if (modelVersion?.usageControl !== ModelUsageControl.Download && !isMod && !isOwner) {
+    return { status: 'downloads-disabled' };
+  }
+
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
   if (!(entityAccess?.hasAccess ?? true)) {
-    // Check the early access scenario:
-    if (
-      !noAuth &&
-      (entityAccess.permissions & EntityAccessPermission.EarlyAccessDownload) != 0 &&
-      !isMod &&
-      !isOwner &&
-      inEarlyAccess
-    ) {
-      return { status: 'early-access', details: { deadline } };
-    }
-
     return { status: 'unauthorized' };
+  }
+
+  // Check the early access scenario:
+  if (
+    inEarlyAccess &&
+    (entityAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
+    !isMod &&
+    !isOwner
+  ) {
+    return { status: 'early-access', details: { deadline } };
   }
 
   // Get the correct file
@@ -262,6 +271,7 @@ export const getFileForModelVersion = async ({
       nsfw: modelVersion.model.nsfw,
       inEarlyAccess,
       metadata: file.metadata as FileMetadata,
+      isDownloadable,
     };
   } catch (error) {
     return { status: 'error' };
@@ -318,7 +328,7 @@ export function getDownloadFilename({
 
 type ModelVersionFileResult =
   | {
-      status: 'not-found' | 'unauthorized' | 'archived' | 'error';
+      status: 'not-found' | 'unauthorized' | 'archived' | 'downloads-disabled' | 'error';
     }
   | {
       status: 'early-access';
@@ -334,6 +344,7 @@ type ModelVersionFileResult =
       nsfw: boolean;
       inEarlyAccess: boolean;
       metadata: FileMetadata;
+      isDownloadable?: boolean;
     };
 
 type FileResult = {

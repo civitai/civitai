@@ -19,25 +19,37 @@ import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
+    whatIf?: boolean;
   }
 ) {
-  input.params.seed =
-    input.params.seed ?? getRandomInt(input.params.quantity, maxRandomSeed) - input.params.quantity;
-  const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
-  const { resources, params, priority } = await parseGenerateImageInput({
+  const { priority, ...inputParams } = input.params;
+  inputParams.seed =
+    inputParams.seed ?? getRandomInt(inputParams.quantity, maxRandomSeed) - inputParams.quantity;
+  const workflowDefinition = await getWorkflowDefinition(inputParams.workflow);
+  const { resources, params } = await parseGenerateImageInput({
     ...input,
     workflowDefinition,
   });
+  const withAir = resources.map((resource) => ({
+    ...resource,
+    air: stringifyAIR({
+      baseModel: resource.baseModel,
+      type: resource.model.type,
+      modelId: resource.model.id,
+      id: resource.id,
+    }),
+  }));
 
   const scheduler = samplersToSchedulers[
     params.sampler as keyof typeof samplersToSchedulers
   ] as Scheduler;
-  const checkpoint = resources.filter((x) => x.model.type === 'Checkpoint')[0];
-  const additionalNetworks = resources
+  const checkpoint = withAir.filter((x) => x.model.type === 'Checkpoint')[0];
+  const additionalNetworks = withAir
     .filter((x) => x.model.type !== 'Checkpoint')
     .reduce<Record<string, ImageJobNetworkParams>>(
       (acc, resource) => ({
@@ -61,6 +73,7 @@ export async function createTextToImageStep(
 
   return {
     $type: 'textToImage',
+    priority,
     input: {
       model: checkpoint.air,
       additionalNetworks,
@@ -71,10 +84,9 @@ export async function createTextToImageStep(
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata: {
       resources: input.resources,
-      params: input.params,
+      params: inputParams,
       remixOfId: input.remixOfId,
     },
-    priority,
   } as TextToImageStepTemplate;
 }
 
@@ -93,8 +105,7 @@ export async function createTextToImage(
       tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
-      // @ts-ignore: ignoring until we update the civitai-client package
-      experimental: false,
+      experimental: env.ORCHESTRATOR_EXPERIMENTAL,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,

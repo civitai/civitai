@@ -100,14 +100,7 @@ export const useTransactionsReport = (
     data: report = [],
     isLoading,
     ...rest
-  } = trpc.buzz.getTransactionsReport.useQuery(
-    {
-      ...(filters ?? {}),
-    },
-    {
-      enabled: opts.enabled,
-    }
-  );
+  } = trpc.buzz.getTransactionsReport.useQuery({ ...(filters ?? {}) }, { enabled: opts.enabled });
 
   return {
     report: report ?? [],
