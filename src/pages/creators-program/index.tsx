@@ -1,22 +1,23 @@
 import {
+  Accordion,
+  Alert,
+  Anchor,
+  Button,
+  Center,
   Container,
   createStyles,
-  Stack,
+  Divider,
+  Grid,
   Group,
+  Paper,
+  Stack,
   Text,
   Title,
-  Paper,
-  Grid,
-  Alert,
-  Accordion,
-  Anchor,
-  Divider,
-  Button,
 } from '@mantine/core';
 import {
+  IconAlertTriangle,
   IconAsterisk,
   IconBolt,
-  IconBrandStripe,
   IconCaretRightFilled,
   IconCash,
   IconCloudDownload,
@@ -32,12 +33,12 @@ import {
   IconWindmill,
   IconWorldCheck,
 } from '@tabler/icons-react';
-import { formatCurrencyForDisplay, numberWithCommas } from '../../utils/number-helpers';
-import { constants } from '../../server/common/constants';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { CurrencyIcon } from '../../components/Currency/CurrencyIcon';
 import { Meta } from '../../components/Meta/Meta';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { constants } from '../../server/common/constants';
+import { formatCurrencyForDisplay, numberWithCommas } from '../../utils/number-helpers';
 
 const sizing = {
   header: {
@@ -58,7 +59,7 @@ const sizing = {
   },
 } as const;
 
-export default function CreatorsClubIntro() {
+function CreatorsClubV1() {
   const { cx, classes, theme } = useStyles();
   const currentUser = useCurrentUser();
   const applyFormUrl = `https://forms.clickup.com/8459928/f/825mr-10271/6KI6AW90JTXU6TYX4L?Username=${currentUser?.username}`;
@@ -484,6 +485,51 @@ const FAQ = () => {
     </Stack>
   );
 };
+
+function CreatorsClubV2() {
+  const { cx, classes, theme } = useStyles();
+  const currentUser = useCurrentUser();
+  const applyFormUrl = `https://forms.clickup.com/8459928/f/825mr-10271/6KI6AW90JTXU6TYX4L?Username=${currentUser?.username}`;
+  return (
+    <>
+      <Meta title="Creators Program | Civitai" />
+      <Container>
+        <Stack spacing="lg">
+          <Title
+            size={sizing.header.title}
+            className={classes.highlightColor}
+            lh={1}
+            mb="sm"
+            mt="lg"
+            align="center"
+          >
+            Civitai Creators Program
+          </Title>
+
+          <Center>
+            <Stack align="center">
+              <Text align="center" mb="xs">
+                We are making it easier for creators to monetize their work. The Civitai Creators
+                Program will soon be opening up to all of our users. This program is the pathway for
+                all creators on Civitai to getting paid for their contributions.
+              </Text>
+              <IconAlertTriangle size={120} />
+
+              <Text align="center">
+                We are working hard to make this a reality as soon as possible. We will be updating
+                this page with more information soon.
+              </Text>
+            </Stack>
+          </Center>
+        </Stack>
+      </Container>
+    </>
+  );
+}
+
+export default function CreatorsClubIntro() {
+  return CreatorsClubV2();
+}
 
 const useStyles = createStyles((theme) => ({
   highlightColor: {
