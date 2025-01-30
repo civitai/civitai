@@ -217,15 +217,17 @@ export async function parseGenerateImageInput({
   // #endregion
 
   // handle moderate prompt
-  const moderationResult = await extModeration.moderatePrompt(params.prompt).catch((error) => {
-    logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-    return { flagged: false, categories: [] as string[] };
-  });
+  if (!whatIf) {
+    const moderationResult = await extModeration.moderatePrompt(params.prompt).catch((error) => {
+      logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
+      return { flagged: false, categories: [] as string[] };
+    });
 
-  if (moderationResult.flagged) {
-    throw throwBadRequestError(
-      `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
-    );
+    if (moderationResult.flagged) {
+      throw throwBadRequestError(
+        `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
+      );
+    }
   }
 
   const hasMinorResource = availableResources.some((resource) => resource.model.minor);
