@@ -314,7 +314,23 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
+  if (step.$type === 'textToImage')
+    return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
+      id: x.version,
+      strength: x.networkParams.strength,
+    }));
   return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
+}
+
+function getTextToImageAirs(inputs: TextToImageInput[]) {
+  return Object.entries(
+    inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
+      if (input.model) acc[input.model] = {};
+      const additionalNetworks = input.additionalNetworks ?? {};
+      for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
+      return acc;
+    }, {})
+  ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
 }
 
 function combineResourcesWithInputResource(
@@ -518,8 +534,13 @@ function formatTextToImageStep({
     const triggerWord = resource.trainedWords?.[0];
     if (triggerWord) {
       if (item?.triggerType === 'negative')
-        negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
-      if (item?.triggerType === 'positive') prompt = prompt.replace(`${triggerWord}, `, '');
+        while (negativePrompt.startsWith(triggerWord)) {
+          negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+        }
+      if (item?.triggerType === 'positive')
+        while (prompt.startsWith(triggerWord)) {
+          prompt = prompt.replace(`${triggerWord}, `, '');
+        }
     }
   }
 
