@@ -758,7 +758,6 @@ export function GenerationFormContent() {
                               name="prompt"
                               data-tour="gen:prompt"
                               placeholder="Your prompt goes here..."
-                              className="tour-highlight"
                               autosize
                               unstyled
                               styles={(theme) => ({

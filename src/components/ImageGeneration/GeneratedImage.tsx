@@ -77,7 +77,7 @@ export function GeneratedImage({
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
 
-  const { tooltipOpened, runTour } = useTourContext();
+  const { running, runTour, currentStep } = useTourContext();
 
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
@@ -299,7 +299,7 @@ export function GeneratedImage({
                 checked={selected}
                 onChange={(e) => {
                   toggleSelect(e.target.checked);
-                  if (tooltipOpened && e.target.checked) runTour({ step: 3 });
+                  if (running && e.target.checked) runTour({ step: currentStep + 1 });
                 }}
               />
             </label>

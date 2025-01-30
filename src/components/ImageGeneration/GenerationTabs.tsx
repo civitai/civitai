@@ -26,16 +26,14 @@ import { useTourContext } from '~/providers/TourProvider';
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
-  const { activeTour, runTour } = useTourContext();
+  const { runTour } = useTourContext();
 
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
 
-  const _opened = useGenerationStore((state) => state.opened);
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
   if (isImageFeedSeparate && view === 'generate') setView('queue');
-  const opened = _opened || isGeneratePage;
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
   const tabEntries = Object.entries(tabs).filter(([key]) =>
@@ -43,14 +41,6 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   );
 
   const isClient = useIsClient();
-
-  useEffect(() => {
-    if (activeTour === 'post-generation' && opened) {
-      runTour({ key: 'post-generation', step: 0 });
-    }
-    // Only need to check for sidebar opened state
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened]);
 
   if (!isClient) return null;
 
@@ -78,11 +68,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               data-tour="gen:reset"
               tooltip="Need help? Start the tour!"
               onClick={async () => {
-                const tourKey = view === 'generate' ? 'content-generation' : 'post-generation';
-                await router.replace({ query: { ...router.query, tour: tourKey } }, undefined, {
-                  shallow: true,
-                });
-                runTour({ key: tourKey, step: 0, forceRun: true });
+                runTour({ key: 'content-generation', step: 0, forceRun: true });
               }}
             />
           </div>

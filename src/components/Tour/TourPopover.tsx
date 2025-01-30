@@ -8,6 +8,7 @@ export function TourPopover(props: TooltipRenderProps) {
   const {
     index,
     step,
+    size,
     continuous,
     isLastStep,
     backProps,
@@ -34,16 +35,21 @@ export function TourPopover(props: TooltipRenderProps) {
   );
 
   return (
-    <Paper {...tooltipProps} className="flex flex-col gap-4" p="sm" radius="md" maw="375px">
-      <Group position="apart" align="flex-start" noWrap>
+    <Paper {...tooltipProps} className="ml-auto flex flex-col gap-4" p="sm" radius="md" maw="375px">
+      <Group position="apart" noWrap>
+        <Text size="sm" color="dimmed">
+          {index + 1} of {size}
+        </Text>
+        {!step.hideCloseButton && <CloseButton {...closeProps} ml="auto" />}
+      </Group>
+      <div className="flex flex-col gap-1">
         {step.title && (
-          <Text size="lg" lineClamp={2}>
+          <Text size="lg" weight={600} lineClamp={2}>
             {step.title}
           </Text>
         )}
-        {!step.hideCloseButton && <CloseButton {...closeProps} ml="auto" />}
-      </Group>
-      {typeof step.content === 'string' ? <Text>{step.content}</Text> : step.content}
+        {typeof step.content === 'string' ? <Text>{step.content}</Text> : step.content}
+      </div>
       {!step.hideFooter && (
         <Group position="apart" noWrap>
           {step.showSkipButton !== false && (

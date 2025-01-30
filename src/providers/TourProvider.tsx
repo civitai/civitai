@@ -1,15 +1,7 @@
 import { useMantineTheme } from '@mantine/core';
-import { steps } from 'motion/dist/react';
 import { useSearchParams } from 'next/navigation';
 import { createContext, useCallback, useContext, useState } from 'react';
-import Joyride, {
-  ACTIONS,
-  Callback,
-  EVENTS,
-  LIFECYCLE,
-  Props as JoyrideProps,
-  STATUS,
-} from 'react-joyride';
+import Joyride, { ACTIONS, Callback, EVENTS, Props as JoyrideProps, STATUS } from 'react-joyride';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -25,7 +17,6 @@ type TourState = {
   runTour: (opts?: { key?: TourKey; step?: number; forceRun?: boolean }) => void;
   closeTour: (opts?: { reset?: boolean }) => void;
   activeTour?: string | null;
-  tooltipOpened?: boolean;
   steps?: StepWithData[];
 };
 
@@ -102,13 +93,16 @@ export function TourProvider({ children, ...props }: Props) {
     async (data) => {
       const { status, type, action, index, step, lifecycle } = data;
       const target = document.querySelector(step.target as string);
-      if (target && lifecycle === LIFECYCLE.READY) target.classList.add('tour-highlight');
-      if (target && lifecycle === LIFECYCLE.COMPLETE) target.classList.remove('tour-highlight');
 
-      setState((old) => ({ ...old, tooltipOpened: lifecycle === LIFECYCLE.TOOLTIP }));
+      // Hack: if the tooltip is misplaced, force a resize event to reposition it
+      // if (target && lifecycle === LIFECYCLE.TOOLTIP) window.dispatchEvent(new Event('resize'));
+
+      if (target && step.placement === 'center') {
+        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
 
       if (action === ACTIONS.START && !target) {
-        // If the target is not found, skip it
+        // If the target is not found at start, skip it
         setState((old) => ({ ...old, steps: old.steps?.filter((x) => x.target !== step.target) }));
       }
 
@@ -164,11 +158,14 @@ export function TourProvider({ children, ...props }: Props) {
               zIndex: 100000,
               arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
             },
+            tooltipContainer: { backgroundColor: 'red' },
             spotlight: { border: `2px solid ${theme.colors.cyan[4]}` },
           }}
           tooltipComponent={TourPopover}
           run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
-          spotlightClicks
+          scrollOffset={100}
+          scrollToFirstStep
+          disableScrollParentFix
           showSkipButton
           continuous
           {...props}

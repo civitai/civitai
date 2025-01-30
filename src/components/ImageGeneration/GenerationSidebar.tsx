@@ -12,8 +12,9 @@ const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/Genera
 
 export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);
+  const remixOfId = useGenerationStore((state) => state.data?.remixOfId);
   const router = useRouter();
-  const { activeTour, runTour } = useTourContext();
+  const { runTour } = useTourContext();
   // TODO - see if we can elevate this to `BaseLayout` and set visibility hidden to content behind sidebar
   const [fullScreen, setFullScreen] = useState(false);
   const isGeneratePage = router.pathname.startsWith('/generate');
@@ -39,12 +40,12 @@ export function GenerationSidebar() {
   }, [opened, updateShowDrawer]);
 
   useEffect(() => {
-    if (activeTour === 'content-generation' && opened) {
-      runTour({ key: 'content-generation', step: 0 });
+    if (opened) {
+      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation', step: 0 });
     }
     // Only need to check for sidebar opened state
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [opened]);
+  }, [opened, remixOfId]);
 
   useWindowEvent('resize', updateShowDrawer);
 

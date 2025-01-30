@@ -5,63 +5,6 @@ import { waitForElement } from '~/utils/html-helpers';
 
 export const postGenerationTour: StepWithData[] = [
   {
-    target: '[data-tour="gen:queue"]',
-    title: 'Your Generation Queue',
-    content: 'This is where your generated media is stored, along with all the generation details.',
-    data: {
-      onNext: async () => generationPanel.setView('queue'),
-    },
-    disableBeacon: true,
-    placement: 'bottom',
-  },
-  {
-    target: '[data-tour="gen:feed"]',
-    title: 'Your Generation Feed',
-    content: 'View all your generated media here in a single scrollable view.',
-    data: {
-      onNext: async () => {
-        generationPanel.setView('feed');
-        await waitForElement({ selector: '[data-tour="gen:select"]' });
-      },
-    },
-  },
-  {
-    target: '[data-tour="gen:select"]',
-    title: 'Selecting Content',
-    content: (
-      <Text>
-        You can select images from both the{' '}
-        <Text weight={600} span>
-          Queue
-        </Text>{' '}
-        and the{' '}
-        <Text weight={600} span>
-          Feed
-        </Text>{' '}
-        to post them on the site. Posting lets you share your creations with the community and earn
-        rewards like Buzz!
-      </Text>
-    ),
-    hideFooter: true,
-    data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:post"]' });
-      },
-    },
-  },
-  {
-    target: '[data-tour="gen:post"]',
-    title: 'Posting Content',
-    content: 'Click this button to post your selected content to the site.',
-    hideFooter: true,
-    disableOverlayClose: true,
-    data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 });
-      },
-    },
-  },
-  {
     target: '[data-tour="post:title"]',
     title: 'Add a Title',
     content:
