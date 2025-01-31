@@ -9,6 +9,7 @@ import {
   Divider,
   Grid,
   Group,
+  List,
   Paper,
   Stack,
   Text,
@@ -414,51 +415,67 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
   );
 };
 
-const faq: { q: string; a: string | React.ReactNode }[] = [
-  {
-    q: 'Why a 30% platform fee on payments?',
-    a: 'While some of that fee goes to covering payment processing and currency conversion, most of it goes towards offsetting the cost of the Buzz we give out to users for the rewards system. That’s the Buzz you get for reacting to content, posting images, receiving reactions and more. Its important to keep this Buzz in circulation, since it encourages users to engage with your resources and content. Since introducing the Buzz reward system we’ve seen a 60% increase in the number of people that react to content each day.',
-  },
-  {
-    q: 'I make NSFW/Celebrity/Anime/Furry resources and content, can I still join?',
-    a: 'Yes, you’re not restricted from the program based on your content.',
-  },
-  {
-    q: 'How and when will I get paid?',
-    a: (
-      <Text>
-        You can get paid for a minimum of{' '}
-        <CurrencyIcon
-          currency={Currency.BUZZ}
-          stroke={0}
-          style={{ position: 'relative', top: 5 }}
-        />
-        {numberWithCommas(constants.buzz.minBuzzWithdrawal)} and maximum of{' '}
-        <CurrencyIcon
-          currency={Currency.BUZZ}
-          stroke={0}
-          style={{ position: 'relative', top: 5 }}
-        />
-        {numberWithCommas(constants.buzz.maxBuzzWithdrawal)} each day. Direct $ Tips and donations
-        do not count toward these limits.
-      </Text>
-    ),
-  },
-  {
-    q: 'Can I get paid in currencies other than USD?',
-    a: 'Yes, you can get paid in your native currency.',
-  },
-  {
-    q: 'Can I leave the Creator Program?',
-    a: 'Anytime you want. Its a voluntary program.',
-  },
-  {
-    q: 'How will changes to the program be communicated?',
-    a: 'Changes will be communicated via email, onsite notification and/or direct message.',
-  },
-];
+const faq: { q: string; a: string | React.ReactNode }[] = {
+  '1': [
+    {
+      q: 'Why a 30% platform fee on payments?',
+      a: 'While some of that fee goes to covering payment processing and currency conversion, most of it goes towards offsetting the cost of the Buzz we give out to users for the rewards system. That’s the Buzz you get for reacting to content, posting images, receiving reactions and more. Its important to keep this Buzz in circulation, since it encourages users to engage with your resources and content. Since introducing the Buzz reward system we’ve seen a 60% increase in the number of people that react to content each day.',
+    },
+    {
+      q: 'I make NSFW/Celebrity/Anime/Furry resources and content, can I still join?',
+      a: 'Yes, you’re not restricted from the program based on your content.',
+    },
+    {
+      q: 'How and when will I get paid?',
+      a: (
+        <Text>
+          You can get paid for a minimum of{' '}
+          <CurrencyIcon
+            currency={Currency.BUZZ}
+            stroke={0}
+            style={{ position: 'relative', top: 5 }}
+          />
+          {numberWithCommas(constants.buzz.minBuzzWithdrawal)} and maximum of{' '}
+          <CurrencyIcon
+            currency={Currency.BUZZ}
+            stroke={0}
+            style={{ position: 'relative', top: 5 }}
+          />
+          {numberWithCommas(constants.buzz.maxBuzzWithdrawal)} each day. Direct $ Tips and donations
+          do not count toward these limits.
+        </Text>
+      ),
+    },
+    {
+      q: 'Can I get paid in currencies other than USD?',
+      a: 'Yes, you can get paid in your native currency.',
+    },
+    {
+      q: 'Can I leave the Creator Program?',
+      a: 'Anytime you want. Its a voluntary program.',
+    },
+    {
+      q: 'How will changes to the program be communicated?',
+      a: 'Changes will be communicated via email, onsite notification and/or direct message.',
+    },
+  ],
+  '2': [
+    {
+      q: 'What’s changing with the Buzz rewards?',
+      a: 'Some rewards which previously awarded Yellow Buzz will now award Blue Buzz to support the broader rollout. You will see these changes reflected in your Buzz Dashboard.',
+    },
+    {
+      q: 'I make NSFW/Celebrity/Anime/Furry resources and content, can I still earn?',
+      a: "Yes! You're not restricted from the program based on your content.",
+    },
+    {
+      q: 'When will more details be available?',
+      a: 'We will be releasing full details on how the new system will work very soon. Keep an eye on official announcements!',
+    },
+  ],
+};
 
-const FAQ = () => {
+const FAQ = ({ version = '1' }: { version?: '1' | '2' }) => {
   const { cx, classes, theme } = useStyles();
 
   return (
@@ -468,7 +485,7 @@ const FAQ = () => {
           Frequently asked questions
         </Title>
         <Accordion variant="default">
-          {faq.map(({ q, a }, index) => (
+          {faq[version].map(({ q, a }, index) => (
             <Accordion.Item key={index} value={`q${index}`}>
               <Accordion.Control>
                 <Group spacing={8}>
@@ -501,26 +518,37 @@ function CreatorsClubV2() {
             lh={1}
             mb="sm"
             mt="lg"
-            align="center"
           >
             Civitai Creators Program
           </Title>
 
-          <Center>
-            <Stack align="center">
-              <Text align="center" mb="xs">
-                We are making it easier for creators to monetize their work. The Civitai Creators
-                Program will soon be opening up to all of our users. This program is the pathway for
-                all creators on Civitai to getting paid for their contributions.
-              </Text>
-              <IconAlertTriangle size={120} />
+          <Text mb="xs" size="lg">
+            The Civitai Creator Program is evolving! After a successful beta test, we are now
+            tweaking and expanding the program, making it easier than ever for Creators to earn!
+          </Text>
 
-              <Text align="center">
-                We are working hard to make this a reality as soon as possible. We will be updating
-                this page with more information soon.
+          <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+            Key Updates
+          </Title>
+          <List>
+            <List.Item>
+              <Text size="lg">
+                More Information Coming Soon! Stay tuned for full details on how the new, expanded,
+                Creator Program will work.
               </Text>
-            </Stack>
-          </Center>
+            </List.Item>
+            <List.Item>
+              <Text size="lg">
+                <Text component="span" weight="bold">
+                  Buzz Rewards:
+                </Text>{' '}
+                We are adjusting some previous Yellow Buzz rewards to Blue Buzz rewards, as a direct
+                result of making the program more accessible to a wider audience
+              </Text>
+            </List.Item>
+          </List>
+
+          <FAQ version="2" />
         </Stack>
       </Container>
     </>
