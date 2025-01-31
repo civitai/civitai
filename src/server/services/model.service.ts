@@ -110,6 +110,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2687,8 +2688,7 @@ export async function ingestModel(data: IngestModelInput) {
 }
 
 export async function getFeaturedModels() {
-  let featuredModels = await redis.packed.get<number[]>(REDIS_KEYS.CACHES.FEATURED_MODELS);
-  if (!featuredModels) {
+  const featuredModels = await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
     const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
       SELECT ci."modelId"
       FROM "CollectionItem" ci
@@ -2702,13 +2702,11 @@ export async function getFeaturedModels() {
       ORDER BY ci."updatedAt" DESC
       LIMIT 50
     `;
-    featuredModels = query.map((row) => row.modelId);
-    await redis.packed.set(REDIS_KEYS.CACHES.FEATURED_MODELS, featuredModels, { EX: CacheTTL.sm });
-  }
+    return query.map((row) => row.modelId);
+  });
 
   return featuredModels;
 }
 export async function bustFeaturedModelsCache() {
-  // Stop busting this cache for now...
-  // await redis.del(REDIS_KEYS.CACHES.FEATURED_MODELS);
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }
