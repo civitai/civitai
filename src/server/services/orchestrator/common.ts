@@ -536,13 +536,13 @@ function formatTextToImageStep({
     const triggerWord = resource.trainedWords?.[0];
     if (triggerWord) {
       if (item?.triggerType === 'negative')
-        while (negativePrompt.startsWith(triggerWord)) {
-          negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
-        }
+        // while (negativePrompt.startsWith(triggerWord)) {
+        negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+      // }
       if (item?.triggerType === 'positive')
-        while (prompt.startsWith(triggerWord)) {
-          prompt = prompt.replace(`${triggerWord}, `, '');
-        }
+        // while (prompt.startsWith(triggerWord)) {
+        prompt = prompt.replace(`${triggerWord}, `, '');
+      // }
     }
   }
 
