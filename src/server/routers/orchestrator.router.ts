@@ -179,7 +179,7 @@ export const orchestratorRouter = router({
   getImageWhatIf: orchestratorGuardedProcedure
     .input(generateImageWhatIfSchema)
     // can't use edge cache due to values dependent on individual users
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    // .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(async ({ ctx, input }) => {
       try {
         const args = {
