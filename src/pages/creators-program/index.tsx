@@ -415,7 +415,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
   );
 };
 
-const faq: { q: string; a: string | React.ReactNode }[] = {
+const faq: Record<string, { q: string; a: string | React.ReactNode }[]> = {
   '1': [
     {
       q: 'Why a 30% platform fee on payments?',
@@ -539,11 +539,9 @@ function CreatorsClubV2() {
             </List.Item>
             <List.Item>
               <Text size="lg">
-                <Text component="span" weight="bold">
-                  Buzz Rewards:
-                </Text>{' '}
-                We are adjusting some previous Yellow Buzz rewards to Blue Buzz rewards, as a direct
-                result of making the program more accessible to a wider audience
+                Buzz Rewards: We are adjusting some previous Yellow Buzz rewards to Blue Buzz
+                rewards, as a direct result of making the program more accessible to a wider
+                audience
               </Text>
             </List.Item>
           </List>
