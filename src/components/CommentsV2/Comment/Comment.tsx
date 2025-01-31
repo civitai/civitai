@@ -8,7 +8,6 @@ import {
   Button,
   Box,
   createStyles,
-  Title,
   UnstyledButton,
   Divider,
 } from '@mantine/core';
@@ -16,7 +15,6 @@ import { useEffect, useState } from 'react';
 import { useCommentsContext, useRootThreadContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
-import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
   IconDotsVertical,
@@ -43,6 +41,7 @@ import { CommentReplies } from '../CommentReplies';
 import { constants } from '../../../server/common/constants';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import type { Comment } from '~/server/services/commentsv2.service';
 
 type Store = {
   id?: number;
@@ -54,7 +53,7 @@ const useStore = create<Store>((set) => ({
 }));
 
 type CommentProps = Omit<GroupProps, 'children'> & {
-  comment: InfiniteCommentResults['comments'][0];
+  comment: Comment;
   viewOnly?: boolean;
   highlight?: boolean;
   resourceOwnerId?: number;

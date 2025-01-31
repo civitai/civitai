@@ -22,17 +22,6 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
   reactions: {
     select: getReactionsSelectV2,
   },
-  childThread: {
-    select: {
-      id: true,
-      locked: true,
-      _count: {
-        select: {
-          comments: true,
-        },
-      },
-    },
-  },
 });
 
 export type CommentV2Model = Prisma.CommentV2GetPayload<typeof commentV2>;

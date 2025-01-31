@@ -10,7 +10,6 @@ import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
-import { isDefined } from '../../utils/type-guards';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -117,20 +116,22 @@ export function RootThreadProvider({
     { entityId: entity.entityId, entityType: entity.entityType, hidden },
     {
       onSuccess: (data) => {
-        if (!data || !('children' in data)) return;
+        if (!data?.comments?.length) return;
 
-        (data?.children ?? []).forEach((child) => {
+        data.comments.forEach((comment) => {
+          const childThread = comment.childThread ?? null;
+          console.log({ childThread });
           utils.commentv2.getThreadDetails.setData(
             {
-              entityId: child.commentId as number,
+              entityId: comment.id,
               entityType: 'comment',
               hidden,
             },
-            child
+            childThread
           );
         });
 
-        const expandedCommentIds = data.children.map((c) => c.commentId).filter(isDefined);
+        const expandedCommentIds = data.comments?.map((c) => c.id) ?? [];
         setExpanded(expandedCommentIds);
       },
     }

@@ -3,17 +3,12 @@ import {
   deleteCommentV2Handler,
   getCommentCountV2Handler,
   getCommentsThreadDetailsHandler,
-  getInfiniteCommentsV2Handler,
   toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
   getCommentHandler,
   toggleHideCommentHandler,
 } from './../controllers/commentv2.controller';
-import {
-  commentConnectorSchema,
-  getCommentsV2Schema,
-  upsertCommentv2Schema,
-} from './../schema/commentv2.schema';
+import { commentConnectorSchema, upsertCommentv2Schema } from './../schema/commentv2.schema';
 import {
   middleware,
   router,
@@ -49,7 +44,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
 });
 
 export const commentv2Router = router({
-  getInfinite: publicProcedure.input(getCommentsV2Schema).query(getInfiniteCommentsV2Handler),
   getCount: publicProcedure.input(commentConnectorSchema).query(getCommentCountV2Handler),
   getSingle: publicProcedure.input(getByIdSchema).query(getCommentHandler),
   upsert: guardedProcedure

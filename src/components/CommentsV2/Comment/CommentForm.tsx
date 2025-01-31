@@ -89,7 +89,7 @@ export const CommentForm = ({
             if (!old) {
               return;
             }
-            const item = old.comments.find((x) => x.id === request.id);
+            const item = old.comments?.find((x) => x.id === request.id);
             if (!item) {
               store.editComment(entityType, entityId, response);
             } else {
