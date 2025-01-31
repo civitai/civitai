@@ -107,10 +107,7 @@ export function GeneratedImageActions({
       const post = await createPostMutation.mutateAsync({});
       // updateImages({}) // tODO - show that this image has been posted?
       if (running) runTour({ step: currentStep + 1 });
-      await router.push({
-        pathname: '/posts/[postId]/edit',
-        query: { ...router.query, postId: post.id, src: key },
-      });
+      await router.push({ pathname: '/posts/[postId]/edit', query: { postId: post.id, src: key } });
       generationPanel.close();
       deselect();
     } catch (e) {

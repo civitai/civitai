@@ -1,6 +1,3 @@
-import { data } from 'motion/dist/react-m';
-import Router from 'next/router';
-import { generationPanel } from '~/store/generation.store';
 import { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 
@@ -56,13 +53,5 @@ export const modelPageTour: StepWithData[] = [
     disableBeacon: true,
     spotlightClicks: true,
     spotlightPadding: 10,
-    data: {
-      onNext: async () => {
-        const path = Router.asPath.split('?')[0];
-        Router.replace(path, undefined, { shallow: true });
-        generationPanel.open();
-        await waitForElement({ selector: '[data-tour="gen:start"]' });
-      },
-    },
   },
 ];

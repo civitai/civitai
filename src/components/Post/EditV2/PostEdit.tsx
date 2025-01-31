@@ -19,11 +19,13 @@ export function PostEdit() {
     state.collectionId,
   ]);
   const { showPreview } = usePostPreviewContext();
-  const { runTour } = useTourContext();
+  const { runTour, running } = useTourContext();
 
   useEffect(() => {
-    runTour({ key: 'post-generation', step: 0 });
-  }, []);
+    if (!running && post?.id) {
+      runTour({ key: 'post-generation', step: 0 });
+    }
+  }, [post?.id]);
 
   if (!post) return null;
 

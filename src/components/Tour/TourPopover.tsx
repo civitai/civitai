@@ -21,7 +21,7 @@ export function TourPopover(props: TooltipRenderProps) {
   const handlePrevClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
     async (e) => {
       backProps.onClick(e);
-      await (step.data as StepData)?.onPrev?.({ isMobile: false });
+      await (step.data as StepData)?.onPrev?.();
     },
     [backProps, step.data]
   );
@@ -29,7 +29,7 @@ export function TourPopover(props: TooltipRenderProps) {
   const handleNextClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
     async (e) => {
       primaryProps.onClick(e);
-      await (step.data as StepData)?.onNext?.({ isMobile: false });
+      await (step.data as StepData)?.onNext?.();
     },
     [primaryProps, step.data]
   );

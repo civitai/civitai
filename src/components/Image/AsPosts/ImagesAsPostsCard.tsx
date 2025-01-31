@@ -68,7 +68,7 @@ export function ImagesAsPostsCard({
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
-  const { runTour, running } = useTourContext();
+  const { runTour, activeTour, running, currentStep, closeTour } = useTourContext();
 
   const { modelVersions, showModerationOptions, model, filters } =
     useImagesAsPostsInfiniteContext();
@@ -148,9 +148,16 @@ export function ImagesAsPostsCard({
         id: selectedImage.id,
       });
 
-      if (running) runTour({ key: 'remix-content-generation', step: 0 });
+      if (running) {
+        if (activeTour === 'model-page') {
+          closeTour({ reset: true });
+          runTour({ key: 'remix-content-generation', step: 0 });
+        } else {
+          runTour({ step: currentStep + 1 });
+        }
+      }
     },
-    [runTour, running]
+    [runTour, closeTour, running]
   );
 
   useEffect(() => {

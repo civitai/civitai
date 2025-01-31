@@ -1,4 +1,5 @@
 import { Text } from '@mantine/core';
+import { data } from 'motion/dist/react-m';
 import Router from 'next/router';
 import { generationPanel } from '~/store/generation.store';
 import { StepWithData } from '~/types/tour';
@@ -13,7 +14,9 @@ export const contentGenerationTour: StepWithData[] = [
       'Welcome to the content generation tool! This tour will guide you through the process.',
     locale: { next: "Let's go" },
     disableBeacon: true,
-    disableOverlayClose: true,
+    data: {
+      onNext: async () => generationPanel.setView('generate'),
+    },
   },
   {
     target: '[data-tour="gen:prompt"]',
@@ -40,14 +43,21 @@ export const contentGenerationTour: StepWithData[] = [
     disableBeacon: true,
     data: {
       onNext: async () => {
-        Router.push({
-          pathname: '/collections/[collectionId]',
-          query: { collectionId: 107, tour: 'content-generation' },
-        });
         // if window width is mobile size, the sidebar will be hidden
         if (window.innerWidth < 768) generationPanel.close();
 
-        await waitForElement({ selector: '[data-tour="gen:remix"]', timeout: 30000 });
+        await waitForElement({ selector: '[data-tour="gen:remix"]' })
+          // if the element is not found, redirect to the content generation page and wait for the element
+          .catch(() => {
+            Router.push({
+              pathname: '/collections/[collectionId]',
+              query: { collectionId: 107 },
+            });
+
+            return waitForElement({ selector: '[data-tour="gen:remix"]', timeout: 30000 });
+          })
+          // Otherwise, do nothing
+          .catch(() => null);
       },
     },
   },
@@ -61,7 +71,7 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightPadding: 10,
     data: {
       onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:submit"]' });
+        await waitForElement({ selector: '[data-tour="gen:submit"]' }).catch(() => null);
       },
     },
   },
@@ -78,6 +88,7 @@ export const contentGenerationTour: StepWithData[] = [
     content: 'This is where your generated media is stored, along with all the generation details.',
     data: {
       onNext: async () => generationPanel.setView('queue'),
+      onPrev: async () => generationPanel.setView('generate'),
     },
     disableBeacon: true,
   },
@@ -89,7 +100,7 @@ export const contentGenerationTour: StepWithData[] = [
     data: {
       onNext: async () => {
         generationPanel.setView('feed');
-        await waitForElement({ selector: '[data-tour="gen:select"]' });
+        await waitForElement({ selector: '[data-tour="gen:select"]' }).catch(() => null);
       },
     },
   },
@@ -118,7 +129,7 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     data: {
       onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:post"]' });
+        await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
       },
     },
   },
@@ -134,15 +145,11 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     data: {
       onNext: async () => {
-        await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 });
+        await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 }).catch(
+          () => null
+        );
       },
     },
-  },
-  {
-    target: '[data-tour="gen:reset"]',
-    title: 'All Set!',
-    content: 'You can view this tour at anytime by clicking this icon.',
-    locale: { last: 'Done' },
   },
 ];
 
@@ -189,7 +196,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     data: {
       onNext: async () => {
         generationPanel.setView('feed');
-        await waitForElement({ selector: '[data-tour="gen:select"]' });
+        await waitForElement({ selector: '[data-tour="gen:select"]' }).catch(() => null);
       },
     },
   },
@@ -218,7 +225,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     data: {
       onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:post"]' });
+        await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
       },
     },
   },
@@ -234,14 +241,10 @@ export const remixContentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     data: {
       onNext: async () => {
-        await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 });
+        await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 }).catch(
+          () => null
+        );
       },
     },
-  },
-  {
-    target: '[data-tour="gen:reset"]',
-    title: 'All Set!',
-    content: 'You can view this tour at anytime by clicking this icon.',
-    disableBeacon: true,
   },
 ];

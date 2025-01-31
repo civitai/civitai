@@ -54,6 +54,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
   useSubmitCreateImage,
@@ -78,6 +79,7 @@ import {
 import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
@@ -100,9 +102,9 @@ import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
+import { contentGenerationTour, remixContentGenerationTour } from '~/utils/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { Priority } from '@civitai/client';
 
 let total = 0;
 const tips = {
@@ -120,6 +122,11 @@ export function GenerationFormContent() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
+  const { runTour, running, setSteps } = useTourContext();
+  const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
+    state.requestsLoading,
+    state.hasGeneratedImages,
+  ]);
 
   const form = useGenerationForm();
   const invalidateWhatIf = useInvalidateWhatIf();
@@ -306,6 +313,20 @@ export function GenerationFormContent() {
     workflowDefinitions
       ?.filter((x) => x.selectable !== false && x.key !== undefined)
       .map(({ key, label }) => ({ label, value: key })) ?? [];
+
+  const remixOfId = form.watch('remixOfId');
+  useEffect(() => {
+    if (!running && status.available && !status.isLoading) {
+      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation', step: 0 });
+    }
+
+    if (!loadingGenQueueRequests && !hasGeneratedImages) {
+      // Remove last two steps if user has not generated any images
+      setSteps(
+        remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
+      );
+    }
+  }, [status.isLoading, status.available, loadingGenQueueRequests, hasGeneratedImages]);
 
   return (
     <Form
@@ -640,7 +661,7 @@ export function GenerationFormContent() {
                       if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
 
                       return (
-                        <div className="radius-md my-2 flex flex-col gap-2 overflow-hidden">
+                        <div className="my-2 flex flex-col gap-2 overflow-hidden rounded-md">
                           <div
                             className={clsx('flex rounded-md', {
                               'border-2 border-red-500': remixSimilarity < 0.75,
@@ -1290,7 +1311,7 @@ function WhatIfAlert() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
+  const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
   const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
