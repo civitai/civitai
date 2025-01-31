@@ -10,6 +10,8 @@ import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
+import { CommentThread } from '~/server/services/commentsv2.service';
+import { isDefined } from '~/utils/type-guards';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -116,21 +118,28 @@ export function RootThreadProvider({
     { entityId: entity.entityId, entityType: entity.entityType, hidden },
     {
       onSuccess: (data) => {
-        if (!data?.comments?.length) return;
+        if (!data) return;
+        const allThreads = [data, ...(data.children ?? [])];
 
-        data.comments.forEach((comment) => {
-          const childThread = comment.childThread ?? null;
-          utils.commentv2.getThreadDetails.setData(
-            {
-              entityId: comment.id,
-              entityType: 'comment',
-              hidden,
-            },
-            childThread
-          );
-        });
+        for (const thread of allThreads) {
+          for (const comment of thread.comments ?? []) {
+            const childThread = allThreads.find((x) => x.commentId === comment.id) ?? null;
+            utils.commentv2.getThreadDetails.setData(
+              {
+                entityId: comment.id,
+                entityType: 'comment',
+                hidden,
+              },
+              childThread
+            );
+            utils.commentv2.getCount.setData(
+              { entityId: comment.id, entityType: 'comment' },
+              childThread?.comments?.length ?? 0
+            );
+          }
+        }
 
-        const expandedCommentIds = data.comments?.map((c) => c.id) ?? [];
+        const expandedCommentIds = data?.children?.map((c) => c.commentId).filter(isDefined) ?? [];
         setExpanded(expandedCommentIds);
       },
     }
@@ -209,6 +218,7 @@ export function CommentsProvider({
       },
     }
   );
+  const hiddenCount = thread?.hidden ?? 0;
   const initialComments = useMemo(() => {
     const comments = thread?.comments ?? [];
 
@@ -218,12 +228,6 @@ export function CommentsProvider({
 
     return comments;
   }, [thread?.comments, sort]);
-
-  const { data: hiddenCount = 0 } = trpc.commentv2.getCount.useQuery({
-    entityId,
-    entityType,
-    hidden: true,
-  });
 
   const highlighted = parseNumericString(router.query.highlight);
   const getLimit = (data: { id: number }[] = []) => {

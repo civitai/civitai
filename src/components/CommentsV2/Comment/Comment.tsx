@@ -42,6 +42,7 @@ import { constants } from '../../../server/common/constants';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import type { Comment } from '~/server/services/commentsv2.service';
+import { trpc } from '~/utils/trpc';
 
 type Store = {
   id?: number;
@@ -79,6 +80,11 @@ export function CommentContent({
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, badge, canReport } = useCommentV2Context();
 
+  const { data: replyCount = 0 } = trpc.commentv2.getCount.useQuery({
+    entityId: comment.id,
+    entityType: 'comment',
+  });
+
   const { classes, cx } = useCommentStyles();
 
   const id = useStore((state) => state.id);
@@ -97,7 +103,6 @@ export function CommentContent({
     if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
   }, [isHighlighted, comment.id]);
 
-  const replyCount = comment?.childThread?._count?.comments ?? 0;
   const isExpanded = !viewOnly && expanded.includes(comment.id);
   const onToggleReplies = () => {
     const maxDepth =
@@ -131,11 +136,11 @@ export function CommentContent({
       })}
     >
       <Group spacing="xs">
-        {replyCount > 0 && !viewOnly && !isExpanded && (
+        {/* {replyCount > 0 && !viewOnly && !isExpanded && (
           <UnstyledButton onClick={onToggleReplies}>
             <IconArrowsMaximize size={16} />
           </UnstyledButton>
-        )}
+        )} */}
         <UserAvatar user={comment.user} size="sm" linkToProfile />
       </Group>
 

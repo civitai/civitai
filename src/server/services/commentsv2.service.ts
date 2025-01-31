@@ -11,11 +11,12 @@ export type CommentThread = {
   locked: boolean;
   commentId?: number | null;
   comments?: Comment[];
-  _count?: { comments: number };
+  hidden: number;
+  children?: CommentThread[];
 };
 
-export type Comment = Omit<CommentV2Model, 'childThread'> & {
-  childThread?: CommentThread | null;
+export type Comment = CommentV2Model & {
+  // childThread?: { id: number; _count?: { comments: number } } | null;
 };
 
 export const upsertComment = async ({
@@ -65,22 +66,10 @@ export const upsertComment = async ({
 export const getComment = async ({ id }: GetByIdInput): Promise<Comment> => {
   const comment = await dbRead.commentV2.findFirst({
     where: { id },
-    select: { ...commentV2Select, thread: true },
+    select: commentV2Select,
   });
   if (!comment) throw throwNotFoundError();
-  const childThread = await dbRead.thread.findFirst({
-    where: { commentId: comment.id },
-    select: {
-      id: true,
-      locked: true,
-      _count: {
-        select: {
-          comments: true,
-        },
-      },
-    },
-  });
-  return { ...comment, childThread: childThread ?? undefined };
+  return comment;
 };
 
 export const deleteComment = ({ id }: { id: number }) => {
@@ -103,7 +92,7 @@ export async function getCommentsThreadDetails2({
   entityType,
   hidden = false,
   excludedUserIds,
-}: CommentConnectorInput) {
+}: CommentConnectorInput): Promise<CommentThread | null> {
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: {
@@ -127,33 +116,33 @@ export async function getCommentsThreadDetails2({
     orderBy: { createdAt: 'asc' },
     where: {
       threadId: { in: threadIds },
-      hidden,
       userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
     },
     select: commentV2Select,
   });
 
-  function combineThreadWithComments(rootThread: {
+  function combineThreadWithComments(thread: {
     id: number;
     locked: boolean;
     commentId?: number | null;
   }): CommentThread {
-    const filtered = comments.filter((comment) => comment.threadId === rootThread.id);
+    const allComments = comments.filter(
+      (comment) => comment.threadId === thread.id && !excludedUserIds?.includes(comment.user.id)
+    );
+    const filtered = allComments.filter((comment) => comment.hidden === hidden);
+    const hiddenCount = !hidden ? allComments.length - filtered.length : 0;
 
     return {
-      ...rootThread,
-      _count: filtered.length ? { comments: comments.length } : undefined,
-      comments: filtered.map((comment) => {
-        const childThread = childThreads.find((x) => x.commentId === comment.id);
-        return {
-          ...comment,
-          childThread: childThread ? combineThreadWithComments(childThread) : undefined,
-        };
-      }),
+      ...thread,
+      hidden: hiddenCount,
+      comments: filtered,
     };
   }
 
-  const result = combineThreadWithComments(mainThread);
+  const result = {
+    ...combineThreadWithComments(mainThread),
+    children: childThreads.map(combineThreadWithComments),
+  };
 
   return result;
 }

@@ -5,7 +5,7 @@ import { trpc } from '~/utils/trpc';
 export const useMutateComment = () => {
   const queryUtils = trpc.useContext();
   const toggleHideCommentMutation = trpc.commentv2.toggleHide.useMutation({
-    async onSuccess(_, { entityType, entityId }) {
+    async onSuccess(response, { entityType, entityId }) {
       await queryUtils.commentv2.getThreadDetails.invalidate({ entityType, entityId });
       await queryUtils.commentv2.getThreadDetails.invalidate({
         entityType,
