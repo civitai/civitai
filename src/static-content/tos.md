@@ -99,6 +99,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - (e) Content depicting scat, fecal matter, gaseous emission, object or lifeform being ejected from an anus, or coprophagia (the ingestion of fecal matter);
 - (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
 - (g) Bounties requesting the creation of a real-life person, deceased or living, are prohibited.
+- (h) AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" individuals.
   For additional information about how content is moderated, please review our Content Moderation Policy.
 
   Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.

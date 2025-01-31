@@ -2690,15 +2690,17 @@ export async function getFeaturedModels() {
   let featuredModels = await redis.packed.get<number[]>(REDIS_KEYS.CACHES.FEATURED_MODELS);
   if (!featuredModels) {
     const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
-      WITH model_ids AS (
-        SELECT ci."modelId"
-          FROM "CollectionItem" ci
-          JOIN "Collection" c ON c.id = ci."collectionId"
-          JOIN "GenerationCoverage" gc ON gc."modelId" = ci."modelId"
-          WHERE c.id = ${FEATURED_MODEL_COLLECTION_ID} AND gc.covered
-          ORDER BY ci."updatedAt" DESC
+      SELECT ci."modelId"
+      FROM "CollectionItem" ci
+      WHERE ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
+      AND EXISTS (
+        SELECT 1
+        FROM "GenerationCoverage" gc
+        WHERE gc."modelId" = ci."modelId"
+        AND gc.covered
       )
-      SELECT * FROM model_ids LIMIT 50
+      ORDER BY ci."updatedAt" DESC
+      LIMIT 50
     `;
     featuredModels = query.map((row) => row.modelId);
     await redis.packed.set(REDIS_KEYS.CACHES.FEATURED_MODELS, featuredModels, { EX: CacheTTL.sm });
@@ -2707,5 +2709,6 @@ export async function getFeaturedModels() {
   return featuredModels;
 }
 export async function bustFeaturedModelsCache() {
-  await redis.del(REDIS_KEYS.CACHES.FEATURED_MODELS);
+  // Stop busting this cache for now...
+  // await redis.del(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }
