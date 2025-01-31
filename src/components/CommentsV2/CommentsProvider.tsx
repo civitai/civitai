@@ -120,7 +120,6 @@ export function RootThreadProvider({
 
         data.comments.forEach((comment) => {
           const childThread = comment.childThread ?? null;
-          console.log({ childThread });
           utils.commentv2.getThreadDetails.setData(
             {
               entityId: comment.id,

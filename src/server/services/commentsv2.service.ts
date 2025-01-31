@@ -104,7 +104,6 @@ export async function getCommentsThreadDetails2({
   hidden = false,
   excludedUserIds,
 }: CommentConnectorInput) {
-  console.time('getCommentsThreadDetails2');
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: {
@@ -112,7 +111,7 @@ export async function getCommentsThreadDetails2({
       locked: true,
     },
   });
-  if (!mainThread) throw throwNotFoundError();
+  if (!mainThread) return null;
 
   const childThreads = await dbRead.thread.findMany({
     where: { rootThreadId: mainThread.id },
@@ -155,7 +154,6 @@ export async function getCommentsThreadDetails2({
   }
 
   const result = combineThreadWithComments(mainThread);
-  console.timeEnd('getCommentsThreadDetails2');
 
   return result;
 }
