@@ -2699,8 +2699,6 @@ export async function getFeaturedModels() {
         WHERE gc."modelId" = ci."modelId"
         AND gc.covered
       )
-      ORDER BY ci."updatedAt" DESC
-      LIMIT 50
     `;
     return query.map((row) => row.modelId);
   });
