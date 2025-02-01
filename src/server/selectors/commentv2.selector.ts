@@ -16,22 +16,12 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
   content: true,
   hidden: true,
   threadId: true,
+  pinnedAt: true,
   user: {
     select: userWithCosmeticsSelect,
   },
   reactions: {
     select: getReactionsSelectV2,
-  },
-  childThread: {
-    select: {
-      id: true,
-      locked: true,
-      _count: {
-        select: {
-          comments: true,
-        },
-      },
-    },
   },
 });
 

@@ -82,14 +82,14 @@ export const CommentForm = ({
       // if it has an id, just set the data with state
       if (request.id) {
         // Response is minimally different but key components remain the same so any is used.
-        queryUtils.commentv2.getSingle.setData({ id: request.id }, response as any);
+        queryUtils.commentv2.getSingle.setData({ id: request.id }, response);
         queryUtils.commentv2.getThreadDetails.setData(
           { entityType, entityId },
           produce((old) => {
             if (!old) {
               return;
             }
-            const item = old.comments.find((x) => x.id === request.id);
+            const item = old.comments?.find((x) => x.id === request.id);
             if (!item) {
               store.editComment(entityType, entityId, response);
             } else {
