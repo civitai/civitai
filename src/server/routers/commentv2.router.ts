@@ -22,6 +22,7 @@ import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { toggleHideCommentSchema } from '~/server/schema/commentv2.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import { commentRateLimits } from '~/server/schema/comment.schema';
+import { togglePinComment } from '~/server/services/commentsv2.service';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -62,4 +63,7 @@ export const commentv2Router = router({
     .input(commentConnectorSchema)
     .mutation(toggleLockThreadDetailsHandler),
   toggleHide: protectedProcedure.input(toggleHideCommentSchema).mutation(toggleHideCommentHandler),
+  togglePinned: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input }) => togglePinComment({ id: input.id })),
 });

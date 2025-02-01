@@ -241,7 +241,9 @@ export function CommentsProvider({
   const [limit, setLimit] = useState(getLimit(initialComments));
 
   const comments = useMemo(() => {
-    const data = initialComments;
+    const data = initialComments.sort(
+      (a, b) => new Date(b.pinnedAt ?? 0).getTime() - new Date(a.pinnedAt ?? 0).getTime()
+    );
     return !showMore ? data.slice(0, limit) : data;
   }, [initialComments, showMore, limit]);
 

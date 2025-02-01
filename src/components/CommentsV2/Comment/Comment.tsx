@@ -10,6 +10,7 @@ import {
   createStyles,
   UnstyledButton,
   Divider,
+  ThemeIcon,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useCommentsContext, useRootThreadContext } from '../CommentsProvider';
@@ -25,6 +26,8 @@ import {
   IconEye,
   IconEyeOff,
   IconArrowsMaximize,
+  IconPinned,
+  IconPinnedOff,
 } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -43,6 +46,7 @@ import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import type { Comment } from '~/server/services/commentsv2.service';
 import { trpc } from '~/utils/trpc';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type Store = {
   id?: number;
@@ -76,6 +80,7 @@ export function CommentContent({
   borderless,
   ...groupProps
 }: CommentProps) {
+  const currentUser = useCurrentUser();
   const { expanded, toggleExpanded, setRootThread } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, badge, canReport } = useCommentV2Context();
@@ -90,7 +95,7 @@ export function CommentContent({
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
-  const { toggleHide } = useMutateComment();
+  const { toggleHide, togglePinned } = useMutateComment();
 
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
@@ -159,6 +164,11 @@ export function CommentContent({
             <Text color="dimmed" size="xs" mt={2}>
               <DaysFromNow date={comment.createdAt} />
             </Text>
+            {comment.pinnedAt && (
+              <ThemeIcon size="sm" color="orange">
+                <IconPinned size={16} stroke={2} />
+              </ThemeIcon>
+            )}
           </Group>
 
           {/* CONTROLS */}
@@ -204,6 +214,20 @@ export function CommentContent({
                   onClick={() => toggleHide({ id: comment.id, entityType, entityId })}
                 >
                   {comment.hidden ? 'Unhide comment' : 'Hide comment'}
+                </Menu.Item>
+              )}
+              {currentUser?.isModerator && (
+                <Menu.Item
+                  icon={
+                    comment.pinnedAt ? (
+                      <IconPinnedOff size={14} stroke={1.5} />
+                    ) : (
+                      <IconPinned size={14} stroke={1.5} />
+                    )
+                  }
+                  onClick={() => togglePinned({ id: comment.id, entityType, entityId })}
+                >
+                  {comment.pinnedAt ? 'Unpin comment' : 'Pin comment'}
                 </Menu.Item>
               )}
               {canReport && (

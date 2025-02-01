@@ -169,3 +169,13 @@ export const toggleHideComment = async ({
     data: { hidden: !currentToggle },
   });
 };
+
+export async function togglePinComment({ id }: GetByIdInput) {
+  const comment = await dbRead.commentV2.findUnique({ where: { id }, select: { pinnedAt: true } });
+  if (!comment) throw throwNotFoundError();
+
+  return dbWrite.commentV2.update({
+    where: { id },
+    data: { pinnedAt: !comment.pinnedAt ? new Date() : null },
+  });
+}
