@@ -3,7 +3,7 @@ title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
 ---
 
-Last Updated: 11/6/2024
+Last Updated: 01/30/2025
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
