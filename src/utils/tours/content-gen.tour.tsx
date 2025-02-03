@@ -1,5 +1,4 @@
 import { Text } from '@mantine/core';
-import { data } from 'motion/dist/react-m';
 import Router from 'next/router';
 import { generationPanel } from '~/store/generation.store';
 import { StepWithData } from '~/types/tour';
@@ -46,18 +45,11 @@ export const contentGenerationTour: StepWithData[] = [
         // if window width is mobile size, the sidebar will be hidden
         if (window.innerWidth < 768) generationPanel.close();
 
-        await waitForElement({ selector: '[data-tour="gen:remix"]' })
-          // if the element is not found, redirect to the content generation page and wait for the element
-          .catch(() => {
-            Router.push({
-              pathname: '/collections/[collectionId]',
-              query: { collectionId: 107 },
-            });
-
-            return waitForElement({ selector: '[data-tour="gen:remix"]', timeout: 30000 });
-          })
-          // Otherwise, do nothing
-          .catch(() => null);
+        await Router.push({
+          pathname: '/collections/[collectionId]',
+          query: { collectionId: 107 },
+        });
+        await waitForElement({ selector: '[data-tour="gen:remix"]', timeout: 30000 });
       },
     },
   },
