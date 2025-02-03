@@ -138,7 +138,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     type: 'images',
     data: memoizedImageData,
   });
-  console.log({ items });
   const [image] = items;
   if (image && !images.length) setImages([image]);
 
