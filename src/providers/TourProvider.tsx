@@ -149,7 +149,9 @@ export function TourProvider({ children, ...props }: Props) {
           return;
         }
 
-        runTour({ step: nextStepIndex });
+        setTimeout(() => {
+          runTour({ step: nextStepIndex });
+        }, 400);
       }
     },
     [closeTour, runTour]
