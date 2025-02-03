@@ -316,17 +316,17 @@ export function GenerationFormContent() {
 
   const remixOfId = form.watch('remixOfId');
   useEffect(() => {
-    if (!running && status.available && !status.isLoading) {
-      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation', step: 0 });
-    }
+    if (!status.available || status.isLoading) return;
 
-    if (!loadingGenQueueRequests && !hasGeneratedImages) {
-      // Remove last two steps if user has not generated any images
+    if (!running)
+      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation', step: 0 });
+
+    // Remove last two steps if user has not generated any images
+    if (!loadingGenQueueRequests && !hasGeneratedImages)
       setSteps(
         remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
       );
-    }
-  }, [status.isLoading, status.available, loadingGenQueueRequests, hasGeneratedImages]);
+  }, [status.isLoading, status.available, loadingGenQueueRequests, hasGeneratedImages, remixOfId]);
 
   return (
     <Form

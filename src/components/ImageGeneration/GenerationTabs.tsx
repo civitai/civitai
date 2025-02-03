@@ -12,7 +12,7 @@ import { Feed } from './Feed';
 import { Queue } from './Queue';
 import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import React, { ForwardRefExoticComponent, RefAttributes, useEffect } from 'react';
+import React, { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useRouter } from 'next/router';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';
 import { SignalStatusNotification } from '~/components/Signals/SignalsProvider';
@@ -33,6 +33,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
+  const generationData = useGenerationStore((state) => state.data);
   if (isImageFeedSeparate && view === 'generate') setView('queue');
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
@@ -68,7 +69,11 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               data-tour="gen:reset"
               tooltip="Need help? Start the tour!"
               onClick={async () => {
-                runTour({ key: 'content-generation', step: 0, forceRun: true });
+                runTour({
+                  key: generationData?.remixOf ? 'remix-content-generation' : 'content-generation',
+                  step: 0,
+                  forceRun: true,
+                });
               }}
             />
           </div>

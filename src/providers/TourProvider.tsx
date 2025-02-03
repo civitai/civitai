@@ -1,7 +1,14 @@
 import { useMantineTheme } from '@mantine/core';
 import { useSearchParams } from 'next/navigation';
 import { createContext, useCallback, useContext, useState } from 'react';
-import Joyride, { ACTIONS, Callback, EVENTS, Props as JoyrideProps, STATUS } from 'react-joyride';
+import Joyride, {
+  ACTIONS,
+  Callback,
+  EVENTS,
+  Props as JoyrideProps,
+  LIFECYCLE,
+  STATUS,
+} from 'react-joyride';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -108,12 +115,12 @@ export function TourProvider({ children, ...props }: Props) {
 
   const handleJoyrideCallback = useCallback<Callback>(
     async (data) => {
-      const { status, type, action, index, step } = data;
+      const { status, type, action, index, step, lifecycle } = data;
       const target = document.querySelector(step.target as string);
 
-      if (target && step.placement === 'center') {
+      if (target && lifecycle === LIFECYCLE.TOOLTIP) window.dispatchEvent(new Event('resize'));
+      if (target && step.placement === 'center')
         target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
 
       if (action === ACTIONS.START && !target) {
         // If the target is not found at start, skip it

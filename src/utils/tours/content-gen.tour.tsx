@@ -42,13 +42,12 @@ export const contentGenerationTour: StepWithData[] = [
     disableBeacon: true,
     data: {
       onNext: async () => {
-        // if window width is mobile size, the sidebar will be hidden
-        if (window.innerWidth < 768) generationPanel.close();
-
-        await Router.push({
+        Router.push({
           pathname: '/collections/[collectionId]',
           query: { collectionId: 107 },
         });
+        // if window width is mobile size, the sidebar will be hidden
+        if (window.innerWidth < 768) generationPanel.close();
         await waitForElement({ selector: '[data-tour="gen:remix"]', timeout: 30000 });
       },
     },
@@ -58,8 +57,11 @@ export const contentGenerationTour: StepWithData[] = [
     title: 'Remix This Image',
     content: 'Click this button to remix an image and create something new',
     hideFooter: true,
+    hideCloseButton: true,
     disableBeacon: true,
     spotlightClicks: true,
+    disableCloseOnEsc: true,
+    disableOverlayClose: true,
     spotlightPadding: 10,
     data: {
       onNext: async () => {
@@ -73,6 +75,12 @@ export const contentGenerationTour: StepWithData[] = [
     content: 'You can submit your prompt by clicking this button and see the magic happen!',
     placement: 'top',
     disableBeacon: true,
+    data: {
+      onPrev: async () => {
+        if (window.innerWidth < 768) generationPanel.close();
+        await waitForElement({ selector: '[data-tour="gen:remix"]' }).catch(() => null);
+      },
+    },
   },
   {
     target: '[data-tour="gen:queue"]',
@@ -119,6 +127,7 @@ export const contentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightClicks: true,
+    spotlightPadding: 10,
     data: {
       onNext: async () => {
         await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
@@ -162,7 +171,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     disableBeacon: true,
     content:
-      'You can type a prompt here to generate an image. Try something simple, like "a blue robot", to get started.',
+      'Looks like you are remixing an image. You can modify the prompt here to generate an image based on the remix.',
   },
   {
     target: '[data-tour="gen:submit"]',
@@ -215,6 +224,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightClicks: true,
+    spotlightPadding: 10,
     data: {
       onNext: async () => {
         await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);

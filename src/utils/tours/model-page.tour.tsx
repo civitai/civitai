@@ -9,13 +9,6 @@ export const modelPageTour: StepWithData[] = [
     disableBeacon: true,
   },
   {
-    target: '[data-tour="model:type"]',
-    disableBeacon: true,
-    title: 'Model Types Explained',
-    content:
-      'Understand the difference between LoRAs and Checkpoints: LoRAs are specialized resources trained on a limited set of images for a specific style or theme, and are used alongside checkpoints. Checkpoints can operate independently without LoRAs.',
-  },
-  {
     target: '[data-tour="model:like"]',
     disableBeacon: true,
     title: 'Like this resource',

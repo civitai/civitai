@@ -1,5 +1,4 @@
 import { Box, Group, Paper, PaperProps, Table, TableProps, Text } from '@mantine/core';
-import { title } from 'process';
 import React from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 

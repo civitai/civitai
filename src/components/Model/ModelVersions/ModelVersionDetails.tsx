@@ -340,7 +340,6 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           )}
         </Group>
       ),
-      rowProps: { 'data-tour': 'model:type' },
     },
     {
       label: 'Stats',
