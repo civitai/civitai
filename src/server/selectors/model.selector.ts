@@ -191,7 +191,7 @@ export const associatedResourceSelect = Prisma.validator<Prisma.ModelSelect>()({
   nsfwLevel: true,
   user: { select: simpleUserSelect },
 });
-const associatedResource = Prisma.validator<Prisma.ModelArgs>()({
+const associatedResource = Prisma.validator<Prisma.ModelFindManyArgs>()({
   select: associatedResourceSelect,
 });
 export type AssociatedResourceModel = Prisma.ModelGetPayload<typeof associatedResource>;
