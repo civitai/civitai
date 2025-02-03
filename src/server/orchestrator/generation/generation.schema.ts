@@ -18,3 +18,9 @@ export const generationSchema = z.discriminatedUnion('type', [
     data: z.record(z.any()),
   }),
 ]);
+
+export const requestPrioritySchema = z
+  .object({
+    type: z.enum(['default', 'kling', 'minimax', 'vidu']).default('default'),
+  })
+  .default({});

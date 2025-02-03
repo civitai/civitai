@@ -103,6 +103,7 @@ import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Priority } from '@civitai/client';
+import { RequestPriority } from '~/components/Generation/Input/RequestPriority';
 
 let total = 0;
 const tips = {
@@ -1120,6 +1121,7 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
+                <RequestPriority />
                 {/* <InputSelect
                   label="Request Priority"
                   name="priority"

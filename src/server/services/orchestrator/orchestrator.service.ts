@@ -1,6 +1,7 @@
 import { env } from '~/env/server';
 import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
 import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
+import { GenerationPriorityLevelMap } from '~/server/orchestrator/infrastructure/base.enums';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export async function createWorkflowStep(args: GenerationSchema) {
@@ -37,6 +38,9 @@ type PrioritySummary = {
   drainTime: string;
 };
 
+const defaultGenerationPriorityValues = Object.values(GenerationPriorityLevelMap).reduce<
+  Record<string, number>
+>((acc, key) => ({ ...acc, [key]: 0 }), {});
 export async function getPriorityVolume() {
   const token = env.ORCHESTRATOR_ACCESS_TOKEN;
   const response = await fetch('https://orchestration.civitai.com/v1/producer', {
@@ -47,12 +51,13 @@ export async function getPriorityVolume() {
     throw new Error(error);
   }
   const data = (await response.json()) as PriorityVolumeQueryResult;
+
   return Object.entries(data).map(([key, value]) => {
     return {
       key,
       prioritySummaries: Object.entries(value.prioritySummaries).reduce<Record<string, number>>(
         (acc, [key, value]) => ({ ...acc, [key]: value.size }),
-        {}
+        defaultGenerationPriorityValues
       ),
     };
   });
