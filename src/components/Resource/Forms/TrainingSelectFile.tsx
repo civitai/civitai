@@ -12,13 +12,15 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconFileDownload, IconSend } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowRight, IconFileDownload } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
+import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -67,6 +69,7 @@ const EpochRow = ({
   loading?: boolean;
   incomplete?: boolean;
 }) => {
+  const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
 
   return (
@@ -100,14 +103,15 @@ const EpochRow = ({
                   : 'Download'}
               </Text>
             </DownloadButton>
+            <GenerateButton disabled={!currentUser?.isMember} />
             <Button
               disabled={incomplete}
               loading={loading}
               onClick={() => onPublishClick(epoch.modelUrl)}
             >
               <Group spacing={4} noWrap>
-                <IconSend size={20} />
-                Publish
+                Continue
+                <IconArrowRight size={20} />
               </Group>
             </Button>
           </Group>
