@@ -515,16 +515,24 @@ type EnginesDictionary = Record<
     whatIf?: string[];
   }
 >;
+/** order of video gen configurations
+  Kling
+  Hailou
+  LTXV
+  Haiper
+  Vidu
+  Mochi
+ */
 export const engineDefinitions: EnginesDictionary = {
-  minimax: {
-    label: 'Hailuo by MiniMax',
-    description: '',
-    whatIf: [],
-  },
   kling: {
     label: 'Kling',
     description: ``,
     whatIf: ['mode', 'duration'],
+  },
+  minimax: {
+    label: 'Hailuo by MiniMax',
+    description: '',
+    whatIf: [],
   },
   haiper: {
     label: 'Haiper',
