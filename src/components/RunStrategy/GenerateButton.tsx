@@ -1,13 +1,4 @@
-import {
-  Badge,
-  Button,
-  ButtonProps,
-  Group,
-  Text,
-  ThemeIcon,
-  Tooltip,
-  useMantineTheme,
-} from '@mantine/core';
+import { Badge, Button, ButtonProps, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconBolt, IconBrush } from '@tabler/icons-react';
 import React from 'react';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
@@ -21,6 +12,7 @@ export function GenerateButton({
   generationPrice,
   onPurchase,
   onClick,
+  epochNumber,
   ...buttonProps
 }: Props) {
   const theme = useMantineTheme();
@@ -55,7 +47,11 @@ export function GenerateButton({
     if (mode === 'toggle' && opened) return generationPanel.close();
 
     modelVersionId
-      ? generationPanel.open({ type: 'modelVersion', id: modelVersionId })
+      ? generationPanel.open({
+          type: 'modelVersion',
+          id: modelVersionId,
+          epochNumbers: epochNumber ? [`${modelVersionId}@${epochNumber}`] : undefined,
+        })
       : generationPanel.open();
 
     onClick?.();
@@ -105,4 +101,5 @@ type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
   generationPrice?: number;
   onPurchase?: () => void;
   onClick?: () => void;
+  epochNumber?: number;
 };

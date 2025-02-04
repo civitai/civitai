@@ -66,9 +66,8 @@ export const useGenerationStore = create<GenerationState>()(
             generationFormStore.setType(input.type as MediaType);
           }
           try {
-            console.log(input);
             const result = await fetchGenerationData(input);
-            console.log(result);
+
             if (isMedia) {
               console.log('Setting remix store');
               useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
@@ -165,6 +164,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
 
   if (dictionary[key]) return dictionary[key];
   else {
+    console.log(QS.stringify(input), input);
     const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);
     if (!response.ok) throw new Error(response.statusText);
     const data: GenerationData = await response.json();

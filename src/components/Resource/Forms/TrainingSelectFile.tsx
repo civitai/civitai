@@ -107,7 +107,11 @@ const EpochRow = ({
               </Text>
             </DownloadButton>
             {modelVersionId && (
-              <GenerateButton disabled={!currentUser?.isMember} modelVersionId={modelVersionId} />
+              <GenerateButton
+                modelVersionId={modelVersionId}
+                disabled={!currentUser?.isMember && !currentUser?.isModerator}
+                epochNumber={epoch.epochNumber}
+              />
             )}
             <Button
               disabled={incomplete}

@@ -9,7 +9,6 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CheckResourcesCoverageSchema,
-  GenerationDataExtrasInput,
   GenerationStatus,
   generationStatusSchema,
   GetGenerationDataInput,
@@ -31,7 +30,7 @@ import {
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
@@ -243,7 +242,7 @@ export const getGenerationData = async ({
       return await getModelVersionGenerationData({
         versionIds: [query.id],
         user,
-        extras: query.extras,
+        epochNumbers: query.epochNumbers,
       });
     case 'modelVersions':
       return await getModelVersionGenerationData({ versionIds: query.ids, user });
@@ -381,14 +380,14 @@ async function getMediaGenerationData({
 const getModelVersionGenerationData = async ({
   versionIds,
   user,
-  extras,
+  epochNumbers,
 }: {
   versionIds: number[];
   user?: SessionUser;
-  extras?: GenerationDataExtrasInput;
+  epochNumbers?: string[];
 }) => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const resources = await getGenerationResourceData({ ids: versionIds, user, extras });
+  const resources = await getGenerationResourceData({ ids: versionIds, user, epochNumbers });
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
     const [vae] = await getGenerationResourceData({ ids: [checkpoint.vaeId], user });
@@ -511,6 +510,10 @@ export type GenerationResource = GenerationResourceBase & {
     minor?: boolean;
     // userId: number;
   };
+  fileDetails?: {
+    jobId: string;
+    fileName: string;
+  };
   substitute?: GenerationResourceBase;
 };
 
@@ -519,10 +522,11 @@ const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => par
 export async function getGenerationResourceData({
   ids,
   user,
-  extras,
+  epochNumbers,
 }: {
   ids: number[];
-  extras?: GenerationDataExtrasInput;
+
+  epochNumbers?: string[];
   user?: {
     id?: number;
     isModerator?: boolean;
@@ -532,7 +536,6 @@ export async function getGenerationResourceData({
   const { id: userId, isModerator } = user ?? {};
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
-  console.log(ids);
 
   function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
     const isUnavailable = unavailableResources.includes(item.model.id);
@@ -644,11 +647,29 @@ export async function getGenerationResourceData({
           fileSizeKB > 10 * 1024;
       }
 
+      console.log(epochNumbers);
+
+      const [, epochNumber] =
+        epochNumbers
+          ?.find((v) => {
+            console.log(v);
+            const [modelVersionId] = v.split('@');
+            if (!modelVersionId) return false;
+            return Number(modelVersionId) === item.id;
+          })
+          ?.split('@') ?? [];
+
+      const fileDetails =
+        epochNumber && primaryFile
+          ? getTrainingFileEpochNumberDetails(primaryFile, Number(epochNumber))
+          : null;
+
       const payload = removeNulls({
         ...item,
         canGenerate: item.covered && item.hasAccess,
         fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
         additionalResourceCost,
+        fileDetails,
       });
 
       if (substitute) {

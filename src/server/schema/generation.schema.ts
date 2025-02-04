@@ -5,7 +5,7 @@ import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-versi
 import { userTierSchema } from '~/server/schema/user.schema';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { numericStringArray } from '~/utils/zod-helpers';
+import { numericStringArray, stringArray } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -272,11 +272,6 @@ export const checkResourcesCoverageSchema = z.object({
   id: z.number(),
 });
 
-export type GenerationDataExtrasInput = z.infer<typeof generationDataExtrasSchema>;
-export const generationDataExtrasSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('modelVersion'), epoch: z.number().optional() }),
-]);
-
 export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
@@ -285,7 +280,7 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('modelVersion'),
     id: z.coerce.number(),
-    extras: generationDataExtrasSchema.optional(),
+    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
   }),
   z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);
