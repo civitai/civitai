@@ -66,8 +66,11 @@ export const useGenerationStore = create<GenerationState>()(
             generationFormStore.setType(input.type as MediaType);
           }
           try {
+            console.log(input);
             const result = await fetchGenerationData(input);
+            console.log(result);
             if (isMedia) {
+              console.log('Setting remix store');
               useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
             }
 
@@ -82,6 +85,7 @@ export const useGenerationStore = create<GenerationState>()(
               state.counter++;
             });
           } catch (e) {
+            console.error('Oh no :V', e);
             set((state) => {
               state.loading = false;
             });

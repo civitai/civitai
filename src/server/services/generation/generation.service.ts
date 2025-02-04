@@ -9,6 +9,7 @@ import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   CheckResourcesCoverageSchema,
+  GenerationDataExtrasInput,
   GenerationStatus,
   generationStatusSchema,
   GetGenerationDataInput,
@@ -35,6 +36,8 @@ import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 
+import { env } from '~/env/server';
+import { getFeaturedModels } from '~/server/services/model.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   fluxUltraAir,
@@ -46,9 +49,7 @@ import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
-import { getFeaturedModels } from '~/server/services/model.service';
 import { isDefined } from '~/utils/type-guards';
-import { env } from '~/env/server';
 
 type GenerationResourceSimple = {
   id: number;
@@ -239,7 +240,11 @@ export const getGenerationData = async ({
     case 'video':
       return await getMediaGenerationData({ id: query.id, user });
     case 'modelVersion':
-      return await getModelVersionGenerationData({ versionIds: [query.id], user });
+      return await getModelVersionGenerationData({
+        versionIds: [query.id],
+        user,
+        extras: query.extras,
+      });
     case 'modelVersions':
       return await getModelVersionGenerationData({ versionIds: query.ids, user });
     default:
@@ -376,12 +381,14 @@ async function getMediaGenerationData({
 const getModelVersionGenerationData = async ({
   versionIds,
   user,
+  extras,
 }: {
   versionIds: number[];
   user?: SessionUser;
+  extras?: GenerationDataExtrasInput;
 }) => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const resources = await getGenerationResourceData({ ids: versionIds, user });
+  const resources = await getGenerationResourceData({ ids: versionIds, user, extras });
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
     const [vae] = await getGenerationResourceData({ ids: [checkpoint.vaeId], user });
@@ -512,8 +519,10 @@ const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => par
 export async function getGenerationResourceData({
   ids,
   user,
+  extras,
 }: {
   ids: number[];
+  extras?: GenerationDataExtrasInput;
   user?: {
     id?: number;
     isModerator?: boolean;
@@ -523,6 +532,7 @@ export async function getGenerationResourceData({
   const { id: userId, isModerator } = user ?? {};
   const unavailableResources = await getUnavailableResources();
   const featuredModels = await getFeaturedModels();
+  console.log(ids);
 
   function transformGenerationData({ settings, ...item }: GenerationResourceDataModel) {
     const isUnavailable = unavailableResources.includes(item.model.id);
@@ -540,11 +550,13 @@ export async function getGenerationResourceData({
       ),
     };
   }
+
   return await resourceDataCache.fetch(ids).then(async (initialResult) => {
     const initialTransformed = initialResult.map(transformGenerationData);
     const modelIds = initialTransformed
       .filter((x) => !x.covered || !x.hasAccess)
       .map((x) => x.model.id);
+
     const substituteIds = await dbRead.modelVersion
       .findMany({
         where: {
@@ -618,7 +630,7 @@ export async function getGenerationResourceData({
       [...initialWithAccess, ...substitutesWithAccess].filter((x) => x.hasAccess).map((x) => x.id)
     );
 
-    return initialWithAccess.map(({ availability, ...item }) => {
+    return initialWithAccess.map(({ ...item }) => {
       const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
       const substitute = substitutesWithAccess.find(
         (sub) => sub.model.id === item.model.id && sub.hasAccess

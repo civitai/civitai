@@ -60,6 +60,7 @@ const EpochRow = ({
   onPublishClick,
   loading,
   incomplete,
+  modelVersionId,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
   prompts: TrainingResultsV2['sampleImagesPrompts'];
@@ -68,6 +69,8 @@ const EpochRow = ({
   onPublishClick: (modelUrl: string) => void;
   loading?: boolean;
   incomplete?: boolean;
+
+  modelVersionId?: number;
 }) => {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
@@ -103,7 +106,9 @@ const EpochRow = ({
                   : 'Download'}
               </Text>
             </DownloadButton>
-            <GenerateButton disabled={!currentUser?.isMember} />
+            {modelVersionId && (
+              <GenerateButton disabled={!currentUser?.isMember} modelVersionId={modelVersionId} />
+            )}
             <Button
               disabled={incomplete}
               loading={loading}
@@ -412,6 +417,7 @@ export default function TrainingSelectFile({
             onPublishClick={handleSubmit}
             loading={awaitInvalidate}
             incomplete={resultsLoading}
+            modelVersionId={modelVersion.id}
           />
           {epochs.length > 1 && (
             <>
@@ -430,6 +436,7 @@ export default function TrainingSelectFile({
                   onPublishClick={handleSubmit}
                   loading={awaitInvalidate}
                   incomplete={resultsLoading}
+                  modelVersionId={modelVersion.id}
                 />
               ))}
             </>

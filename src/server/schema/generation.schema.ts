@@ -1,12 +1,12 @@
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { BaseModel, constants, generation } from '~/server/common/constants';
-import { userTierSchema } from '~/server/schema/user.schema';
-import { auditPrompt } from '~/utils/metadata/audit';
-import { imageSchema } from './image.schema';
 import { GenerationRequestStatus } from '~/server/common/enums';
-import { numericStringArray } from '~/utils/zod-helpers';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
+import { userTierSchema } from '~/server/schema/user.schema';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
+import { auditPrompt } from '~/utils/metadata/audit';
+import { numericStringArray } from '~/utils/zod-helpers';
+import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.nativeEnum(ModelType),
@@ -53,6 +53,7 @@ const generationResourceSchemaBase = z.object({
   covered: z.boolean(),
   hasAccess: z.boolean(),
   additionalResourceCost: z.boolean().optional(),
+  availability: z.nativeEnum(Availability).optional(),
 });
 export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
 export const generationResourceSchema = generationResourceSchemaBase.extend({
@@ -271,12 +272,21 @@ export const checkResourcesCoverageSchema = z.object({
   id: z.number(),
 });
 
+export type GenerationDataExtrasInput = z.infer<typeof generationDataExtrasSchema>;
+export const generationDataExtrasSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('modelVersion'), epoch: z.number().optional() }),
+]);
+
 export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('image'), id: z.coerce.number() }),
   z.object({ type: z.literal('video'), id: z.coerce.number() }),
   z.object({ type: z.literal('audio'), id: z.coerce.number() }),
-  z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
+  z.object({
+    type: z.literal('modelVersion'),
+    id: z.coerce.number(),
+    extras: generationDataExtrasSchema.optional(),
+  }),
   z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
 ]);
 

@@ -7,16 +7,17 @@ import { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import {
-  getUnavailableResources,
   getShouldChargeForResources,
+  getUnavailableResources,
 } from '~/server/services/generation/generation.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Availability, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/utils/string-helpers';
+import { stringifyAIR, stringifyEpochAir } from '~/utils/string-helpers';
 
-const schema = z.object({ id: z.coerce.number() });
+const schema = z.object({ id: z.coerce.number(), epoch: z.number().optional() });
+
 type VersionRow = {
   id: number;
   versionName: string;
@@ -106,11 +107,47 @@ export default MixedAuthEndpoint(async function handler(
   if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
 
   const baseUrl = getBaseUrl();
-  const air = stringifyAIR(modelVersion);
-  let downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
-    versionId: modelVersion.id,
-    primary: true,
-  })}`;
+  let air: string;
+  let downloadUrl: string;
+
+  if (
+    modelVersion.availability === Availability.Private &&
+    !!primaryFile.metadata.trainingResults
+  ) {
+    const epoch =
+      primaryFile.metadata.trainingResults.epochs?.find((e) => {
+        if ('epoch_number' in e) {
+          return e.epoch_number === results.data.epoch;
+        }
+
+        return e.epochNumber === results.data.epoch;
+      }) ?? primaryFile.metadata.trainingResults.epochs?.pop();
+
+    if (!epoch) {
+      return res.status(404).json({ error: 'Missing   epoch' });
+    }
+
+    downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
+    const jobFileUrl = downloadUrl.split('/jobs/')[1]; // Leaves you with: ${jobId}/assets/${fileName}
+    const jobId = jobFileUrl.split('/assets/')[0];
+    const fileName = jobFileUrl.split('/assets/')[1];
+
+    if (!jobId || !fileName) {
+      return res.status(404).json({ error: 'Could not get jobId or fileName' });
+    }
+
+    air = stringifyEpochAir({
+      jobId,
+      fileName,
+    });
+  } else {
+    air = stringifyAIR(modelVersion);
+    downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
+      versionId: modelVersion.id,
+      primary: true,
+    })}`;
+  }
+
   // if req url domain contains `api.`, strip /api/ from the download url
   if (req.headers.host?.includes('api.')) {
     downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
