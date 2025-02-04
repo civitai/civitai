@@ -71,8 +71,8 @@ export const contentGenerationTour: StepWithData[] = [
   },
   {
     target: '[data-tour="gen:submit"]',
-    title: 'Submit Your Prompt',
-    content: 'You can submit your prompt by clicking this button and see the magic happen!',
+    title: 'Create Your Image',
+    content: `Once your prompt is ready to go, hit the generate button and AI will start doing it's magic!`,
     placement: 'top',
     disableBeacon: true,
     data: {
@@ -118,7 +118,7 @@ export const contentGenerationTour: StepWithData[] = [
           Feed
         </Text>{' '}
         to post them on the site. Posting lets you share your creations with the community and earn
-        rewards like Buzz!
+        Buzz allowing you to create more!
       </Text>
     ),
     hideFooter: true,

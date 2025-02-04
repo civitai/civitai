@@ -318,14 +318,14 @@ export function GenerationFormContent() {
   useEffect(() => {
     if (!status.available || status.isLoading) return;
 
-    if (!running)
-      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation', step: 0 });
-
     // Remove last two steps if user has not generated any images
     if (!loadingGenQueueRequests && !hasGeneratedImages)
       setSteps(
         remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
       );
+
+    if (!running)
+      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation', step: 0 });
   }, [status.isLoading, status.available, loadingGenQueueRequests, hasGeneratedImages, remixOfId]);
 
   return (
