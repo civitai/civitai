@@ -145,7 +145,7 @@ module.exports = {
     },
   },
   plugins: [
-    // require('./src/tailwind/container-queries'),
+    require('./src/tailwind/container-queries'),
     plugin(function ({matchUtilities, theme, addUtilities, addVariant, e}) {
       matchUtilities(
         {
