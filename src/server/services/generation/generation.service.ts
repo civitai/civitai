@@ -510,9 +510,10 @@ export type GenerationResource = GenerationResourceBase & {
     minor?: boolean;
     // userId: number;
   };
-  fileDetails?: {
+  epochDetails?: {
     jobId: string;
     fileName: string;
+    epochNumber: number;
   };
   substitute?: GenerationResourceBase;
 };
@@ -525,7 +526,6 @@ export async function getGenerationResourceData({
   epochNumbers,
 }: {
   ids: number[];
-
   epochNumbers?: string[];
   user?: {
     id?: number;
@@ -634,6 +634,7 @@ export async function getGenerationResourceData({
     );
 
     return initialWithAccess.map(({ ...item }) => {
+      console.log(modelFilesCached[item.id]?.files);
       const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
       const substitute = substitutesWithAccess.find(
         (sub) => sub.model.id === item.model.id && sub.hasAccess
@@ -647,29 +648,27 @@ export async function getGenerationResourceData({
           fileSizeKB > 10 * 1024;
       }
 
-      console.log(epochNumbers);
-
       const [, epochNumber] =
         epochNumbers
           ?.find((v) => {
-            console.log(v);
             const [modelVersionId] = v.split('@');
             if (!modelVersionId) return false;
             return Number(modelVersionId) === item.id;
           })
           ?.split('@') ?? [];
 
-      const fileDetails =
+      const epochDetails =
         epochNumber && primaryFile
           ? getTrainingFileEpochNumberDetails(primaryFile, Number(epochNumber))
           : null;
+      console.log({ epochNumbers, epochNumber, primaryFile, epochDetails });
 
       const payload = removeNulls({
         ...item,
         canGenerate: item.covered && item.hasAccess,
         fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
         additionalResourceCost,
-        fileDetails,
+        epochDetails,
       });
 
       if (substitute) {

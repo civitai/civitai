@@ -37,10 +37,10 @@ export async function createTextToImageStep(
   });
   const withAir = resources.map((resource) => ({
     ...resource,
-    air: resource.fileDetails
+    air: resource.epochDetails
       ? stringifyEpochAir({
-          jobId: resource.fileDetails.jobId,
-          fileName: resource.fileDetails.fileName,
+          jobId: resource.epochDetails.jobId,
+          fileName: resource.epochDetails.fileName,
         })
       : stringifyAIR({
           baseModel: resource.baseModel,

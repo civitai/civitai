@@ -168,6 +168,11 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
                 {resource.name}
               </Badge>
             )}
+            {'epochDetails' in resource && (
+              <Badge size="sm" color="dark.5" variant="filled" miw="42px">
+                {resource.epochDetails?.epochNumber}
+              </Badge>
+            )}
 
             {resource.availability === Availability.Private && (
               <ActionIcon size={18} color="dark.5" variant="filled">

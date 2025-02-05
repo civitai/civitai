@@ -164,10 +164,10 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
 
   if (dictionary[key]) return dictionary[key];
   else {
-    console.log(QS.stringify(input), input);
     const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);
     if (!response.ok) throw new Error(response.statusText);
     const data: GenerationData = await response.json();
+    console.log(data);
     dictionary[key] = data;
     return data;
   }

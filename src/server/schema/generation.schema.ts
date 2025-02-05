@@ -54,6 +54,13 @@ const generationResourceSchemaBase = z.object({
   hasAccess: z.boolean(),
   additionalResourceCost: z.boolean().optional(),
   availability: z.nativeEnum(Availability).optional(),
+  epochDetails: z
+    .object({
+      jobId: z.string(),
+      epochNumber: z.number(),
+      fileName: z.string(),
+    })
+    .optional(),
 });
 export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
 export const generationResourceSchema = generationResourceSchemaBase.extend({

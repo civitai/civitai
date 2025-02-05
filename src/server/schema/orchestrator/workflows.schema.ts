@@ -17,6 +17,7 @@ export const workflowQuerySchema = z.object({
 export const workflowResourceSchema = z.object({
   id: z.number(),
   strength: z.number().default(1),
+  epochNumber: z.number().optional(),
 });
 
 export const jsonPatchSchema = z.object({
