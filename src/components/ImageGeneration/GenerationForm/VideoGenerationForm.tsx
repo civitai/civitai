@@ -410,6 +410,10 @@ function MinimaxImg2VidGenerationForm() {
   );
 }
 
+function LightricksPromptDescription() {
+  const url = 'https://education.civitai.com/civitais-quickstart-guide-to-lightricks-ltxv/#prompting'
+  return <span>If you see poor results, please refer to the <Anchor href={url} target="_blank">prompt guide</Anchor></span>
+}
 function LightricksTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="lightricks">
@@ -419,6 +423,7 @@ function LightricksTxt2VidGenerationForm() {
         label="Prompt"
         placeholder="Your prompt goes here..."
         autosize
+        description={LightricksPromptDescription()}
       />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <InputAspectRatioColonDelimited
@@ -493,7 +498,7 @@ function LightricksTxt2VidGenerationForm() {
 function LightricksImg2VidGenerationForm() {
   return (
     <FormWrapper engine="lightricks">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize  description={LightricksPromptDescription()}/>
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>

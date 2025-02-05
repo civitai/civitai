@@ -9,14 +9,14 @@ import {
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 
-export const lightricksAspectRatios = ['16:9', '1:1', '9:16'] as const;
+export const lightricksAspectRatios = ['16:9', '1:1'] as const;
 export const lightricksDuration = [5, 10] as const;
 
 const lightricksTxt2VidSchema = textEnhancementSchema.extend({
   engine: z.literal('lightricks'),
   workflow: z.string(),
   negativePrompt: negativePromptSchema,
-  aspectRatio: z.enum(lightricksAspectRatios).default('1:1').catch('1:1'),
+  aspectRatio: z.enum(lightricksAspectRatios).default('16:9').catch('16:9'),
   duration: numberEnum(lightricksDuration).default(5).catch(5),
   cfgScale: z.number().min(3).max(3.5).default(3).catch(3),
   steps: z.number().min(20).max(30).default(25).catch(25),
