@@ -427,6 +427,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
       aspectRatio = width && height ? width / height : 16 / 9;
     } else if (params.type === 'txt2vid') {
       switch (params.engine) {
+        case 'lightricks':
         case 'kling':
         case 'haiper': {
           if (params.aspectRatio) {
