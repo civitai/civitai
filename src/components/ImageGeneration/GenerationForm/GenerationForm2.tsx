@@ -56,8 +56,8 @@ import InputResourceSelectMultiple from '~/components/ImageGeneration/Generation
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
-  useSubmitCreateImage,
   useInvalidateWhatIf,
+  useSubmitCreateImage,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -102,7 +102,6 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { Priority } from '@civitai/client';
 
 let total = 0;
 const tips = {
@@ -237,7 +236,11 @@ export function GenerationFormContent() {
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.canGenerate !== false);
+      .filter((x) => x.canGenerate !== false)
+      .map((r) => ({
+        ...r,
+        epochNumber: r.epochDetails?.epochNumber,
+      }));
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
