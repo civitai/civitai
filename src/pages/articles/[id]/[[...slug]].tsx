@@ -21,7 +21,7 @@ import { IconAlertCircle, IconBolt, IconBookmark, IconShare3 } from '@tabler/ico
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import React from 'react';
+import React, { useMemo } from 'react';
 import { z } from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
@@ -65,6 +65,8 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { removeTags, slugit } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
+import { isDefined } from '~/utils/type-guards';
 
 const querySchema = z.object({
   id: z.preprocess(parseNumericString, z.number()),
@@ -128,6 +130,17 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
     );
   };
 
+  const memoizedImageData = useMemo(
+    () => [article?.coverImage].filter(isDefined),
+    [article?.coverImage]
+  );
+  const { items } = useApplyHiddenPreferences({
+    type: 'images',
+    data: memoizedImageData,
+  });
+  const [image] = items;
+  if (image && !images.length) setImages([image]);
+
   if (isLoading) return <PageLoader />;
   if (!article || isBlocked || disableArticles) return <NotFound />;
 
@@ -190,9 +203,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       e.preventDefault();
       onSetImage(imageId);
     };
-
-  const image = article.coverImage;
-  if (image && !images.length) setImages([image]);
 
   return (
     <>
@@ -288,10 +298,10 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
           <Grid gutter="xl">
             <Grid.Col xs={12} md={8}>
               <Stack spacing="xs">
-                <AspectRatio
-                  ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
-                >
-                  {image && (
+                {image && (
+                  <AspectRatio
+                    ratio={constants.article.coverImageWidth / constants.article.coverImageHeight}
+                  >
                     <Box
                       role="button"
                       tabIndex={0}
@@ -334,8 +344,9 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                         </div>
                       </Center>
                     </Box>
-                  )}
-                </AspectRatio>
+                  </AspectRatio>
+                )}
+
                 {article.content && (
                   <article>
                     <RenderHtml html={article.content} />

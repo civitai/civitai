@@ -44,8 +44,10 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     const { model, resources = [], vae, ...params } = watched;
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
-      params.width = size.width;
-      params.height = size.height;
+      if (size) {
+        params.width = size.width;
+        params.height = size.height;
+      }
     }
 
     let modelId = defaultModel.id;

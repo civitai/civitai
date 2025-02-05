@@ -67,7 +67,11 @@ const reviewTypeToBlockedReason = {
   tag: BlockImageReason.TOS,
   newUser: BlockImageReason.Ownership,
   appeal: BlockImageReason.TOS,
-};
+} as const;
+export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
+  string,
+  ...string[]
+];
 
 export const moderateImageHandler = async ({
   input,
