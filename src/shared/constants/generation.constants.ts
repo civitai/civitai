@@ -513,6 +513,7 @@ type EnginesDictionary = Record<
     label: string;
     description: string | (() => React.ReactNode);
     whatIf?: string[];
+    memberOnly?: boolean;
   }
 >;
 /** order of video gen configurations
@@ -538,6 +539,7 @@ export const engineDefinitions: EnginesDictionary = {
     label: 'Lightricks',
     description: '',
     whatIf: ['duration', 'cfgScale', 'steps'],
+    memberOnly: true,
   },
   haiper: {
     label: 'Haiper',
