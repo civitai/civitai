@@ -183,7 +183,7 @@ export const orchestratorRouter = router({
       try {
         const args = {
           ...input,
-          resources: input.resources.map((id) => ({ id, strength: 1 })),
+          resources: input.resources.map((x) => ({ ...x, strength: 1 })),
           user: ctx.user,
           token: ctx.token,
         };
