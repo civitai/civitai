@@ -63,6 +63,7 @@ export type AspectRatioImageCardProps<T extends DialogKey> = {
   routedDialog?: RoutedDialogProps<T>;
   target?: string;
   isRemix?: boolean;
+  explain?: boolean;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -83,6 +84,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   routedDialog,
   target,
   isRemix,
+  explain,
 }: AspectRatioImageCardProps<T>) {
   const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
 
@@ -97,7 +99,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
       ref={ref}
       style={!cosmetic ? wrapperStyle : undefined}
       className={clsx(className)}
-    > 
+    >
       <div className={clsx(styles.content, { [styles.inView]: inView })}>
         {inView && (
           <>
@@ -106,6 +108,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 connectId={contentId as any}
                 connectType={contentType as any}
                 image={image}
+                explain={explain}
               >
                 {(safe) => (
                   <>
@@ -178,7 +181,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
             {onSite && <OnsiteIndicator isRemix={isRemix} />}
           </>
         )}
-      </div> 
+      </div>
     </CosmeticCard>
   );
 }

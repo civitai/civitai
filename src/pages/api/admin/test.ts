@@ -10,7 +10,7 @@ import { getSystemPermissions } from '~/server/services/system-cache';
 import { addGenerationEngine } from '~/server/services/generation/engines';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
-import { getGenerationResourceData } from '~/server/services/generation/generation.service';
+import { getResourceData } from '~/server/services/generation/generation.service';
 import { Prisma } from '@prisma/client';
 import { getCommentsThreadDetails2 } from '~/server/services/commentsv2.service';
 
