@@ -1,6 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { Tracker } from '~/server/clickhouse/client';
+import { reviewTypeToBlockedReasonKeys } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -14,12 +15,13 @@ import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsin
 const schema = z.object({
   imageIds: z.array(z.number()),
   userId: z.number().optional(),
+  reason: z.enum(reviewTypeToBlockedReasonKeys).optional(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
-    const { imageIds, userId } = schema.parse(req.body);
+    const { imageIds, userId, reason } = schema.parse(req.body);
 
     const images = await dbRead.image.findMany({
       where: { id: { in: imageIds } },
@@ -51,7 +53,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         nsfw: getNsfwLevelDeprecatedReverseMapping(image.nsfwLevel),
         tags: imageTags[image.id] ?? [],
         resources: imageResources[image.id] ?? [],
-        userId,
+        tosReason: reason,
       });
     }
   } catch (e) {

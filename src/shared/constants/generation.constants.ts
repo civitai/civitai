@@ -515,16 +515,29 @@ type EnginesDictionary = Record<
     whatIf?: string[];
   }
 >;
+/** order of video gen configurations
+  Kling
+  Hailou
+  LTXV
+  Haiper
+  Vidu
+  Mochi
+ */
 export const engineDefinitions: EnginesDictionary = {
+  kling: {
+    label: 'Kling',
+    description: ``,
+    whatIf: ['mode', 'duration'],
+  },
   minimax: {
     label: 'Hailuo by MiniMax',
     description: '',
     whatIf: [],
   },
-  kling: {
-    label: 'Kling',
-    description: ``,
-    whatIf: ['mode', 'duration'],
+  lightricks: {
+    label: 'Lightricks',
+    description: '',
+    whatIf: ['duration', 'cfgScale', 'steps'],
   },
   haiper: {
     label: 'Haiper',
@@ -534,11 +547,6 @@ export const engineDefinitions: EnginesDictionary = {
   mochi: {
     label: 'Mochi',
     description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
-  },
-  lightricks: {
-    label: 'Lightricks',
-    description: '',
-    whatIf: ['duration', 'cfgScale', 'steps'],
   },
 };
 

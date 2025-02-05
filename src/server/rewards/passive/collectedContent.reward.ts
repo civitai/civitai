@@ -5,7 +5,7 @@ const type = 'collectedContent' as const;
 const supported: CollectionType[] = ['Model', 'Image', 'Article'];
 export const collectedContentReward = createBuzzEvent({
   type,
-  toAccountType: 'user',
+  toAccountType: 'generation',
   includeTypes: supported.map((x) => `${type}:${x.toLowerCase()}`),
   description: 'Content that you posted was collected by someone else',
   triggerDescription: 'For each time a user collects your content',

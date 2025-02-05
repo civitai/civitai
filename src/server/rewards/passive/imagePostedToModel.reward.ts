@@ -1,8 +1,7 @@
 import { createBuzzEvent } from '../base.reward';
-import { CollectionType } from '~/shared/utils/prisma/enums';
 
 export const imagePostedToModelReward = createBuzzEvent({
-  toAccountType: 'user',
+  toAccountType: 'generation',
   type: 'imagePostedToModel',
   description: 'Image posted to a model you own',
   triggerDescription: 'For each user that posts an image to your model',

@@ -287,6 +287,7 @@ export async function parseGenerateImageInput({
   if (params.draft) {
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
+    params.sampler = 'LCM';
   }
 
   if (!params.upscaleHeight || !params.upscaleWidth) {
@@ -435,7 +436,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           }
           break;
         }
-
+        case 'minimax':
+          aspectRatio = 16 / 9;
+          break;
         case 'mochi':
           width = 848;
           height = 480;
@@ -532,13 +535,13 @@ function formatTextToImageStep({
     const triggerWord = resource.trainedWords?.[0];
     if (triggerWord) {
       if (item?.triggerType === 'negative')
-        while (negativePrompt.startsWith(triggerWord)) {
-          negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
-        }
+        // while (negativePrompt.startsWith(triggerWord)) {
+        negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+      // }
       if (item?.triggerType === 'positive')
-        while (prompt.startsWith(triggerWord)) {
-          prompt = prompt.replace(`${triggerWord}, `, '');
-        }
+        // while (prompt.startsWith(triggerWord)) {
+        prompt = prompt.replace(`${triggerWord}, `, '');
+      // }
     }
   }
 
