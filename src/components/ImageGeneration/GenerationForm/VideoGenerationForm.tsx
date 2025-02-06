@@ -411,8 +411,16 @@ function MinimaxImg2VidGenerationForm() {
 }
 
 function LightricksPromptDescription() {
-  const url = 'https://education.civitai.com/civitais-quickstart-guide-to-lightricks-ltxv/#prompting'
-  return <span>If you see poor results, please refer to the <Anchor href={url} target="_blank">prompt guide</Anchor></span>
+  const url =
+    'https://education.civitai.com/civitais-quickstart-guide-to-lightricks-ltxv/#prompting';
+  return (
+    <span>
+      If you see poor results, please refer to the{' '}
+      <Anchor href={url} target="_blank">
+        prompt guide
+      </Anchor>
+    </span>
+  );
 }
 function LightricksTxt2VidGenerationForm() {
   return (
@@ -487,7 +495,7 @@ function LightricksTxt2VidGenerationForm() {
           </div>
         }
         min={20}
-        max={30}
+        max={40}
         reverse
       />
       <InputSeed name="seed" label="Seed" />
@@ -498,7 +506,13 @@ function LightricksTxt2VidGenerationForm() {
 function LightricksImg2VidGenerationForm() {
   return (
     <FormWrapper engine="lightricks">
-      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize  description={LightricksPromptDescription()}/>
+      <InputTextArea
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+        description={LightricksPromptDescription()}
+      />
       <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
@@ -556,7 +570,7 @@ function LightricksImg2VidGenerationForm() {
           </div>
         }
         min={20}
-        max={30}
+        max={40}
         reverse
       />
       <InputSeed name="seed" label="Seed" />
