@@ -517,14 +517,7 @@ type EnginesDictionary = Record<
     memberOnly?: boolean;
   }
 >;
-/** order of video gen configurations
-  Kling
-  Hailou
-  LTXV
-  Haiper
-  Vidu
-  Mochi
- */
+
 export const engineDefinitions: EnginesDictionary = {
   minimax: {
     label: 'Hailuo by MiniMax',
