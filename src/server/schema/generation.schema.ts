@@ -289,7 +289,11 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
     id: z.coerce.number(),
     epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
   }),
-  z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
+  z.object({
+    type: z.literal('modelVersions'),
+    ids: numericStringArray(),
+    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+  }),
 ]);
 
 export type BulkDeleteGeneratedImagesInput = z.infer<typeof bulkDeleteGeneratedImagesSchema>;

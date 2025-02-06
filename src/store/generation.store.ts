@@ -156,7 +156,10 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
   let key = 'default';
   switch (input.type) {
     case 'modelVersions':
-      key = `${input.type}_${input.ids.join('_')}`;
+      key = `${input.type}_${input.ids.join('_')}_${input.epochNumbers?.join('_')}`;
+      break;
+    case 'modelVersion':
+      key = `${input.type}_${input.id}_${input.epochNumbers?.join('_')}`;
       break;
     default:
       key = `${input.type}_${input.id}`;
@@ -168,7 +171,6 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
     const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);
     if (!response.ok) throw new Error(response.statusText);
     const data: GenerationData = await response.json();
-    console.log(data);
     dictionary[key] = data;
     return data;
   }
