@@ -68,7 +68,9 @@ export const useGenerationStore = create<GenerationState>()(
           }
           try {
             const result = await fetchGenerationData(input);
+
             if (isMedia) {
+              console.log('Setting remix store');
               useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
             }
 
@@ -83,6 +85,7 @@ export const useGenerationStore = create<GenerationState>()(
               state.counter++;
             });
           } catch (e) {
+            console.error('Oh no :V', e);
             set((state) => {
               state.loading = false;
             });
@@ -165,6 +168,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
     const response = await fetch(`/api/generation/data?${QS.stringify(input)}`);
     if (!response.ok) throw new Error(response.statusText);
     const data: GenerationData = await response.json();
+    console.log(data);
     dictionary[key] = data;
     return data;
   }

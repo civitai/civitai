@@ -87,10 +87,15 @@ export async function getGenerationStatus() {
 export async function getResourceDataWithInjects<T extends GenerationResource>(args: {
   ids: number[];
   user?: SessionUser;
+  epochNumbers?: string[];
   cb?: (resource: GenerationResource) => T;
 }) {
   const ids = [...args.ids, ...allInjectableResourceIds];
-  const results = await getGenerationResourceData({ ids, user: args.user });
+  const results = await getGenerationResourceData({
+    ids,
+    user: args.user,
+    epochNumbers: args.epochNumbers,
+  });
   const allResources = (args.cb ? results.map(args.cb) : results) as T[];
 
   return {
@@ -159,6 +164,9 @@ export async function parseGenerateImageInput({
   const resourceData = await getResourceDataWithInjects({
     ids: originalResources.map((x) => x.id),
     user,
+    epochNumbers: originalResources
+      .filter((x) => !!x.epochNumber)
+      .map((x) => `${x.id}@${x.epochNumber}`),
     cb: (resource) => ({
       ...resource,
       ...originalResources.find((x) => x.id === resource.id),

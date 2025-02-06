@@ -30,11 +30,13 @@ import {
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
 import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 
+import { env } from '~/env/server';
+import { getFeaturedModels } from '~/server/services/model.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   baseModelResourceTypes,
@@ -49,9 +51,7 @@ import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
-import { getFeaturedModels } from '~/server/services/model.service';
 import { isDefined } from '~/utils/type-guards';
-import { env } from '~/env/server';
 
 type GenerationResourceSimple = {
   id: number;
@@ -242,7 +242,11 @@ export const getGenerationData = async ({
     case 'video':
       return await getMediaGenerationData({ id: query.id, user });
     case 'modelVersion':
-      return await getModelVersionGenerationData({ versionIds: [query.id], user });
+      return await getModelVersionGenerationData({
+        versionIds: [query.id],
+        user,
+        epochNumbers: query.epochNumbers,
+      });
     case 'modelVersions':
       return await getModelVersionGenerationData({ versionIds: query.ids, user });
     default:
@@ -379,12 +383,14 @@ async function getMediaGenerationData({
 const getModelVersionGenerationData = async ({
   versionIds,
   user,
+  epochNumbers,
 }: {
   versionIds: number[];
   user?: SessionUser;
+  epochNumbers?: string[];
 }) => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const resources = await getGenerationResourceData({ ids: versionIds, user });
+  const resources = await getGenerationResourceData({ ids: versionIds, user, epochNumbers });
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
     const [vae] = await getGenerationResourceData({ ids: [checkpoint.vaeId], user });
@@ -507,6 +513,11 @@ export type GenerationResource = GenerationResourceBase & {
     minor?: boolean;
     // userId: number;
   };
+  epochDetails?: {
+    jobId: string;
+    fileName: string;
+    epochNumber: number;
+  };
   substitute?: GenerationResourceBase;
 };
 
@@ -515,8 +526,10 @@ const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => par
 export async function getResourceData({
   ids,
   user,
+  epochNumbers,
 }: {
   ids: number[];
+  epochNumbers?: string[];
   user?: {
     id?: number;
     isModerator?: boolean;
@@ -543,11 +556,13 @@ export async function getResourceData({
       ),
     };
   }
+
   return await resourceDataCache.fetch(ids).then(async (initialResult) => {
     const initialTransformed = initialResult.map(transformGenerationData);
     const modelIds = initialTransformed
       .filter((x) => !x.covered || !x.hasAccess)
       .map((x) => x.model.id);
+
     const substituteIds = await dbRead.modelVersion
       .findMany({
         where: {
@@ -621,7 +636,8 @@ export async function getResourceData({
       [...initialWithAccess, ...substitutesWithAccess].filter((x) => x.hasAccess).map((x) => x.id)
     );
 
-    return initialWithAccess.map(({ availability, ...item }) => {
+    return initialWithAccess.map(({ ...item }) => {
+      console.log(modelFilesCached[item.id]?.files);
       const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
       const substitute = substitutesWithAccess.find(
         (sub) => sub.model.id === item.model.id && sub.hasAccess
@@ -635,11 +651,27 @@ export async function getResourceData({
           fileSizeKB > 10 * 1024;
       }
 
+      const [, epochNumber] =
+        epochNumbers
+          ?.find((v) => {
+            const [modelVersionId] = v.split('@');
+            if (!modelVersionId) return false;
+            return Number(modelVersionId) === item.id;
+          })
+          ?.split('@') ?? [];
+
+      const epochDetails =
+        epochNumber && primaryFile
+          ? getTrainingFileEpochNumberDetails(primaryFile, Number(epochNumber))
+          : null;
+      console.log({ epochNumbers, epochNumber, primaryFile, epochDetails });
+
       const payload = removeNulls({
         ...item,
         canGenerate: item.covered && item.hasAccess,
         fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
         additionalResourceCost,
+        epochDetails,
       });
 
       if (substitute) {

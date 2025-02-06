@@ -3,7 +3,6 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { env } from '~/env/server';
-import { CacheTTL } from '~/server/common/constants';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
@@ -184,7 +183,7 @@ export const orchestratorRouter = router({
       try {
         const args = {
           ...input,
-          resources: input.resources.map((id) => ({ id, strength: 1 })),
+          resources: input.resources.map((x) => ({ ...x, strength: 1 })),
           user: ctx.user,
           token: ctx.token,
         };
