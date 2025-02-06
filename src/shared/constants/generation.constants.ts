@@ -526,15 +526,15 @@ type EnginesDictionary = Record<
   Mochi
  */
 export const engineDefinitions: EnginesDictionary = {
-  kling: {
-    label: 'Kling',
-    description: ``,
-    whatIf: ['mode', 'duration'],
-  },
   minimax: {
     label: 'Hailuo by MiniMax',
     description: '',
     whatIf: [],
+  },
+  kling: {
+    label: 'Kling',
+    description: ``,
+    whatIf: ['mode', 'duration'],
   },
   lightricks: {
     label: 'Lightricks',
