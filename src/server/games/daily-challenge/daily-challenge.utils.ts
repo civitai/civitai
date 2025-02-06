@@ -1,6 +1,7 @@
 import { mergeWith } from 'lodash-es';
 import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
 import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 const challengeConfigSchema = z.object({
@@ -152,7 +153,8 @@ type DailyChallengeDetails = {
   entryPrize: Prize;
 };
 export async function getChallengeDetails(articleId: number) {
-  const rows = await dbRead.$queryRaw<DailyChallengeDetails[]>`
+  const db = await getDbWithoutLag('article', articleId);
+  const rows = await db.$queryRaw<DailyChallengeDetails[]>`
     SELECT
       a."id" as "articleId",
       (a.metadata->>'challengeType') as "type",

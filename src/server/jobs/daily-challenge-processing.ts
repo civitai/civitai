@@ -35,6 +35,7 @@ import { isDefined } from '~/utils/type-guards';
 import { createJob } from './job';
 import { eventEngine } from '~/server/events';
 import { randomizeCollectionItems } from '~/server/services/collection.service';
+import { preventReplicationLag } from '~/server/db/db-helpers';
 
 const log = createLogger('jobs:daily-challenge-processing', 'blue');
 
@@ -248,6 +249,8 @@ export async function createUpcomingChallenge() {
     INSERT INTO "TagsOnArticle" ("articleId", "tagId")
     VALUES (${article.id}, ${config.articleTagId});
   `;
+
+  await preventReplicationLag('article', article.id);
 
   log('Article created:', article);
 

@@ -517,24 +517,17 @@ type EnginesDictionary = Record<
     memberOnly?: boolean;
   }
 >;
-/** order of video gen configurations
-  Kling
-  Hailou
-  LTXV
-  Haiper
-  Vidu
-  Mochi
- */
+
 export const engineDefinitions: EnginesDictionary = {
-  kling: {
-    label: 'Kling',
-    description: ``,
-    whatIf: ['mode', 'duration'],
-  },
   minimax: {
     label: 'Hailuo by MiniMax',
     description: '',
     whatIf: [],
+  },
+  kling: {
+    label: 'Kling',
+    description: ``,
+    whatIf: ['mode', 'duration'],
   },
   lightricks: {
     label: 'Lightricks',
