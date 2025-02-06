@@ -32,7 +32,7 @@ const featureFlags = createFeatureFlags({
   articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
-  civitaiLink: isDev ? ['granted'] : ['mod', 'member'],
+  civitaiLink: ['mod', 'member'],
   stripe: ['mod'],
   imageTraining: ['user'],
   imageTrainingResults: ['user'],

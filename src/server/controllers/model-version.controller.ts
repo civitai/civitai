@@ -58,7 +58,7 @@ import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
-import { getGenerationResourceData } from './../services/generation/generation.service';
+import { getResourceData } from './../services/generation/generation.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -152,7 +152,7 @@ export const getModelVersionHandler = async ({
     });
 
     const recommendedResourceIds = version?.recommendedResources.map((x) => x.id) ?? [];
-    const generationResources = await getGenerationResourceData({
+    const generationResources = await getResourceData({
       ids: recommendedResourceIds,
       user: ctx?.user,
     }).then((data) =>

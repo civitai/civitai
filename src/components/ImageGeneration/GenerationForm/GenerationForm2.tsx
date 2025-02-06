@@ -102,7 +102,6 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { Priority } from '@civitai/client';
 import { RequestPriority } from '~/components/Generation/Input/RequestPriority';
 
 let total = 0;
@@ -641,7 +640,7 @@ export function GenerationFormContent() {
                       if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
 
                       return (
-                        <div className="radius-md my-2 flex flex-col gap-2 overflow-hidden">
+                        <div className="my-2 flex flex-col gap-2 overflow-hidden rounded-md">
                           <div
                             className={clsx('flex rounded-md', {
                               'border-2 border-red-500': remixSimilarity < 0.75,
@@ -650,7 +649,8 @@ export function GenerationFormContent() {
                             <div className=" flex-none">
                               <ImageById
                                 imageId={remixOfId}
-                                className="h-28 rounded-none	rounded-l-md"
+                                className="h-28 rounded-none rounded-l-md"
+                                explain={false}
                               />
                             </div>
                             <div className="h-28 flex-1">
