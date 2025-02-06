@@ -47,7 +47,7 @@ export async function getDownloadUrl(fileUrl: string, fileName?: string) {
   }
 
   if (!response.ok) {
-    throw new Error(response.statusText);
+    throw new Error(`Delivery worker error: ${response.statusText}`);
   }
   const result = await response.json();
   return result as DownloadInfo;

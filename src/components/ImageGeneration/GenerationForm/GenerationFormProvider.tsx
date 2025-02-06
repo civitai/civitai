@@ -216,7 +216,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         checkSimilarity(storageValues.remixOfId, storageValues.prompt);
       }
 
-      console.log({ storageValues });
       return getDefaultValues(storageValues);
     },
     [currentUser, status] // eslint-disable-line
@@ -364,7 +363,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   function getDefaultValues(overrides: DeepPartialFormData): DeepPartialFormData {
     prevBaseModelRef.current = defaultValues.baseModel;
-    console.log(defaultValues.sampler);
     return sanitizeTextToImageParams(
       {
         ...defaultValues,

@@ -19,7 +19,7 @@ const baseKlingSchema = z.object({
   enablePromptEnhancer: z.boolean().default(true),
   mode: z.nativeEnum(KlingMode).catch(KlingMode.STANDARD),
   duration: z.enum(klingDuration).default('5').catch('5'),
-  cfgScale: z.number().min(0).max(1).default(0.5).catch(0.5),
+  cfgScale: z.number().min(0.1).max(1).default(0.5).catch(0.5),
   seed: seedSchema,
 });
 
