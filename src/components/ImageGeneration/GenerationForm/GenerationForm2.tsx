@@ -83,6 +83,7 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
   fluxModeOptions,
+  fluxStandardAir,
   fluxUltraAir,
   fluxUltraAspectRatios,
   getBaseModelResourceTypes,
@@ -126,6 +127,7 @@ export function GenerationFormContent() {
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
   const [opened, setOpened] = useState(false);
+  const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -296,6 +298,8 @@ export function GenerationFormContent() {
       if (name === 'model' || name === 'resources' || name === 'vae') {
         setHasMinorResources([model, ...resources, vae].filter((x) => x?.model?.minor).length > 0);
       }
+
+      setRunsOnFalAI(model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir);
     });
     return () => {
       subscription.unsubscribe();
@@ -432,10 +436,6 @@ export function GenerationFormContent() {
                     );
                     const atLimit = resources.length >= status.limits.resources;
 
-                    const disableAdditionalResources =
-                      model.model.id === fluxModelId &&
-                      fluxMode !== 'urn:air:flux1:checkpoint:civitai:618692@691639';
-
                     return (
                       <Card
                         className={cx(
@@ -466,7 +466,7 @@ export function GenerationFormContent() {
                               : undefined
                           }
                         />
-                        {!disableAdditionalResources && (
+                        {!runsOnFalAI && (
                           <Card.Section
                             className={cx(
                               { [classes.formError]: form.formState.errors.resources },
@@ -1121,7 +1121,7 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
-                <InputRequestPriority name="priority" label="Request Priority" />
+                {!runsOnFalAI && <InputRequestPriority name="priority" label="Request Priority" />}
               </div>
               <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
@@ -1322,20 +1322,14 @@ function SubmitButton(props: { isLoading?: boolean }) {
   if (!features.creatorComp) return generateButton;
 
   return (
-    <Paper className="flex flex-1" bg="dark.5" radius="sm" p={4} pr={6}>
-      <Group className="flex-1" spacing={6} noWrap>
-        {generateButton}
-        <GenerationCostPopover
-          width={300}
-          workflowCost={data?.cost ?? {}}
-          hideCreatorTip={!hasCreatorTip}
-        >
-          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!total}>
-            <IconInfoCircle stroke={2.5} />
-          </ActionIcon>
-        </GenerationCostPopover>
-      </Group>
-    </Paper>
+    <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
+      {generateButton}
+      <GenerationCostPopover
+        width={300}
+        workflowCost={data?.cost ?? {}}
+        hideCreatorTip={!hasCreatorTip}
+      />
+    </div>
   );
 }
 

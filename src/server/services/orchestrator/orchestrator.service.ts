@@ -13,9 +13,10 @@ export async function createWorkflowStep(args: GenerationSchema) {
   }
 }
 
-export async function createVideoGenStep(data: VideoGenerationSchema) {
+export async function createVideoGenStep({ priority, ...data }: VideoGenerationSchema) {
   return {
     $type: 'videoGen' as const,
+    priority,
     input: data,
     metadata: { params: removeEmpty(data) },
   };

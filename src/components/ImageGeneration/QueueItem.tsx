@@ -208,14 +208,9 @@ export function QueueItem({
                   constants.buzz.generationBuzzChargingStartDate && (
                   <GenerationCostPopover
                     workflowCost={request.cost ?? {}}
-                    disabled={!features.creatorComp}
                     readOnly
-                  >
-                    {/* Wrapped in div for the popover to work properly */}
-                    <div className="cursor-pointer">
-                      <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
-                    </div>
-                  </GenerationCostPopover>
+                    variant="badge"
+                  />
                 )}
             </div>
             <div className="flex gap-1">
@@ -239,7 +234,7 @@ export function QueueItem({
 
       {inView && (
         <>
-          <div className="@container flex flex-col gap-3 py-3">
+          <div className="flex flex-col gap-3 py-3 @container">
             {showDelayedMessage && cancellable && request.steps[0]?.$type !== 'videoGen' && (
               <Alert color="yellow" p={0}>
                 <div className="flex items-center gap-2 px-2 py-1">

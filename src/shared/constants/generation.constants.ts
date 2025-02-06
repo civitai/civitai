@@ -477,11 +477,12 @@ export function getBaseModelResourceTypes(baseModel: string) {
   // throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
 }
 
+export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
 export const fluxUltraAirId = 1088507;
 export const fluxModeOptions = [
   { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
-  { label: 'Standard', value: 'urn:air:flux1:checkpoint:civitai:618692@691639' },
+  { label: 'Standard', value: fluxStandardAir },
   { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
   { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },
   { label: 'Ultra', value: fluxUltraAir },
