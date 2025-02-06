@@ -1122,13 +1122,8 @@ export function GenerationFormContent() {
                   </PersistentAccordion>
                 )}
                 <InputRequestPriority name="priority" label="Request Priority" />
-                {/* <InputSelect
-                  label="Request Priority"
-                  name="priority"
-                  data={Object.values(Priority)}
-                /> */}
               </div>
-              <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+              <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
                 {subscriptionMismatch && (
                   <DismissibleAlert

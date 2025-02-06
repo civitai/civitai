@@ -26,21 +26,22 @@ export function RequestPriority3({
   label = 'Request Priority',
   value,
   onChange,
+  placeholder = 'select...',
 }: {
   label?: string;
   value?: Priority;
   onChange?: (priority: Priority) => void;
+  placeholder?: string;
 }) {
-  const [selected, setSelected] = useState<Priority>('low');
   const handleChange = (value: Priority) => {
     onChange?.(value);
-    setSelected(value);
   };
   const currentUser = useCurrentUser();
+  const selected = value ? priorityOptionsMap[value] : undefined;
 
   return (
-    <Input.Wrapper label={label} className="mb-3">
-      <Listbox value={selected} onChange={setSelected}>
+    <Input.Wrapper label={label}>
+      <Listbox value={value} onChange={handleChange}>
         <div className="relative mt-2">
           <ListboxButton
             className={clsx(
@@ -51,7 +52,7 @@ export function RequestPriority3({
           >
             <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
               {/* <img alt="" src={selected.avatar} className="size-5 shrink-0 rounded-full" /> */}
-              <PriorityLabel priority={selected} />
+              {!value ? placeholder : <PriorityLabel {...selected} />}
             </span>
             <IconSelector
               aria-hidden="true"
@@ -64,8 +65,10 @@ export function RequestPriority3({
 
           <ListboxOptions
             transition
+            anchor="bottom start"
+            portal
             className={clsx(
-              'absolute z-10 mt-1 max-h-56 w-full overflow-auto rounded-md py-1 text-base shadow-lg ring-1 ring-black/5 focus:outline-none data-[closed]:data-[leave]:opacity-0 data-[leave]:transition data-[leave]:duration-100 data-[leave]:ease-in sm:text-sm',
+              'z-10 mt-1 max-h-56 w-[var(--button-width)] overflow-auto rounded-md py-1 text-base shadow-lg ring-1 ring-black/5 focus:outline-none data-[closed]:data-[leave]:opacity-0 data-[leave]:transition data-[leave]:duration-100 data-[leave]:ease-in sm:text-sm',
               'bg-white',
               'dark:bg-dark-6'
             )}
@@ -81,7 +84,7 @@ export function RequestPriority3({
                     value={priority}
                     disabled={disabled}
                     className={clsx(
-                      'group relative cursor-default select-none py-2 pl-3 pr-9 data-[disabled]:opacity-50 data-[focus]:outline-none',
+                      'group relative cursor-default select-none justify-between py-2 pl-3 pr-9 data-[disabled]:opacity-50 data-[focus]:outline-none',
                       'text-dark-9 data-[focus]:bg-blue-5 data-[focus]:text-white',
                       'dark:text-dark-0 dark:data-[focus]:bg-blue-8 '
                     )}
@@ -89,7 +92,7 @@ export function RequestPriority3({
                     <div className="flex items-center">
                       {/* <img alt="" src={person.avatar} className="size-5 shrink-0 rounded-full" /> */}
                       <span className="ml-3 block truncate font-normal group-data-[selected]:font-semibold">
-                        <PriorityLabel priority={priority} />
+                        <PriorityLabel {...options} disabled={disabled} />
                       </span>
                     </div>
 
@@ -112,25 +115,31 @@ export function RequestPriority3({
   );
 }
 
-function PriorityLabel({ priority }: { priority: Priority }) {
-  const currentUser = useCurrentUser();
-  const options = priorityOptionsMap[priority];
-  const disabled = options.memberOnly && !currentUser?.isPaidMember;
-
+function PriorityLabel({
+  label,
+  offset,
+  disabled,
+}: {
+  label: string;
+  offset: number;
+  disabled?: boolean;
+}) {
   return (
-    <div className="flex items-center gap-3">
-      {disabled && <IconLock size={16} />}
-      <span>{options.label}</span>
-      {options.offset > 0 && (
-        <span className="flex items-center">
-          <span>+</span>
+    <Tooltip withinPortal label="Member only" disabled={!disabled} withArrow offset={2}>
+      <div className="flex items-center gap-3">
+        <span>{label}</span>
+        {offset > 0 && (
           <span className="flex items-center">
-            <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
-            <span>{options.offset}</span>
+            <span>+</span>
+            <span className="flex items-center">
+              <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
+              <span>{offset}</span>
+            </span>
           </span>
-        </span>
-      )}
-    </div>
+        )}
+        {disabled && <IconLock className="size-5" />}
+      </div>
+    </Tooltip>
   );
 }
 
@@ -245,69 +254,69 @@ export function RequestPriority({
   );
 }
 
-export function RequestPriority2({
-  label = 'Request Priority',
-  value,
-  onChange,
-}: {
-  label?: string;
-  value?: Priority;
-  onChange?: (priority: Priority) => void;
-}) {
-  const { data, isLoading } = trpc.orchestrator.requestPriority.useQuery(undefined, {
-    refetchInterval: 10 * 1000,
-  });
+// export function RequestPriority2({
+//   label = 'Request Priority',
+//   value,
+//   onChange,
+// }: {
+//   label?: string;
+//   value?: Priority;
+//   onChange?: (priority: Priority) => void;
+// }) {
+//   const { data, isLoading } = trpc.orchestrator.requestPriority.useQuery(undefined, {
+//     refetchInterval: 10 * 1000,
+//   });
 
-  const [selected, setSelected] = useState<Priority>('low');
-  const handleChange = (value: Priority) => {
-    onChange?.(value);
-    setSelected(value);
-  };
+//   const [selected, setSelected] = useState<Priority>('low');
+//   const handleChange = (value: Priority) => {
+//     onChange?.(value);
+//     setSelected(value);
+//   };
 
-  return (
-    <Input.Wrapper label={label}>
-      <fieldset aria-label="request-priority">
-        <RadioGroup value={selected} onChange={handleChange} className="space-y-0.5">
-          {Object.values(Priority)
-            .reverse()
-            .map((priority) => {
-              const options = priorityOptionsMap[priority];
-              const volume = data?.[GenerationPriorityLevelMap[priority]] ?? 0;
-              return (
-                <Radio
-                  key={priority}
-                  value={priority}
-                  aria-label={priority}
-                  className="focus:outline-hidden group relative flex cursor-pointer justify-between rounded-lg border border-gray-3 bg-white px-6 py-4 shadow-sm data-[focus]:border-blue-6 data-[focus]:ring-2 data-[focus]:ring-blue-6 dark:border-dark-6 dark:bg-dark-8"
-                >
-                  <div className="flex items-center gap-5">
-                    <span>{options.label}</span>
-                    {options.offset > 0 && (
-                      <span className="flex items-center gap-0.5">
-                        <span>+</span>
-                        <span className="flex items-center">
-                          <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
-                          <span>{options.offset}</span>
-                        </span>
-                      </span>
-                    )}
-                  </div>
-                  <div className="flex items-center justify-end gap-1">
-                    <div className="relative inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-dark-9 shadow-sm ring-1 ring-inset ring-gray-3  dark:bg-dark-6 dark:text-white dark:ring-dark-4">
-                      Request Volume: {volume}
-                    </div>
-                  </div>
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute -inset-px rounded-lg border-2 border-transparent group-data-[focus]:border group-data-[checked]:border-blue-6"
-                  />
-                </Radio>
-              );
-            })}
-        </RadioGroup>
-      </fieldset>
-    </Input.Wrapper>
-  );
-}
+//   return (
+//     <Input.Wrapper label={label}>
+//       <fieldset aria-label="request-priority">
+//         <RadioGroup value={selected} onChange={handleChange} className="space-y-0.5">
+//           {Object.values(Priority)
+//             .reverse()
+//             .map((priority) => {
+//               const options = priorityOptionsMap[priority];
+//               const volume = data?.[GenerationPriorityLevelMap[priority]] ?? 0;
+//               return (
+//                 <Radio
+//                   key={priority}
+//                   value={priority}
+//                   aria-label={priority}
+//                   className="focus:outline-hidden group relative flex cursor-pointer justify-between rounded-lg border border-gray-3 bg-white px-6 py-4 shadow-sm data-[focus]:border-blue-6 data-[focus]:ring-2 data-[focus]:ring-blue-6 dark:border-dark-6 dark:bg-dark-8"
+//                 >
+//                   <div className="flex items-center gap-5">
+//                     <span>{options.label}</span>
+//                     {options.offset > 0 && (
+//                       <span className="flex items-center gap-0.5">
+//                         <span>+</span>
+//                         <span className="flex items-center">
+//                           <IconBolt className="fill-yellow-7 stroke-yellow-7" size={16} />
+//                           <span>{options.offset}</span>
+//                         </span>
+//                       </span>
+//                     )}
+//                   </div>
+//                   <div className="flex items-center justify-end gap-1">
+//                     <div className="relative inline-flex items-center rounded-md bg-white px-3 py-2 text-sm font-semibold text-dark-9 shadow-sm ring-1 ring-inset ring-gray-3  dark:bg-dark-6 dark:text-white dark:ring-dark-4">
+//                       Request Volume: {volume}
+//                     </div>
+//                   </div>
+//                   <span
+//                     aria-hidden="true"
+//                     className="pointer-events-none absolute -inset-px rounded-lg border-2 border-transparent group-data-[focus]:border group-data-[checked]:border-blue-6"
+//                   />
+//                 </Radio>
+//               );
+//             })}
+//         </RadioGroup>
+//       </fieldset>
+//     </Input.Wrapper>
+//   );
+// }
 
-export const InputRequestPriority = withController(RequestPriority);
+export const InputRequestPriority = withController(RequestPriority3);
