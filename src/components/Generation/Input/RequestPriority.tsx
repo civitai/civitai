@@ -52,7 +52,7 @@ export function RequestPriority3({
           >
             <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
               {/* <img alt="" src={selected.avatar} className="size-5 shrink-0 rounded-full" /> */}
-              {!value ? placeholder : <PriorityLabel {...selected} />}
+              {!selected ? placeholder : <PriorityLabel {...selected} />}
             </span>
             <IconSelector
               aria-hidden="true"
