@@ -37,9 +37,12 @@ import { fromJson, toJson } from '~/utils/json-helpers';
 
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
+  baseModelResourceTypes,
   fluxUltraAir,
   getBaseModelFromResources,
   getBaseModelSet,
+  getBaseModelSetType,
+  SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
 import { isFutureDate } from '~/utils/date-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
@@ -509,7 +512,7 @@ export type GenerationResource = GenerationResourceBase & {
 
 const explicitCoveredModelAirs = [fluxUltraAir];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
-export async function getGenerationResourceData({
+export async function getResourceData({
   ids,
   user,
 }: {
@@ -650,4 +653,19 @@ export async function getGenerationResourceData({
       return payload;
     });
   });
+}
+
+export async function getGenerationResourceData(args: {
+  ids: number[];
+  user?: {
+    id?: number;
+    isModerator?: boolean;
+  };
+}) {
+  return await getResourceData(args).then((data) =>
+    data.filter((resource) => {
+      const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
+      return !!baseModelResourceTypes[baseModel];
+    })
+  );
 }

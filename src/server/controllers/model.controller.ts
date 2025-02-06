@@ -120,7 +120,7 @@ import { isDefined } from '~/utils/type-guards';
 import { redis, REDIS_KEYS } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
 import {
-  getGenerationResourceData,
+  getResourceData,
   getUnavailableResources,
 } from '../services/generation/generation.service';
 
@@ -187,7 +187,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
     const recommendedResourceIds =
       model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.id)) ??
       [];
-    const generationResources = await getGenerationResourceData({
+    const generationResources = await getResourceData({
       ids: recommendedResourceIds,
       user: ctx?.user,
     });
