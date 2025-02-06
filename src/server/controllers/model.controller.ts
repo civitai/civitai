@@ -775,9 +775,11 @@ export const getDownloadCommandHandler = async ({
     });
     if (!modelVersion) throw throwNotFoundError();
 
-    const isDownloadable = modelVersion.usageControl !== ModelUsageControl.Download;
+    const isOwner = ctx.user?.id === modelVersion.model.userId;
+    const isDownloadable =
+      modelVersion.usageControl === ModelUsageControl.Download || isOwner || ctx.user?.isModerator;
 
-    if (!isDownloadable && !(modelVersion.model.userId === ctx.user?.id || ctx.user?.isModerator)) {
+    if (!isDownloadable) {
       throw throwAuthorizationError();
     }
 

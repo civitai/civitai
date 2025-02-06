@@ -138,8 +138,8 @@ export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean()
 export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;
 
 export const getDownloadSchema = z.object({
-  modelId: z.preprocess((val) => Number(val), z.number()),
-  modelVersionId: z.preprocess((val) => Number(val), z.number()).optional(),
+  modelId: z.coerce.number(),
+  modelVersionId: z.coerce.number().optional(),
   type: z.enum(constants.modelFileTypes).optional(),
   format: z.enum(constants.modelFileFormats).optional(),
 });
