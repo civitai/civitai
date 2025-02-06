@@ -71,3 +71,4 @@ trace/types.json
 
 # Local files
 /src/local
+.todo

@@ -36,7 +36,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   judgedTagId: 299729,
   reviewMeTagId: 301770,
   userCooldown: '14 day',
-  resourceCooldown: '45 day',
+  resourceCooldown: '90 day',
   prizes: [
     { buzz: 5000, points: 150 },
     { buzz: 2500, points: 100 },
