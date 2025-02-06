@@ -237,8 +237,8 @@ export function stringifyAIR({
 }: {
   baseModel: BaseModel | string;
   type: ModelType;
-  modelId: number;
-  id?: number;
+  modelId: number | string;
+  id?: number | string;
   source?: string;
 }) {
   const ecosystem =
@@ -302,13 +302,3 @@ export function toPascalCase(str: string) {
   // Join the words back together with a space
   return pascalCaseWords.join(' ');
 }
-
-export const stringifyEpochAir = ({ jobId, fileName }: { jobId: string; fileName: string }) => {
-  return Air.stringify({
-    ecosystem: 'other',
-    type: 'other',
-    source: 'orchestrator',
-    id: jobId,
-    version: fileName,
-  });
-};

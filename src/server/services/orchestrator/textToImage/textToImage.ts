@@ -19,7 +19,7 @@ import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
 import { getRandomInt } from '~/utils/number-helpers';
-import { stringifyAIR, stringifyEpochAir } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 export async function createTextToImageStep(
   input: z.infer<typeof generateImageSchema> & {
@@ -37,17 +37,13 @@ export async function createTextToImageStep(
   });
   const withAir = resources.map((resource) => ({
     ...resource,
-    air: resource.epochDetails
-      ? stringifyEpochAir({
-          jobId: resource.epochDetails.jobId,
-          fileName: resource.epochDetails.fileName,
-        })
-      : stringifyAIR({
-          baseModel: resource.baseModel,
-          type: resource.model.type,
-          modelId: resource.model.id,
-          id: resource.id,
-        }),
+    air: stringifyAIR({
+      baseModel: resource.baseModel,
+      type: resource.model.type,
+      modelId: resource.epochDetails ? resource.epochDetails.jobId : resource.model.id,
+      id: resource.epochDetails ? resource.epochDetails.fileName : resource.id,
+      source: resource.epochDetails ? 'orchestrator' : 'civitai',
+    }),
   }));
 
   const scheduler = samplersToSchedulers[

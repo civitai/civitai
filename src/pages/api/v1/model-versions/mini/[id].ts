@@ -14,7 +14,7 @@ import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { Availability, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
-import { stringifyAIR, stringifyEpochAir } from '~/utils/string-helpers';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 const schema = z.object({ id: z.coerce.number(), epoch: z.number().optional() });
 
@@ -136,9 +136,11 @@ export default MixedAuthEndpoint(async function handler(
       return res.status(404).json({ error: 'Could not get jobId or fileName' });
     }
 
-    air = stringifyEpochAir({
-      jobId,
-      fileName,
+    air = stringifyAIR({
+      ...modelVersion,
+      source: 'orchestrator',
+      modelId: jobId,
+      id: fileName,
     });
   } else {
     air = stringifyAIR(modelVersion);
