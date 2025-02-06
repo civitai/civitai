@@ -46,7 +46,6 @@ import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrap
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useTourContext } from '~/providers/TourProvider';
 import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -67,8 +66,6 @@ export function ImagesAsPostsCard({
   const { classes, cx, theme } = useStyles();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
-
-  const { runTour, activeTour, running, currentStep, closeTour } = useTourContext();
 
   const { modelVersions, showModerationOptions, model, filters } =
     useImagesAsPostsInfiniteContext();
@@ -147,17 +144,8 @@ export function ImagesAsPostsCard({
         type: selectedImage.type,
         id: selectedImage.id,
       });
-
-      if (running) {
-        if (activeTour === 'model-page') {
-          closeTour({ reset: true });
-          runTour({ key: 'remix-content-generation', step: 0 });
-        } else {
-          runTour({ step: currentStep + 1 });
-        }
-      }
     },
-    [runTour, closeTour, running]
+    []
   );
 
   useEffect(() => {

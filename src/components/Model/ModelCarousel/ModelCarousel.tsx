@@ -24,6 +24,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { ImageSort } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -124,6 +125,8 @@ function ModelCarouselContent({
   const features = useFeatureFlags();
   const { classes, cx } = useStyles();
 
+  const { runTour, activeTour, running, closeTour } = useTourContext();
+
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -185,13 +188,20 @@ function ModelCarouselContent({
                             color="white"
                             variant="filled"
                             data-activity="remix:model-carousel"
+                            data-tour="model:remix"
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
+
                               generationPanel.open({
                                 type: image.type,
                                 id: image.id,
                               });
+
+                              if (running && activeTour === 'model-page') {
+                                closeTour({ reset: true });
+                                runTour({ key: 'remix-content-generation', step: 0 });
+                              }
                             }}
                           >
                             <IconBrush stroke={2.5} size={16} />

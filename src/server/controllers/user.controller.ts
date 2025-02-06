@@ -1354,14 +1354,12 @@ export const setUserSettingHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { completedTour, ...restInput } = input;
+    const { tour, ...restInput } = input;
     const { tourSettings, ...restSettings } = await getUserSettings(id);
     const newSettings = {
       ...restSettings,
       ...restInput,
-      tourSettings: tourSettings
-        ? { ...tourSettings, completed: { ...completedTour } }
-        : { completed: { ...completedTour } },
+      tourSettings: tourSettings ? { ...tourSettings, ...tour } : { ...tour },
     };
 
     await setUserSetting(id, newSettings);

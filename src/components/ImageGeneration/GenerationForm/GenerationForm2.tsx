@@ -96,7 +96,11 @@ import {
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
+import {
+  generationFormStore,
+  useGenerationFormStore,
+  useGenerationStore,
+} from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -123,6 +127,7 @@ export function GenerationFormContent() {
     [status.message]
   );
   const { runTour, running, setSteps } = useTourContext();
+  const loadingGeneratorData = useGenerationStore((state) => state.loading);
   const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
     state.requestsLoading,
     state.hasGeneratedImages,
@@ -309,14 +314,14 @@ export function GenerationFormContent() {
     };
   }, []);
 
-  const workflowOptions =
-    workflowDefinitions
-      ?.filter((x) => x.selectable !== false && x.key !== undefined)
-      .map(({ key, label }) => ({ label, value: key })) ?? [];
+  // const workflowOptions =
+  //   workflowDefinitions
+  //     ?.filter((x) => x.selectable !== false && x.key !== undefined)
+  //     .map(({ key, label }) => ({ label, value: key })) ?? [];
 
   const remixOfId = form.watch('remixOfId');
   useEffect(() => {
-    if (!status.available || status.isLoading) return;
+    if (!status.available || status.isLoading || loadingGeneratorData) return;
 
     // Remove last two steps if user has not generated any images
     if (!loadingGenQueueRequests && !hasGeneratedImages)
@@ -324,9 +329,15 @@ export function GenerationFormContent() {
         remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
       );
 
-    if (!running)
-      runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation', step: 0 });
-  }, [status.isLoading, status.available, loadingGenQueueRequests, hasGeneratedImages, remixOfId]);
+    if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
+  }, [
+    status.isLoading,
+    status.available,
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    loadingGeneratorData,
+  ]);
 
   return (
     <Form

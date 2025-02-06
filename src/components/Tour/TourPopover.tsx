@@ -1,8 +1,7 @@
 import { Button, CloseButton, Group, Paper, Text } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
-import React, { useCallback } from 'react';
+import React, { useCallback, useLayoutEffect } from 'react';
 import { TooltipRenderProps } from 'react-joyride';
-import { StepData } from '~/types/tour';
 
 export function TourPopover(props: TooltipRenderProps) {
   const {
@@ -18,21 +17,26 @@ export function TourPopover(props: TooltipRenderProps) {
     tooltipProps,
   } = props;
 
-  const handlePrevClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
-    async (e) => {
-      backProps.onClick(e);
-      await (step.data as StepData)?.onPrev?.();
-    },
-    [backProps, step.data]
-  );
+  // const handlePrevClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
+  //   async (e) => {
+  //     backProps.onClick(e);
+  //     // await (step.data as StepData)?.onPrev?.();
+  //   },
+  //   [backProps, step.data]
+  // );
 
-  const handleNextClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
-    async (e) => {
-      primaryProps.onClick(e);
-      await (step.data as StepData)?.onNext?.();
-    },
-    [primaryProps, step.data]
-  );
+  // const handleNextClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
+  //   async (e) => {
+  //     primaryProps.onClick(e);
+  //     // await (step.data as StepData)?.onNext?.();
+  //   },
+  //   [primaryProps, step.data]
+  // );
+
+  // useLayoutEffect(() => {
+  //   console.log('dispatching resize event');
+  //   window.dispatchEvent(new Event('resize'));
+  // }, []);
 
   return (
     <Paper {...tooltipProps} className="ml-auto flex flex-col gap-4" p="sm" radius="md" maw="375px">
@@ -62,7 +66,6 @@ export function TourPopover(props: TooltipRenderProps) {
               {index > 0 && !step.hideBackButton && (
                 <Button
                   {...backProps}
-                  onClick={handlePrevClick}
                   variant="subtle"
                   size="xs"
                   leftIcon={<IconChevronLeft size={16} />}
@@ -72,7 +75,6 @@ export function TourPopover(props: TooltipRenderProps) {
               )}
               <Button
                 {...primaryProps}
-                onClick={handleNextClick}
                 size="xs"
                 rightIcon={!isLastStep ? <IconChevronRight size={16} /> : null}
               >

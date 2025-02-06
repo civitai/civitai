@@ -568,7 +568,7 @@ export default function ModelDetailsV2({
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
-        <Container size="xl">
+        <Container size="xl" data-tour="model:start">
           <Stack spacing="xl">
             <Stack spacing="xs">
               <Stack spacing={4}>

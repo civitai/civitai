@@ -70,6 +70,13 @@ export const contentGenerationTour: StepWithData[] = [
     },
   },
   {
+    target: '[data-tour="gen:accept"]',
+    title: 'Accept the Terms',
+    content: 'Before generating content, you must accept the terms of service.',
+    spotlightClicks: true,
+    disableBeacon: true,
+  },
+  {
     target: '[data-tour="gen:submit"]',
     title: 'Create Your Image',
     content: `Once your prompt is ready to go, hit the generate button and AI will start doing it's magic!`,
@@ -132,6 +139,10 @@ export const contentGenerationTour: StepWithData[] = [
       onNext: async () => {
         await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
       },
+      onBeforeStart: async () => {
+        generationPanel.setView('feed');
+        generationPanel.open();
+      },
     },
   },
   {
@@ -149,6 +160,10 @@ export const contentGenerationTour: StepWithData[] = [
         await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 }).catch(
           () => null
         );
+      },
+      onBeforeStart: async () => {
+        generationPanel.setView('feed');
+        generationPanel.open();
       },
     },
   },
@@ -229,6 +244,10 @@ export const remixContentGenerationTour: StepWithData[] = [
       onNext: async () => {
         await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
       },
+      onBeforeStart: async () => {
+        generationPanel.setView('feed');
+        generationPanel.open();
+      },
     },
   },
   {
@@ -246,6 +265,10 @@ export const remixContentGenerationTour: StepWithData[] = [
         await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 }).catch(
           () => null
         );
+      },
+      onBeforeStart: async () => {
+        generationPanel.setView('feed');
+        generationPanel.open();
       },
     },
   },

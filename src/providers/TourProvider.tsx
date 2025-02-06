@@ -1,6 +1,6 @@
 import { useMantineTheme } from '@mantine/core';
 import { useSearchParams } from 'next/navigation';
-import { createContext, useCallback, useContext, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import Joyride, {
   ACTIONS,
   Callback,
@@ -13,6 +13,7 @@ import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
+import { TourSettingsSchema } from '~/server/schema/user.schema';
 import { StepData, StepWithData } from '~/types/tour';
 import { TourKey, tourSteps } from '~/utils/tours';
 import { trpc } from '~/utils/trpc';
@@ -63,8 +64,8 @@ export function TourProvider({ children, ...props }: Props) {
     steps: tourKey ? tourSteps[tourKey] ?? [] : [],
   }));
 
-  const [completed = {}, setCompleted] = useStorage<{ [k: string]: boolean }>({
-    key: 'completed-tours',
+  const [localTour = {}, setLocalTour] = useStorage<TourSettingsSchema>({
+    key: 'tours',
     type: 'localStorage',
     defaultValue: {},
   });
@@ -79,34 +80,52 @@ export function TourProvider({ children, ...props }: Props) {
     },
   });
 
-  const runTour = useCallback<TourState['runTour']>((opts) => {
-    setState((old) => ({
-      ...old,
-      running: true,
-      activeTour: opts?.key ?? old.activeTour,
-      steps: opts?.key ? tourSteps[opts.key] ?? [] : old.steps,
-      forceRun: opts?.forceRun ?? old.forceRun,
-      currentStep: opts?.step ?? old.currentStep,
-    }));
-  }, []);
+  const runTour = useCallback<TourState['runTour']>(
+    (opts) => {
+      setState((old) => ({
+        ...old,
+        running: true,
+        activeTour: opts?.key ?? old.activeTour,
+        steps: opts?.key ? tourSteps[opts.key] ?? [] : old.steps,
+        forceRun: opts?.forceRun ?? old.forceRun,
+        currentStep: opts?.step ?? old.currentStep,
+      }));
+
+      const activeTour = opts?.key ?? state.activeTour;
+      const currentTourData =
+        userSettings?.tourSettings?.[activeTour ?? ''] ?? localTour[activeTour ?? ''];
+      if (opts?.step && activeTour && !currentTourData?.completed) {
+        const tour = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
+        updateUserSettingsMutation.mutate({ tour });
+        setLocalTour((old) => ({ ...old, ...tour }));
+      }
+    },
+    [
+      localTour,
+      setLocalTour,
+      state.activeTour,
+      updateUserSettingsMutation,
+      userSettings?.tourSettings,
+    ]
+  );
 
   const closeTour = useCallback<TourState['closeTour']>(
     (opts) => {
+      if (state.activeTour) {
+        const tour = {
+          [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
+        };
+        updateUserSettingsMutation.mutate({ tour });
+        setLocalTour((old) => ({ ...old, ...tour }));
+      }
+
       setState((old) => ({
         ...old,
         running: false,
         currentStep: opts?.reset ? 0 : old.currentStep,
       }));
-
-      if (state.activeTour && opts?.reset) {
-        updateUserSettingsMutation.mutate({
-          completedTour: { [state.activeTour]: true },
-        });
-        // Need to explicitly typecast here because ts is dumb
-        setCompleted((old) => ({ ...old, [state.activeTour as string]: true }));
-      }
     },
-    [setCompleted, state.activeTour, updateUserSettingsMutation]
+    [setLocalTour, state.activeTour, state.currentStep, updateUserSettingsMutation]
   );
 
   const setSteps = (steps: TourState['steps']) => {
@@ -116,16 +135,8 @@ export function TourProvider({ children, ...props }: Props) {
   const handleJoyrideCallback = useCallback<Callback>(
     async (data) => {
       const { status, type, action, index, step, lifecycle } = data;
-      const target = document.querySelector(step.target as string);
-
-      if (target && lifecycle === LIFECYCLE.TOOLTIP) window.dispatchEvent(new Event('resize'));
-      if (target && step.placement === 'center')
-        target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-
-      if (action === ACTIONS.START && !target) {
-        // If the target is not found at start, skip it
-        setState((old) => ({ ...old, steps: old.steps?.filter((x) => x.target !== step.target) }));
-      }
+      // const target = document.querySelector(step.target as string);
+      // if (target && lifecycle === LIFECYCLE.TOOLTIP) forceUpdate();
 
       if (type === EVENTS.TOUR_END && completeStatus.includes(status)) {
         closeTour({ reset: true });
@@ -152,15 +163,32 @@ export function TourProvider({ children, ...props }: Props) {
         setTimeout(() => {
           runTour({ step: nextStepIndex });
         }, 400);
+      } else if (type === EVENTS.STEP_BEFORE || type === EVENTS.TOUR_START) {
+        await step.data?.onBeforeStart?.();
       }
     },
     [closeTour, runTour]
   );
 
+  useEffect(() => {
+    if (isInitialLoading || state.running) return;
+    // Update currentStep from userSettings
+    setState((old) => ({
+      ...old,
+      currentStep:
+        (userSettings?.tourSettings?.[old.activeTour ?? '']?.currentStep ?? 0) ||
+        (localTour[old.activeTour ?? '']?.currentStep ?? 0),
+    }));
+  }, [localTour, userSettings?.tourSettings, isInitialLoading, state.running]);
+
   const alreadyCompleted = state.activeTour
-    ? (userSettings?.tourSettings?.completed?.[state.activeTour] ?? false) ||
-      (completed[state.activeTour] ?? false)
+    ? (userSettings?.tourSettings?.[state.activeTour]?.completed ?? false) ||
+      (localTour[state.activeTour]?.completed ?? false)
     : false;
+
+  useEffect(() => {
+    if (alreadyCompleted && state.running) closeTour({ reset: true });
+  }, [alreadyCompleted, closeTour, state.running]);
 
   return (
     <TourContext.Provider value={{ ...state, runTour, closeTour, setSteps }}>
@@ -181,8 +209,8 @@ export function TourProvider({ children, ...props }: Props) {
           tooltipComponent={TourPopover}
           run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
           scrollOffset={100}
-          scrollToFirstStep
           disableScrollParentFix
+          scrollToFirstStep
           showSkipButton
           continuous
           {...props}
