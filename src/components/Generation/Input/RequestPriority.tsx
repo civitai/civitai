@@ -11,6 +11,7 @@ import clsx from 'clsx';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Label, Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
 import { IconCheck, IconSelector } from '@tabler/icons-react';
+import { withController } from '~/libs/form/hoc/withController';
 
 const priorityOptionsMap: Record<
   Priority,
@@ -21,7 +22,7 @@ const priorityOptionsMap: Record<
   high: { label: 'Highest', offset: 20, memberOnly: true },
 };
 
-export function RequestPriority({
+export function RequestPriority3({
   label = 'Request Priority',
   value,
   onChange,
@@ -35,6 +36,7 @@ export function RequestPriority({
     onChange?.(value);
     setSelected(value);
   };
+  const currentUser = useCurrentUser();
 
   return (
     <Input.Wrapper label={label} className="mb-3">
@@ -70,34 +72,39 @@ export function RequestPriority({
           >
             {Object.values(Priority)
               .reverse()
-              .map((priority) => (
-                <ListboxOption
-                  key={priority}
-                  value={priority}
-                  className={clsx(
-                    'group relative cursor-default select-none py-2 pl-3 pr-9 data-[focus]:outline-none',
-                    'text-dark-9 data-[focus]:bg-blue-5 data-[focus]:text-white',
-                    'dark:text-dark-0 dark:data-[focus]:bg-blue-8 '
-                  )}
-                >
-                  <div className="flex items-center">
-                    {/* <img alt="" src={person.avatar} className="size-5 shrink-0 rounded-full" /> */}
-                    <span className="ml-3 block truncate font-normal group-data-[selected]:font-semibold">
-                      <PriorityLabel priority={priority} />
-                    </span>
-                  </div>
-
-                  <span
+              .map((priority) => {
+                const options = priorityOptionsMap[priority];
+                const disabled = options.memberOnly && !currentUser?.isPaidMember;
+                return (
+                  <ListboxOption
+                    key={priority}
+                    value={priority}
+                    disabled={disabled}
                     className={clsx(
-                      'absolute inset-y-0 right-0 flex items-center pr-4 group-[&:not([data-selected])]:hidden ',
-                      'text-blue-5 group-data-[focus]:text-white',
-                      'dark:text-blue-8'
+                      'group relative cursor-default select-none py-2 pl-3 pr-9 data-[disabled]:opacity-50 data-[focus]:outline-none',
+                      'text-dark-9 data-[focus]:bg-blue-5 data-[focus]:text-white',
+                      'dark:text-dark-0 dark:data-[focus]:bg-blue-8 '
                     )}
                   >
-                    <IconCheck aria-hidden="true" className="size-5" />
-                  </span>
-                </ListboxOption>
-              ))}
+                    <div className="flex items-center">
+                      {/* <img alt="" src={person.avatar} className="size-5 shrink-0 rounded-full" /> */}
+                      <span className="ml-3 block truncate font-normal group-data-[selected]:font-semibold">
+                        <PriorityLabel priority={priority} />
+                      </span>
+                    </div>
+
+                    <span
+                      className={clsx(
+                        'absolute inset-y-0 right-0 flex items-center pr-4 group-[&:not([data-selected])]:hidden ',
+                        'text-blue-5 group-data-[focus]:text-white',
+                        'dark:text-blue-8'
+                      )}
+                    >
+                      <IconCheck aria-hidden="true" className="size-5" />
+                    </span>
+                  </ListboxOption>
+                );
+              })}
           </ListboxOptions>
         </div>
       </Listbox>
@@ -127,7 +134,7 @@ function PriorityLabel({ priority }: { priority: Priority }) {
   );
 }
 
-export function RequestPriority3({
+export function RequestPriority({
   label = 'Request Priority',
   value,
   onChange,
@@ -140,19 +147,19 @@ export function RequestPriority3({
   //   refetchInterval: 10 * 1000,
   // });
 
-  const [selected, setSelected] = useState<Priority>('low');
+  // const [selected, setSelected] = useState<Priority>('low');
   const handleChange = (value: Priority) => {
     onChange?.(value);
-    setSelected(value);
+    // setSelected(value);
   };
   const currentUser = useCurrentUser();
 
   return (
     <Input.Wrapper label={label}>
       <RadioGroup
-        value={selected}
+        value={value}
         onChange={handleChange}
-        className="mt-2 grid grid-cols-3 gap-3 @max-xs:grid-cols-1 @max-xs:gap-2"
+        className="mt-1 grid grid-cols-3 gap-3 @max-xs:grid-cols-1 @max-xs:gap-2"
       >
         {Object.values(Priority)
           .reverse()
@@ -302,3 +309,5 @@ export function RequestPriority2({
     </Input.Wrapper>
   );
 }
+
+export const InputRequestPriority = withController(RequestPriority);
