@@ -13,6 +13,7 @@ export type CommentThread = {
   commentId?: number | null;
   comments?: Comment[];
   count: number;
+  depth: number;
   hidden: number;
   children?: CommentThread[];
 };
