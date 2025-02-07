@@ -17,6 +17,8 @@ import { GenerationData } from '~/server/services/generation/generation.service'
 import {
   SupportedBaseModel,
   fluxModeOptions,
+  fluxModelId,
+  fluxStandardAir,
   getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
@@ -85,6 +87,7 @@ const formSchema = textToImageParamsSchema
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
+    if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
     if (fluxUltraRaw) data.engine = 'flux-pro-raw';
     else data.engine = undefined;
     return {

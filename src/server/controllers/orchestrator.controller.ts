@@ -145,10 +145,19 @@ export async function whatIf(args: GenerationSchema & Ctx) {
   };
 }
 
-export async function handleGetPriorityVolume(target: string) {
+export async function handleGetPriorityVolume({ type }: { type: string }) {
   const data = await getPriorityVolume();
-  const lowerCaseTarget = target.toLowerCase();
+  const lowerCaseTarget = type.toLowerCase();
   let provider = data.find((x) => x.key.toLowerCase() === lowerCaseTarget);
   if (!provider) provider = data.find((x) => x.key === 'ValdiAI');
-  return provider?.prioritySummaries;
+  const summaries = provider?.prioritySummaries ?? {};
+  const keys = Object.keys(summaries).map(Number);
+  for (const key in summaries) {
+    let value = summaries[key];
+    const numKey = Number(key);
+    const smallerKeys = keys.filter((x) => x < numKey);
+    value += smallerKeys.reduce<number>((acc, key) => acc + summaries[key.toString()], 0);
+    summaries[key] = value;
+  }
+  return summaries;
 }

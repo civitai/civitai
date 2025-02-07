@@ -1,4 +1,3 @@
-import { ButtonProps } from '@headlessui/react';
 import {
   Popover,
   Indicator,
@@ -8,6 +7,7 @@ import {
   ScrollArea,
   Group,
   createStyles,
+  ButtonProps,
 } from '@mantine/core';
 import { IconFilter, IconChevronDown } from '@tabler/icons-react';
 import { useState } from 'react';

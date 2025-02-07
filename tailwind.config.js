@@ -135,8 +135,8 @@ module.exports = {
       },
       keyframes: {
         wiggle: {
-          '0%, 100%': { transform: 'rotate(-3deg)' },
-          '50%': { transform: 'rotate(3deg)' },
+          '0%, 100%': {transform: 'rotate(-3deg)'},
+          '50%': {transform: 'rotate(3deg)'},
         }
       },
       animation: {
@@ -146,42 +146,42 @@ module.exports = {
   },
   plugins: [
     require('./src/tailwind/container-queries'),
-    plugin(function ({ matchUtilities, theme, addUtilities, addVariant, e }) {
+    plugin(function ({matchUtilities, theme, addUtilities, addVariant, e}) {
       matchUtilities(
         {
           'text-shadow': (value) => ({
             textShadow: value,
           }),
         },
-        { values: theme('textShadow') },
+        {values: theme('textShadow')},
 
       ),
-      addUtilities({
-        '.aspect-portrait': {
-          aspectRatio: '7 / 9'
-        },
-        '.card': {},
-        '.absolute-center': {},
-        '.scrollbar-none': {
+        addUtilities({
+          '.aspect-portrait': {
+            aspectRatio: '7 / 9'
+          },
+          '.card': {},
+          '.absolute-center': {},
+          '.scrollbar-none': {
             scrollbarWidth: 'none',
             '::-webkit-scrollbar': {
               display: 'none',
             },
-        },
-        '.scrollbar-thin': {
+          },
+          '.scrollbar-thin': {
             scrollbarWidth: 'thin'
-        }
-      }),
-      addVariant('not-first', ({ modifySelectors, separator }) => {
-        modifySelectors(({ className }) => {
-          return `.${e(`not-first${separator}${className}`)}:not(:first-child)`
+          }
+        }),
+        addVariant('not-first', ({modifySelectors, separator}) => {
+          modifySelectors(({className}) => {
+            return `.${e(`not-first${separator}${className}`)}:not(:first-child)`
+          })
+        }),
+        addVariant('not-last', ({modifySelectors, separator}) => {
+          modifySelectors(({className}) => {
+            return `.${e(`not-last${separator}${className}`)}:not(:last-child)`
+          })
         })
-      }),
-      addVariant('not-last', ({ modifySelectors, separator }) => {
-        modifySelectors(({ className }) => {
-          return `.${e(`not-last${separator}${className}`)}:not(:last-child)`
-        })
-      })
     }),
     // ...(process.env.NODE_ENV === 'production' ? { cssnano: {} } : {})
   ],

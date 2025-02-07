@@ -903,6 +903,7 @@ export const generation = {
     fluxUltraAspectRatio: '4',
     fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     model: generationConfig.Flux1.checkpoint,
+    priority: 'low',
   },
   maxValues: {
     seed: 4294967295,
