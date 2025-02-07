@@ -12,11 +12,11 @@ import { numberEnum } from '~/utils/zod-helpers';
 export const lightricksAspectRatios = ['16:9', '3:2', '1:1', '2:3'] as const;
 export const lightricksDuration = [5, 10] as const;
 
-const lightricksTxt2VidSchema = textEnhancementSchema.extend({
+const sharedSchema = z.object({
   engine: z.literal('lightricks'),
+  model: z.string().default('urn:air:ltxv:checkpoint:civitai:982559@1182093'),
   workflow: z.string(),
   negativePrompt: negativePromptSchema,
-  aspectRatio: z.enum(lightricksAspectRatios).default('3:2').catch('3:2'),
   duration: numberEnum(lightricksDuration).default(5).catch(5),
   cfgScale: z.number().min(3).max(3.5).default(3).catch(3),
   steps: z.number().min(20).max(30).default(25).catch(25),
@@ -24,16 +24,12 @@ const lightricksTxt2VidSchema = textEnhancementSchema.extend({
   seed: seedSchema,
 });
 
-const lightricksImg2VidSchema = imageEnhancementSchema.extend({
-  engine: z.literal('lightricks'),
-  workflow: z.string(),
+const lightricksTxt2VidSchema = textEnhancementSchema.merge(sharedSchema).extend({
+  aspectRatio: z.enum(lightricksAspectRatios).default('3:2').catch('3:2'),
+});
+
+const lightricksImg2VidSchema = imageEnhancementSchema.merge(sharedSchema).extend({
   prompt: promptSchema,
-  negativePrompt: negativePromptSchema,
-  duration: numberEnum(lightricksDuration).default(5).catch(5),
-  cfgScale: z.number().min(3).max(3.5).default(3).catch(3),
-  steps: z.number().min(20).max(40).default(25).catch(25),
-  frameRate: z.number().optional(),
-  seed: seedSchema,
 });
 
 const lightricksTxt2VidConfig = new VideoGenerationConfig({
