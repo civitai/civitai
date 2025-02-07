@@ -51,8 +51,8 @@ export default function EarnPotential() {
 
   const bankedBuzz = poolSize * bankPortion/100;
   const creatorBankedBuzz = earned * creatorBankPortion/100;
-  const forecastedEarning =
-    poolValue / bankedBuzz * creatorBankedBuzz;
+  const rewardRate = Math.min(poolValue/bankedBuzz, 1/1000);
+  const forecastedEarning = rewardRate * creatorBankedBuzz;
 
   const buzzCurrencyProps = {
     currency: Currency.BUZZ,
@@ -68,7 +68,7 @@ export default function EarnPotential() {
   const poolDetails: DescriptionTableProps['items'] = [
     {
       label: 'Pool Value',
-      info: 'The total value of the creator earning pool',
+      info: 'The total $ value of the Creator Compensation Pool for this month, based on a % of platform revenue. Amount varies monthly.',
       value: <CurrencyBadge
           unitAmount={poolValue}
           size="lg"
@@ -77,7 +77,7 @@ export default function EarnPotential() {
     },
     {
       label: 'Buzz Earned by All Creators',
-      info: 'The total amount of Buzz earned by all Creators last month',
+      info: 'The total amount of Buzz earned by all Creators last month.',
       value: <CurrencyBadge
           unitAmount={poolSize}
           size="lg"
@@ -85,8 +85,8 @@ export default function EarnPotential() {
         />,
     },
     {
-      label: 'Portion of All Earned Buzz Banked',
-      info: 'The portion of all earned Buzz Creators Bank in the month',
+      label: 'Portion of All Earned-Buzz Banked',
+      info: 'The portion of all earned-Buzz banked by Creators this month.',
       value: (
         <NumberInput
           value={bankPortion}
@@ -100,7 +100,7 @@ export default function EarnPotential() {
     },
     {
       label: 'Pool Size',
-      info: 'The total amount of Buzz in the pool',
+      info: 'The total amount of Buzz in the pool.',
       value: <CurrencyBadge
           unitAmount={bankedBuzz}
           size="lg"
@@ -109,7 +109,7 @@ export default function EarnPotential() {
     },
     {
       label: 'Your Buzz Earned',
-      info: 'The total amount of Buzz you earned last month',
+      info: 'The total amount of Buzz you earned last month, including Creator Compensation, Generation Tips, Early Access.',
       value: <CurrencyBadge
           unitAmount={earned}
           size="lg"
@@ -118,7 +118,7 @@ export default function EarnPotential() {
     },
     {
       label: 'Your Bank Portion',
-      info: 'The amount of earned Buzz you plan to Bank',
+      info: 'The amount of Earned-Buzz you plan to Bank',
       value: (
         <NumberInput
           value={creatorBankPortion}
@@ -132,7 +132,7 @@ export default function EarnPotential() {
     },
     {
       label: 'Your Banked Buzz',
-      info: 'The total amount of Buzz you\'ve put into the pool',
+      info: 'The total Earned-Buzz you\'re choosing to contribute to the pool.',
       value: <CurrencyBadge
           unitAmount={creatorBankedBuzz}
           size="lg"
@@ -182,6 +182,10 @@ export default function EarnPotential() {
               sx={{ fontWeight: 900, fontSize: 24 }}
             />
           </Group>
+          <Text size="xs" c="dimmed">About ${(rewardRate * 1000).toFixed(2)} per ⚡1,000 Buzz Banked</Text>
+          {rewardRate >= (1/1000) && (
+            <Text mt={-16} size="xs" c="dimmed">The Buzz earning rate is capped at $1.00 per ⚡1,000 Buzz Banked</Text>
+          )}
         </Stack>
       </Container>
     </>

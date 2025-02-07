@@ -835,7 +835,10 @@ const earnedCache = createCachedObject<{ id: number; earned: number }>({
         toAccountId as id,
         SUM(amount) as earned
       FROM buzzTransactions
-      WHERE type = 'compensation'
+      WHERE (
+        (type IN ('compensation', 'tip')) -- Generation
+        OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
+      )
       AND toAccountType = 'user'
       AND toAccountId IN (${ids})
       AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))
@@ -861,13 +864,16 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
     REDIS_KEYS.BUZZ.POTENTIAL_POOL,
     async () => {
       const results = await clickhouse!.$query<{ balance: number }>`
-      SELECT
-        SUM(amount) AS balance
-      FROM buzzTransactions
-      WHERE toAccountType = 'user'
-      AND type IN ('compensation', 'tip')
-      AND toAccountId != 0
-      AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1));
+        SELECT
+          SUM(amount) AS balance
+        FROM buzzTransactions
+        WHERE toAccountType = 'user'
+        AND (
+          (type IN ('compensation', 'tip')) -- Generation
+          OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
+        )
+        AND toAccountId != 0
+        AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1));
     `;
       if (!results.length) return 135000000;
       return results[0].balance;
@@ -879,15 +885,15 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
     REDIS_KEYS.BUZZ.POTENTIAL_POOL_VALUE,
     async () => {
       const results = await clickhouse!.$query<{ balance: number }>`
-      SELECT
-          SUM(amount) / 1000 AS balance
-      FROM buzzTransactions
-      WHERE toAccountType = 'user'
-      AND type = 'purchase'
-      AND fromAccountId = 0
-      AND externalTransactionId NOT LIKE 'renewalBonus:%'
-      AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1));
-    `;
+        SELECT
+            SUM(amount) / 1000 AS balance
+        FROM buzzTransactions
+        WHERE toAccountType = 'user'
+        AND type = 'purchase'
+        AND fromAccountId = 0
+        AND externalTransactionId NOT LIKE 'renewalBonus:%'
+        AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1));
+      `;
       if (!results.length || !env.CREATOR_POOL_TAXES || !env.CREATOR_POOL_PORTION) return 35000;
       const gross = results[0].balance;
       const taxesAndFees = gross * (env.CREATOR_POOL_TAXES / 100);

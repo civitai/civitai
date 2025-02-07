@@ -37,6 +37,7 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, getDatesAsList, stripTime } from '~/utils/date-helpers';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 ChartJS.register(
   CategoryScale,
@@ -191,6 +192,7 @@ export function DailyCreatorCompReward() {
   }, 0);
 
   return (
+    <>
     <Grid gutter="xs">
       <Grid.Col xs={12} md={8}>
         <Paper withBorder className={classes.tileCard} h="100%">
@@ -337,6 +339,8 @@ export function DailyCreatorCompReward() {
         </Paper>
       </Grid.Col>
     </Grid>
+    <Text mt={-16} size="sm" align="right">New Creator's Program coming soon! <Text component={Link} variant="link" td="underline" href="/user/pool-estimate">See how much you might be able to earn</Text>.</Text>
+    </>
   );
 }
 
