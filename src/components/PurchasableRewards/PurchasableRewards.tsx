@@ -142,7 +142,7 @@ const RewardDetailsModal = ({
                           edgeImageProps={{ width: 450 }}
                           radius="md"
                           style={{ width: '100%', height: '100%' }}
-                          aspectRatio={0}
+                          // aspectRatio={0}
                         />
                       )}
                     </>
@@ -287,7 +287,7 @@ const PurchasableRewardListItem = ({
                       edgeImageProps={{ width: 450 }}
                       radius="md"
                       style={{ width: '100%', height: '100%' }}
-                      aspectRatio={0}
+                      // aspectRatio={0}
                     />
                   )}
                 </>
@@ -370,9 +370,9 @@ const PurchasableRewardCard = ({
                       <ImagePreview
                         image={image}
                         edgeImageProps={{ width: 450 }}
-                        radius="md"
+                        // radius="md"
                         style={{ width: '100%', height: '100%' }}
-                        aspectRatio={0}
+                        // aspectRatio={0}
                       />
                     )}
                   </>

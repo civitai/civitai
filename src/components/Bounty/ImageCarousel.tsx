@@ -221,7 +221,7 @@ export function ImageCarouselContent({
                             width: 450,
                             style: { objectPosition: mobile ? 'top' : 'center' },
                           }}
-                          radius="md"
+                          // radius="md"
                           style={{ width: '100%' }}
                           aspectRatio={1}
                           nsfw={!safe}
