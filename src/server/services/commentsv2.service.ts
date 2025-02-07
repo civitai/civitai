@@ -1,16 +1,23 @@
 import { GetByIdInput } from './../schema/base.schema';
-import { commentV2Select } from '~/server/selectors/commentv2.selector';
+import { CommentV2Model, commentV2Select } from '~/server/selectors/commentv2.selector';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
-import {
-  UpsertCommentV2Input,
-  GetCommentsV2Input,
-  CommentConnectorInput,
-} from './../schema/commentv2.schema';
-import { CommentV2Sort } from '~/server/common/enums';
-import { constants } from '../common/constants';
+import { UpsertCommentV2Input, CommentConnectorInput } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+
+export type CommentThread = {
+  id: number;
+  locked: boolean;
+  commentId?: number | null;
+  comments?: Comment[];
+  hidden: number;
+  children?: CommentThread[];
+};
+
+export type Comment = CommentV2Model & {
+  // childThread?: { id: number; _count?: { comments: number } } | null;
+};
 
 export const upsertComment = async ({
   userId,
@@ -56,43 +63,13 @@ export const upsertComment = async ({
   return await dbWrite.commentV2.update({ where: { id: data.id }, data, select: commentV2Select });
 };
 
-export const getComment = async ({ id }: GetByIdInput) => {
+export const getComment = async ({ id }: GetByIdInput): Promise<Comment> => {
   const comment = await dbRead.commentV2.findFirst({
     where: { id },
-    select: { ...commentV2Select, thread: true },
+    select: commentV2Select,
   });
   if (!comment) throw throwNotFoundError();
   return comment;
-};
-
-export const getComments = async <TSelect extends Prisma.CommentV2Select>({
-  entityType,
-  entityId,
-  limit,
-  cursor,
-  select,
-  sort,
-  excludedUserIds,
-  hidden = false,
-}: GetCommentsV2Input & {
-  select: TSelect;
-  excludedUserIds?: number[];
-}) => {
-  const orderBy: Prisma.Enumerable<Prisma.CommentV2OrderByWithRelationInput> = [];
-  if (sort === CommentV2Sort.Newest) orderBy.push({ createdAt: 'desc' });
-  else orderBy.push({ createdAt: 'asc' });
-
-  return await dbRead.commentV2.findMany({
-    take: limit,
-    cursor: cursor ? { id: cursor } : undefined,
-    where: {
-      thread: { [`${entityType}Id`]: entityId },
-      userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
-      hidden,
-    },
-    orderBy,
-    select,
-  });
 };
 
 export const deleteComment = ({ id }: { id: number }) => {
@@ -110,96 +87,65 @@ export const getCommentCount = async ({ entityId, entityType, hidden }: CommentC
   });
 };
 
-export const getCommentsThreadDetails = async ({
+export async function getCommentsThreadDetails2({
   entityId,
   entityType,
   hidden = false,
   excludedUserIds,
-}: CommentConnectorInput) => {
+}: CommentConnectorInput): Promise<CommentThread | null> {
   const mainThread = await dbRead.thread.findUnique({
     where: { [`${entityType}Id`]: entityId } as unknown as Prisma.ThreadWhereUniqueInput,
     select: {
       id: true,
       locked: true,
-      rootThreadId: true,
-      comments: {
-        orderBy: { createdAt: 'asc' },
-        where: { hidden, userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined },
-        select: commentV2Select,
-      },
+    },
+  });
+  if (!mainThread) return null;
+
+  const childThreads = await dbRead.thread.findMany({
+    where: { rootThreadId: mainThread.id },
+    select: {
+      id: true,
+      locked: true,
+      commentId: true,
     },
   });
 
-  if (!mainThread) return null;
+  const threadIds = [mainThread.id, ...childThreads.map((x) => x.id)];
+  const comments = await dbRead.commentV2.findMany({
+    orderBy: { createdAt: 'asc' },
+    where: {
+      threadId: { in: threadIds },
+      userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
+    },
+    select: commentV2Select,
+  });
 
-  type ChildThread = {
+  function combineThreadWithComments(thread: {
     id: number;
-    parentThreadId: number | null;
-    generation: number;
+    locked: boolean;
+    commentId?: number | null;
+  }): CommentThread {
+    const allComments = comments.filter(
+      (comment) => comment.threadId === thread.id && !excludedUserIds?.includes(comment.user.id)
+    );
+    const filtered = allComments.filter((comment) => comment.hidden === hidden);
+    const hiddenCount = !hidden ? allComments.length - filtered.length : 0;
+
+    return {
+      ...thread,
+      hidden: hiddenCount,
+      comments: filtered,
+    };
+  }
+
+  const result = {
+    ...combineThreadWithComments(mainThread),
+    children: childThreads.map(combineThreadWithComments),
   };
 
-  const childThreadHierarchy = await dbRead.$queryRaw<ChildThread[]>`
-    WITH RECURSIVE generation AS (
-      SELECT id,
-          "parentThreadId",
-          1 AS "generationNumber"
-      FROM "Thread" t
-      WHERE t."parentThreadId" = ${mainThread?.id}
-
-      UNION ALL
-
-      SELECT "childThread".id,
-          "childThread"."parentThreadId",
-          "generationNumber"+1 AS "generationNumber"
-      FROM "Thread" "childThread"
-      JOIN generation g
-        ON g.id = "childThread"."parentThreadId"
-    )
-    SELECT
-      g.id,
-      g."generationNumber" as "generation",
-      "parentThread".id as "parentThreadId"
-    FROM generation g
-    JOIN "Thread" "parentThread"
-    ON g."parentThreadId" = "parentThread".id
-    WHERE "generationNumber" < ${
-      `${entityType}MaxDepth` in constants.comments
-        ? constants.comments[`${entityType}MaxDepth` as keyof typeof constants.comments]
-        : constants.comments.maxDepth
-    }
-    ORDER BY "generationNumber";
-  `;
-
-  const childThreadIds = childThreadHierarchy.map((c) => c.id);
-  const children = childThreadIds?.length
-    ? await dbRead.thread.findMany({
-        where: { id: { in: childThreadIds } },
-        select: {
-          id: true,
-          locked: true,
-          commentId: true, // All children are for comments.
-          rootThreadId: true,
-          comments: {
-            orderBy: { createdAt: 'asc' },
-            where: {
-              hidden,
-              userId: excludedUserIds?.length ? { notIn: excludedUserIds } : undefined,
-            },
-            select: commentV2Select,
-          },
-        },
-      })
-    : [];
-
-  return {
-    ...mainThread,
-    children: children.map((c) => ({
-      ...c,
-      // So that we can keep typescript happy when setting the data on TRPC.
-      children: [],
-    })),
-  };
-};
+  return result;
+}
 
 export const toggleLockCommentsThread = async ({ entityId, entityType }: CommentConnectorInput) => {
   const thread = await dbWrite.thread.findUnique({
@@ -223,3 +169,13 @@ export const toggleHideComment = async ({
     data: { hidden: !currentToggle },
   });
 };
+
+export async function togglePinComment({ id }: GetByIdInput) {
+  const comment = await dbRead.commentV2.findUnique({ where: { id }, select: { pinnedAt: true } });
+  if (!comment) throw throwNotFoundError();
+
+  return dbWrite.commentV2.update({
+    where: { id },
+    data: { pinnedAt: !comment.pinnedAt ? new Date() : null },
+  });
+}

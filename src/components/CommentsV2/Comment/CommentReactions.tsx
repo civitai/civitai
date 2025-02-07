@@ -1,11 +1,11 @@
-import { InfiniteCommentV2Model } from '~/server/controllers/commentv2.controller';
 import { useMemo } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Reactions, ReactionMetrics } from '~/components/Reaction/Reactions';
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import React from 'react';
+import type { Comment } from '~/server/services/commentsv2.service';
 
-export function CommentReactions({ comment }: { comment: InfiniteCommentV2Model }) {
+export function CommentReactions({ comment }: { comment: Comment }) {
   const currentUser = useCurrentUser();
   const userReactions = comment.reactions.filter((x) => x.userId === currentUser?.id);
   const metrics = useMemo(

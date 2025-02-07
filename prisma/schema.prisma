@@ -1891,19 +1891,20 @@ model AnswerMetric {
 }
 
 model CommentV2 {
-  id           Int      @id @default(autoincrement())
+  id           Int       @id @default(autoincrement())
   content      String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  nsfw         Boolean  @default(false)
-  tosViolation Boolean  @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  nsfw         Boolean   @default(false)
+  tosViolation Boolean   @default(false)
   userId       Int
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   threadId     Int
-  thread       Thread   @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
-  childThread  Thread?  @relation("childThread")
+  thread       Thread    @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
+  childThread  Thread?   @relation("childThread")
   metadata     Json?
-  hidden       Boolean? @default(false)
+  hidden       Boolean?  @default(false)
+  pinnedAt     DateTime?
 
   reactions CommentV2Reaction[]
   reports   CommentV2Report[]
@@ -1953,6 +1954,7 @@ model Thread {
   @@index([questionId], type: Hash)
   @@index([imageId], type: Hash)
   @@index([articleId], type: Hash)
+  @@index([rootThreadId], type: Hash)
 }
 
 model QuestionReaction {

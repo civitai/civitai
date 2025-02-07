@@ -95,10 +95,10 @@ export enum ImageScanType {
   HiveDemographics,
 }
 
-export enum CommentV2Sort {
-  Newest = 'Newest',
-  Oldest = 'Oldest',
-}
+// export enum CommentV2Sort {
+//   Newest = 'Newest',
+//   Oldest = 'Oldest',
+// }
 
 export enum ArticleSort {
   MostBookmarks = 'Most Bookmarks',

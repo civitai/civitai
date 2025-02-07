@@ -3454,7 +3454,12 @@ const imageReviewQueueJoinMap = {
       ma."createdAt" as "removedAt",
     `,
     join: `
-      JOIN "Appeal" appeal ON appeal."entityId" = i.id AND appeal."entityType" = 'Image'
+      LEFT JOIN LATERAL (
+        SELECT * FROM "Appeal" 
+        WHERE "entityId" = i.id AND "entityType" = 'Image'
+        ORDER BY "createdAt" DESC
+        LIMIT 1
+      ) appeal ON true
       JOIN "User" au ON au.id = appeal."userId"
       JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
       JOIN "User" mu ON mu.id = ma."userId"

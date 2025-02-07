@@ -1503,6 +1503,7 @@ export interface CommentV2 {
   childThread?: Thread | null;
   metadata: JsonValue | null;
   hidden: boolean | null;
+  pinnedAt: Date | null;
   reactions?: CommentV2Reaction[];
   reports?: CommentV2Report[];
 }

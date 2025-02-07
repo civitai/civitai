@@ -438,7 +438,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
-    FEATURED_MODELS: 'packed:featured-models',
+    FEATURED_MODELS: 'packed:featured-models2',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
@@ -493,6 +493,7 @@ export const REDIS_KEYS = {
   HOMEBLOCKS: {
     BASE: 'packed:home-blocks',
   },
+  CACHE_LOCKS: 'cache-lock',
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`

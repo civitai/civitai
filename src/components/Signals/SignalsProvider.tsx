@@ -1,25 +1,22 @@
 import { MantineColor, Notification, NotificationProps } from '@mantine/core';
-import { useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
+import { SignalStatus } from '~/utils/signals/types';
 // import { createSignalWorker, SignalWorker } from '~/utils/signals';
-import { useSignalsWorker, SignalWorker, SignalStatus } from '~/utils/signals/useSignalsWorker';
+import { useSignalsWorker, SignalWorker } from '~/utils/signals/useSignalsWorker';
 import { trpc } from '~/utils/trpc';
 
 type SignalState = {
   connected: boolean;
-  status?: SignalStatus;
+  status: SignalStatus | null;
   worker: SignalWorker | null;
 };
 
 const signalStatusDictionary: Record<SignalStatus, MantineColor> = {
   connected: 'green',
-  reconnected: 'green',
   reconnecting: 'yellow',
-  error: 'red',
   closed: 'red',
 };
 
@@ -50,38 +47,30 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
 };
 
 export function SignalProvider({ children }: { children: React.ReactNode }) {
-  const session = useSession();
   const queryUtils = trpc.useUtils();
-  const features = useFeatureFlags();
+  const prevStatusRef = useRef<SignalStatus | null>(null);
+  const hasConnectedAtLeastOnceRef = useRef(false);
 
-  const [status, setStatus] = useState<SignalStatus>();
+  const [status, setStatus] = useState<SignalStatus | null>(null);
+  prevStatusRef.current = status ?? null;
 
-  const { data } = trpc.signals.getToken.useQuery(undefined, {
-    enabled: !!session.data?.user && features.signal,
+  const worker = useSignalsWorker({
+    onStateChange: ({ state }) => {
+      const prevStatus = prevStatusRef.current;
+      const hasConnectedAtLeastOnce = hasConnectedAtLeastOnceRef.current;
+      if (prevStatus !== state && state === 'connected' && hasConnectedAtLeastOnce) {
+        queryUtils.buzz.getBuzzAccount.invalidate();
+        queryUtils.orchestrator.queryGeneratedImages.invalidate();
+      }
+
+      if (state === 'connected') hasConnectedAtLeastOnceRef.current = true;
+      setStatus(state);
+    },
   });
 
-  const accessToken = data?.accessToken;
-  const userId = session.data?.user?.id;
+  const connected = status === 'connected';
 
-  const worker = useSignalsWorker(
-    { accessToken },
-    {
-      onReconnected: () => {
-        if (userId) {
-          queryUtils.buzz.getBuzzAccount.invalidate();
-          queryUtils.orchestrator.queryGeneratedImages.invalidate();
-        }
-      },
-      onError: () => {
-        queryUtils.signals.getToken.invalidate();
-      },
-      onStatusChange: ({ status }) => setStatus(status),
-    }
-  );
-
-  const connected = status === 'connected' || status === 'reconnected';
-
-  return features.signal ? (
+  return (
     <SignalContext.Provider
       value={{
         connected,
@@ -91,10 +80,6 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
     >
       <SignalNotifications />
       <SignalsRegistrar />
-      {children}
-    </SignalContext.Provider>
-  ) : (
-    <SignalContext.Provider value={{ connected: false, worker: null }}>
       {children}
     </SignalContext.Provider>
   );

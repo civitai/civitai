@@ -1,7 +1,8 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { CacheTTL } from '~/server/common/constants';
-import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS, RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
+import { sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -236,6 +237,63 @@ export function cachedCounter<T extends string | number>(
   };
 
   return counter;
+}
+
+type FetchThroughCacheOptions = {
+  ttl?: number;
+  lockTTL?: number;
+  retryCount?: number;
+};
+type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
+export async function fetchThroughCache<T>(
+  key: RedisKeyTemplateCache,
+  fetchFn: () => Promise<T>,
+  options: FetchThroughCacheOptions = {}
+) {
+  const ttl = options.ttl ?? CacheTTL.sm;
+  const lockTTL = options.lockTTL ?? 10;
+  const retryCount = options.retryCount ?? 3;
+  const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}` as const;
+
+  const cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key);
+  const cachedExpired =
+    !cachedData || (cachedData && Date.now() - ttl * 1000 > cachedData.cachedAt);
+  if (cachedExpired) {
+    // Try to set lock. If already locked, do nothing...
+    const lockResponse = await redis.set(lockKey, '1', { NX: true, KEEPTTL: true });
+    const shouldFetch = lockResponse === '1' || lockResponse === 'OK';
+    if (!shouldFetch) {
+      if (cachedData) return cachedData.data;
+      if (retryCount === 0) throw new Error('Failed to fetch data through cache');
+
+      // Wait for the fetcher to do their thing...
+      await sleep((lockTTL * 1000) / 2);
+      return fetchThroughCache(key, fetchFn, {
+        ttl,
+        lockTTL,
+        retryCount: retryCount - 1,
+      });
+    } else {
+      await redis.expire(lockKey, lockTTL);
+    }
+  } else if (cachedData) return cachedData.data;
+
+  try {
+    const data = await fetchFn();
+    const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
+    await redis.packed.set(key, toCache, { EX: ttl * 2 });
+    return data;
+  } finally {
+    await redis.del(lockKey);
+  }
+}
+
+export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
+  const cachedData = await redis.packed.get<FetchThroughCacheEntity<any>>(key);
+  if (!cachedData) return;
+
+  const toCache: FetchThroughCacheEntity<any> = { data: cachedData.data, cachedAt: 0 };
+  await redis.packed.set(key, toCache, { KEEPTTL: true });
 }
 
 export async function clearCacheByPattern(pattern: string) {

@@ -8,7 +8,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
-import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createWorkflowStep,
+  getPriorityVolume,
+} from '~/server/services/orchestrator/orchestrator.service';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
@@ -140,4 +143,12 @@ export async function whatIf(args: GenerationSchema & Ctx) {
     eta,
     position,
   };
+}
+
+export async function handleGetPriorityVolume(target: string) {
+  const data = await getPriorityVolume();
+  const lowerCaseTarget = target.toLowerCase();
+  let provider = data.find((x) => x.key.toLowerCase() === lowerCaseTarget);
+  if (!provider) provider = data.find((x) => x.key === 'ValdiAI');
+  return provider?.prioritySummaries;
 }

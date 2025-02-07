@@ -4,15 +4,16 @@ import {
   baseModelSets,
   BaseModelSetType,
   generation,
+  generationConfig,
   getGenerationConfig,
   Sampler,
 } from '~/server/common/constants';
+import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { findClosest } from '~/utils/number-helpers';
-import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 
 export const WORKFLOW_TAGS = {
   GENERATION: 'gen',
@@ -339,7 +340,7 @@ export function sanitizeTextToImageParams<T extends Partial<TextToImageParams>>(
 export function getSizeFromAspectRatio(aspectRatio: number | string, baseModel?: string) {
   const numberAspectRatio = typeof aspectRatio === 'string' ? Number(aspectRatio) : aspectRatio;
   const config = getGenerationConfig(baseModel);
-  return config.aspectRatios[numberAspectRatio];
+  return config.aspectRatios[numberAspectRatio] ?? generationConfig.SD1.aspectRatios[0];
 }
 
 export const getClosestAspectRatio = (width?: number, height?: number, baseModel?: string) => {
@@ -513,8 +514,10 @@ type EnginesDictionary = Record<
     label: string;
     description: string | (() => React.ReactNode);
     whatIf?: string[];
+    memberOnly?: boolean;
   }
 >;
+
 export const engineDefinitions: EnginesDictionary = {
   minimax: {
     label: 'Hailuo by MiniMax',
@@ -525,6 +528,12 @@ export const engineDefinitions: EnginesDictionary = {
     label: 'Kling',
     description: ``,
     whatIf: ['mode', 'duration'],
+  },
+  lightricks: {
+    label: 'Lightricks',
+    description: '',
+    whatIf: ['duration', 'cfgScale', 'steps'],
+    // memberOnly: true,
   },
   haiper: {
     label: 'Haiper',

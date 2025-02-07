@@ -1,7 +1,6 @@
 import { TRPCError } from '@trpc/server';
 import { Context } from '~/server/createContext';
 import { ToggleHideCommentInput } from '~/server/schema/commentv2.schema';
-import { commentV2Select } from '~/server/selectors/commentv2.selector';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -18,62 +17,16 @@ import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { dbRead } from '../db/client';
 import { hasEntityAccess } from '../services/common.service';
 import { GetByIdInput } from './../schema/base.schema';
-import {
-  CommentConnectorInput,
-  GetCommentsV2Input,
-  UpsertCommentV2Input,
-} from './../schema/commentv2.schema';
+import { CommentConnectorInput, UpsertCommentV2Input } from './../schema/commentv2.schema';
 import {
   deleteComment,
   getComment,
   getCommentCount,
-  getComments,
-  getCommentsThreadDetails,
+  getCommentsThreadDetails2,
   toggleHideComment,
   toggleLockCommentsThread,
   upsertComment,
 } from './../services/commentsv2.service';
-
-export type InfiniteCommentResults = AsyncReturnType<typeof getInfiniteCommentsV2Handler>;
-export type InfiniteCommentV2Model = InfiniteCommentResults['comments'][0];
-export const getInfiniteCommentsV2Handler = async ({
-  ctx,
-  input,
-}: {
-  ctx: Context;
-  input: GetCommentsV2Input;
-}) => {
-  try {
-    const limit = input.limit + 1;
-
-    const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
-      (x) => x.id
-    );
-    const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
-
-    const comments = await getComments({
-      ...input,
-      excludedUserIds,
-      limit,
-      select: commentV2Select,
-    });
-
-    let nextCursor: number | undefined;
-    if (comments.length > input.limit) {
-      const nextItem = comments.pop();
-      nextCursor = nextItem?.id;
-    }
-
-    return {
-      nextCursor,
-      comments,
-    };
-  } catch (error) {
-    throw throwDbError(error);
-  }
-};
 
 export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: GetByIdInput }) => {
   try {
@@ -235,7 +188,7 @@ export const getCommentsThreadDetailsHandler = async ({
     const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
     const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
 
-    return await getCommentsThreadDetails({ ...input, excludedUserIds });
+    return await getCommentsThreadDetails2({ ...input, excludedUserIds });
   } catch (error) {
     throw throwDbError(error);
   }

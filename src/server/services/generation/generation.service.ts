@@ -11,7 +11,7 @@ import {
   CheckResourcesCoverageSchema,
   GenerationStatus,
   generationStatusSchema,
-  GetGenerationDataInput,
+  GetGenerationDataSchema,
   GetGenerationResourcesInput,
 } from '~/server/schema/generation.schema';
 
@@ -37,9 +37,12 @@ import { fromJson, toJson } from '~/utils/json-helpers';
 
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
+  baseModelResourceTypes,
   fluxUltraAir,
   getBaseModelFromResources,
   getBaseModelSet,
+  getBaseModelSetType,
+  SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
 import { isFutureDate } from '~/utils/date-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
@@ -231,28 +234,39 @@ export const getGenerationData = async ({
   query,
   user,
 }: {
-  query: GetGenerationDataInput;
+  query: GetGenerationDataSchema;
   user?: SessionUser;
 }): Promise<GenerationData> => {
   switch (query.type) {
     case 'image':
     case 'video':
-      return await getMediaGenerationData({ id: query.id, user });
+      return await getMediaGenerationData({ id: query.id, user, generation: query.generation });
     case 'modelVersion':
-      return await getModelVersionGenerationData({ versionIds: [query.id], user });
+      return await getModelVersionGenerationData({
+        versionIds: [query.id],
+        user,
+        generation: query.generation,
+      });
     case 'modelVersions':
-      return await getModelVersionGenerationData({ versionIds: query.ids, user });
+      return await getModelVersionGenerationData({
+        versionIds: query.ids,
+        user,
+        generation: query.generation,
+      });
     default:
       throw new Error('unsupported generation data type');
   }
 };
 
+type ResourceType = 'generation' | 'all';
 async function getMediaGenerationData({
   id,
   user,
+  generation,
 }: {
   id: number;
   user?: SessionUser;
+  generation: boolean;
 }): Promise<GenerationData> {
   const media = await dbRead.image.findUnique({
     where: { id },
@@ -291,7 +305,8 @@ async function getMediaGenerationData({
       const versionIds = [
         ...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined)),
       ];
-      const resources = await getGenerationResourceData({ ids: versionIds, user }).then((data) =>
+      const fn = generation ? getGenerationResourceData : getResourceData;
+      const resources = await fn({ ids: versionIds, user }).then((data) =>
         data.map((item) => {
           const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
           return {
@@ -376,15 +391,18 @@ async function getMediaGenerationData({
 const getModelVersionGenerationData = async ({
   versionIds,
   user,
+  generation,
 }: {
   versionIds: number[];
   user?: SessionUser;
+  generation: boolean;
 }) => {
   if (!versionIds.length) throw new Error('missing version ids');
-  const resources = await getGenerationResourceData({ ids: versionIds, user });
+  const fn = generation ? getGenerationResourceData : getResourceData;
+  const resources = await fn({ ids: versionIds, user });
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
-    const [vae] = await getGenerationResourceData({ ids: [checkpoint.vaeId], user });
+    const [vae] = await fn({ ids: [checkpoint.vaeId], user });
     if (vae) resources.push({ ...vae, vaeId: undefined });
   }
 
@@ -509,7 +527,7 @@ export type GenerationResource = GenerationResourceBase & {
 
 const explicitCoveredModelAirs = [fluxUltraAir];
 const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => parseAIR(air).version);
-export async function getGenerationResourceData({
+export async function getResourceData({
   ids,
   user,
 }: {
@@ -650,4 +668,19 @@ export async function getGenerationResourceData({
       return payload;
     });
   });
+}
+
+export async function getGenerationResourceData(args: {
+  ids: number[];
+  user?: {
+    id?: number;
+    isModerator?: boolean;
+  };
+}) {
+  return await getResourceData(args).then((data) =>
+    data.filter((resource) => {
+      const baseModel = getBaseModelSetType(resource.baseModel) as SupportedBaseModel;
+      return !!baseModelResourceTypes[baseModel];
+    })
+  );
 }
