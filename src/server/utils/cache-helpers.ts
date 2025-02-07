@@ -1,5 +1,7 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
+import { createClient } from 'redis';
+import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { redis, REDIS_KEYS, RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
 import { sleep } from '~/server/utils/concurrency-helpers';
@@ -297,31 +299,60 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
 }
 
 export async function clearCacheByPattern(pattern: string) {
-  let cursor: number | undefined;
   const cleared: string[] = [];
-  while (cursor !== 0) {
-    console.log('Scanning:', cursor);
-    const reply = await redis.scan(cursor ?? 0, {
-      MATCH: pattern,
-      COUNT: 10000000,
-    });
 
-    cursor = reply.cursor;
-    const keys = reply.keys as unknown as RedisKeyTemplateCache[];
-    const newKeys = keys.filter((key) => !cleared.includes(key));
-    console.log('Total keys:', cleared.length, 'Adding:', newKeys.length, 'Cursor:', cursor);
-    if (newKeys.length === 0) continue;
-
-    const batches = chunk(newKeys, 10000);
-    for (let i = 0; i < batches.length; i++) {
-      console.log('Clearing:', i, 'Of', batches.length);
-      await redis.del(batches[i]);
-      cleared.push(...batches[i]);
-      console.log('Cleared:', i, 'Of', batches.length);
-    }
-    console.log('Cleared:', cleared.length);
-    console.log('Cursor:', cursor);
+  if (!env.REDIS_URL_DIRECT || env.REDIS_URL_DIRECT.length === 0) {
+    console.log('No redis url found, skipping cache clear');
+    return cleared;
   }
-  console.log('Done clearing cache');
+
+  await Promise.all(
+    env.REDIS_URL_DIRECT.map(async (url) => {
+      let cursor: number | undefined;
+      const redis = createClient({
+        url,
+        socket: {
+          reconnectStrategy(retries) {
+            log(`Redis reconnecting, retry ${retries}`);
+            return Math.min(retries * 100, 3000);
+          },
+          connectTimeout: env.REDIS_TIMEOUT,
+        },
+        pingInterval: 4 * 60 * 1000,
+      });
+      console.log(`Connecting to redis: ${url}`);
+
+      try {
+        await redis.connect();
+        while (cursor !== 0) {
+          console.log('Scanning:', cursor);
+          const reply = await redis.scan(cursor ?? 0, {
+            MATCH: pattern,
+            COUNT: 10000000,
+          });
+
+          cursor = reply.cursor;
+          const keys = reply.keys as unknown as RedisKeyTemplateCache[];
+          const newKeys = keys.filter((key) => !cleared.includes(key));
+          console.log('Total keys:', cleared.length, 'Adding:', newKeys.length, 'Cursor:', cursor);
+          if (newKeys.length === 0) continue;
+
+          const batches = chunk(newKeys, 10000);
+          for (let i = 0; i < batches.length; i++) {
+            console.log('Clearing:', i, 'Of', batches.length);
+            await redis.del(batches[i]);
+            cleared.push(...batches[i]);
+            console.log('Cleared:', i, 'Of', batches.length);
+          }
+          console.log('Cleared:', cleared.length);
+          console.log('Cursor:', cursor);
+        }
+        console.log('Done clearing cache');
+      } finally {
+        await redis.quit();
+      }
+    })
+  );
+
   return cleared;
 }
