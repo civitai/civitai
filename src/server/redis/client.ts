@@ -494,6 +494,11 @@ export const REDIS_KEYS = {
     BASE: 'packed:home-blocks',
   },
   CACHE_LOCKS: 'cache-lock',
+  BUZZ: {
+    POTENTIAL_POOL: 'buzz:potential-pool',
+    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
+    EARNED: 'buzz:earned',
+  },
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`

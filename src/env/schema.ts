@@ -208,6 +208,10 @@ export const serverSchema = z.object({
   VIMEO_SECRET: z.string().optional(),
   VIMEO_CLIENT_ID: z.string().optional(),
   VIMEO_VIDEO_UPLOAD_URL: z.string().optional(),
+
+  // Creator Program Related:
+  CREATOR_POOL_TAXES: z.coerce.number().optional(),
+  CREATOR_POOL_PORTION: z.coerce.number().optional(),
 });
 
 /**
