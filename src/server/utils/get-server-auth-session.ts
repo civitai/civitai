@@ -1,5 +1,5 @@
 import type { GetServerSidePropsContext } from 'next';
-import { Session } from 'next-auth';
+import type { Session } from 'next-auth';
 import { getServerSession } from 'next-auth/next';
 import { env } from '~/env/server';
 import { createAuthOptions } from '~/pages/api/auth/[...nextauth]';
