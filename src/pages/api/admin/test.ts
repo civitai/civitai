@@ -29,10 +29,10 @@ const test = [1183765, 164821];
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
-    // const modelVersions = await getGenerationResourceData({
-    //   ids: [...test, ...covered, ...notCovered],
-    //   user: session?.user,
-    // });
+    const modelVersions = await getResourceData({
+      ids: [1182093],
+      user: session?.user,
+    });
     // const modelVersions = await dbRead.$queryRaw`
     //   SELECT
     //     mv."id",
@@ -66,12 +66,12 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   WHERE mv.id IN (${Prisma.join([1325378])})
     // `;
 
-    const thread = await getCommentsThreadDetails2({
-      entityId: 10936,
-      entityType: 'article',
-    });
+    // const thread = await getCommentsThreadDetails2({
+    //   entityId: 10936,
+    //   entityType: 'article',
+    // });
 
-    res.status(200).send(thread);
+    res.status(200).send(modelVersions);
   } catch (e) {
     console.log(e);
     res.status(400).end();

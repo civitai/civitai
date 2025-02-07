@@ -5,7 +5,7 @@ import { userTierSchema } from '~/server/schema/user.schema';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { imageSchema } from './image.schema';
 import { GenerationRequestStatus } from '~/server/common/enums';
-import { numericStringArray } from '~/utils/zod-helpers';
+import { booleanString, numericStringArray } from '~/utils/zod-helpers';
 import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -271,13 +271,20 @@ export const checkResourcesCoverageSchema = z.object({
   id: z.number(),
 });
 
-export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
+const baseSchema = z.object({ generation: booleanString().default(true) });
+export type GetGenerationDataInput = z.input<typeof getGenerationDataSchema>;
+export type GetGenerationDataSchema = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('image'), id: z.coerce.number() }),
-  z.object({ type: z.literal('video'), id: z.coerce.number() }),
-  z.object({ type: z.literal('audio'), id: z.coerce.number() }),
-  z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
-  z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
+  baseSchema.extend({ type: z.literal('image'), id: z.coerce.number() }),
+  baseSchema.extend({ type: z.literal('video'), id: z.coerce.number() }),
+  baseSchema.extend({ type: z.literal('audio'), id: z.coerce.number() }),
+  baseSchema.extend({ type: z.literal('modelVersion'), id: z.coerce.number() }),
+  baseSchema.extend({
+    type: z.literal('modelVersions'),
+    ids: z
+      .union([z.array(z.coerce.number()), z.coerce.number()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
+  }),
 ]);
 
 export type BulkDeleteGeneratedImagesInput = z.infer<typeof bulkDeleteGeneratedImagesSchema>;
