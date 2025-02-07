@@ -95,6 +95,8 @@ export function GeneratedImageActions({
         const workflow = data?.find((x) => x.id === image.workflowId);
         if (workflow) {
           const step = workflow.steps.find((x) => x.name === image.stepName);
+          // TODO - handle resources
+          const resources = step?.resources?.map(({ id, strength }) => ({ id, strength }));
           return { url: image.url, meta: step?.params };
         }
       })

@@ -153,7 +153,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
   let key = 'default';
   switch (input.type) {
     case 'modelVersions':
-      key = `${input.type}_${input.ids.join('_')}`;
+      key = `${input.type}_${Array.isArray(input.ids) ? input.ids.join('_') : input.ids}`;
       break;
     default:
       key = `${input.type}_${input.id}`;

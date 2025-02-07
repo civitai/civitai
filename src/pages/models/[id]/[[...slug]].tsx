@@ -768,32 +768,6 @@ export default function ModelDetailsV2({
                             >
                               Edit Model
                             </Menu.Item>
-                            {!model.mode ? (
-                              <>
-                                <Menu.Item
-                                  icon={<IconArchive size={14} stroke={1.5} />}
-                                  onClick={() => handleChangeMode(ModelModifier.Archived)}
-                                >
-                                  Archive
-                                </Menu.Item>
-                                {isModerator && (
-                                  <Menu.Item
-                                    icon={<IconCircleMinus size={14} stroke={1.5} />}
-                                    onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                                  >
-                                    Take Down
-                                  </Menu.Item>
-                                )}
-                              </>
-                            ) : model.mode === ModelModifier.Archived ||
-                              (isModerator && model.mode === ModelModifier.TakenDown) ? (
-                              <Menu.Item
-                                icon={<IconReload size={14} stroke={1.5} />}
-                                onClick={() => handleChangeMode(null)}
-                              >
-                                Bring Back
-                              </Menu.Item>
-                            ) : null}
                           </>
                         )}
                         {features.collections && (
@@ -876,6 +850,29 @@ export default function ModelDetailsV2({
                                   entityId={model.id}
                                   key="toggle-searchable-menu-item"
                                 />
+                                {!model.mode ? (
+                                  <>
+                                    <Menu.Item
+                                      icon={<IconArchive size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(ModelModifier.Archived)}
+                                    >
+                                      Archive
+                                    </Menu.Item>
+                                    <Menu.Item
+                                      icon={<IconCircleMinus size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(ModelModifier.TakenDown)}
+                                    >
+                                      Take Down
+                                    </Menu.Item>
+                                  </>
+                                ) : (
+                                  <Menu.Item
+                                    icon={<IconReload size={14} stroke={1.5} />}
+                                    onClick={() => handleChangeMode(null)}
+                                  >
+                                    Bring Back
+                                  </Menu.Item>
+                                )}
                               </>
                             )}
                           </>
