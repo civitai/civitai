@@ -102,6 +102,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
@@ -202,6 +203,7 @@ export default function ModelDetailsV2({
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
+  const { activeTour, running, runTour, steps } = useTourContext();
 
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
@@ -461,6 +463,13 @@ export default function ModelDetailsV2({
     }
   }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel]);
 
+  useEffect(() => {
+    if (loadingModel) return;
+    if (activeTour === 'model-page' && !running) runTour({ key: 'model-page', step: 0 });
+    // only run first render
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingModel, latestVersion]);
+
   if (loadingModel) return <PageLoader />;
 
   // Handle missing and deleted models
@@ -559,7 +568,7 @@ export default function ModelDetailsV2({
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
-        <Container size="xl">
+        <Container size="xl" data-tour="model:start">
           <Stack spacing="xl">
             <Stack spacing="xs">
               <Stack spacing={4}>
@@ -1078,7 +1087,9 @@ export default function ModelDetailsV2({
               <Stack spacing="md">
                 <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                   <Group spacing="xs">
-                    <Title order={2}>Discussion</Title>
+                    <Title order={2} data-tour="model:discussion">
+                      Discussion
+                    </Title>
                     {canDiscuss ? (
                       <>
                         <LoginRedirect reason="create-comment">

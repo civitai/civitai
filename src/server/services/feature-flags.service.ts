@@ -108,6 +108,7 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   generationOnlyModels: ['mod', 'granted'],
+  appTour: ['public'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];

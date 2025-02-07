@@ -12,7 +12,6 @@ import {
   ThemeIcon,
   ThemeIconProps,
   Tooltip,
-  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAutomaticGearbox,
@@ -26,7 +25,7 @@ import {
   IconProps,
   IconUserPlus,
 } from '@tabler/icons-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
@@ -49,6 +48,7 @@ import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { ImagesAsPostModel } from '~/server/controllers/image.controller';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -63,8 +63,7 @@ export function ImagesAsPostsCard({
   width: number;
   height: number;
 }) {
-  const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
+  const { classes, cx, theme } = useStyles();
   const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
 
@@ -135,6 +134,19 @@ export function ImagesAsPostsCard({
       }
     }
   };
+
+  const handleRemixClick = useCallback(
+    (selectedImage: typeof image) => (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      generationPanel.open({
+        type: selectedImage.type,
+        id: selectedImage.id,
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     if (!embla) return;
@@ -361,14 +373,10 @@ export function ImagesAsPostsCard({
                                   color="white"
                                   variant="filled"
                                   data-activity="remix:model-gallery"
-                                  onClick={(e) => {
-                                    e.preventDefault();
-                                    e.stopPropagation();
-                                    generationPanel.open({
-                                      type: image.type,
-                                      id: image.id,
-                                    });
-                                  }}
+                                  data-tour={
+                                    image.type === MediaType.image ? 'gen:remix' : undefined
+                                  }
+                                  onClick={handleRemixClick(image)}
                                 >
                                   <IconBrush stroke={2.5} size={16} />
                                 </HoverActionButton>
@@ -485,14 +493,12 @@ export function ImagesAsPostsCard({
                                             color="white"
                                             variant="filled"
                                             data-activity="remix:model-gallery"
-                                            onClick={(e) => {
-                                              e.preventDefault();
-                                              e.stopPropagation();
-                                              generationPanel.open({
-                                                type: image.type,
-                                                id: image.id,
-                                              });
-                                            }}
+                                            data-tour={
+                                              image.type === MediaType.image
+                                                ? 'gen:remix'
+                                                : undefined
+                                            }
+                                            onClick={handleRemixClick(image)}
                                           >
                                             <IconBrush stroke={2.5} size={16} />
                                           </HoverActionButton>

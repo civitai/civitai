@@ -54,6 +54,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
   useSubmitCreateImage,
@@ -78,6 +79,7 @@ import {
 import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
@@ -94,12 +96,17 @@ import {
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
+import {
+  generationFormStore,
+  useGenerationFormStore,
+  useGenerationStore,
+} from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
+import { contentGenerationTour, remixContentGenerationTour } from '~/utils/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -119,6 +126,12 @@ export function GenerationFormContent() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
+  const { runTour, running, currentStep, setSteps } = useTourContext();
+  const loadingGeneratorData = useGenerationStore((state) => state.loading);
+  const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
+    state.requestsLoading,
+    state.hasGeneratedImages,
+  ]);
 
   const form = useGenerationForm();
   const invalidateWhatIf = useInvalidateWhatIf();
@@ -301,10 +314,31 @@ export function GenerationFormContent() {
     };
   }, []);
 
-  const workflowOptions =
-    workflowDefinitions
-      ?.filter((x) => x.selectable !== false && x.key !== undefined)
-      .map(({ key, label }) => ({ label, value: key })) ?? [];
+  // const workflowOptions =
+  //   workflowDefinitions
+  //     ?.filter((x) => x.selectable !== false && x.key !== undefined)
+  //     .map(({ key, label }) => ({ label, value: key })) ?? [];
+
+  const remixOfId = form.watch('remixOfId');
+  useEffect(() => {
+    if (!status.available || status.isLoading || loadingGeneratorData) return;
+    if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
+  }, [
+    status.isLoading,
+    status.available,
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    loadingGeneratorData,
+  ]);
+
+  useEffect(() => {
+    // Remove last two steps if user has not generated any images
+    if (!loadingGenQueueRequests && !hasGeneratedImages)
+      setSteps(
+        remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
+      );
+  }, [loadingGenQueueRequests, hasGeneratedImages, remixOfId]);
 
   return (
     <Form
@@ -757,6 +791,7 @@ export function GenerationFormContent() {
                           >
                             <InputPrompt
                               name="prompt"
+                              data-tour="gen:prompt"
                               placeholder="Your prompt goes here..."
                               autosize
                               unstyled
@@ -1181,7 +1216,7 @@ export function GenerationFormContent() {
                 ) : (
                   <>
                     {!reviewed && (
-                      <Alert color="yellow" title="Image Generation Terms">
+                      <Alert color="yellow" title="Image Generation Terms" data-tour="gen:terms">
                         <Text size="xs">
                           By using the image generator you confirm that you have read and agree to
                           our{' '}
@@ -1197,7 +1232,10 @@ export function GenerationFormContent() {
                         <Button
                           color="yellow"
                           variant="light"
-                          onClick={() => setReviewed(true)}
+                          onClick={() => {
+                            setReviewed(true);
+                            if (running) runTour({ step: currentStep + 1 });
+                          }}
                           style={{ marginTop: 10 }}
                           leftIcon={<IconCheck />}
                           fullWidth
@@ -1289,9 +1327,10 @@ function WhatIfAlert() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
+  const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
+  const { running, runTour, currentStep } = useTourContext();
   const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
@@ -1315,10 +1354,14 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const generateButton = (
     <GenerateButton
       type="submit"
+      data-tour="gen:submit"
       className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
       cost={total}
       disabled={isError}
+      onClick={() => {
+        if (running) runTour({ step: currentStep + 1 });
+      }}
     />
   );
 
