@@ -37,7 +37,7 @@ import {
 import { checkLocalDb, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
-const numRows = 1000;
+const numRows = 200;
 
 faker.seed(1337);
 const randw = faker.helpers.weightedArrayElement;
@@ -157,11 +157,11 @@ const truncateNotificationRows = async () => {
 const genUsers = (num: number, includeCiv = false) => {
   const ret = [];
 
-  if (includeCiv) {
-    num -= 1;
+  const extraUsers = [];
 
+  if (includeCiv) {
     // civ user
-    const civUser = [
+    extraUsers.push([
       'Civitai',
       'hello@civitai.com',
       null,
@@ -194,15 +194,237 @@ const genUsers = (num: number, includeCiv = false) => {
       null,
       'Eligible',
       null,
-    ];
+    ]);
 
-    ret.push(civUser);
+    // - test users
+
+    // mod
+    extraUsers.push([
+      'Test - Moderator', // name
+      'test-mod@civitai.com', // email
+      null,
+      null,
+      1, // id
+      false, // blurnsfw
+      true, // shownsfw
+      'test-mod', // username
+      true, // isMod
+      false,
+      '2022-11-13 00:00:00.000',
+      null, // deletedAt
+      null, // bannedAt
+      null,
+      null,
+      true,
+      '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+      null,
+      '{Moderation,Buzz}', // onboardingSteps
+      null,
+      '{}', // meta
+      '{}', // settings
+      null, // "mutedAt"
+      false, // muted
+      31, // "browsingLevel"
+      15, // onboarding
+      '{}', // "publicSettings"
+      null, // "muteConfirmedAt"
+      false,
+      null,
+      'Eligible',
+      `ctm_01j6${faker.string.alphanumeric(22)}`,
+    ]);
+
+    // newbie
+    extraUsers.push([
+      'Test - Newbie', // name
+      'test-newbie@civitai.com', // email
+      null,
+      null,
+      2, // id
+      true, // blurnsfw
+      false, // shownsfw
+      'test-newbie', // username
+      false, // isMod
+      false,
+      '2024-11-13 00:00:00.000',
+      null, // deletedAt
+      null, // bannedAt
+      null,
+      null,
+      false,
+      '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+      null,
+      '{Moderation,Buzz}',
+      null,
+      '{}', // meta
+      '{}', // settings
+      null, // "mutedAt"
+      false, // muted
+      1, // "browsingLevel"
+      0, // onboarding
+      '{}', // "publicSettings"
+      null, // "muteConfirmedAt"
+      false,
+      null,
+      'Eligible',
+      null,
+    ]);
+
+    // degen
+    extraUsers.push([
+      'Test - Degen', // name
+      'test-degen@civitai.com', // email
+      '2023-11-14 00:00:00.000',
+      null,
+      3, // id
+      false, // blurnsfw
+      true, // shownsfw
+      'test-degen', // username
+      false, // isMod
+      false,
+      '2023-11-13 00:00:00.000',
+      null, // deletedAt
+      null, // bannedAt
+      null,
+      null,
+      true,
+      '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+      null,
+      '{}',
+      null,
+      '{"scores": {"total": 374, "users": 300, "images": 70, "models": 4, "reportsActioned": 50}}', // meta
+      '{}', // settings
+      null, // "mutedAt"
+      false, // muted
+      31, // "browsingLevel"
+      15, // onboarding
+      '{}', // "publicSettings"
+      null, // "muteConfirmedAt"
+      false,
+      null,
+      'Eligible',
+      `ctm_01j6${faker.string.alphanumeric(22)}`,
+    ]);
+
+    // banned
+    extraUsers.push([
+      'Test - Banned', // name
+      'test-banned@civitai.com', // email
+      '2023-11-14 00:00:00.000',
+      null,
+      4, // id
+      false, // blurnsfw
+      true, // shownsfw
+      'test-banned', // username
+      false, // isMod
+      false,
+      '2023-11-13 00:00:00.000',
+      null, // deletedAt
+      '2023-11-17 00:00:00.000', // bannedAt
+      null,
+      null,
+      true,
+      '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+      null,
+      '{}',
+      null,
+      '{}', // meta
+      '{}', // settings
+      null, // "mutedAt"
+      false, // muted
+      31, // "browsingLevel"
+      15, // onboarding
+      '{}', // "publicSettings"
+      null, // "muteConfirmedAt"
+      false,
+      null,
+      'Eligible',
+      `ctm_01j6${faker.string.alphanumeric(22)}`,
+    ]);
+
+    // deleted
+    extraUsers.push([
+      'Test - Deleted', // name
+      'test-deleted@civitai.com', // email
+      '2023-11-14 00:00:00.000',
+      null,
+      5, // id
+      false, // blurnsfw
+      true, // shownsfw
+      'test-deleted', // username
+      false, // isMod
+      false,
+      '2023-11-13 00:00:00.000',
+      '2023-11-17 00:00:00.000', // deletedAt
+      null, // bannedAt
+      null,
+      null,
+      true,
+      '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+      null,
+      '{}',
+      null,
+      '{}', // meta
+      '{}', // settings
+      null, // "mutedAt"
+      false, // muted
+      31, // "browsingLevel"
+      15, // onboarding
+      '{}', // "publicSettings"
+      null, // "muteConfirmedAt"
+      false,
+      null,
+      'Eligible',
+      `ctm_01j6${faker.string.alphanumeric(22)}`,
+    ]);
+
+    // muted
+    extraUsers.push([
+      'Test - Muted', // name
+      'test-muted@civitai.com', // email
+      '2023-11-14 00:00:00.000',
+      null,
+      6, // id
+      false, // blurnsfw
+      true, // shownsfw
+      'test-muted', // username
+      false, // isMod
+      false,
+      '2023-11-13 00:00:00.000',
+      null, // deletedAt
+      null, // bannedAt
+      null,
+      null,
+      true,
+      '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
+      null,
+      '{}',
+      null,
+      '{}', // meta
+      '{}', // settings
+      '2023-11-17 00:00:00.000', // "mutedAt"
+      true, // muted
+      31, // "browsingLevel"
+      15, // onboarding
+      '{}', // "publicSettings"
+      '2023-11-17 01:00:00.000', // "muteConfirmedAt"
+      false,
+      null,
+      'Eligible',
+      `ctm_01j6${faker.string.alphanumeric(22)}`,
+    ]);
+
+    // subscriber
+    // customerSubscription?
+
+    ret.push(...extraUsers);
+    num += extraUsers.length;
   }
 
   const seenUserNames: string[] = [];
 
   // random users
-  for (let step = 1; step <= num; step++) {
+  for (let step = extraUsers.length + 1; step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const isMuted = fbool(0.01);
     let username = faker.internet.userName();

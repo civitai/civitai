@@ -241,6 +241,33 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           }
         },
       }),
+      ...(isDev
+        ? [
+            CredentialsProvider({
+              id: 'testing-login',
+              name: 'Testing Login',
+              credentials: {
+                id: { label: 'id', type: 'text' },
+              },
+              async authorize(credentials) {
+                if (!isDev) return null;
+
+                const { id } = credentials ?? {};
+                if (!id) throw new Error('No id provided.');
+
+                try {
+                  const userId = Number(id);
+                  const user = await getSessionUser({ userId });
+                  if (!user) throw new Error('No user found.');
+                  return user;
+                } catch (e: unknown) {
+                  const err = e as Error;
+                  throw new Error(`Failed to authenticate: ${err.message}.`);
+                }
+              },
+            }),
+          ]
+        : []),
     ],
     cookies: {
       sessionToken: {

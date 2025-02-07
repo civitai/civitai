@@ -40,9 +40,9 @@
     "analyze:browser": "cross-env BUNDLE_ANALYZE=browser next build",
     "tsc:trace": "tsc  --generateTrace trace --incremental false",
     "tsc:analyze": "npx analyze-trace trace",
-    "test": "npx playwright test",
-    "test:ui": "npx playwright test --ui",
-    "test:gen": "npx playwright codegen"
+    "test": "cross-env NODE_ENV=development npx playwright test",
+    "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
+    "test:gen": "cross-env NODE_ENV=development npx playwright codegen"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
