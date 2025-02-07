@@ -1,5 +1,6 @@
 import { Text } from '@mantine/core';
 import Router from 'next/router';
+import { title } from 'process';
 import { generationPanel } from '~/store/generation.store';
 import { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
@@ -12,16 +13,32 @@ export const contentGenerationTour: StepWithData[] = [
     content:
       'Welcome to the content generation tool! This tour will guide you through the process.',
     locale: { next: "Let's go" },
+    floaterProps: {
+      styles: { floater: { width: '100%' } },
+    },
     disableBeacon: true,
     data: {
       onNext: async () => generationPanel.setView('generate'),
     },
   },
   {
+    target: '[data-tour="gen:terms"]',
+    title: 'Accept the Terms',
+    content: 'Before generating content, you must accept the terms of service.',
+    placement: 'top',
+    spotlightClicks: true,
+    disableBeacon: true,
+    disableOverlayClose: true,
+    disableCloseOnEsc: true,
+    hideCloseButton: true,
+    hideFooter: true,
+  },
+  {
     target: '[data-tour="gen:prompt"]',
     title: 'Start Here',
     spotlightClicks: true,
     disableBeacon: true,
+    disableScrolling: true,
     content:
       'You can type a prompt here to generate an image. Try something simple, like "a blue robot", to get started.',
   },
@@ -40,6 +57,7 @@ export const contentGenerationTour: StepWithData[] = [
       </div>
     ),
     disableBeacon: true,
+    disableScrolling: true,
     data: {
       onNext: async () => {
         Router.push({
@@ -70,24 +88,26 @@ export const contentGenerationTour: StepWithData[] = [
     },
   },
   {
-    target: '[data-tour="gen:accept"]',
-    title: 'Accept the Terms',
-    content: 'Before generating content, you must accept the terms of service.',
-    spotlightClicks: true,
-    disableBeacon: true,
-  },
-  {
     target: '[data-tour="gen:submit"]',
     title: 'Create Your Image',
     content: `Once your prompt is ready to go, hit the generate button and AI will start doing it's magic!`,
     placement: 'top',
     disableBeacon: true,
+    spotlightClicks: true,
     data: {
       onPrev: async () => {
         if (window.innerWidth < 768) generationPanel.close();
         await waitForElement({ selector: '[data-tour="gen:remix"]' }).catch(() => null);
       },
     },
+  },
+  {
+    target: '[data-tour="gen:buzz"]',
+    title: 'Cost of Generation',
+    content:
+      'All AI tools on Civitai run on Buzz. Depending on the complexity of your request, the amount of Buzz may vary.',
+    placement: 'top',
+    disableBeacon: true,
   },
   {
     target: '[data-tour="gen:queue"]',
@@ -179,11 +199,30 @@ export const remixContentGenerationTour: StepWithData[] = [
     locale: { next: "Let's go" },
     disableBeacon: true,
     disableOverlayClose: true,
+    floaterProps: {
+      styles: { floater: { width: '100%' } },
+    },
+    data: {
+      onNext: async () => generationPanel.setView('generate'),
+    },
+  },
+  {
+    target: '[data-tour="gen:terms"]',
+    title: 'Accept the Terms',
+    content: 'Before generating content, you must accept the terms of service.',
+    placement: 'top',
+    spotlightClicks: true,
+    disableBeacon: true,
+    disableOverlayClose: true,
+    disableCloseOnEsc: true,
+    hideCloseButton: true,
+    hideFooter: true,
   },
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Start Here',
     spotlightClicks: true,
+    disableScrolling: true,
     disableBeacon: true,
     content:
       'Looks like you are remixing an image. You can modify the prompt here to generate an image based on the remix.',
@@ -192,6 +231,15 @@ export const remixContentGenerationTour: StepWithData[] = [
     target: '[data-tour="gen:submit"]',
     title: 'Submit Your Prompt',
     content: 'You can submit your prompt by clicking this button and see the magic happen!',
+    placement: 'top',
+    disableBeacon: true,
+    spotlightClicks: true,
+  },
+  {
+    target: '[data-tour="gen:buzz"]',
+    title: 'Cost of Generation',
+    content:
+      'All AI tools on Civitai run on Buzz. Depending on the complexity of your request, the amount of Buzz may vary.',
     placement: 'top',
     disableBeacon: true,
   },

@@ -48,9 +48,9 @@ export function GenerationSidebar() {
       minWidth={350}
       maxWidth={800}
       defaultWidth={400}
-      className={clsx('z-10', fullScreen && 'z-[210] max-w-0')}
+      className={clsx('z-10', fullScreen && 'z-[210] !w-screen')}
     >
-      <div className={clsx('size-full', fullScreen && 'fixed inset-0 w-screen')}>
+      <div className="size-full">
         <ContainerProvider containerName="generation-sidebar" className="bg-gray-0 dark:bg-dark-7">
           <GenerationTabs fullScreen={fullScreen} />
         </ContainerProvider>

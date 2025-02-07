@@ -126,7 +126,7 @@ export function GenerationFormContent() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
-  const { runTour, running, setSteps } = useTourContext();
+  const { runTour, running, currentStep, setSteps } = useTourContext();
   const loadingGeneratorData = useGenerationStore((state) => state.loading);
   const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
     state.requestsLoading,
@@ -322,13 +322,6 @@ export function GenerationFormContent() {
   const remixOfId = form.watch('remixOfId');
   useEffect(() => {
     if (!status.available || status.isLoading || loadingGeneratorData) return;
-
-    // Remove last two steps if user has not generated any images
-    if (!loadingGenQueueRequests && !hasGeneratedImages)
-      setSteps(
-        remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
-      );
-
     if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
   }, [
     status.isLoading,
@@ -338,6 +331,14 @@ export function GenerationFormContent() {
     remixOfId,
     loadingGeneratorData,
   ]);
+
+  useEffect(() => {
+    // Remove last two steps if user has not generated any images
+    if (!loadingGenQueueRequests && !hasGeneratedImages)
+      setSteps(
+        remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
+      );
+  }, [loadingGenQueueRequests, hasGeneratedImages, remixOfId]);
 
   return (
     <Form
@@ -1214,7 +1215,7 @@ export function GenerationFormContent() {
                 ) : (
                   <>
                     {!reviewed && (
-                      <Alert color="yellow" title="Image Generation Terms">
+                      <Alert color="yellow" title="Image Generation Terms" data-tour="gen:terms">
                         <Text size="xs">
                           By using the image generator you confirm that you have read and agree to
                           our{' '}
@@ -1230,7 +1231,10 @@ export function GenerationFormContent() {
                         <Button
                           color="yellow"
                           variant="light"
-                          onClick={() => setReviewed(true)}
+                          onClick={() => {
+                            setReviewed(true);
+                            if (running) runTour({ step: currentStep + 1 });
+                          }}
                           style={{ marginTop: 10 }}
                           leftIcon={<IconCheck />}
                           fullWidth
@@ -1325,6 +1329,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
+  const { running, runTour, currentStep } = useTourContext();
   const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
@@ -1353,6 +1358,9 @@ function SubmitButton(props: { isLoading?: boolean }) {
       loading={isInitialLoading || props.isLoading}
       cost={total}
       disabled={isError}
+      onClick={() => {
+        if (running) runTour({ step: currentStep + 1 });
+      }}
     />
   );
 

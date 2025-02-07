@@ -124,6 +124,7 @@ export function BuzzTransactionButton({
         </Text>
         {(hasCost || loading) && (
           <CurrencyBadge
+            data-tour="gen:buzz"
             currency={Currency.BUZZ}
             unitAmount={buzzAmount}
             displayCurrency={false}

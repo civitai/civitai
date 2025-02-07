@@ -8,6 +8,9 @@ export const modelPageTour: StepWithData[] = [
     content: 'This is where you can view and interact with the model.',
     placement: 'center',
     disableBeacon: true,
+    floaterProps: {
+      styles: { floater: { width: '100%' } },
+    },
   },
   {
     target: '[data-tour="model:create"]',
@@ -33,30 +36,31 @@ export const modelPageTour: StepWithData[] = [
       },
     },
   },
-  {
-    target: '[data-tour="model:discussion"]',
-    disableBeacon: true,
-    title: 'Join the Discussion',
-    placement: 'top',
-    content: 'Engage in discussions related to this resource.',
-  },
-  {
-    target: '[data-tour="model:gallery"]',
-    disableBeacon: true,
-    title: 'View Gallery',
-    content: `View images created with this resource. You can add your review and post your own images that you've created using this resource.`,
-    data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="model:remix"]' }).catch(() => null);
-      },
-    },
-  },
+  // {
+  //   target: '[data-tour="model:discussion"]',
+  //   disableBeacon: true,
+  //   title: 'Join the Discussion',
+  //   placement: 'top',
+  //   content: 'Engage in discussions related to this resource.',
+  // },
+  // {
+  //   target: '[data-tour="model:gallery"]',
+  //   disableBeacon: true,
+  //   title: 'View Gallery',
+  //   content: `View images created with this resource. You can add your review and post your own images that you've created using this resource.`,
+  //   // data: {
+  //   //   onNext: async () => {
+  //   //     await waitForElement({ selector: '[data-tour="model:remix"]' }).catch(() => null);
+  //   //   },
+  //   // },
+  // },
   {
     target: '[data-tour="model:remix"]',
     title: 'Remix This Image',
     content: 'Click this button to remix an image and create something new',
     disableBeacon: true,
     spotlightClicks: true,
+    disableOverlayClose: true,
     spotlightPadding: 10,
   },
 ];

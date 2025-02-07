@@ -1,18 +1,12 @@
 import { useMantineTheme } from '@mantine/core';
 import { useSearchParams } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import Joyride, {
-  ACTIONS,
-  Callback,
-  EVENTS,
-  Props as JoyrideProps,
-  LIFECYCLE,
-  STATUS,
-} from 'react-joyride';
+import Joyride, { ACTIONS, Callback, EVENTS, Props as JoyrideProps, STATUS } from 'react-joyride';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TourSettingsSchema } from '~/server/schema/user.schema';
 import { StepData, StepWithData } from '~/types/tour';
 import { TourKey, tourSteps } from '~/utils/tours';
@@ -54,6 +48,7 @@ export function TourProvider({ children, ...props }: Props) {
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
   const tourKey = searchParams.get('tour') as TourKey | null;
 
   const [state, setState] = useState<Omit<TourState, 'runTour' | 'closeTour' | 'setSteps'>>(() => ({
@@ -94,13 +89,14 @@ export function TourProvider({ children, ...props }: Props) {
       const activeTour = opts?.key ?? state.activeTour;
       const currentTourData =
         userSettings?.tourSettings?.[activeTour ?? ''] ?? localTour[activeTour ?? ''];
-      if (opts?.step && activeTour && !currentTourData?.completed) {
+      if (opts?.step != null && activeTour && !currentTourData?.completed) {
         const tour = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
-        updateUserSettingsMutation.mutate({ tour });
+        if (currentUser) updateUserSettingsMutation.mutate({ tour });
         setLocalTour((old) => ({ ...old, ...tour }));
       }
     },
     [
+      currentUser,
       localTour,
       setLocalTour,
       state.activeTour,
@@ -115,7 +111,7 @@ export function TourProvider({ children, ...props }: Props) {
         const tour = {
           [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
         };
-        updateUserSettingsMutation.mutate({ tour });
+        if (currentUser) updateUserSettingsMutation.mutate({ tour });
         setLocalTour((old) => ({ ...old, ...tour }));
       }
 
@@ -125,7 +121,7 @@ export function TourProvider({ children, ...props }: Props) {
         currentStep: opts?.reset ? 0 : old.currentStep,
       }));
     },
-    [setLocalTour, state.activeTour, state.currentStep, updateUserSettingsMutation]
+    [setLocalTour, state.activeTour, state.currentStep, updateUserSettingsMutation, currentUser]
   );
 
   const setSteps = (steps: TourState['steps']) => {
@@ -134,9 +130,7 @@ export function TourProvider({ children, ...props }: Props) {
 
   const handleJoyrideCallback = useCallback<Callback>(
     async (data) => {
-      const { status, type, action, index, step, lifecycle } = data;
-      // const target = document.querySelector(step.target as string);
-      // if (target && lifecycle === LIFECYCLE.TOOLTIP) forceUpdate();
+      const { status, type, action, index, step } = data;
 
       if (type === EVENTS.TOUR_END && completeStatus.includes(status)) {
         closeTour({ reset: true });
@@ -193,29 +187,31 @@ export function TourProvider({ children, ...props }: Props) {
   return (
     <TourContext.Provider value={{ ...state, runTour, closeTour, setSteps }}>
       {children}
-      <IsClient>
-        <Joyride
-          key={state.activeTour}
-          steps={state.steps}
-          stepIndex={state.currentStep}
-          callback={handleJoyrideCallback}
-          styles={{
-            options: {
-              zIndex: 100000,
-              arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-            },
-            spotlight: { border: `2px solid ${theme.colors.cyan[4]}` },
-          }}
-          tooltipComponent={TourPopover}
-          run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
-          scrollOffset={100}
-          disableScrollParentFix
-          scrollToFirstStep
-          showSkipButton
-          continuous
-          {...props}
-        />
-      </IsClient>
+      {features.appTour && (
+        <IsClient>
+          <Joyride
+            key={state.activeTour}
+            steps={state.steps}
+            stepIndex={state.currentStep}
+            callback={handleJoyrideCallback}
+            styles={{
+              options: {
+                zIndex: 100000,
+                arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
+              },
+              spotlight: { border: `2px solid ${theme.colors.cyan[4]}` },
+            }}
+            tooltipComponent={TourPopover}
+            run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
+            scrollOffset={100}
+            // disableScrollParentFix
+            scrollToFirstStep
+            showSkipButton
+            continuous
+            {...props}
+          />
+        </IsClient>
+      )}
     </TourContext.Provider>
   );
 }

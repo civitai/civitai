@@ -1,5 +1,6 @@
 import { Button, CloseButton, Group, Paper, Text } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
+import { clsx } from 'clsx';
 import React, { useCallback, useLayoutEffect } from 'react';
 import { TooltipRenderProps } from 'react-joyride';
 
@@ -17,29 +18,10 @@ export function TourPopover(props: TooltipRenderProps) {
     tooltipProps,
   } = props;
 
-  // const handlePrevClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
-  //   async (e) => {
-  //     backProps.onClick(e);
-  //     // await (step.data as StepData)?.onPrev?.();
-  //   },
-  //   [backProps, step.data]
-  // );
-
-  // const handleNextClick = useCallback<React.MouseEventHandler<HTMLButtonElement>>(
-  //   async (e) => {
-  //     primaryProps.onClick(e);
-  //     // await (step.data as StepData)?.onNext?.();
-  //   },
-  //   [primaryProps, step.data]
-  // );
-
-  // useLayoutEffect(() => {
-  //   console.log('dispatching resize event');
-  //   window.dispatchEvent(new Event('resize'));
-  // }, []);
+  const centered = step.placement === 'center';
 
   return (
-    <Paper {...tooltipProps} className="ml-auto flex flex-col gap-4" p="sm" radius="md" maw="375px">
+    <Paper {...tooltipProps} className={clsx('flex flex-col gap-4', centered && 'mx-auto')} p="sm" radius="md" maw="375px">
       <Group position="apart" noWrap>
         <Text size="sm" color="dimmed">
           {index + 1} of {size}
