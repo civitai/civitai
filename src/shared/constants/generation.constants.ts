@@ -533,7 +533,7 @@ export const engineDefinitions: EnginesDictionary = {
     label: 'Lightricks',
     description: '',
     whatIf: ['duration', 'cfgScale', 'steps'],
-    memberOnly: true,
+    // memberOnly: true,
   },
   haiper: {
     label: 'Haiper',
