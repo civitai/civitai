@@ -264,6 +264,7 @@ export default function TrainingSelectFile({
         TRANSMITTER_KEY,
         publishImages.map((url) => ({ url }))
       );
+      
       await router.replace({ query: { ...router.query, src: TRANSMITTER_KEY } }, undefined, {
         shallow: true,
         scroll: false,

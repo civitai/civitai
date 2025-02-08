@@ -12,7 +12,6 @@ import {
   TooltipProps,
 } from '@mantine/core';
 import { useClipboard } from '@mantine/hooks';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   IconAlertTriangleFilled,
   IconArrowsShuffle,
@@ -21,8 +20,8 @@ import {
   IconInfoHexagon,
   IconTrash,
 } from '@tabler/icons-react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
-import { Currency } from '~/shared/utils/prisma/enums';
 import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
@@ -40,23 +39,24 @@ import {
   useDeleteTextToImageRequest,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
+import { Currency } from '~/shared/utils/prisma/enums';
 
-import { generationPanel, generationStore } from '~/store/generation.store';
-import { formatDateMin } from '~/utils/date-helpers';
+import { TimeSpan, WorkflowStatus } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
+import { TwCard } from '~/components/TwCard/TwCard';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { TimeSpan, WorkflowStatus } from '@civitai/client';
 import { orchestratorPendingStatuses } from '~/shared/constants/generation.constants';
+import { generationPanel, generationStore } from '~/store/generation.store';
+import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
-import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useInViewDynamic } from '~/components/IntersectionObserver/IntersectionObserverProvider';
-import { TwCard } from '~/components/TwCard/TwCard';
-import { GenerationResource } from '~/server/services/generation/generation.service';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -89,6 +89,8 @@ export function QueueItem({
   const [showDelayedMessage, setShowDelayedMessage] = useState(false);
   const { status } = request;
   const { params, resources = [] } = step;
+
+  console.log(resources);
 
   let { images } = step;
   const failureReason = images.find((x) => x.status === 'failed' && x.reason)?.reason;

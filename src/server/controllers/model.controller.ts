@@ -36,6 +36,7 @@ import {
   ModelGallerySettingsSchema,
   ModelMeta,
   ModelUpsertInput,
+  PrivateModelFromTrainingInput,
   PublishModelSchema,
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
@@ -71,6 +72,7 @@ import {
   getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
+  privateModelFromTraining,
   publishModelById,
   restoreModelById,
   setModelShowcaseCollection,
@@ -1703,3 +1705,52 @@ export function setModelCollectionShowcaseHandler({
     throw throwDbError(error);
   }
 }
+
+export const privateModelFromTrainingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PrivateModelFromTrainingInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { nsfw, poi, minor } = input;
+
+    if (nsfw && poi)
+      throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+
+    if (nsfw && minor)
+      throw throwBadRequestError('Mature content depicting minors is not permitted.');
+
+    // Check tags for multiple categories
+    const { tagsOnModels } = input;
+    if (tagsOnModels?.length) {
+      const modelCategories = await getCategoryTags('model');
+      const matchedTags = tagsOnModels.filter((tag) =>
+        modelCategories.some((categoryTag) => categoryTag.name === tag.name)
+      );
+
+      if (matchedTags.length > 1)
+        throw throwBadRequestError(
+          `Model cannot have multiple categories. Please include only one from: ${matchedTags
+            .map((tag) => tag.name)
+            .join(', ')}`
+        );
+    }
+
+    const model = await privateModelFromTraining({
+      ...input,
+      userId,
+      isModerator: ctx.user.isModerator,
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    if (input.id) await dataForModelsCache.bust(input.id);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};

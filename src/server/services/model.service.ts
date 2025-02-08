@@ -18,8 +18,9 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
@@ -32,6 +33,7 @@ import {
   ModelInput,
   ModelMeta,
   ModelUpsertInput,
+  PrivateModelFromTrainingInput,
   PublishModelSchema,
   SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
@@ -62,14 +64,18 @@ import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   ImagesForModelVersions,
+  ingestImageBulk,
+  uploadImageFromUrl,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
   bustMvCache,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
+import { createPost } from '~/server/services/post.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
@@ -90,8 +96,8 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  Availability,
   CommercialUse,
-  HomeBlockType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,
@@ -110,7 +116,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -237,6 +242,7 @@ export const getModelsRaw = async ({
     browsingLevel,
     excludedUserIds,
     collectionTagId,
+    availability,
   } = input;
 
   let pending = input.pending;
@@ -463,6 +469,9 @@ export const getModelsRaw = async ({
 
   if (earlyAccess) {
     AND.push(Prisma.sql`m."earlyAccessDeadline" >= ${new Date()}`);
+  }
+  if (availability) {
+    AND.push(Prisma.sql`m."availability" = ${availability}::"Availability"`);
   }
 
   if (supportsGeneration) {
@@ -2708,3 +2717,162 @@ export async function getFeaturedModels() {
 export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }
+
+export const privateModelFromTraining = async (
+  input: PrivateModelFromTrainingInput & {
+    userId: number;
+    // meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
+    isModerator?: boolean;
+  }
+) => {
+  if (!input.isModerator) {
+    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
+  }
+
+  const totalPrivateModels = await dbRead.model.count({
+    where: { userId: input.userId, availability: Availability.Private },
+  });
+
+  if (totalPrivateModels >= 10) {
+    throw throwBadRequestError('You have reached the maximum number of private models');
+  }
+
+  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
+    input;
+
+  // don't allow updating of locked properties
+  if (!isModerator) {
+    const lockedProperties = data.lockedProperties ?? [];
+    for (const prop of lockedProperties) {
+      const key = prop as keyof typeof data;
+      if (data[key] !== undefined) delete data[key];
+    }
+  }
+
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+    },
+  });
+
+  if (!model) return null;
+
+  const isOwner = model.userId === userId || isModerator;
+  if (!isOwner) return null;
+
+  const result = await dbWrite.model.update({
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      nsfwLevel: true,
+      poi: true,
+      minor: true,
+      nsfw: true,
+      gallerySettings: true,
+      status: true,
+      meta: true,
+      modelVersions: {
+        select: {
+          id: true,
+          files: {
+            select: {
+              id: true,
+              metadata: true,
+            },
+          },
+        },
+      },
+    },
+    where: { id },
+    data: {
+      ...data,
+      availability: Availability.Private,
+      status: ModelStatus.Published,
+    },
+  });
+
+  if (result.modelVersions.length > 0) {
+    const now = new Date();
+    // Make this private:
+    await dbWrite.modelVersion.updateMany({
+      where: { id: { in: result.modelVersions.map((x) => x.id) } },
+      data: { availability: Availability.Private, publishedAt: now, status: ModelStatus.Published },
+    });
+
+    // Create posts:
+    await Promise.all(
+      result.modelVersions.map(async (modelVersion) => {
+        const trainingFile = modelVersion.files.find((file) => {
+          const metadata = file.metadata as ModelFileMetadata;
+          return !!metadata?.trainingResults;
+        });
+
+        if (!trainingFile) {
+          return;
+        }
+        const fileMetadata = trainingFile.metadata as ModelFileMetadata;
+
+        const epoch = fileMetadata.selectedEpochUrl
+          ? fileMetadata.trainingResults?.epochs?.find((e) =>
+              'modelUrl' in e
+                ? e.modelUrl === fileMetadata.selectedEpochUrl
+                : e.model_url === fileMetadata.selectedEpochUrl
+            )
+          : fileMetadata.trainingResults?.epochs?.[fileMetadata.trainingResults.epochs?.length - 1];
+
+        if (!epoch) {
+          return;
+        }
+
+        const imageUrls = 'sampleImages' in epoch ? epoch.sampleImages : epoch.sample_images;
+
+        if (!imageUrls || imageUrls?.length === 0) {
+          return;
+        }
+
+        const uploadedImages = (
+          await Promise.all(
+            imageUrls.map(async (data) => {
+              return await uploadImageFromUrl({
+                imageUrl: typeof data === 'string' ? data : data.image_url,
+              });
+            })
+          )
+        ).filter((x) => isDefined(x?.url));
+
+        // Create post:
+        const post = await createPost({
+          userId,
+          modelVersionId: modelVersion.id,
+          publishedAt: now,
+        });
+
+        // Create images:
+        await dbWrite.image.createMany({
+          data: uploadedImages.map((image) => ({
+            userId,
+            meta: image.meta as any,
+            metadata: image.metadata as any,
+            url: image.url as string,
+            postId: post.id,
+          })),
+        });
+
+        const images = await dbWrite.image.findMany({
+          where: { postId: post.id },
+          select: { id: true, url: true },
+        });
+
+        await ingestImageBulk({ images, lowPriority: true });
+      })
+    );
+  }
+
+  await preventReplicationLag('model', id);
+
+  await userContentOverviewCache.bust(userId);
+
+  return result;
+};

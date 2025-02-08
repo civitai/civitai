@@ -17,6 +17,7 @@ import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   AssociationType,
+  Availability,
   CheckpointType,
   CollectionItemStatus,
   CommercialUse,
@@ -104,6 +105,7 @@ export const getAllModelsSchema = baseQuerySchema
     clubId: z.number().optional(),
     pending: z.boolean().optional(),
     collectionTagId: z.number().optional(),
+    availability: z.nativeEnum(Availability).optional(),
   });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
@@ -191,6 +193,7 @@ export const modelUpsertSchema = licensingSchema.extend({
     .passthrough()
     .transform((val) => val as ModelMeta | null)
     .nullish(),
+  availability: z.nativeEnum(Availability).optional(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
@@ -360,4 +363,9 @@ export const ingestModelSchema = z.object({
 export type LimitOnly = z.input<typeof limitOnly>;
 export const limitOnly = z.object({
   take: z.number().optional(),
+});
+
+export type PrivateModelFromTrainingInput = z.infer<typeof privateModelFromTrainingSchema>;
+export const privateModelFromTrainingSchema = modelUpsertSchema.extend({
+  id: z.number(), // Model should already be created before hand.
 });

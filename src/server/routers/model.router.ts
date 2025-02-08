@@ -23,6 +23,7 @@ import {
   getMyDraftModelsHandler,
   getMyTrainingModelsHandler,
   getSimpleModelsInfiniteHandler,
+  privateModelFromTrainingHandler,
   publishModelHandler,
   reorderModelVersionsHandler,
   requestReviewHandler,
@@ -54,6 +55,7 @@ import {
   migrateResourceToCollectionSchema,
   modelByHashesInput,
   modelUpsertSchema,
+  privateModelFromTrainingSchema,
   publishModelSchema,
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
@@ -240,4 +242,7 @@ export const modelRouter = router({
     .input(migrateResourceToCollectionSchema)
     .use(isOwnerOrModerator)
     .mutation(({ input }) => migrateResourceToCollection(input)),
+  privateModelFromTraining: guardedProcedure
+    .input(privateModelFromTrainingSchema)
+    .mutation(privateModelFromTrainingHandler),
 });
