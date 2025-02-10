@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.465",
+  "version": "5.0.468",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -68,7 +68,7 @@
     "@essentials/memoize-one": "^1.1.0",
     "@essentials/one-key-map": "^1.2.0",
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
-    "@headlessui/react": "^2.0.3",
+    "@headlessui/react": "2.2",
     "@hookform/resolvers": "^2.9.10",
     "@mailchimp/mailchimp_marketing": "^3.0.80",
     "@mantine/carousel": "^5.10.4",

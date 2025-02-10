@@ -211,7 +211,7 @@ function ModelCarouselContent({
                             image={image}
                             edgeImageProps={{ width: 450 }}
                             aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
-                            radius="md"
+                            // radius="md"
                             style={{ width: '100%' }}
                             nsfw={!safe}
                           />
