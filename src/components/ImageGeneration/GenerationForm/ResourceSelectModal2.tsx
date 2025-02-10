@@ -191,7 +191,7 @@ export default function ResourceSelectModal({
 
   const filters: string[] = [
     // Default filter for visibility:
-    // `((availability = ${Availability.Public} OR availability = ${Availability.EarlyAccess}) OR user.id = ${currentUser?.id})`,
+    `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
   ];
 
   const or: string[] = [];
@@ -221,8 +221,6 @@ export default function ResourceSelectModal({
       `versions.baseModel IN [${selectFilters.baseModels.map((x) => `"${x}"`).join(',')}]`
     );
   }
-
-  
 
   if (selectedTab === 'featured') {
     if (!!featuredModels) {
@@ -270,7 +268,6 @@ export default function ResourceSelectModal({
 
   const totalFilters = [...filters, ...exclude].join(' AND ');
 
-
   function handleSelect(value: GenerationResource) {
     onSelect(value);
     dialog.onClose();
@@ -281,7 +278,6 @@ export default function ResourceSelectModal({
     onClose?.();
   }
 
- 
   return (
     <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
       <div className="flex size-full max-h-full max-w-full flex-col">
@@ -408,7 +404,7 @@ function ResourceHitList({
     data: items,
   });
 
-   const loading =
+  const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
   const filtered = useMemo(() => {
@@ -449,7 +445,7 @@ function ResourceHitList({
       </div>
     );
 
-  console.log(items)
+  console.log(items);
 
   if (!filtered.length)
     return (
@@ -908,11 +904,24 @@ function ResourceSelectCard({
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                     {data.availability === Availability.Private && (
                       <div className="absolute bottom-2 left-2 flex items-center gap-1">
-                        <Tooltip label="This is a private model which requires permission to generate with." position="top" withArrow withinPortal multiline maw={250}>
-                        <Badge color="gray" variant="filled" h={30} w={30} className="flex items-center justify-center" p={0}>
-                          <IconLock size={16} />
-                        </Badge>
-
+                        <Tooltip
+                          label="This is a private model which requires permission to generate with."
+                          position="top"
+                          withArrow
+                          withinPortal
+                          multiline
+                          maw={250}
+                        >
+                          <Badge
+                            color="gray"
+                            variant="filled"
+                            h={30}
+                            w={30}
+                            className="flex items-center justify-center"
+                            p={0}
+                          >
+                            <IconLock size={16} />
+                          </Badge>
                         </Tooltip>
                       </div>
                     )}

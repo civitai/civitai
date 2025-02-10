@@ -199,9 +199,22 @@ export const upsertModelVersion = async ({
   if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
-      select: { id: true },
+      select: {
+        id: true,
+        model: {
+          select: { availability: true },
+        },
+      },
       orderBy: { index: 'asc' },
     });
+
+    if (
+      existingVersions.length > 0 &&
+      existingVersions[0].model.availability === Availability.Private
+    ) {
+      // Ensures people won't abuse the system by adding versions to private models.
+      throw throwBadRequestError('You cannot add versions to a private model.');
+    }
 
     const [version] = await dbWrite.$transaction([
       dbWrite.modelVersion.create({

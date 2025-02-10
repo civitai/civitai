@@ -74,6 +74,7 @@ import {
   permaDeleteModelById,
   privateModelFromTraining,
   publishModelById,
+  publishPrivateModel,
   restoreModelById,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
@@ -106,6 +107,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  Availability,
   BountyType,
   CollectionItemStatus,
   MetricTimeframe,
@@ -1749,6 +1751,43 @@ export const privateModelFromTrainingHandler = async ({
     if (input.id) await dataForModelsCache.bust(input.id);
 
     return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const publishPrivateModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const model = await getModel({
+      id: input.id,
+      select: { id: true, userId: true, status: true, availability: true },
+    });
+
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    if (model.availability !== Availability.Private) {
+      throw throwBadRequestError('Model is not private. Cannot publish.');
+    }
+
+    if (model.userId !== userId && !ctx.user.isModerator) {
+      throw throwAuthorizationError();
+    }
+
+    await publishPrivateModel({ modelId: input.id });
+    await dataForModelsCache.bust(input.id);
+    await modelsSearchIndex.queueUpdate([
+      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
+    return true;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

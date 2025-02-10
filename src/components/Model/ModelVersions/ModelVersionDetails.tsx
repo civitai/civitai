@@ -19,6 +19,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconBrush,
   IconClock,
@@ -108,6 +109,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import {
+  Availability,
   CollectionType,
   ModelFileVisibility,
   ModelModifier,
@@ -201,6 +203,27 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+  const publishPrivateModelMutation = trpc.model.publishPrivateModel.useMutation({
+    onSuccess: async () => {
+      await queryUtils.model.getById.invalidate({ id: model.id });
+      await queryUtils.modelVersion.getById.invalidate({ id: version.id });
+    },
+  });
+  const handlePublishPrivateModel = async () => {
+    openConfirmModal({
+      title: 'Make this model public',
+      children: (
+        <Text size="sm">
+          Are you sure you want to make this model public? This action is not reversible.
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Publish model', cancel: "No, don't publish it" },
+      confirmProps: { color: 'blue' },
+      onConfirm: () => publishPrivateModelMutation.mutateAsync({ id: model.id }),
+    });
+  };
+
   const onPurchase = (reason?: 'generation' | 'download') => {
     if (!features.earlyAccessModel) {
       showErrorNotification({
@@ -899,6 +922,19 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                   submit an appeal
                 </Text>
                 .
+              </Text>
+            </AlertWithIcon>
+          )}
+          {model.availability === Availability.Private && (
+            <AlertWithIcon
+              color="yellow"
+              iconColor="yellow"
+              icon={<IconLock />}
+              title="Private Model"
+            >
+              <Text>
+                Want to start earning buzz,{' '}
+                <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
               </Text>
             </AlertWithIcon>
           )}

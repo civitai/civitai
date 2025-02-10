@@ -25,6 +25,7 @@ import {
   getSimpleModelsInfiniteHandler,
   privateModelFromTrainingHandler,
   publishModelHandler,
+  publishPrivateModelHandler,
   reorderModelVersionsHandler,
   requestReviewHandler,
   restoreModelHandler,
@@ -245,4 +246,8 @@ export const modelRouter = router({
   privateModelFromTraining: guardedProcedure
     .input(privateModelFromTrainingSchema)
     .mutation(privateModelFromTrainingHandler),
+  publishPrivateModel: guardedProcedure
+    .input(getByIdSchema)
+    .use(isOwnerOrModerator)
+    .mutation(publishPrivateModelHandler),
 });

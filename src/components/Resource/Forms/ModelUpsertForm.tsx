@@ -46,6 +46,7 @@ import {
   Availability,
   CheckpointType,
   CommercialUse,
+  ModelStatus,
   ModelType,
   ModelUploadType,
   TagTarget,
@@ -263,13 +264,14 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   }
 
   const isTrained = model?.uploadType === ModelUploadType.Trained;
+  const isDraft = model?.status === ModelStatus.Draft;
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col span={12}>
           <Stack>
-            {isTrained && (
+            {isTrained && isDraft && (
               <InputChipGroup
                 grow
                 spacing="sm"

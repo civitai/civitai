@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { ManipulateType } from 'dayjs';
+import dayjs, { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
@@ -2901,13 +2901,21 @@ export const privateModelFromTraining = async (
   }
 };
 
-export const getOwnedModelsForGeneration = async ({ userId }: { userId: number }) => {
-  const ownedModels = await dbRead.model.findMany({
-    where: { userId },
-    select: { id: true },
-  });
+export const publishPrivateModel = async ({ modelId }: { modelId: number }) => {
+  await dbWrite.$transaction([
+    dbWrite.modelVersion.updateMany({
+      where: { modelId: modelId },
+      data: { availability: Availability.Public, publishedAt: dayjs().toDate() },
+    }),
+    dbWrite.model.update({
+      where: {
+        id: modelId,
+      },
+      data: {
+        availability: Availability.Public,
+      },
+    }),
+  ]);
 
-  const data = await modelsSearchIndex.getData(ownedModels.map((x) => x.id));
-
-  return data;
+  return true;
 };
