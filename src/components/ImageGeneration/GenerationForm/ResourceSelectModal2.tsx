@@ -25,6 +25,7 @@ import {
   IconDownload,
   IconHorse,
   IconInfoCircle,
+  IconLock,
   IconTagOff,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -84,6 +85,7 @@ import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { GenerationResource } from '~/server/services/generation/generation.service';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -104,7 +106,7 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-const tabs = ['all', 'featured', 'recent', 'liked', 'uploaded'] as const;
+const tabs = ['all', 'featured', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
 
 const take = 20;
@@ -172,39 +174,26 @@ export default function ResourceSelectModal({
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'modelVersion' }
   );
 
-  const {
-    data: ownedModels,
-    isFetching: isLoadingOwnedModels,
-  } = trpc.model.getAll.useQuery({
-    username: currentUser?.username,
-    pending: true,
-
-    // baseModels: selectFilters.baseModels,
-    // types: selectFilters.types,
-  }, {
-    enabled: !!currentUser && selectedTab === 'uploaded',
-  })
-
-  console.log(ownedModels)
-
   const isLoadingExtra =
     (isLoadingFeatured && selectedTab === 'featured') ||
     ((isLoadingGenerations ||
       isLoadingTraining ||
       isLoadingManuallyAdded ||
       isLoadingRecommendedModels) &&
-      selectedTab === 'recent') || (
-      isLoadingOwnedModels && selectedTab === 'uploaded'
-      );
+      selectedTab === 'recent');
 
   // TODO handle fetching errors from above
 
   const { resources = [], excludeIds = [], canGenerate } = options;
   const allowedTabs = tabs.filter((t) => {
-    return !(!currentUser && ['recent', 'liked', 'uploaded'].includes(t));
+    return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
 
-  const filters: string[] = [];
+  const filters: string[] = [
+    // Default filter for visibility:
+    // `((availability = ${Availability.Public} OR availability = ${Availability.EarlyAccess}) OR user.id = ${currentUser?.id})`,
+  ];
+
   const or: string[] = [];
   if (canGenerate !== undefined) filters.push(`canGenerate = ${canGenerate}`);
   for (const { type, baseModels } of resources) {
@@ -232,6 +221,8 @@ export default function ResourceSelectModal({
       `versions.baseModel IN [${selectFilters.baseModels.map((x) => `"${x}"`).join(',')}]`
     );
   }
+
+  
 
   if (selectedTab === 'featured') {
     if (!!featuredModels) {
@@ -271,7 +262,7 @@ export default function ResourceSelectModal({
     if (!!likedModels) {
       filters.push(`id IN [${likedModels.join(',')}]`);
     }
-  } else if (selectedTab === 'uploaded') {
+  } else if (selectedTab === 'mine') {
     if (currentUser) {
       filters.push(`user.id = ${currentUser.id}`);
     }
@@ -279,7 +270,6 @@ export default function ResourceSelectModal({
 
   const totalFilters = [...filters, ...exclude].join(' AND ');
 
-  // console.log(totalFilters);
 
   function handleSelect(value: GenerationResource) {
     onSelect(value);
@@ -291,6 +281,7 @@ export default function ResourceSelectModal({
     onClose?.();
   }
 
+ 
   return (
     <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
       <div className="flex size-full max-h-full max-w-full flex-col">
@@ -341,28 +332,13 @@ export default function ResourceSelectModal({
                 </Center>
               </div>
             ) : (
-              <>
-              {selectedTab === 'uploaded' && (
-                <>
-                  {ownedModels?.items.map(model => (
-                    <ResourceSelectCard
-                      key={model.id}
-                      data={model}
-                      selectSource={selectSource}
-                    />
-                  ))}
-                </>
-              )}
-              {selectedTab !== 'uploaded' && (
-                <ResourceHitList
-                  resources={resources}
-                  canGenerate={canGenerate}
-                  excludeIds={excludeIds}
-                  likes={likedModels}
-                  selectSource={selectSource}
-                />
-              )}
-              </>
+              <ResourceHitList
+                resources={resources}
+                canGenerate={canGenerate}
+                excludeIds={excludeIds}
+                likes={likedModels}
+                selectSource={selectSource}
+              />
             )}
           </InstantSearch>
         </ResourceSelectContext.Provider>
@@ -431,7 +407,8 @@ function ResourceHitList({
     type: 'models',
     data: items,
   });
-  const loading =
+
+   const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
   const filtered = useMemo(() => {
@@ -472,7 +449,9 @@ function ResourceHitList({
       </div>
     );
 
-  if (!items.length)
+  console.log(items)
+
+  if (!filtered.length)
     return (
       <div className="p-3 py-5">
         <Center>
@@ -927,6 +906,16 @@ function ResourceSelectCard({
                       )}
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
+                    {data.availability === Availability.Private && (
+                      <div className="absolute bottom-2 left-2 flex items-center gap-1">
+                        <Tooltip label="This is a private model which requires permission to generate with." position="top" withArrow withinPortal multiline maw={250}>
+                        <Badge color="gray" variant="filled" h={30} w={30} className="flex items-center justify-center" p={0}>
+                          <IconLock size={16} />
+                        </Badge>
+
+                        </Tooltip>
+                      </div>
+                    )}
                     {!!currentUser && (
                       <div className="absolute bottom-2 right-2 flex items-center gap-1">
                         <Tooltip

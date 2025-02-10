@@ -2900,3 +2900,14 @@ export const privateModelFromTraining = async (
     throw throwDbError(error);
   }
 };
+
+export const getOwnedModelsForGeneration = async ({ userId }: { userId: number }) => {
+  const ownedModels = await dbRead.model.findMany({
+    where: { userId },
+    select: { id: true },
+  });
+
+  const data = await modelsSearchIndex.getData(ownedModels.map((x) => x.id));
+
+  return data;
+};
