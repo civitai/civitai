@@ -92,9 +92,9 @@ const someObject = new Promise((resolve) =>
 export default function Test() {
   const [count, setCount] = useState(0);
 
-  // useEffect(() => {
-  //   throw new Error('custom error for testing');
-  // }, []);
+  // // useEffect(() => {
+  // //   throw new Error('custom error for testing');
+  // // }, []);
 
   const theme = useMantineTheme();
 
