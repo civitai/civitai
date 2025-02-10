@@ -193,3 +193,15 @@ test.describe('error handling', () => {
     await expect(page.getByRole('heading', { name: 'Add version' })).toBeVisible();
   });
 });
+
+test.describe('api', () => {
+  test('get tools', async ({ request }) => {
+    const tools = await request.get(`/api/trpc/tool.getAll`);
+    expect(tools.ok()).toBeTruthy();
+
+    const json = await tools.json();
+    const ids = json?.result?.data?.json?.items?.map((item: { id: number }) => item.id);
+    expect(ids).toEqual(expect.arrayContaining([1, 7]));
+    expect(ids).not.toEqual(expect.arrayContaining([55, 100]));
+  });
+});

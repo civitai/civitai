@@ -42,7 +42,8 @@
     "tsc:analyze": "npx analyze-trace trace",
     "test": "cross-env NODE_ENV=development npx playwright test",
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
-    "test:gen": "cross-env NODE_ENV=development npx playwright codegen"
+    "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
+    "test:reset": "make bootstrap-db"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
