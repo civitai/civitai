@@ -430,7 +430,7 @@ async function reviewEntries() {
       const review = await generateReview({
         theme: currentChallenge.theme,
         creator: entry.username,
-        imageUrl: getEdgeUrl(entry.url, { width: 1024 }),
+        imageUrl: getEdgeUrl(entry.url, { width: 1024, optimized: true }),
         config: challengeTypeConfig,
       });
       log('Review prepared', entry.imageId, review);
@@ -739,7 +739,7 @@ export async function getCoverOfModel(modelId: number) {
     LIMIT 1;
   `;
   if (!image) throw new Error('Failed to get cover image');
-  image.url = getEdgeUrl(image.url, { width: 1024 });
+  image.url = getEdgeUrl(image.url, { width: 1024, optimized: true });
   return image;
 }
 
