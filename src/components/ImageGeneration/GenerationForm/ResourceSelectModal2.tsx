@@ -82,8 +82,11 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -92,9 +95,6 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
-import { GenerationResource } from '~/server/services/generation/generation.service';
-import { fetchGenerationData } from '~/store/generation.store';
-import { showErrorNotification } from '~/utils/notifications';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -172,13 +172,30 @@ export default function ResourceSelectModal({
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'modelVersion' }
   );
 
+  const {
+    data: ownedModels,
+    isFetching: isLoadingOwnedModels,
+  } = trpc.model.getAll.useQuery({
+    username: currentUser?.username,
+    pending: true,
+
+    // baseModels: selectFilters.baseModels,
+    // types: selectFilters.types,
+  }, {
+    enabled: !!currentUser && selectedTab === 'uploaded',
+  })
+
+  console.log(ownedModels)
+
   const isLoadingExtra =
     (isLoadingFeatured && selectedTab === 'featured') ||
     ((isLoadingGenerations ||
       isLoadingTraining ||
       isLoadingManuallyAdded ||
       isLoadingRecommendedModels) &&
-      selectedTab === 'recent');
+      selectedTab === 'recent') || (
+      isLoadingOwnedModels && selectedTab === 'uploaded'
+      );
 
   // TODO handle fetching errors from above
 
@@ -324,13 +341,28 @@ export default function ResourceSelectModal({
                 </Center>
               </div>
             ) : (
-              <ResourceHitList
-                resources={resources}
-                canGenerate={canGenerate}
-                excludeIds={excludeIds}
-                likes={likedModels}
-                selectSource={selectSource}
-              />
+              <>
+              {selectedTab === 'uploaded' && (
+                <>
+                  {ownedModels?.items.map(model => (
+                    <ResourceSelectCard
+                      key={model.id}
+                      data={model}
+                      selectSource={selectSource}
+                    />
+                  ))}
+                </>
+              )}
+              {selectedTab !== 'uploaded' && (
+                <ResourceHitList
+                  resources={resources}
+                  canGenerate={canGenerate}
+                  excludeIds={excludeIds}
+                  likes={likedModels}
+                  selectSource={selectSource}
+                />
+              )}
+              </>
             )}
           </InstantSearch>
         </ResourceSelectContext.Provider>
