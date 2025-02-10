@@ -11,7 +11,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
 import { registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
-import { getSession, SessionProvider } from 'next-auth/react';
+import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -56,7 +56,7 @@ import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
 import { parseCookies, ParsedCookies } from '~/shared/utils';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
@@ -83,6 +83,7 @@ type CustomAppProps = {
   cookies: ParsedCookies;
   flags?: FeatureAccess;
   seed: number;
+  canIndex: boolean;
   hasAuthCookie: boolean;
 }>;
 
@@ -95,6 +96,7 @@ function MyApp(props: CustomAppProps) {
       cookies = parseCookies(getCookies()),
       flags,
       seed = Date.now(),
+      canIndex,
       hasAuthCookie,
       ...pageProps
     },
@@ -120,7 +122,7 @@ function MyApp(props: CustomAppProps) {
   );
 
   return (
-    <AppProvider seed={seed}>
+    <AppProvider seed={seed} canIndex={canIndex}>
       <Head>
         <title>Civitai | Share your models</title>
       </Head>
@@ -252,6 +254,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const flags = getFeatureFlags({ host: request?.headers.host });
+  const canIndex = Object.values(serverDomainMap).includes(request.headers.host);
   const token = await getToken({
     req: appContext.ctx.req as any,
     secret: process.env.NEXTAUTH_SECRET,
@@ -270,6 +273,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       ...pageProps,
       colorScheme,
       cookies: parsedCookies,
+      canIndex,
       // cookieKeys: Object.keys(cookies),
       session,
       flags,
