@@ -126,7 +126,7 @@ import {
 import { ImageResource } from '~/shared/utils/prisma/models';
 import { fetchBlob } from '~/utils/file-utils';
 import { logToDb } from '~/utils/logging';
-import { preprocessFile } from '~/utils/media-preprocessors';
+import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
@@ -4778,7 +4778,6 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
   }
 
   const imageKey = randomUUID();
-  const file = await preprocessFile(new File([blob], imageKey));
 
   const upload = await serverUploadImage({
     file: blob,
@@ -4788,8 +4787,17 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
 
   const data = await upload.done();
 
-  return {
-    ...file,
+  const response = {
+    meta: await getMetadata(new File([blob], 'image.png')),
+    metadata: {
+      size: blob.size,
+      width: 512, //  This is mostly a safeguard to default.
+      height: 512, //  This is mostly a safeguard to default.
+    },
     url: data.Key,
   };
+
+  console.log(response);
+
+  return response;
 };

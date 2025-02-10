@@ -636,6 +636,7 @@ export const PrivateModelAutomaticSetup = ({ ...form }: ModelUpsertSchema) => {
     });
 
     await router.replace(`/models/${form.id}`);
+    handleClose();
   }
 
   return (
@@ -666,6 +667,7 @@ export const PrivateModelAutomaticSetup = ({ ...form }: ModelUpsertSchema) => {
               handleConfirm();
             }}
             disabled={privateModelFromTrainingMutation.isLoading}
+            loading={privateModelFromTrainingMutation.isLoading}
           >
             Make Private
           </Button>
