@@ -11,11 +11,13 @@ import {
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React from 'react';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import {
   DescriptionTable,
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { useTipStore } from '~/store/tip.store';
 
 const getEmojiByValue = (value: number) => {
@@ -45,13 +47,44 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function GenerationCostPopover({
-  children,
   workflowCost,
   readOnly,
-  disabled,
   hideCreatorTip,
+  variant = 'info-circle',
   ...popoverProps
-}: Props) {
+}: Omit<PopoverProps, 'children'> & Props) {
+  const totalCost = workflowCost.total ?? 0;
+  const disabled = totalCost > 0 ? popoverProps.disabled : true;
+
+  return (
+    <Popover shadow="md" {...popoverProps} withinPortal>
+      <Popover.Target>
+        {variant === 'info-circle' ? (
+          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={disabled}>
+            <IconInfoCircle stroke={2.5} />
+          </ActionIcon>
+        ) : (
+          <CurrencyBadge
+            unitAmount={totalCost}
+            currency={Currency.BUZZ}
+            size="xs"
+            className="cursor-pointer"
+          />
+        )}
+      </Popover.Target>
+      <Popover.Dropdown p={0}>
+        <GenerationCostPopoverDetail
+          workflowCost={workflowCost}
+          readOnly={readOnly}
+          disabled={disabled}
+          hideCreatorTip={hideCreatorTip}
+        />
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCreatorTip }: Props) {
   const { classes, cx } = useStyles();
   const { civitaiTip, creatorTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
@@ -219,28 +252,19 @@ export function GenerationCostPopover({
     },
   ];
 
-  if (disabled) return <>{children}</>;
-
   return (
-    <Popover shadow="md" {...popoverProps}>
-      <Popover.Target>{children}</Popover.Target>
-      <Popover.Dropdown p={0}>
-        <DescriptionTable
-          title={
-            <div
-              className={cx(classes.baseCostCell, 'flex items-center justify-between gap-4 p-2')}
-            >
-              <div className="font-semibold">Generation Cost Breakdown</div>
-              <ActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
-                <IconInfoCircle size={18} />
-              </ActionIcon>
-            </div>
-          }
-          items={items}
-          withBorder={false}
-        />
-      </Popover.Dropdown>
-    </Popover>
+    <DescriptionTable
+      title={
+        <div className={cx(classes.baseCostCell, 'flex items-center justify-between gap-4 p-2')}>
+          <div className="font-semibold">Generation Cost Breakdown</div>
+          <ActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
+            <IconInfoCircle size={18} />
+          </ActionIcon>
+        </div>
+      }
+      items={items}
+      withBorder={false}
+    />
   );
 }
 
@@ -284,10 +308,10 @@ function BreakdownExplanation() {
   );
 }
 
-type Props = Omit<PopoverProps, 'children'> & {
-  children: React.ReactNode;
+type Props = {
   workflowCost: WorkflowCost;
   readOnly?: boolean;
   disabled?: boolean;
   hideCreatorTip?: boolean;
+  variant?: 'info-circle' | 'badge';
 };

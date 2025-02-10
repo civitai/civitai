@@ -37,7 +37,7 @@ export function DeleteComment({
           { entityType, entityId },
           produce((old) => {
             if (!old) return;
-            old.comments = old.comments.filter((x) => x.id !== request.id);
+            old.comments = old.comments?.filter((x) => x.id !== request.id);
           })
         );
       }

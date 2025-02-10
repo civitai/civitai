@@ -46,8 +46,9 @@ export async function createComfyStep(
     ...params,
     sampler,
     scheduler,
-    seed: params.seed ?? -1,
+    seed: inputParams.seed,
   });
+
   applyResources(
     comfyWorkflow,
     resources.map((resource) => ({

@@ -10,7 +10,9 @@ import { useRouter } from 'next/router';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
-import { isDefined } from '../../utils/type-guards';
+import { CommentThread } from '~/server/services/commentsv2.service';
+import { isDefined } from '~/utils/type-guards';
+import { constants } from '~/server/common/constants';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -117,20 +119,37 @@ export function RootThreadProvider({
     { entityId: entity.entityId, entityType: entity.entityType, hidden },
     {
       onSuccess: (data) => {
-        if (!data || !('children' in data)) return;
+        if (!data) return;
+        const allThreads = [data, ...(data.children ?? [])];
+        const maxDepth = constants.comments.getMaxDepth({ entityType: entity.entityType });
 
-        (data?.children ?? []).forEach((child) => {
-          utils.commentv2.getThreadDetails.setData(
-            {
-              entityId: child.commentId as number,
-              entityType: 'comment',
-              hidden,
-            },
-            child
-          );
-        });
+        for (const thread of allThreads) {
+          for (const comment of thread.comments ?? []) {
+            const childThread = allThreads.find((x) => x.commentId === comment.id) ?? null;
+            const childThreadDepth = childThread?.depth ?? 0;
+            if (childThreadDepth < maxDepth) {
+              utils.commentv2.getThreadDetails.setData(
+                {
+                  entityId: comment.id,
+                  entityType: 'comment',
+                  hidden,
+                },
+                childThread
+              );
+            }
 
-        const expandedCommentIds = data.children.map((c) => c.commentId).filter(isDefined);
+            utils.commentv2.getCount.setData(
+              { entityId: comment.id, entityType: 'comment' },
+              childThread?.count ?? 0
+            );
+          }
+        }
+
+        const expandedCommentIds =
+          data?.children
+            ?.filter((c) => c.depth < maxDepth)
+            .map((c) => c.commentId)
+            .filter(isDefined) ?? [];
         setExpanded(expandedCommentIds);
       },
     }
@@ -209,6 +228,7 @@ export function CommentsProvider({
       },
     }
   );
+  const hiddenCount = thread?.hidden ?? 0;
   const initialComments = useMemo(() => {
     const comments = thread?.comments ?? [];
 
@@ -218,12 +238,6 @@ export function CommentsProvider({
 
     return comments;
   }, [thread?.comments, sort]);
-
-  const { data: hiddenCount = 0 } = trpc.commentv2.getCount.useQuery({
-    entityId,
-    entityType,
-    hidden: true,
-  });
 
   const highlighted = parseNumericString(router.query.highlight);
   const getLimit = (data: { id: number }[] = []) => {
@@ -237,7 +251,9 @@ export function CommentsProvider({
   const [limit, setLimit] = useState(getLimit(initialComments));
 
   const comments = useMemo(() => {
-    const data = initialComments;
+    const data = initialComments.sort(
+      (a, b) => new Date(b.pinnedAt ?? 0).getTime() - new Date(a.pinnedAt ?? 0).getTime()
+    );
     return !showMore ? data.slice(0, limit) : data;
   }, [initialComments, showMore, limit]);
 

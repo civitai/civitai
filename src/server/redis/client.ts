@@ -148,6 +148,7 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
   sCard(key: K): Promise<number>;
   ttl(key: K): Promise<number>;
   type(key: K): Promise<string>;
+  setNxKeepTtlWithEx(key: K, value: string, ttl: number): Promise<boolean>;
 }
 
 interface CustomRedisClientCache extends CustomRedisClient<RedisKeyTemplateCache> {
@@ -286,6 +287,21 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacy
     },
   };
 
+  client.setNxKeepTtlWithEx = async (key, value, ttl) => {
+    const script: string = `
+      if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'KEEPTTL') then
+          return redis.call('EXPIRE', KEYS[1], ARGV[2])
+      else
+          return 0
+      end
+    `;
+    const result = await client.eval(script, {
+      keys: [key],
+      arguments: [value, ttl.toString()],
+    });
+    return result === 1; // 1 if set, 0 if not set
+  };
+
   return client;
 }
 
@@ -383,6 +399,9 @@ export const REDIS_SYS_KEYS = {
     INVALID_TOKENS: 'session:invalid-tokens',
   },
   JOB: 'job',
+  BUZZ_WITHDRAWAL_REQUEST: {
+    STATUS: 'buzz-withdrawal-request:status',
+  },
 } as const;
 
 // Cached data
@@ -435,7 +454,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
-    FEATURED_MODELS: 'packed:featured-models',
+    FEATURED_MODELS: 'packed:featured-models2',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
@@ -489,6 +508,12 @@ export const REDIS_KEYS = {
   },
   HOMEBLOCKS: {
     BASE: 'packed:home-blocks',
+  },
+  CACHE_LOCKS: 'cache-lock',
+  BUZZ: {
+    POTENTIAL_POOL: 'buzz:potential-pool',
+    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
+    EARNED: 'buzz:earned',
   },
 } as const;
 

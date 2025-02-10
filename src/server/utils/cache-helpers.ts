@@ -1,7 +1,10 @@
 import { Prisma, PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
+import { createClient } from 'redis';
+import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
-import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
+import { redis, REDIS_KEYS, RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
+import { sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { hashifyObject } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -238,32 +241,115 @@ export function cachedCounter<T extends string | number>(
   return counter;
 }
 
-export async function clearCacheByPattern(pattern: string) {
-  let cursor: number | undefined;
-  const cleared: string[] = [];
-  while (cursor !== 0) {
-    console.log('Scanning:', cursor);
-    const reply = await redis.scan(cursor ?? 0, {
-      MATCH: pattern,
-      COUNT: 10000000,
-    });
+type FetchThroughCacheOptions = {
+  ttl?: number;
+  lockTTL?: number;
+  retryCount?: number;
+};
+type FetchThroughCacheEntity<T> = { data: T; cachedAt: number };
+export async function fetchThroughCache<T>(
+  key: RedisKeyTemplateCache,
+  fetchFn: () => Promise<T>,
+  options: FetchThroughCacheOptions = {}
+) {
+  const ttl = options.ttl ?? CacheTTL.sm;
+  const lockTTL = options.lockTTL ?? 10;
+  const retryCount = options.retryCount ?? 3;
+  const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}` as const;
 
-    cursor = reply.cursor;
-    const keys = reply.keys as unknown as RedisKeyTemplateCache[];
-    const newKeys = keys.filter((key) => !cleared.includes(key));
-    console.log('Total keys:', cleared.length, 'Adding:', newKeys.length, 'Cursor:', cursor);
-    if (newKeys.length === 0) continue;
+  const cachedData = await redis.packed.get<FetchThroughCacheEntity<T>>(key);
+  const cachedExpired =
+    !cachedData || (cachedData && Date.now() - ttl * 1000 > cachedData.cachedAt);
+  if (cachedExpired) {
+    // Try to set lock. If already locked, do nothing...
+    const gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL);
+    if (!gotLock) {
+      if (cachedData) return cachedData.data;
+      if (retryCount === 0) throw new Error('Failed to fetch data through cache');
 
-    const batches = chunk(newKeys, 10000);
-    for (let i = 0; i < batches.length; i++) {
-      console.log('Clearing:', i, 'Of', batches.length);
-      await redis.del(batches[i]);
-      cleared.push(...batches[i]);
-      console.log('Cleared:', i, 'Of', batches.length);
+      // Wait for the fetcher to do their thing...
+      await sleep((lockTTL * 1000) / 2);
+      return fetchThroughCache(key, fetchFn, {
+        ttl,
+        lockTTL,
+        retryCount: retryCount - 1,
+      });
     }
-    console.log('Cleared:', cleared.length);
-    console.log('Cursor:', cursor);
+  } else if (cachedData) return cachedData.data;
+
+  try {
+    const data = await fetchFn();
+    const toCache: FetchThroughCacheEntity<T> = { data, cachedAt: Date.now() };
+    await redis.packed.set(key, toCache, { EX: ttl * 2 });
+    return data;
+  } finally {
+    await redis.del(lockKey);
   }
-  console.log('Done clearing cache');
+}
+
+export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
+  const cachedData = await redis.packed.get<FetchThroughCacheEntity<any>>(key);
+  if (!cachedData) return;
+
+  const toCache: FetchThroughCacheEntity<any> = { data: cachedData.data, cachedAt: 0 };
+  await redis.packed.set(key, toCache, { KEEPTTL: true });
+}
+
+export async function clearCacheByPattern(pattern: string) {
+  const cleared: string[] = [];
+
+  if (!env.REDIS_URL_DIRECT || env.REDIS_URL_DIRECT.length === 0) {
+    console.log('No redis url found, skipping cache clear');
+    return cleared;
+  }
+
+  await Promise.all(
+    env.REDIS_URL_DIRECT.map(async (url) => {
+      let cursor: number | undefined;
+      const redis = createClient({
+        url,
+        socket: {
+          reconnectStrategy(retries) {
+            log(`Redis reconnecting, retry ${retries}`);
+            return Math.min(retries * 100, 3000);
+          },
+          connectTimeout: env.REDIS_TIMEOUT,
+        },
+        pingInterval: 4 * 60 * 1000,
+      });
+      console.log(`Connecting to redis: ${url}`);
+
+      try {
+        await redis.connect();
+        while (cursor !== 0) {
+          console.log('Scanning:', cursor);
+          const reply = await redis.scan(cursor ?? 0, {
+            MATCH: pattern,
+            COUNT: 10000000,
+          });
+
+          cursor = reply.cursor;
+          const keys = reply.keys as unknown as RedisKeyTemplateCache[];
+          const newKeys = keys.filter((key) => !cleared.includes(key));
+          console.log('Total keys:', cleared.length, 'Adding:', newKeys.length, 'Cursor:', cursor);
+          if (newKeys.length === 0) continue;
+
+          const batches = chunk(newKeys, 10000);
+          for (let i = 0; i < batches.length; i++) {
+            console.log('Clearing:', i, 'Of', batches.length);
+            await redis.del(batches[i]);
+            cleared.push(...batches[i]);
+            console.log('Cleared:', i, 'Of', batches.length);
+          }
+          console.log('Cleared:', cleared.length);
+          console.log('Cursor:', cursor);
+        }
+        console.log('Done clearing cache');
+      } finally {
+        await redis.quit();
+      }
+    })
+  );
+
   return cleared;
 }

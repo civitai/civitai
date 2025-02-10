@@ -307,7 +307,9 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const earlyAccessUnlockedDays = constants.earlyAccess.scoreTimeFrameUnlock
     // TODO: Update to model scores.
     .map(([, days]) =>
-      days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta }) ? days : null
+      currentUser?.isModerator || days <= getMaxEarlyAccessDays({ userMeta: currentUser?.meta })
+        ? days
+        : null
     )
     .filter(isDefined);
   const atEarlyAccess = !!version?.earlyAccessEndsAt;

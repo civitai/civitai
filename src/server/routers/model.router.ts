@@ -148,7 +148,7 @@ export const modelRouter = router({
   getRecentlyRecommended: protectedProcedure
     .input(limitOnly)
     .query(({ ctx, input }) => getRecentlyRecommended({ userId: ctx.user.id, ...input })),
-  getFeaturedModels: publicProcedure.query(({ input }) => getFeaturedModels()),
+  getFeaturedModels: publicProcedure.query(() => getFeaturedModels().then((x) => x.slice(200))),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)

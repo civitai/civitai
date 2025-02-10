@@ -294,9 +294,15 @@ export const constants = {
     coverImageWidth: 850,
   },
   comments: {
-    imageMaxDepth: 3,
-    bountyEntryMaxDepth: 3,
-    maxDepth: 5,
+    getMaxDepth({ entityType }: { entityType: string }) {
+      switch (entityType) {
+        case 'image':
+        case 'bountyEntry':
+          return 3;
+        default:
+          return 5;
+      }
+    },
   },
   altTruncateLength: 125,
   system: {
@@ -897,6 +903,7 @@ export const generation = {
     fluxUltraAspectRatio: '4',
     fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     model: generationConfig.Flux1.checkpoint,
+    priority: 'low',
   },
   maxValues: {
     seed: 4294967295,

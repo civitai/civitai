@@ -109,7 +109,7 @@ export function QueueSnackbar() {
             //   withinPortal
             // >
             <Popover withinPortal withArrow>
-              <Popover.Target refProp="innerRef">
+              <Popover.Target>
                 <CurrencyBadge
                   currency="BUZZ"
                   size="sm"

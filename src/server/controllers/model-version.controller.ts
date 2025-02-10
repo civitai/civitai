@@ -58,7 +58,7 @@ import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
 import { getFilesByEntity } from '../services/file.service';
 import { createFile } from '../services/model-file.service';
-import { getGenerationResourceData } from './../services/generation/generation.service';
+import { getResourceData } from './../services/generation/generation.service';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -152,7 +152,7 @@ export const getModelVersionHandler = async ({
     });
 
     const recommendedResourceIds = version?.recommendedResources.map((x) => x.id) ?? [];
-    const generationResources = await getGenerationResourceData({
+    const generationResources = await getResourceData({
       ids: recommendedResourceIds,
       user: ctx?.user,
     }).then((data) =>
@@ -233,7 +233,7 @@ export const upsertModelVersionHandler = async ({
     if (!!input.earlyAccessConfig?.timeframe) {
       const maxDays = getMaxEarlyAccessDays({ userMeta: ctx.user.meta });
 
-      if (input.earlyAccessConfig?.timeframe > maxDays) {
+      if (!ctx.user.isModerator && input.earlyAccessConfig?.timeframe > maxDays) {
         throw throwBadRequestError('Early access days exceeds user limit');
       }
     }
@@ -243,6 +243,7 @@ export const upsertModelVersionHandler = async ({
       const activeEarlyAccess = await getUserEarlyAccessModelVersions({ userId: ctx.user.id });
 
       if (
+        !ctx.user.isModerator &&
         activeEarlyAccess.length >= getMaxEarlyAccessModels({ userMeta: ctx.user.meta }) &&
         (!input.id || !activeEarlyAccess.some((v) => v.id === input.id))
       ) {

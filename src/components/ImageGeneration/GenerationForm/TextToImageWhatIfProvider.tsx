@@ -5,6 +5,7 @@ import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/G
 import { generationConfig } from '~/server/common/constants';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import {
+  fluxStandardAir,
   getBaseModelSetType,
   getIsFlux,
   getIsSD3,
@@ -14,9 +15,9 @@ import {
 import { trpc } from '~/utils/trpc';
 
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
@@ -44,8 +45,10 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     const { model, resources = [], vae, ...params } = watched;
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
-      params.width = size.width;
-      params.height = size.height;
+      if (size) {
+        params.width = size.width;
+        params.height = size.height;
+      }
     }
 
     let modelId = defaultModel.id;
@@ -53,6 +56,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     if (isFlux && watched.fluxMode) {
       const { version } = parseAIR(watched.fluxMode);
       modelId = version;
+      if (watched.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
     const isSD3 = getIsSD3(watched.baseModel);

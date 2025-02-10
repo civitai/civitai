@@ -1,15 +1,9 @@
 import fs from 'fs';
 import matter from 'gray-matter';
-import {
-  GetStaticPaths,
-  GetStaticProps,
-  InferGetServerSidePropsType,
-  InferGetStaticPropsType,
-} from 'next';
+import { InferGetServerSidePropsType } from 'next';
 import { Container, Title, TypographyStylesProvider } from '@mantine/core';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
-import { getFilesWithExtension } from '~/utils/fs-helpers';
 import { Meta } from '~/components/Meta/Meta';
 import { removeTags } from '~/utils/string-helpers';
 import { truncate } from 'lodash-es';
@@ -61,19 +55,25 @@ export const getServerSideProps = createServerSideProps({
     if (!slug) return { notFound: true };
     if (!Array.isArray(slug)) slug = [slug];
 
-    const fileName = fs.readFileSync(`${contentRoot}/${slug.join('/')}.md`, 'utf-8');
-    const { data: frontmatter, content } = matter(fileName);
-    return {
-      props: {
-        frontmatter,
-        content,
-      },
-    };
+    try {
+      const fileName = fs.readFileSync(`${contentRoot}/${slug.join('/')}.md`, 'utf-8');
+      const { data: frontmatter, content } = matter(fileName);
+      return {
+        props: {
+          title: frontmatter.title,
+          description: frontmatter.description,
+          content,
+        },
+      };
+    } catch {
+      return { notFound: true };
+    }
   },
 });
 
 export default function ContentPage({
-  frontmatter: { title, description },
+  title,
+  description,
   content,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
   return (

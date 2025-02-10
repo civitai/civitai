@@ -83,6 +83,7 @@ import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
   fluxModeOptions,
+  fluxStandardAir,
   fluxUltraAir,
   fluxUltraAspectRatios,
   getBaseModelResourceTypes,
@@ -102,7 +103,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { Priority } from '@civitai/client';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 
 let total = 0;
 const tips = {
@@ -126,6 +127,7 @@ export function GenerationFormContent() {
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
   const [opened, setOpened] = useState(false);
+  const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -296,6 +298,8 @@ export function GenerationFormContent() {
       if (name === 'model' || name === 'resources' || name === 'vae') {
         setHasMinorResources([model, ...resources, vae].filter((x) => x?.model?.minor).length > 0);
       }
+
+      setRunsOnFalAI(model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir);
     });
     return () => {
       subscription.unsubscribe();
@@ -432,10 +436,6 @@ export function GenerationFormContent() {
                     );
                     const atLimit = resources.length >= status.limits.resources;
 
-                    const disableAdditionalResources =
-                      model.model.id === fluxModelId &&
-                      fluxMode !== 'urn:air:flux1:checkpoint:civitai:618692@691639';
-
                     return (
                       <Card
                         className={cx(
@@ -466,7 +466,7 @@ export function GenerationFormContent() {
                               : undefined
                           }
                         />
-                        {!disableAdditionalResources && (
+                        {!runsOnFalAI && (
                           <Card.Section
                             className={cx(
                               { [classes.formError]: form.formState.errors.resources },
@@ -640,7 +640,7 @@ export function GenerationFormContent() {
                       if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
 
                       return (
-                        <div className="radius-md my-2 flex flex-col gap-2 overflow-hidden">
+                        <div className="my-2 flex flex-col gap-2 overflow-hidden rounded-md">
                           <div
                             className={clsx('flex rounded-md', {
                               'border-2 border-red-500': remixSimilarity < 0.75,
@@ -649,7 +649,8 @@ export function GenerationFormContent() {
                             <div className=" flex-none">
                               <ImageById
                                 imageId={remixOfId}
-                                className="h-28 rounded-none	rounded-l-md"
+                                className="h-28 rounded-none rounded-l-md"
+                                explain={false}
                               />
                             </div>
                             <div className="h-28 flex-1">
@@ -1120,13 +1121,9 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
-                {/* <InputSelect
-                  label="Request Priority"
-                  name="priority"
-                  data={Object.values(Priority)}
-                /> */}
+                {!runsOnFalAI && <InputRequestPriority name="priority" label="Request Priority" />}
               </div>
-              <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+              <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
                 {subscriptionMismatch && (
                   <DismissibleAlert
@@ -1325,20 +1322,14 @@ function SubmitButton(props: { isLoading?: boolean }) {
   if (!features.creatorComp) return generateButton;
 
   return (
-    <Paper className="flex flex-1" bg="dark.5" radius="sm" p={4} pr={6}>
-      <Group className="flex-1" spacing={6} noWrap>
-        {generateButton}
-        <GenerationCostPopover
-          width={300}
-          workflowCost={data?.cost ?? {}}
-          hideCreatorTip={!hasCreatorTip}
-        >
-          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!total}>
-            <IconInfoCircle stroke={2.5} />
-          </ActionIcon>
-        </GenerationCostPopover>
-      </Group>
-    </Paper>
+    <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
+      {generateButton}
+      <GenerationCostPopover
+        width={300}
+        workflowCost={data?.cost ?? {}}
+        hideCreatorTip={!hasCreatorTip}
+      />
+    </div>
   );
 }
 

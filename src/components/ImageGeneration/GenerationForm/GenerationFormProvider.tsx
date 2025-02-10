@@ -17,6 +17,8 @@ import { GenerationData } from '~/server/services/generation/generation.service'
 import {
   SupportedBaseModel,
   fluxModeOptions,
+  fluxModelId,
+  fluxStandardAir,
   getBaseModelFromResources,
   getBaseModelSetType,
   getBaseModelSetTypes,
@@ -85,6 +87,7 @@ const formSchema = textToImageParamsSchema
       ? getSizeFromFluxUltraAspectRatio(Number(data.fluxUltraAspectRatio))
       : getSizeFromAspectRatio(data.aspectRatio, data.baseModel);
 
+    if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
     if (fluxUltraRaw) data.engine = 'flux-pro-raw';
     else data.engine = undefined;
     return {
@@ -157,6 +160,9 @@ function formatGenerationData(data: GenerationData): PartialFormData {
     !vae.canGenerate
   )
     vae = undefined;
+
+  if (params.sampler === 'undefined') params.sampler = defaultValues.sampler;
+
   // filter out any additional resources that don't belong
   // TODO - update filter to use `baseModelResourceTypes` from `generation.constants.ts`
   const resources = data.resources.filter((resource) => {

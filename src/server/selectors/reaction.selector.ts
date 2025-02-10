@@ -15,6 +15,6 @@ export const getReactionsSelectV2 = Prisma.validator<Prisma.CommentReactionSelec
 });
 
 export type ReactionDetails = Prisma.CommentReactionGetPayload<typeof getReactions>;
-const getReactions = Prisma.validator<Prisma.CommentReactionArgs>()({
+const getReactions = Prisma.validator<Prisma.CommentReactionFindManyArgs>()({
   select: getReactionsSelect,
 });

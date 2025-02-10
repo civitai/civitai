@@ -1,11 +1,11 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { env } from '~/env/server';
 import { Readable } from 'node:stream';
-import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
-import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
-import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
+import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
+import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
 
 export const config = {
   api: {
@@ -111,7 +111,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           }. Payment status: ${payment.paymentStatus}`;
 
           await updateBuzzWithdrawalRequest({
-            requestId: request.id,
+            requestIds: [request.id],
             status,
             metadata,
             note,
@@ -166,7 +166,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               : 'Payment canceled';
 
           await updateBuzzWithdrawalRequest({
-            requestId: request.id,
+            requestIds: [request.id],
             status,
             metadata,
             note,
@@ -200,7 +200,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           // Update the status of the withdrawal request:
 
           await updateBuzzWithdrawalRequest({
-            requestId: request.id,
+            requestIds: [request.id],
             status: BuzzWithdrawalRequestStatus.Rejected,
             metadata: {
               ...((request.metadata as MixedObject) ?? {}),
@@ -219,7 +219,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
         default:
           throw new Error('Unhandled relevant event!');
-          break;
       }
     } catch (error: any) {
       console.log(`❌ Error message: ${error.message}`);

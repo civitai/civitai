@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { haiperVideoGenerationConfig } from '~/server/orchestrator/haiper/haiper.schema';
 import { klingVideoGenerationConfig } from '~/server/orchestrator/kling/kling.schema';
+import { lightricksVideoGenerationConfig } from '~/server/orchestrator/lightricks/lightricks.schema';
 import { minimaxVideoGenerationConfig } from '~/server/orchestrator/minimax/minimax.schema';
 import { mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
 
@@ -10,4 +11,5 @@ export const videoGenerationConfig = [
   ...minimaxVideoGenerationConfig,
   ...haiperVideoGenerationConfig,
   ...mochiVideoGenerationConfig,
+  ...lightricksVideoGenerationConfig,
 ] as const;

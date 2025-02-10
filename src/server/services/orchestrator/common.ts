@@ -217,15 +217,17 @@ export async function parseGenerateImageInput({
   // #endregion
 
   // handle moderate prompt
-  const moderationResult = await extModeration.moderatePrompt(params.prompt).catch((error) => {
-    logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
-    return { flagged: false, categories: [] as string[] };
-  });
+  if (!whatIf) {
+    const moderationResult = await extModeration.moderatePrompt(params.prompt).catch((error) => {
+      logToAxiom({ name: 'external-moderation-error', type: 'error', message: error.message });
+      return { flagged: false, categories: [] as string[] };
+    });
 
-  if (moderationResult.flagged) {
-    throw throwBadRequestError(
-      `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
-    );
+    if (moderationResult.flagged) {
+      throw throwBadRequestError(
+        `Your prompt was flagged for: ${moderationResult.categories.join(', ')}`
+      );
+    }
   }
 
   const hasMinorResource = availableResources.some((resource) => resource.model.minor);
@@ -285,6 +287,7 @@ export async function parseGenerateImageInput({
   if (params.draft) {
     quantity = Math.ceil(params.quantity / 4);
     batchSize = 4;
+    params.sampler = 'LCM';
   }
 
   if (!params.upscaleHeight || !params.upscaleWidth) {
@@ -314,7 +317,23 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
+  if (step.$type === 'textToImage')
+    return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
+      id: x.version,
+      strength: x.networkParams.strength,
+    }));
   return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
+}
+
+function getTextToImageAirs(inputs: TextToImageInput[]) {
+  return Object.entries(
+    inputs.reduce<Record<string, ImageJobNetworkParams>>((acc, input) => {
+      if (input.model) acc[input.model] = {};
+      const additionalNetworks = input.additionalNetworks ?? {};
+      for (const key in additionalNetworks) acc[key] = additionalNetworks[key];
+      return acc;
+    }, {})
+  ).map(([air, networkParams]) => ({ ...parseAIR(air), networkParams }));
 }
 
 function combineResourcesWithInputResource(
@@ -408,6 +427,8 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
       aspectRatio = width && height ? width / height : 16 / 9;
     } else if (params.type === 'txt2vid') {
       switch (params.engine) {
+        case 'lightricks':
+        case 'kling':
         case 'haiper': {
           if (params.aspectRatio) {
             const [rw, rh] = params.aspectRatio.split(':').map(Number);
@@ -415,13 +436,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           }
           break;
         }
-        case 'kling': {
-          if (params.aspectRatio) {
-            const [rw, rh] = params.aspectRatio.split(':').map(Number);
-            aspectRatio = rw / rh;
-          }
+        case 'minimax':
+          aspectRatio = 16 / 9;
           break;
-        }
         case 'mochi':
           width = 848;
           height = 480;
@@ -518,8 +535,13 @@ function formatTextToImageStep({
     const triggerWord = resource.trainedWords?.[0];
     if (triggerWord) {
       if (item?.triggerType === 'negative')
+        // while (negativePrompt.startsWith(triggerWord)) {
         negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
-      if (item?.triggerType === 'positive') prompt = prompt.replace(`${triggerWord}, `, '');
+      // }
+      if (item?.triggerType === 'positive')
+        // while (prompt.startsWith(triggerWord)) {
+        prompt = prompt.replace(`${triggerWord}, `, '');
+      // }
     }
   }
 

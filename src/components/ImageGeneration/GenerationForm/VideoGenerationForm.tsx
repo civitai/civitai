@@ -55,6 +55,12 @@ import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/Gene
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { uniqBy } from 'lodash-es';
+import {
+  lightricksAspectRatios,
+  lightricksDuration,
+} from '~/server/orchestrator/lightricks/lightricks.schema';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -174,6 +180,10 @@ function EngineForm() {
       return <MinimaxTxt2VidGenerationForm />;
     case 'minimax-img2vid':
       return <MinimaxImg2VidGenerationForm />;
+    case 'lightricks-txt2vid':
+      return <LightricksTxt2VidGenerationForm />;
+    case 'lightricks-img2vid':
+      return <LightricksImg2VidGenerationForm />;
     default:
       return null;
   }
@@ -241,7 +251,7 @@ function KlingTextToVideoForm() {
             </InfoPopover>
           </div>
         }
-        min={0}
+        min={0.1}
         max={1}
         step={0.1}
         precision={1}
@@ -302,7 +312,6 @@ function KlingImageToVideoForm() {
             </InfoPopover>
           </div>
         }
-        description="A value above 0.7 may cause visual errors due to conflicts between the image and the text"
         min={0}
         max={1}
         step={0.1}
@@ -399,6 +408,174 @@ function MinimaxImg2VidGenerationForm() {
     <FormWrapper engine="minimax">
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+    </FormWrapper>
+  );
+}
+
+function LightricksPromptDescription() {
+  const url =
+    'https://education.civitai.com/civitais-quickstart-guide-to-lightricks-ltxv/#prompting';
+  return (
+    <span>
+      If you see poor results, please refer to the{' '}
+      <Anchor href={url} target="_blank">
+        prompt guide
+      </Anchor>
+    </span>
+  );
+}
+function LightricksTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="lightricks">
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+        description={LightricksPromptDescription()}
+      />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <InputAspectRatioColonDelimited
+        name="aspectRatio"
+        label="Aspect Ratio"
+        options={lightricksAspectRatios}
+      />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={lightricksDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={3}
+        max={3.5}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+
+      <InputNumberSlider
+        name="steps"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Steps</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              The number of iterations spent generating a video.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={20}
+        max={40}
+        reverse
+      />
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+function LightricksImg2VidGenerationForm() {
+  return (
+    <FormWrapper engine="lightricks">
+      <InputTextArea
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+        description={LightricksPromptDescription()}
+      />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={lightricksDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={3}
+        max={3.5}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+
+      <InputNumberSlider
+        name="steps"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Steps</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              The number of iterations spent generating a video.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={20}
+        max={40}
+        reverse
+      />
+      <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
 }
@@ -508,6 +685,7 @@ function FormWrapper({
         <InputText type="hidden" name="workflow" value={workflow.key} className="hidden" />
 
         {typeof children === 'function' ? children(form) : children}
+        <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
       </div>
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
@@ -550,7 +728,6 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   );
 
   const { workflow } = useWorkflowContext();
-  // console.log({ query, workflow, engine });
 
   const cost = data?.cost?.total ?? 0;
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
@@ -566,7 +743,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
       );
 
       try {
-        const result = validateInput(workflow, whatIfData);
+        const result = validateInput(workflow, { ...whatIfData, priority: formData.priority });
         setQuery(result);
         setError(null);
       } catch (e: any) {
@@ -585,15 +762,18 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   }, [data]);
 
   return (
-    <GenerateButton
-      type="submit"
-      className="flex-1"
-      disabled={!data || !query || isUploadingImage}
-      loading={isFetching || loading}
-      cost={totalCost}
-    >
-      Generate
-    </GenerateButton>
+    <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
+      <GenerateButton
+        type="submit"
+        className="flex-1"
+        disabled={!data || !query || isUploadingImage}
+        loading={isFetching || loading}
+        cost={totalCost}
+      >
+        Generate
+      </GenerateButton>
+      <GenerationCostPopover width={300} workflowCost={data?.cost ?? {}} hideCreatorTip />
+    </div>
   );
 }
 

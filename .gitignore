@@ -68,3 +68,7 @@ ca-certificate.crt
 src/pages/api/admin/*.json
 trace/trace.json
 trace/types.json
+
+# Local files
+/src/local
+.todo

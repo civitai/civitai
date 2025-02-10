@@ -10,7 +10,7 @@ export const resourceReviewSimpleSelect = Prisma.validator<Prisma.ResourceReview
   createdAt: true,
   exclude: true,
 });
-const resourceReviewSimple = Prisma.validator<Prisma.ResourceReviewArgs>()({
+const resourceReviewSimple = Prisma.validator<Prisma.ResourceReviewFindManyArgs>()({
   select: resourceReviewSimpleSelect,
 });
 export type ResourceReviewSimpleModel = Prisma.ResourceReviewGetPayload<
@@ -41,7 +41,7 @@ export const resourceReviewSelect = Prisma.validator<Prisma.ResourceReviewSelect
   },
 });
 
-const resourceReview = Prisma.validator<Prisma.ResourceReviewArgs>()({
+const resourceReview = Prisma.validator<Prisma.ResourceReviewFindManyArgs>()({
   select: resourceReviewSelect,
 });
 export type ResourceReviewModel = Prisma.ResourceReviewGetPayload<typeof resourceReview>;

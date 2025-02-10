@@ -3,7 +3,7 @@ title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
 ---
 
-Last Updated: 11/6/2024
+Last Updated: 01/30/2025
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
@@ -99,6 +99,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - (e) Content depicting scat, fecal matter, gaseous emission, object or lifeform being ejected from an anus, or coprophagia (the ingestion of fecal matter);
 - (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
 - (g) Bounties requesting the creation of a real-life person, deceased or living, are prohibited.
+- (h) AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" individuals.
   For additional information about how content is moderated, please review our Content Moderation Policy.
 
   Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.

@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import {
   GenerationData,
@@ -152,7 +153,7 @@ export const fetchGenerationData = async (input: GetGenerationDataInput) => {
   let key = 'default';
   switch (input.type) {
     case 'modelVersions':
-      key = `${input.type}_${input.ids.join('_')}`;
+      key = `${input.type}_${Array.isArray(input.ids) ? input.ids.join('_') : input.ids}`;
       break;
     default:
       key = `${input.type}_${input.id}`;
@@ -205,6 +206,8 @@ export const useRemixStore = create<{
 }>()(persist(() => ({}), { name: 'remixOf' }));
 
 export function useVideoGenerationWorkflows() {
+  const currentUser = useCurrentUser();
+  const isMember = (currentUser?.isPaidMember || currentUser?.isModerator) ?? false;
   const { data, isLoading } = trpc.generation.getGenerationEngines.useQuery();
   const workflows = generationFormWorkflowConfigurations
     .map((config) => {
@@ -218,10 +221,13 @@ export function useVideoGenerationWorkflows() {
   const availableEngines = Object.keys(engineDefinitions)
     .filter((key) =>
       workflows
-        ?.filter((x) => (sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
+        ?.filter((x) => {
+          return sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid';
+        })
         .some((x) => x.engine === key && !x.disabled)
     )
-    .map((key) => ({ key, ...engineDefinitions[key] }));
+    .map((key) => ({ key, ...engineDefinitions[key] }))
+    .filter((x) => (x.memberOnly ? isMember : true));
 
   return { data: workflows, availableEngines, isLoading };
 }
