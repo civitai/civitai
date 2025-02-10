@@ -262,9 +262,8 @@ export async function fetchThroughCache<T>(
     !cachedData || (cachedData && Date.now() - ttl * 1000 > cachedData.cachedAt);
   if (cachedExpired) {
     // Try to set lock. If already locked, do nothing...
-    const lockResponse = await redis.set(lockKey, '1', { NX: true, KEEPTTL: true });
-    const shouldFetch = lockResponse === '1' || lockResponse === 'OK';
-    if (!shouldFetch) {
+    const gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', lockTTL);
+    if (!gotLock) {
       if (cachedData) return cachedData.data;
       if (retryCount === 0) throw new Error('Failed to fetch data through cache');
 
@@ -275,8 +274,6 @@ export async function fetchThroughCache<T>(
         lockTTL,
         retryCount: retryCount - 1,
       });
-    } else {
-      await redis.expire(lockKey, lockTTL);
     }
   } else if (cachedData) return cachedData.data;
 
