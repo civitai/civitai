@@ -79,6 +79,7 @@ export function ToolBanner({
                     color="blue"
                     radius="xl"
                     rightIcon={<IconBrush size={18} />}
+                    data-activity="generate:tool"
                     onClick={() => {
                       const isVideo = selected.type === ToolType.Video;
                       const engine = isVideo ? selected.alias : undefined;

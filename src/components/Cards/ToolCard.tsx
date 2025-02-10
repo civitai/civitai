@@ -76,6 +76,7 @@ export function ToolCard({ data }: Props) {
           )}
           {data.alias && (
             <Button
+              data-activity="generate:tool"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
