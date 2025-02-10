@@ -186,7 +186,10 @@ export default function ModelReviews() {
         title={`${model?.name} Reviews | Rated ${ratingAverage} Stars by ${ratingCount} Users on Civitai`}
         description={`Explore user reviews of the ${model?.name} AI model on Civitai, rated ${ratingAverage} stars by ${ratingCount} users, and see how it has helped others bring their creative visions to life`}
         links={[
-          { href: `${env.NEXT_PUBLIC_BASE_URL}/models/${modelId}/reviews`, rel: 'canonical' },
+          {
+            href: `${env.NEXT_PUBLIC_BASE_URL}/models/${modelId}/reviews?modelVersionId=${modelVersionId}`,
+            rel: 'canonical',
+          },
         ]}
       />
       <Container size="xl">
