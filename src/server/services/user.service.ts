@@ -1722,25 +1722,3 @@ export const getUserByPaddleCustomerId = async ({
 
   return user;
 };
-
-export async function setUserMeta(userId: number, meta: Partial<UserMeta>) {
-  const toSet = removeEmpty(meta);
-  if (Object.keys(toSet).length) {
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "User"
-      SET meta = COALESCE(meta, '{}') || '${JSON.stringify(toSet)}'::jsonb
-      WHERE id = ${userId}
-    `);
-  }
-
-  const toRemove = Object.entries(meta)
-    .filter(([, value]) => value === undefined)
-    .map(([key]) => `'${key}'`);
-  if (toRemove.length) {
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "User"
-      SET meta = meta - ${toRemove.join(' - ')}}
-      WHERE id = ${userId}
-    `);
-  }
-}

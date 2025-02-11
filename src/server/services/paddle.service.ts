@@ -39,7 +39,6 @@ import {
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { getPlans } from '~/server/services/subscriptions.service';
-import { setUserMeta } from '~/server/services/user.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import {
   handleLogError,
@@ -394,7 +393,14 @@ export const upsertSubscription = async (
   if (subscriptionNotification.status === 'canceled') {
     // immediate cancel:
     log('upsertSubscription :: Subscription canceled immediately');
-    await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
+    await dbWrite.customerSubscription.update({
+      where: { userId: user.id },
+      data: {
+        status: 'canceled',
+        canceledAt: new Date(),
+        cancelAtPeriodEnd: false,
+      },
+    });
     await getMultipliersForUser(user.id, true);
     await invalidateSession(user.id);
     await dbWrite.vault.update({
@@ -403,8 +409,6 @@ export const upsertSubscription = async (
         storageKb: 0, // Reset storage to 0
       },
     });
-
-    await setUserMeta(user.id, { membershipChangedAt: new Date() });
 
     return;
   }
@@ -741,7 +745,6 @@ export const updateSubscriptionPlan = async ({
 
     await invalidateSession(userId);
     await getMultipliersForUser(userId, true);
-    await setUserMeta(userId, { membershipChangedAt: new Date() });
 
     return true;
   } catch (e) {
