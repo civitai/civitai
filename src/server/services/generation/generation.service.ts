@@ -661,7 +661,6 @@ export async function getGenerationResourceData({
         epochNumber && primaryFile
           ? getTrainingFileEpochNumberDetails(primaryFile, Number(epochNumber))
           : null;
-      console.log({ epochNumbers, epochNumber, primaryFile, epochDetails });
 
       const payload = removeNulls({
         ...item,

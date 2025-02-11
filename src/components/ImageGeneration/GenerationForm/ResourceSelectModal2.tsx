@@ -445,8 +445,7 @@ function ResourceHitList({
       </div>
     );
 
-  console.log(items);
-
+ 
   if (!filtered.length)
     return (
       <div className="p-3 py-5">

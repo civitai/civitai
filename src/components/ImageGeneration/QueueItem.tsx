@@ -90,8 +90,6 @@ export function QueueItem({
   const { status } = request;
   const { params, resources = [] } = step;
 
-  console.log(resources);
-
   let { images } = step;
   const failureReason = images.find((x) => x.status === 'failed' && x.reason)?.reason;
 

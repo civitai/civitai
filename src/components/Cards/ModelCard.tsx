@@ -71,8 +71,6 @@ export function ModelCard({ data }: Props) {
   let href = `/models/${data.id}/${slugit(data.name)}`;
   if (useModelVersionRedirect) href += `?modelVersionId=${data.version.id}`;
 
-  console.log(data);
-
   return (
     <AspectRatioImageCard
       href={href}
@@ -119,11 +117,7 @@ export function ModelCard({ data }: Props) {
               </Badge>
             )}
             {isPrivate && (
-              <Badge
-                className={cx(classes.infoChip, classes.chip,)}
-                variant="light"
-                radius="xl"
-              >
+              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
                 <IconLock size={16} />
               </Badge>
             )}
