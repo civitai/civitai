@@ -10,7 +10,7 @@ import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import { v4 as uuid } from 'uuid';
-import { isDev } from '~/env/other';
+import { isDev, isTest } from '~/env/other';
 import { env } from '~/env/server';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
@@ -241,7 +241,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           }
         },
       }),
-      ...(isDev
+      ...(isDev || isTest
         ? [
             CredentialsProvider({
               id: 'testing-login',
@@ -250,7 +250,7 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
                 id: { label: 'id', type: 'text' },
               },
               async authorize(credentials) {
-                if (!isDev) return null;
+                if (!(isDev || isTest)) return null;
 
                 const { id } = credentials ?? {};
                 if (!id) throw new Error('No id provided.');

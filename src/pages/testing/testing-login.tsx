@@ -3,14 +3,14 @@ import { signIn } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
-import { isDev } from '~/env/other';
+import { isDev, isTest } from '~/env/other';
 
 export default function DevLoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    if (!isDev) return;
+    if (!(isDev || isTest)) return;
 
     const { userId } = router.query;
 
@@ -23,7 +23,7 @@ export default function DevLoginPage() {
     }
   }, [router.query]);
 
-  if (!isDev) return <NotFound />;
+  if (!(isDev || isTest)) return <NotFound />;
 
   return (
     <Container size="xs">
