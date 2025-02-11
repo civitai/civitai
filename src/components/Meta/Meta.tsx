@@ -2,6 +2,7 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import Head from 'next/head';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { useAppContext } from '~/providers/AppProvider';
 
 export function Meta<TImage extends { nsfwLevel: number; url: string; type?: MediaType }>({
   title,
@@ -25,6 +26,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
   const _imageProps =
     _image?.type === 'video' ? { anim: false, transcode: true, optimized: true } : {};
   const _imageUrl = _image ? getEdgeUrl(_image.url, { width: 1200, ..._imageProps }) : imageUrl;
+  const { canIndex } = useAppContext();
 
   return (
     <Head>
@@ -52,7 +54,7 @@ export function Meta<TImage extends { nsfwLevel: number; url: string; type?: Med
           <meta name="robots" content="max-image-preview:large" />
         </>
       )}
-      {deIndex && <meta name="robots" content="noindex,nofollow" />}
+      {(deIndex || !canIndex) && <meta name="robots" content="noindex,nofollow" />}
       {links.map((link, index) => (
         <link key={link.href || index} {...link} />
       ))}

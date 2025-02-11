@@ -1,3 +1,4 @@
+import { capitalize } from 'instantsearch.js/es/lib/utils';
 import jwt from 'jsonwebtoken';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
@@ -136,10 +137,12 @@ export async function upsertContact(user: FreshdeskUserInput) {
   if (contactId) await updateContact({ ...user, contactId });
 }
 
-export async function updateServiceTier(
-  userId: number,
-  serviceTier: 'Supporter' | 'Bronze' | 'Silver' | 'Gold' | undefined
-) {
+export async function updateServiceTier(userId: number, serviceTier: string) {
+  const supportedTiers = ['Supporter', 'Bronze', 'Silver', 'Gold', 'Buzz Purchaser'];
+  const tier = capitalize(serviceTier);
+
+  if (!supportedTiers.includes(tier)) return;
+
   const { email } =
     (await dbWrite.user.findUnique({
       where: { id: userId },
@@ -147,5 +150,5 @@ export async function updateServiceTier(
     })) ?? {};
   if (!email) return;
 
-  return upsertContact({ email, tier: serviceTier });
+  return upsertContact({ email, tier });
 }

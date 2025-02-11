@@ -72,3 +72,10 @@ trace/types.json
 # Local files
 /src/local
 .todo
+
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/tests/auth/*.json

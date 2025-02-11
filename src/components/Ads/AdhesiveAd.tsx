@@ -1,5 +1,5 @@
 import { AdUnitAdhesive } from '~/components/Ads/AdUnit';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { isMobileDevice } from '~/hooks/useIsMobile';
 
@@ -10,23 +10,9 @@ function AdhesiveAdContent({
   onClose?: () => void;
   preserveLayout?: boolean;
 }) {
-  const [canClose, setCanClose] = useState(false);
-
-  useEffect(() => {
-    const isMobile = isMobileDevice();
-    if (isMobile) return;
-    const listener = ((e: CustomEvent) => {
-      const adUnit = e.detail;
-      if (adUnit === 'adhesive') {
-        setTimeout(() => setCanClose(true), 1000);
-      }
-    }) as EventListener;
-
-    window.addEventListener('civitai-ad-impression', listener);
-    return () => {
-      window.removeEventListener('civitai-ad-impression', listener);
-    };
-  }, []);
+  const isMobile = isMobileDevice();
+  const tracked = AdUnitAdhesive.useImpressionTracked();
+  const canClose = tracked && !isMobile;
 
   return (
     <AdUnitRenderable hideOnBlocked>

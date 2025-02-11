@@ -83,6 +83,7 @@ type BaseTool = {
   homepage: string | null;
   company: string | null;
   bannerUrl: string | null;
+  alias: string | null;
 };
 
 const WHERE = [Prisma.sql`t.enabled = TRUE AND t.unlisted = FALSE`];
@@ -144,6 +145,7 @@ export const toolsSearchIndex = createSearchIndexUpdateProcessor({
         t.description,
         t.homepage,
         t.company,
+        t.alias,
         t.metadata ->> 'header' as "bannerUrl"
       FROM "Tool" t
       WHERE ${Prisma.join(where, ' AND ')}

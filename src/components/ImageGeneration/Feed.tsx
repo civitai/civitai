@@ -1,11 +1,11 @@
-import { Center, Loader, createStyles, Stack, Alert, Text } from '@mantine/core';
+import { Alert, Center, createStyles, Loader, Stack, Text } from '@mantine/core';
 import { IconInbox } from '@tabler/icons-react';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { useGetTextToImageRequestsImages } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InViewLoader } from '~/components/InView/InViewLoader';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generationPanel } from '~/store/generation.store';
 import { isDefined } from '~/utils/type-guards';
-import { useFiltersContext } from '~/providers/FiltersProvider';
 
 export function Feed() {
   const { classes } = useStyles();
@@ -68,7 +68,7 @@ export function Feed() {
   return (
     <div className="flex flex-col gap-2 px-3">
       {/* <GeneratedImagesBuzzPrompt /> */}
-      <div className={classes.grid}>
+      <div className={classes.grid} data-testid="generation-feed-list">
         {steps.map((step) =>
           step.images
             .filter((x) => x.status === 'succeeded')

@@ -148,3 +148,6 @@ export type BuzzWithdrawalGetPaginatedItem =
 
 type ToolRouter = RouterOutput['tool'];
 export type ToolGetAllModel = ToolRouter['getAll']['items'][number];
+
+type OrchestratorRouter = RouterOutput['orchestrator'];
+export type QueryGeneratedImages = OrchestratorRouter['queryGeneratedImages'];
