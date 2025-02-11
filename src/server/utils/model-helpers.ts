@@ -76,8 +76,6 @@ export const getTrainingFileEpochNumberDetails = (
       'epoch_number' in e ? e.epoch_number === epochNumber : e.epochNumber === epochNumber
     ) ?? file.metadata.trainingResults?.epochs?.pop();
 
-  console.log({ epoch, file, epochNumber });
-
   if (!epoch) return null;
 
   const downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;

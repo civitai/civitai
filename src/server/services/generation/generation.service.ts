@@ -237,6 +237,7 @@ export const getGenerationData = async ({
   query: GetGenerationDataSchema;
   user?: SessionUser;
 }): Promise<GenerationData> => {
+  console.log(query);
   switch (query.type) {
     case 'image':
     case 'video':
@@ -674,7 +675,13 @@ export async function getResourceData({
 
       const epochDetails =
         epochNumber && primaryFile
-          ? getTrainingFileEpochNumberDetails(primaryFile, Number(epochNumber))
+          ? getTrainingFileEpochNumberDetails(
+              epochNumber
+                ? modelFilesCached[item.id]?.files?.find((f) => f.type === 'Training Data') ??
+                    primaryFile
+                : primaryFile,
+              Number(epochNumber)
+            )
           : null;
 
       const payload = removeNulls({

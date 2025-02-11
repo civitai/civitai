@@ -5,7 +5,7 @@ import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-versi
 import { userTierSchema } from '~/server/schema/user.schema';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { booleanString } from '~/utils/zod-helpers';
+import { booleanString, stringArray } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -289,14 +289,14 @@ export const getGenerationDataSchema = z.discriminatedUnion('type', [
   baseSchema.extend({
     type: z.literal('modelVersion'),
     id: z.coerce.number(),
-    epochNumbers: z.string().array().optional(), // Formatted as modelVersion@epoch
+    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
   }),
   baseSchema.extend({
     type: z.literal('modelVersions'),
     ids: z
       .union([z.array(z.coerce.number()), z.coerce.number()])
       .transform((val) => (Array.isArray(val) ? val : [val])),
-    epochNumbers: z.string().array().optional(), // Formatted as modelVersion@epoch
+    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
   }),
 ]);
 
