@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { isDev, isProd } from '~/env/other';
+import { isDev, isProd, isTest } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
@@ -106,7 +106,7 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
 
   return middleware(async ({ ctx, next, path }) => {
     // Skip if user is a moderator
-    if (ctx.user?.isModerator || isDev) return await next();
+    if (ctx.user?.isModerator || isDev || isTest) return await next();
 
     // Get valid limits
     let validLimits: RateLimit[] = [];
