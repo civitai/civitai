@@ -376,12 +376,12 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   )}
               />
 
-              <Alert color="blue" title="Usage Control">
+              <Alert color="blue">
                 {modelDownloadEnabled ? (
                   <Text>People will be able to download & generate with this model version.</Text>
                 ) : (
                   <Text>
-                    People will be able to generate with this model version, but will not be able to
+                    People will be able to generate with this model version, but will <span className="underline">not</span> be able to
                     download it.
                   </Text>
                 )}

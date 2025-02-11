@@ -163,6 +163,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
   const downloadsDisabled =
     !!version?.usageControl && version?.usageControl !== ModelUsageControl.Download;
+  const hideDownload = !isDownloadable || downloadsDisabled;
 
   const { collection, setShowcaseCollection, settingShowcase } = useModelShowcaseCollection({
     modelId: model.id,
@@ -520,7 +521,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       </Group>
     </Group>
   );
-  const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
+  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile);
 
   const downloadMenuItems = filesVisible.map((file) =>
     !archived ? (
@@ -743,7 +744,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       }
                     </CivitaiLinkManageButton>
                   )}
-                  {displayCivitaiLink || canGenerate ? (
+                  {hideDownload ? null : displayCivitaiLink || canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
                         canDownload={canDownload}
@@ -811,7 +812,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                   )}
                 </Group>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
-                  {!displayCivitaiLink && !isEarlyAccess && isDownloadable && (
+                  {!displayCivitaiLink && !isEarlyAccess && !hideDownload && (
                     <RunButton
                       variant="light"
                       modelVersionId={version.id}
@@ -922,25 +923,23 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             baseModel={version.baseModel}
           />
 
-          {(!isDownloadable || downloadsDisabled) && (
-            <Alert title="Download disabled" color="yellow" icon={<IconDownload />}>
-              {isDownloadable ? (
+          {hideDownload && (
+            <AlertWithIcon color="blue" iconColor="blue" icon={<IconBrush size={16} />} size="sm">
+              {isDownloadable && !isLoadingAccess ? (
                 <Text>
-                  As the owner, you can still download this model. Other users will not be able to.
+                  You've set this model to Generation-Only. Other users will not be able to download this model.
                   Click{' '}
-                  <Link href={`/models/${version.modelId}/model-versions/${version.id}/edit`}>
+                  <Text component={Link} variant="link" td="underline" href={`/models/${version.modelId}/model-versions/${version.id}/edit`}>
                     here
-                  </Link>{' '}
-                  to change this behavior
+                  </Text>{' '}
+                  to change this behavior.
                 </Text>
               ) : (
                 <Text>
-                  The owner of this model has disabled downloads for this model.{' '}
-                  {canGenerate &&
-                    'You can still generate images using this model in our generator, but will not be able to download the model files.'}
+                  The creator has set this model to Generation-Only. <Text variant="link" td="underline" component={Link} href="/articles/11494">Learn more</Text>
                 </Text>
               )}
-            </Alert>
+            </AlertWithIcon>
           )}
 
           {!model.locked && alreadyDownloaded && (
