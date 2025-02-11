@@ -4797,7 +4797,5 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
     url: data.Key,
   };
 
-  console.log(response);
-
   return response;
 };

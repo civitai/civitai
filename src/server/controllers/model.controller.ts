@@ -69,6 +69,7 @@ import {
   getModelsRaw,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getPrivateModelCount,
   getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
@@ -85,6 +86,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   BlockedByUsers,
@@ -1718,6 +1720,28 @@ export const privateModelFromTrainingHandler = async ({
   try {
     const { id: userId } = ctx.user;
     const { nsfw, poi, minor } = input;
+
+    const membership = await getUserSubscription({ userId });
+    if (!membership && !ctx.user.isModerator)
+      throw throwAuthorizationError('You must have a subscription to create private models.');
+
+    const maxPrivateModels =
+      membership?.productMeta?.maxPrivateModels ??
+      constants.memberships.maxPrivateModels[
+        membership?.tier as keyof typeof constants.memberships.maxPrivateModels
+      ];
+
+    if (!maxPrivateModels && !ctx.user.isModerator) {
+      throw throwAuthorizationError('You must have a subscription to create private models.');
+    }
+
+    const currentPrivateModels = await getPrivateModelCount({ userId });
+
+    if (currentPrivateModels >= maxPrivateModels && !ctx.user.isModerator) {
+      throw throwAuthorizationError(
+        `You have reached the limit of ${maxPrivateModels} private models. You may upgrade your subscription to create more.`
+      );
+    }
 
     if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');

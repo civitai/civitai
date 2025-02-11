@@ -38,6 +38,7 @@ import {
   WorkflowDefinition,
 } from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   allInjectableResourceIds,
@@ -56,7 +57,7 @@ import {
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
@@ -173,6 +174,19 @@ export async function parseGenerateImageInput({
       triggerWord: resource.trainedWords?.[0],
     }),
   });
+
+  console.log(resourceData);
+
+  if (
+    resourceData.resources.some(
+      (r) => r.availability === Availability.Private || !!r.epochDetails || !!r.epochNumber
+    )
+  ) {
+    // Confirm the user has a subscription:
+    const subscription = await getUserSubscription({ userId: user.id });
+    if (!subscription)
+      throw throwBadRequestError('Using Private resources require an active subscription.');
+  }
 
   if (
     resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')

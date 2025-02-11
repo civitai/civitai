@@ -31,7 +31,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
-import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 
@@ -493,6 +493,7 @@ type GenerationResourceBase = {
   hasAccess: boolean;
   covered: boolean;
   additionalResourceCost?: boolean;
+  availability?: Availability;
   // settings
   clipSkip?: number;
   minStrength: number;

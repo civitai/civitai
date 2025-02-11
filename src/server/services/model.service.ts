@@ -2720,6 +2720,12 @@ export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }
 
+export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
+  return await dbRead.model.count({
+    where: { userId, availability: Availability.Private },
+  });
+};
+
 export const privateModelFromTraining = async (
   input: PrivateModelFromTrainingInput & {
     userId: number;
@@ -2729,14 +2735,6 @@ export const privateModelFromTraining = async (
 ) => {
   if (!input.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
-  }
-
-  const totalPrivateModels = await dbRead.model.count({
-    where: { userId: input.userId, availability: Availability.Private },
-  });
-
-  if (totalPrivateModels >= 10) {
-    throw throwBadRequestError('You have reached the maximum number of private models');
   }
 
   const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =

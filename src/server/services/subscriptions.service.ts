@@ -1,5 +1,4 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
-import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import {
@@ -7,6 +6,7 @@ import {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 
 // const baseUrl = getBaseUrl();
@@ -127,6 +127,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
       subscription.status
     ),
     tier: productMeta?.[env.TIER_METADATA_KEY] ?? 'free',
+    productMeta,
   };
 };
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
