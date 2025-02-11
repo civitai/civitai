@@ -37,6 +37,10 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
+import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { CacheTTL } from '~/server/common/constants';
+import { number } from 'zod';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';
@@ -818,6 +822,94 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
   `;
 
   return potential;
+}
+
+const earnedCache = createCachedObject<{ id: number; earned: number }>({
+  key: REDIS_KEYS.BUZZ.EARNED,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    if (ids.length === 0 || !clickhouse) return {};
+
+    const results = await clickhouse.$query<{ id: number; earned: number }>`
+      SELECT
+        toAccountId as id,
+        SUM(amount) as earned
+      FROM buzzTransactions
+      WHERE (
+        (type IN ('compensation', 'tip')) -- Generation
+        OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
+      )
+      AND toAccountType = 'user'
+      AND toAccountId IN (${ids})
+      AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))
+      GROUP BY toAccountId;
+    `;
+
+    return Object.fromEntries(results.map((r) => [r.id, { id: r.id, earned: Number(r.earned) }]));
+  },
+  ttl: CacheTTL.day,
+});
+
+export async function getPoolForecast({ userId, username }: GetEarnPotentialSchema) {
+  if (!clickhouse) return;
+  if (!userId && !username) return;
+  if (!userId && username) {
+    const user = await getUserByUsername({ username, select: { id: true } });
+    if (!user) return;
+    userId = user.id;
+  }
+  if (!userId) return;
+
+  const poolSize = await fetchThroughCache(
+    REDIS_KEYS.BUZZ.POTENTIAL_POOL,
+    async () => {
+      const results = await clickhouse!.$query<{ balance: number }>`
+        SELECT
+          SUM(amount) AS balance
+        FROM buzzTransactions
+        WHERE toAccountType = 'user'
+        AND (
+          (type IN ('compensation', 'tip')) -- Generation
+          OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
+        )
+        AND toAccountId != 0
+        AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1));
+    `;
+      if (!results.length) return 135000000;
+      return results[0].balance;
+    },
+    { ttl: CacheTTL.day }
+  );
+
+  const poolValue = await fetchThroughCache(
+    REDIS_KEYS.BUZZ.POTENTIAL_POOL_VALUE,
+    async () => {
+      const results = await clickhouse!.$query<{ balance: number }>`
+        SELECT
+            SUM(amount) / 1000 AS balance
+        FROM buzzTransactions
+        WHERE toAccountType = 'user'
+        AND type = 'purchase'
+        AND fromAccountId = 0
+        AND externalTransactionId NOT LIKE 'renewalBonus:%'
+        AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1));
+      `;
+      if (!results.length || !env.CREATOR_POOL_TAXES || !env.CREATOR_POOL_PORTION) return 35000;
+      const gross = results[0].balance;
+      const taxesAndFees = gross * (env.CREATOR_POOL_TAXES / 100);
+      const poolValue = (gross - taxesAndFees) * (env.CREATOR_POOL_PORTION / 100);
+      return poolValue;
+    },
+    { ttl: CacheTTL.day }
+  );
+
+  const results = await earnedCache.fetch(userId);
+
+  return {
+    poolSize,
+    poolValue,
+    earned: results[userId]?.earned ?? 0,
+  };
 }
 
 type Row = { modelVersionId: number; date: Date; comp: number; tip: number; total: number };

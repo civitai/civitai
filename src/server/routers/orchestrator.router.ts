@@ -3,11 +3,18 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { env } from '~/env/server';
-import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
+import {
+  generate,
+  handleGetPriorityVolume,
+  whatIf,
+} from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
-import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
+import {
+  generationSchema,
+  requestPrioritySchema,
+} from '~/server/orchestrator/generation/generation.schema';
 import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
 import {
@@ -223,8 +230,6 @@ export const orchestratorRouter = router({
           }
         }
 
-
-
         return {
           cost: workflow.cost,
           ready,
@@ -248,6 +253,10 @@ export const orchestratorRouter = router({
   generate: orchestratorGuardedProcedure
     .input(z.any())
     .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
+  requestPriority: orchestratorGuardedProcedure
+    .input(requestPrioritySchema)
+    .use(edgeCacheIt({ ttl: 5 }))
+    .query(({ input }) => handleGetPriorityVolume({ type: input.type })),
   // #endregion
 
   // #region [Image upload]

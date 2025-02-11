@@ -125,7 +125,8 @@ type LaggingType =
   | 'commentModel'
   | 'resourceReview'
   | 'post'
-  | 'postImages';
+  | 'postImages'
+  | 'article';
 
 export async function getDbWithoutLag(type: LaggingType, id?: number) {
   if (env.REPLICATION_LAG_DELAY <= 0 || !id) return dbRead;

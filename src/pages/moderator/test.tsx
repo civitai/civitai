@@ -92,13 +92,15 @@ const someObject = new Promise((resolve) =>
 export default function Test() {
   const [count, setCount] = useState(0);
 
-  useEffect(() => {
-    throw new Error('custom error for testing');
-  }, []);
+  // // useEffect(() => {
+  // //   throw new Error('custom error for testing');
+  // // }, []);
+
+  const theme = useMantineTheme();
 
   return (
     <IsClient>
-      <div className="container flex items-center gap-2 pb-2">
+      {/* <div className="container flex items-center gap-2 pb-2">
         <span>{count}</span>
         <Button
           onClick={() => {
@@ -110,7 +112,11 @@ export default function Test() {
       </div>
       <ComponentWithSlots>
         <Content />
-      </ComponentWithSlots>
+      </ComponentWithSlots> */}
+      <div className="container flex max-w-sm flex-col gap-3">
+        <Example />
+        <ExampleSelect />
+      </div>
     </IsClient>
   );
 }
@@ -212,5 +218,192 @@ function ModelVersionLink({ url }: { url: string }) {
     >
       {url}
     </Text>
+  );
+}
+
+import { Radio, RadioGroup } from '@headlessui/react';
+import clsx from 'clsx';
+
+const memoryOptions = [
+  { name: '4 GB', inStock: true },
+  { name: '8 GB', inStock: true },
+  { name: '16 GB', inStock: true },
+  { name: '32 GB', inStock: true },
+  { name: '64 GB', inStock: true },
+  { name: '128 GB', inStock: false },
+];
+
+function Example() {
+  const [mem, setMem] = useState(memoryOptions[2]);
+
+  return (
+    <fieldset aria-label="Choose a memory option">
+      <div className="flex items-center justify-between">
+        <div className="text-sm/6 font-medium text-dark-9">RAM</div>
+        {/* <a href="#" className="text-sm/6 font-medium text-blue-7 hover:text-blue-6">
+          See performance specs
+        </a> */}
+      </div>
+
+      <RadioGroup
+        value={mem}
+        onChange={setMem}
+        className="mt-2 grid grid-cols-3 gap-3 sm:grid-cols-6"
+      >
+        {memoryOptions.map((option) => (
+          <Radio
+            key={option.name}
+            value={option}
+            disabled={!option.inStock}
+            className={clsx(
+              option.inStock
+                ? 'cursor-pointer focus:outline-none'
+                : 'cursor-not-allowed opacity-25',
+              'flex items-center justify-center rounded-md  p-3 text-sm font-semibold uppercase ring-1  data-[checked]:text-white   data-[checked]:ring-0 data-[focus]:data-[checked]:ring-2 data-[focus]:ring-2 data-[focus]:ring-offset-2  sm:flex-1  [&:not([data-focus])]:[&:not([data-checked])]:ring-inset  ',
+              'bg-white text-dark-9 ring-gray-4 hover:bg-gray-1 data-[checked]:bg-blue-5 data-[focus]:ring-blue-5 ',
+              'dark:bg-dark-5 dark:text-white dark:ring-dark-4 dark:hover:bg-dark-4 dark:data-[checked]:bg-blue-8 dark:data-[focus]:ring-blue-8 '
+            )}
+          >
+            {option.name}
+          </Radio>
+        ))}
+      </RadioGroup>
+    </fieldset>
+  );
+}
+
+import { Label, Listbox, ListboxButton, ListboxOption, ListboxOptions } from '@headlessui/react';
+import { IconCheck, IconSelector } from '@tabler/icons-react';
+
+const people = [
+  {
+    id: 1,
+    name: 'Wade Cooper',
+    avatar:
+      'https://images.unsplash.com/photo-1491528323818-fdd1faba62cc?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+  {
+    id: 2,
+    name: 'Arlene Mccoy',
+    avatar:
+      'https://images.unsplash.com/photo-1550525811-e5869dd03032?ixlib=rb-1.2.1&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+  {
+    id: 3,
+    name: 'Devon Webb',
+    avatar:
+      'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2.25&w=256&h=256&q=80',
+  },
+  {
+    id: 4,
+    name: 'Tom Cook',
+    avatar:
+      'https://images.unsplash.com/photo-1472099645785-5658abf4ff4e?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+  {
+    id: 5,
+    name: 'Tanya Fox',
+    avatar:
+      'https://images.unsplash.com/photo-1494790108377-be9c29b29330?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+  {
+    id: 6,
+    name: 'Hellen Schmidt',
+    avatar:
+      'https://images.unsplash.com/photo-1487412720507-e7ab37603c6f?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+  {
+    id: 7,
+    name: 'Caroline Schultz',
+    avatar:
+      'https://images.unsplash.com/photo-1568409938619-12e139227838?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+  {
+    id: 8,
+    name: 'Mason Heaney',
+    avatar:
+      'https://images.unsplash.com/photo-1531427186611-ecfd6d936c79?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+  {
+    id: 9,
+    name: 'Claudie Smitham',
+    avatar:
+      'https://images.unsplash.com/photo-1584486520270-19eca1efcce5?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+  {
+    id: 10,
+    name: 'Emil Schaefer',
+    avatar:
+      'https://images.unsplash.com/photo-1561505457-3bcad021f8ee?ixlib=rb-1.2.1&ixid=eyJhcHBfaWQiOjEyMDd9&auto=format&fit=facearea&facepad=2&w=256&h=256&q=80',
+  },
+];
+
+function ExampleSelect() {
+  const [selected, setSelected] = useState(people[3]);
+
+  return (
+    <Listbox value={selected} onChange={setSelected}>
+      <div className="relative mt-2">
+        <ListboxButton
+          className={clsx(
+            'grid w-full cursor-default grid-cols-1 rounded-md py-1.5 pl-3 pr-2 text-left outline outline-1 -outline-offset-1 focus:outline focus:outline-2 focus:-outline-offset-2  sm:text-sm/6',
+            'bg-white text-dark-9 outline-gray-4 focus:outline-blue-5',
+            'dark:bg-dark-6 dark:text-dark-0 dark:outline-dark-4 dark:focus:outline-blue-8'
+          )}
+        >
+          <span className="col-start-1 row-start-1 flex items-center gap-3 pr-6">
+            {/* <img alt="" src={selected.avatar} className="size-5 shrink-0 rounded-full" /> */}
+            <span className="block truncate">{selected.name}</span>
+          </span>
+          <IconSelector
+            aria-hidden="true"
+            className={clsx(
+              'col-start-1 row-start-1 size-5 self-center justify-self-end sm:size-4',
+              'text-gray-6'
+            )}
+          />
+        </ListboxButton>
+
+        <ListboxOptions
+          transition
+          anchor="bottom start"
+          portal
+          className={clsx(
+            'z-10 mt-1 max-h-56 w-[var(--button-width)]  overflow-auto rounded-md py-1 text-base shadow-lg ring-1 ring-black/5 focus:outline-none data-[closed]:data-[leave]:opacity-0 data-[leave]:transition data-[leave]:duration-100 data-[leave]:ease-in sm:text-sm',
+            'bg-white',
+            'dark:bg-dark-6'
+          )}
+        >
+          {people.map((person) => (
+            <ListboxOption
+              key={person.id}
+              value={person}
+              className={clsx(
+                'group relative cursor-default select-none py-2 pl-3 pr-9 data-[focus]:outline-none',
+                'text-dark-9 data-[focus]:bg-blue-5 data-[focus]:text-white',
+                'dark:text-dark-0 dark:data-[focus]:bg-blue-8 '
+              )}
+            >
+              <div className="flex items-center">
+                {/* <img alt="" src={person.avatar} className="size-5 shrink-0 rounded-full" /> */}
+                <span className="ml-3 block truncate font-normal group-data-[selected]:font-semibold">
+                  {person.name}
+                </span>
+              </div>
+
+              <span
+                className={clsx(
+                  'absolute inset-y-0 right-0 flex items-center pr-4 group-[&:not([data-selected])]:hidden ',
+                  'text-blue-5 group-data-[focus]:text-white',
+                  'dark:text-blue-8'
+                )}
+              >
+                <IconCheck aria-hidden="true" className="size-5" />
+              </span>
+            </ListboxOption>
+          ))}
+        </ListboxOptions>
+      </div>
+    </Listbox>
   );
 }

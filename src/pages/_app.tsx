@@ -56,13 +56,15 @@ import { PaddleProvider } from '~/providers/PaddleProvider';
 // import { StripeSetupSuccessProvider } from '~/providers/StripeProvider';
 import { ThemeProvider } from '~/providers/ThemeProvider';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
+import { getFeatureFlags, serverDomainMap } from '~/server/services/feature-flags.service';
 import { parseCookies, ParsedCookies } from '~/shared/utils';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
 import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
+import { getToken } from 'next-auth/jwt';
+import { civitaiTokenCookieName } from '~/libs/auth';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -81,6 +83,7 @@ type CustomAppProps = {
   cookies: ParsedCookies;
   flags?: FeatureAccess;
   seed: number;
+  canIndex: boolean;
   hasAuthCookie: boolean;
 }>;
 
@@ -93,6 +96,7 @@ function MyApp(props: CustomAppProps) {
       cookies = parseCookies(getCookies()),
       flags,
       seed = Date.now(),
+      canIndex,
       hasAuthCookie,
       ...pageProps
     },
@@ -118,7 +122,7 @@ function MyApp(props: CustomAppProps) {
   );
 
   return (
-    <AppProvider seed={seed}>
+    <AppProvider seed={seed} canIndex={canIndex}>
       <Head>
         <title>Civitai | Share your models</title>
       </Head>
@@ -195,12 +199,51 @@ function MyApp(props: CustomAppProps) {
   );
 }
 
+// MyApp.getInitialProps = async (appContext: AppContext) => {
+//   const initialProps = await App.getInitialProps(appContext);
+//   if (!appContext.ctx.req) return initialProps;
+
+//   // const url = appContext.ctx.req?.url;
+//   // console.log({ url });
+//   // const isClient = !url || url?.startsWith('/_next/data');
+
+//   const { pageProps, ...appProps } = initialProps;
+//   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
+//   const cookies = getCookies(appContext.ctx);
+//   const parsedCookies = parseCookies(cookies);
+
+//   const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
+//   const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
+//   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
+//   const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
+
+//   // Pass this via the request so we can use it in SSR
+//   if (session) {
+//     (appContext.ctx.req as any)['session'] = session;
+//     // (appContext.ctx.req as any)['flags'] = flags;
+//   }
+
+//   return {
+//     pageProps: {
+//       ...pageProps,
+//       colorScheme,
+//       cookies: parsedCookies,
+//       // cookieKeys: Object.keys(cookies),
+//       session,
+//       flags,
+//       seed: Date.now(),
+//       hasAuthCookie,
+//     },
+//     ...appProps,
+//   };
+// };
+
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
-  if (!appContext.ctx.req) return initialProps;
+  const request = appContext.ctx.req;
+  if (!request) return initialProps;
 
   // const url = appContext.ctx?.req?.url;
-  // const isClient = !url || url?.startsWith('/_next/data');
 
   const { pageProps, ...appProps } = initialProps;
   const colorScheme = getCookie('mantine-color-scheme', appContext.ctx) ?? 'dark';
@@ -210,21 +253,29 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  const flags = getFeatureFlags({ host: appContext.ctx.req?.headers.host });
+  const flags = getFeatureFlags({ host: request?.headers.host });
+  const canIndex = Object.values(serverDomainMap).includes(request.headers.host);
+  const token = await getToken({
+    req: appContext.ctx.req as any,
+    secret: process.env.NEXTAUTH_SECRET,
+    cookieName: civitaiTokenCookieName,
+  });
 
+  const session = token?.user ? { user: token.user } : null;
   // Pass this via the request so we can use it in SSR
-  // if (session) {
-  //   (appContext.ctx.req as any)['session'] = session;
-  //   // (appContext.ctx.req as any)['flags'] = flags;
-  // }
+  if (session) {
+    (appContext.ctx.req as any)['session'] = session;
+    // (appContext.ctx.req as any)['flags'] = flags;
+  }
 
   return {
     pageProps: {
       ...pageProps,
       colorScheme,
       cookies: parsedCookies,
+      canIndex,
       // cookieKeys: Object.keys(cookies),
-      // session,
+      session,
       flags,
       seed: Date.now(),
       hasAuthCookie,

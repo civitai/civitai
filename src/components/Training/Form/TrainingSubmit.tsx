@@ -188,7 +188,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     } else if (cost !== selectedRun.buzzCost) {
       updateRun(model.id, selectedRun.id, { hasIssue: false, buzzCost: cost });
     }
-  }, [dryRunResult.data?.cost]);
+  }, [dryRunResult.data?.cost, dryRunResult.isLoading, runs.length]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation();
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation();

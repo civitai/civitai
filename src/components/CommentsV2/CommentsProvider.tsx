@@ -12,6 +12,7 @@ import { CommentV2Model } from '~/server/selectors/commentv2.selector';
 import { ThreadSort } from '../../server/common/enums';
 import { CommentThread } from '~/server/services/commentsv2.service';
 import { isDefined } from '~/utils/type-guards';
+import { constants } from '~/server/common/constants';
 
 export type CommentV2BadgeProps = {
   userId: number;
@@ -120,26 +121,35 @@ export function RootThreadProvider({
       onSuccess: (data) => {
         if (!data) return;
         const allThreads = [data, ...(data.children ?? [])];
+        const maxDepth = constants.comments.getMaxDepth({ entityType: entity.entityType });
 
         for (const thread of allThreads) {
           for (const comment of thread.comments ?? []) {
             const childThread = allThreads.find((x) => x.commentId === comment.id) ?? null;
-            utils.commentv2.getThreadDetails.setData(
-              {
-                entityId: comment.id,
-                entityType: 'comment',
-                hidden,
-              },
-              childThread
-            );
+            const childThreadDepth = childThread?.depth ?? 0;
+            if (childThreadDepth < maxDepth) {
+              utils.commentv2.getThreadDetails.setData(
+                {
+                  entityId: comment.id,
+                  entityType: 'comment',
+                  hidden,
+                },
+                childThread
+              );
+            }
+
             utils.commentv2.getCount.setData(
               { entityId: comment.id, entityType: 'comment' },
-              childThread?.comments?.length ?? 0
+              childThread?.count ?? 0
             );
           }
         }
 
-        const expandedCommentIds = data?.children?.map((c) => c.commentId).filter(isDefined) ?? [];
+        const expandedCommentIds =
+          data?.children
+            ?.filter((c) => c.depth < maxDepth)
+            .map((c) => c.commentId)
+            .filter(isDefined) ?? [];
         setExpanded(expandedCommentIds);
       },
     }

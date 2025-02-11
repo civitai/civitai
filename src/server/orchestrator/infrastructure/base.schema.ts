@@ -1,3 +1,4 @@
+import { Priority } from '@civitai/client';
 import z from 'zod';
 import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 
@@ -12,13 +13,18 @@ export const negativePromptSchema = z
   .default('');
 
 export const seedSchema = z.number().optional();
+const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
 
-export const textEnhancementSchema = z.object({
+const baseSchema = z.object({
+  priority: prioritySchema,
+});
+
+export const textEnhancementSchema = baseSchema.extend({
   type: z.literal(GenerationType.txt2vid).catch(GenerationType.txt2vid),
   prompt: promptSchema,
 });
 
-export const imageEnhancementSchema = z.object({
+export const imageEnhancementSchema = baseSchema.extend({
   type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
   sourceImage: z.string(),
   height: z.number().optional(),

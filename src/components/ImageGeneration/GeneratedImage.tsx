@@ -284,9 +284,9 @@ export function GeneratedImage({
               src={image.url}
               type={image.type}
               alt=""
-              wrapperProps={{ style: { height: '100%' } }}
               className="max-h-full w-auto max-w-full"
               disableWebm
+              disablePoster
               // onDragStart={(e) => {
               //   if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
               // }}

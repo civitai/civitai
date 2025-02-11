@@ -5,7 +5,7 @@ import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-versi
 import { userTierSchema } from '~/server/schema/user.schema';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { auditPrompt } from '~/utils/metadata/audit';
-import { numericStringArray, stringArray } from '~/utils/zod-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
@@ -279,20 +279,24 @@ export const checkResourcesCoverageSchema = z.object({
   id: z.number(),
 });
 
-export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
+const baseSchema = z.object({ generation: booleanString().default(true) });
+export type GetGenerationDataInput = z.input<typeof getGenerationDataSchema>;
+export type GetGenerationDataSchema = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('image'), id: z.coerce.number() }),
-  z.object({ type: z.literal('video'), id: z.coerce.number() }),
-  z.object({ type: z.literal('audio'), id: z.coerce.number() }),
-  z.object({
+  baseSchema.extend({ type: z.literal('image'), id: z.coerce.number() }),
+  baseSchema.extend({ type: z.literal('video'), id: z.coerce.number() }),
+  baseSchema.extend({ type: z.literal('audio'), id: z.coerce.number() }),
+  baseSchema.extend({
     type: z.literal('modelVersion'),
     id: z.coerce.number(),
-    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+    epochNumbers: z.string().array().optional(), // Formatted as modelVersion@epoch
   }),
-  z.object({
+  baseSchema.extend({
     type: z.literal('modelVersions'),
-    ids: numericStringArray(),
-    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+    ids: z
+      .union([z.array(z.coerce.number()), z.coerce.number()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
+    epochNumbers: z.string().array().optional(), // Formatted as modelVersion@epoch
   }),
 ]);
 

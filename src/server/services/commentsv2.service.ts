@@ -5,12 +5,15 @@ import { Prisma } from '@prisma/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { UpsertCommentV2Input, CommentConnectorInput } from './../schema/commentv2.schema';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { constants } from '~/server/common/constants';
 
 export type CommentThread = {
   id: number;
   locked: boolean;
   commentId?: number | null;
   comments?: Comment[];
+  count: number;
+  depth: number;
   hidden: number;
   children?: CommentThread[];
 };
@@ -102,14 +105,49 @@ export async function getCommentsThreadDetails2({
   });
   if (!mainThread) return null;
 
-  const childThreads = await dbRead.thread.findMany({
-    where: { rootThreadId: mainThread.id },
-    select: {
-      id: true,
-      locked: true,
-      commentId: true,
-    },
-  });
+  const maxDepth = constants.comments.getMaxDepth({ entityType });
+
+  const childThreads = await dbRead.$queryRaw<
+    {
+      id: number;
+      locked: boolean;
+      commentId: number | null;
+      depth: number;
+    }[]
+  >`
+    WITH RECURSIVE generation AS (
+      SELECT
+          id,
+          "parentThreadId",
+          1 AS depth,
+          "commentId",
+          locked
+      FROM "Thread" t
+      WHERE t."parentThreadId" = ${mainThread.id}
+
+      UNION ALL
+
+      SELECT
+          ct.id,
+          ct."parentThreadId",
+          depth+1 AS depth,
+          ct."commentId",
+          ct.locked
+      FROM "Thread" ct
+      JOIN generation g
+        ON g.id = ct."parentThreadId"
+    )
+    SELECT
+      g.id,
+      g.locked,
+      g."commentId",
+      g.depth
+    FROM generation g
+    JOIN "Thread" t
+    ON g."parentThreadId" = t.id
+    WHERE depth < ${maxDepth + 1}
+    ORDER BY depth;
+  `;
 
   const threadIds = [mainThread.id, ...childThreads.map((x) => x.id)];
   const comments = await dbRead.commentV2.findMany({
@@ -125,6 +163,7 @@ export async function getCommentsThreadDetails2({
     id: number;
     locked: boolean;
     commentId?: number | null;
+    depth?: number;
   }): CommentThread {
     const allComments = comments.filter(
       (comment) => comment.threadId === thread.id && !excludedUserIds?.includes(comment.user.id)
@@ -134,8 +173,10 @@ export async function getCommentsThreadDetails2({
 
     return {
       ...thread,
+      depth: thread.depth ?? 0,
       hidden: hiddenCount,
       comments: filtered,
+      count: filtered.length,
     };
   }
 

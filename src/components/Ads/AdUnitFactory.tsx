@@ -9,7 +9,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { useRouter } from 'next/router';
+import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -169,7 +169,7 @@ export function adUnitFactory(factoryArgs: {
   id?: string;
   onDismount?: OnDismount;
 }) {
-  return function AdUnit({
+  function AdUnit({
     withFeedback,
     browsingLevel,
     className,
@@ -196,7 +196,13 @@ export function adUnitFactory(factoryArgs: {
         />
       </AdUnitRenderable>
     );
+  }
+
+  AdUnit.useImpressionTracked = function () {
+    return useAdUnitImpressionTracked(factoryArgs.adUnit);
   };
+
+  return AdUnit;
 }
 
 function getMaxHeight(sizes: AdSize[], args?: { maxHeight?: number; maxWidth?: number }) {

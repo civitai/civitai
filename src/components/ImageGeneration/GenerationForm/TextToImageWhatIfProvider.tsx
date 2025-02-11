@@ -5,6 +5,7 @@ import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/G
 import { generationConfig } from '~/server/common/constants';
 import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import {
+  fluxStandardAir,
   getBaseModelSetType,
   getIsFlux,
   getIsSD3,
@@ -55,6 +56,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     if (isFlux && watched.fluxMode) {
       const { version } = parseAIR(watched.fluxMode);
       modelId = version;
+      if (watched.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
     const isSD3 = getIsSD3(watched.baseModel);

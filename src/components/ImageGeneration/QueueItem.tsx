@@ -208,14 +208,9 @@ export function QueueItem({
                   constants.buzz.generationBuzzChargingStartDate && (
                   <GenerationCostPopover
                     workflowCost={request.cost ?? {}}
-                    disabled={!features.creatorComp}
                     readOnly
-                  >
-                    {/* Wrapped in div for the popover to work properly */}
-                    <div className="cursor-pointer">
-                      <CurrencyBadge unitAmount={actualCost} currency={Currency.BUZZ} size="xs" />
-                    </div>
-                  </GenerationCostPopover>
+                    variant="badge"
+                  />
                 )}
             </div>
             <div className="flex gap-1">

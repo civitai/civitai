@@ -74,14 +74,15 @@ export function ToolCard({ data }: Props) {
               </CustomMarkdown>
             </Text>
           )}
-          {data.supported && (
+          {data.alias && (
             <Button
+              data-activity="generate:tool"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
 
                 const isVideo = data.type === ToolType.Video;
-                const engine = isVideo ? data.name.toLowerCase() : undefined;
+                const engine = isVideo ? data.alias : undefined;
                 generationStore.setData({
                   resources: [],
                   params: {},

@@ -1,19 +1,19 @@
-import { Stack, Group, Button, Alert, Center, createStyles } from '@mantine/core';
-import { Form, InputRTE, useForm } from '~/libs/form';
-import { useRef, useState, useMemo } from 'react';
-import { UpsertCommentV2Input, upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
-import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
-import produce from 'immer';
-import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
-import { SimpleUser } from '~/server/selectors/user.selector';
+import { Alert, Button, Center, createStyles, Group, Stack } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
+import produce from 'immer';
+import { useMemo, useRef, useState } from 'react';
 import {
   useCommentsContext,
   useNewCommentStore,
   useRootThreadContext,
 } from '~/components/CommentsV2/CommentsProvider';
+import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
+import { Form, InputRTE, useForm } from '~/libs/form';
+import { UpsertCommentV2Input, upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
+import { SimpleUser } from '~/server/selectors/user.selector';
 import { removeDuplicates } from '~/utils/array-helpers';
+import { showErrorNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 /*
   Most use cases of this form will require cancel/submit buttons to be displayed
@@ -173,6 +173,7 @@ export const CommentForm = ({
             root: borderless ? 'border-none' : undefined,
             content: cx(classes.content, 'rounded-3xl'),
           }}
+          data-testid="comment-form"
         />
         {focused && (
           <Group position="right">

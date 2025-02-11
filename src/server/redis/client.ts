@@ -148,6 +148,7 @@ interface CustomRedisClient<K extends RedisKeyTemplates>
   sCard(key: K): Promise<number>;
   ttl(key: K): Promise<number>;
   type(key: K): Promise<string>;
+  setNxKeepTtlWithEx(key: K, value: string, ttl: number): Promise<boolean>;
 }
 
 interface CustomRedisClientCache extends CustomRedisClient<RedisKeyTemplateCache> {
@@ -284,6 +285,21 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacy
       );
       return results.map((result) => (result ? unpack(result) : null));
     },
+  };
+
+  client.setNxKeepTtlWithEx = async (key, value, ttl) => {
+    const script: string = `
+      if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'KEEPTTL') then
+          return redis.call('EXPIRE', KEYS[1], ARGV[2])
+      else
+          return 0
+      end
+    `;
+    const result = await client.eval(script, {
+      keys: [key],
+      arguments: [value, ttl.toString()],
+    });
+    return result === 1; // 1 if set, 0 if not set
   };
 
   return client;
@@ -494,6 +510,11 @@ export const REDIS_KEYS = {
     BASE: 'packed:home-blocks',
   },
   CACHE_LOCKS: 'cache-lock',
+  BUZZ: {
+    POTENTIAL_POOL: 'buzz:potential-pool',
+    POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
+    EARNED: 'buzz:earned',
+  },
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`
