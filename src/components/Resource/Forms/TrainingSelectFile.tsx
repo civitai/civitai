@@ -20,6 +20,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
@@ -107,11 +108,13 @@ const EpochRow = ({
               </Text>
             </DownloadButton>
             {modelVersionId && (
-              <GenerateButton
-                modelVersionId={modelVersionId}
-                disabled={!currentUser?.isMember && !currentUser?.isModerator}
-                epochNumber={epoch.epochNumber}
-              />
+              <SubscriptionRequiredBlock feature="private-models">
+                <GenerateButton
+                  modelVersionId={modelVersionId}
+                  disabled={!currentUser?.isMember && !currentUser?.isModerator}
+                  epochNumber={epoch.epochNumber}
+                />
+              </SubscriptionRequiredBlock>
             )}
             <Button
               disabled={incomplete}
@@ -264,7 +267,7 @@ export default function TrainingSelectFile({
         TRANSMITTER_KEY,
         publishImages.map((url) => ({ url }))
       );
-      
+
       await router.replace({ query: { ...router.query, src: TRANSMITTER_KEY } }, undefined, {
         shallow: true,
         scroll: false,

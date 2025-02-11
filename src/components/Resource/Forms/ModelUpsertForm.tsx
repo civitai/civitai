@@ -24,6 +24,7 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -305,14 +306,25 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
               >
                 {Object.keys(availabilityDetails).map((type) => {
                   const details = availabilityDetails[type as keyof typeof availabilityDetails];
+                  const Wrap = ({ children }: { children: React.ReactNode }) =>
+                    type === 'Private' ? (
+                      <SubscriptionRequiredBlock feature="private-models">
+                        {children}
+                      </SubscriptionRequiredBlock>
+                    ) : (
+                      <>{children}</>
+                    );
+
                   return (
-                    <Chip key={type} value={type} {...chipProps}>
-                      <Stack spacing={4} align="center">
-                        {details.icon}
-                        <Text weight="bold">{details.label}</Text>
-                        <Text>{details.description}</Text>
-                      </Stack>
-                    </Chip>
+                    <Wrap key={type}>
+                      <Chip value={type} {...chipProps}>
+                        <Stack spacing={4} align="center">
+                          {details.icon}
+                          <Text weight="bold">{details.label}</Text>
+                          <Text>{details.description}</Text>
+                        </Stack>
+                      </Chip>
+                    </Wrap>
                   );
                 })}
               </InputChipGroup>
@@ -628,8 +640,8 @@ export const PrivateModelAutomaticSetup = ({ ...form }: ModelUpsertSchema) => {
   const handleClose = dialog.onClose;
   const router = useRouter();
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();
-   
-  const handleConfirm =  async () => {
+
+  const handleConfirm = async () => {
     await privateModelFromTrainingMutation.mutateAsync({
       ...form,
       poi: form.poi === 'true',
@@ -639,7 +651,7 @@ export const PrivateModelAutomaticSetup = ({ ...form }: ModelUpsertSchema) => {
 
     await router.replace(`/models/${form.id}`);
     handleClose();
-  }
+  };
 
   return (
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
@@ -660,8 +672,11 @@ export const PrivateModelAutomaticSetup = ({ ...form }: ModelUpsertSchema) => {
           you will be able to generate with it.
         </Text>
         <Group ml="auto">
-          <Button onClick={handleClose} color="gray" 
-            disabled={privateModelFromTrainingMutation.isLoading}>
+          <Button
+            onClick={handleClose}
+            color="gray"
+            disabled={privateModelFromTrainingMutation.isLoading}
+          >
             Cancel
           </Button>
           <Button
