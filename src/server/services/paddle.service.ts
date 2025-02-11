@@ -5,7 +5,6 @@ import type {
   PriceNotification,
   ProductNotification,
   SubscriptionNotification,
-  Transaction,
   TransactionNotification,
 } from '@paddle/paddle-node-sdk';
 import { ApiError } from '@paddle/paddle-node-sdk';
@@ -40,6 +39,7 @@ import {
 } from '~/server/schema/subscriptions.schema';
 import { createBuzzTransaction, getMultipliersForUser } from '~/server/services/buzz.service';
 import { getPlans } from '~/server/services/subscriptions.service';
+import { setUserMeta } from '~/server/services/user.service';
 import { getOrCreateVault } from '~/server/services/vault.service';
 import {
   handleLogError,
@@ -404,6 +404,8 @@ export const upsertSubscription = async (
       },
     });
 
+    await setUserMeta(user.id, { membershipChangedAt: new Date() });
+
     return;
   }
 
@@ -739,6 +741,7 @@ export const updateSubscriptionPlan = async ({
 
     await invalidateSession(userId);
     await getMultipliersForUser(userId, true);
+    await setUserMeta(userId, { membershipChangedAt: new Date() });
 
     return true;
   } catch (e) {

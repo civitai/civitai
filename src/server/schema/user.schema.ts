@@ -263,6 +263,7 @@ export const userScoreMetaSchema = z.object({
   reportsActioned: z.number().optional(),
   reportsAgainst: z.number().optional(),
 });
+
 export const userMeta = z.object({
   firstImage: z.date().optional(),
   scores: userScoreMetaSchema.optional(),
@@ -279,6 +280,7 @@ export const userMeta = z.object({
       detailsInternal: z.string().optional(),
     })
     .optional(),
+  membershipChangedAt: z.date().optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
