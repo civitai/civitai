@@ -110,7 +110,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
     },
   });
 
-  if (!subscription) return null;
+  if (!subscription || subscription.status === 'canceled') return null;
 
   const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
 
