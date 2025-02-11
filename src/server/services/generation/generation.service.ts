@@ -635,7 +635,6 @@ export async function getGenerationResourceData({
     );
 
     return initialWithAccess.map(({ ...item }) => {
-      console.log(modelFilesCached[item.id]?.files);
       const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
       const substitute = substitutesWithAccess.find(
         (sub) => sub.model.id === item.model.id && sub.hasAccess

@@ -175,12 +175,11 @@ export async function parseGenerateImageInput({
     }),
   });
 
-  console.log(resourceData);
-
   if (
     resourceData.resources.some(
       (r) => r.availability === Availability.Private || !!r.epochDetails || !!r.epochNumber
-    )
+    ) &&
+    !user.isModerator
   ) {
     // Confirm the user has a subscription:
     const subscription = await getUserSubscription({ userId: user.id });
