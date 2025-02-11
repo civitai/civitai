@@ -8,7 +8,6 @@ export default PublicEndpoint(
     try {
       const session = await getServerAuthSession({ req, res });
       const queryInput = getGenerationDataSchema.parse(req.query);
-      console.log(queryInput);
       const queryResult = await getGenerationData({ query: queryInput, user: session?.user });
       return res.status(200).json(queryResult);
     } catch (e: any) {
