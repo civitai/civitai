@@ -7,13 +7,13 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangleFilled } from '@tabler/icons-react';
+import clsx from 'clsx';
 import React from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from './buzz.utils';
-import clsx from 'clsx';
 
 type Props = ButtonProps & {
   buzzAmount: number;
@@ -103,7 +103,7 @@ export function BuzzTransactionButton({
         buttonColor !== 'blue' ? 'text-dark-8' : 'text-white',
         buttonProps?.className
       )}
-      classNames={{ inner: 'flex gap-8 justify-between items-center', label: 'w-full' }}
+      classNames={{ inner: 'flex gap-8 justify-between items-center', label: 'w-full gap-2' }}
     >
       <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined} sx={{ flex: 1 }}>
         {label}
