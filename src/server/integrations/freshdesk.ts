@@ -39,7 +39,7 @@ type FreshdeskConflictResponse = {
     code: string;
   }[];
 };
-type FreshdeskUserInput = { id?: number; username?: string; email?: string; tier?: string };
+type FreshdeskUserInput = { id?: number; username?: string; email?: string; tier?: string | null };
 
 export async function createContact(user: FreshdeskUserInput) {
   if (!env.FRESHDESK_TOKEN || !env.FRESHDESK_DOMAIN) return;
@@ -137,11 +137,11 @@ export async function upsertContact(user: FreshdeskUserInput) {
   if (contactId) await updateContact({ ...user, contactId });
 }
 
-export async function updateServiceTier(userId: number, serviceTier: string) {
+export async function updateServiceTier(userId: number, serviceTier: string | null) {
   const supportedTiers = ['Supporter', 'Bronze', 'Silver', 'Gold', 'Buzz Purchaser'];
-  const tier = capitalize(serviceTier);
+  const tier = serviceTier ? capitalize(serviceTier) : null;
 
-  if (!supportedTiers.includes(tier)) return;
+  if (tier && !supportedTiers.includes(tier)) return;
 
   const { email } =
     (await dbWrite.user.findUnique({

@@ -149,6 +149,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         }
 
         if (customerId) {
+          // This runs whenever there's a transaction or a subscription event.
           const user = await dbWrite.user.findFirst({
             where: { paddleCustomerId: customerId },
             select: {
@@ -159,10 +160,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
           if (user) {
             const subscription = await getUserSubscription({ userId: user.id });
-
-            if (subscription || serviceTier) {
-              await updateServiceTier(user.id, subscription?.tier ?? serviceTier ?? '');
-            }
+            await updateServiceTier(user.id, subscription?.tier ?? serviceTier ?? null);
           }
         }
 
