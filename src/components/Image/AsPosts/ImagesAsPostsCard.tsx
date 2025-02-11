@@ -53,6 +53,7 @@ import { generationPanel } from '~/store/generation.store';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { TwCarousel } from '~/components/TwCarousel/TwCarousel';
 
 export function ImagesAsPostsCard({
   data,
@@ -85,7 +86,7 @@ export function ImagesAsPostsCard({
   const image = data.images[0];
 
   const [embla, setEmbla] = useState<Embla | null>(null);
-  const [slidesInView, setSlidesInView] = useState<number[]>([]);
+  const [slidesInView, setSlidesInView] = useState<number[]>([0]);
 
   const { gallerySettings, toggle } = useGallerySettings({ modelId: model.id });
 
@@ -138,8 +139,8 @@ export function ImagesAsPostsCard({
 
   useEffect(() => {
     if (!embla) return;
-    setSlidesInView(embla.slidesInView(true));
-    const onSelect = () => setSlidesInView([...embla.slidesInView(true), ...embla.slidesInView()]);
+    setSlidesInView(embla.slidesInView());
+    const onSelect = () => setSlidesInView([embla.selectedScrollSnap(), ...embla.slidesInView()]);
     embla.on('select', onSelect);
     return () => {
       embla.off('select', onSelect);
@@ -435,7 +436,7 @@ export function ImagesAsPostsCard({
                     )}
                   </ImageGuard2>
                 ) : (
-                  <Carousel
+                  <TwCarousel
                     key={carouselKey}
                     withControls
                     draggable
@@ -464,7 +465,7 @@ export function ImagesAsPostsCard({
                   >
                     {data.images.map((image, index) => {
                       return (
-                        <Carousel.Slide key={image.id}>
+                        <TwCarousel.Slide key={image.id}>
                           {slidesInView.includes(index) && (
                             <ImageGuard2 image={image} connectType="post" connectId={postId}>
                               {(safe) => (
@@ -560,10 +561,10 @@ export function ImagesAsPostsCard({
                               )}
                             </ImageGuard2>
                           )}
-                        </Carousel.Slide>
+                        </TwCarousel.Slide>
                       );
                     })}
-                  </Carousel>
+                  </TwCarousel>
                 )}
               </>
             )}
@@ -611,6 +612,7 @@ const useStyles = createStyles((theme) => ({
     height: '100%',
     display: 'flex',
     justifyContent: 'center',
+    position: 'relative',
   },
   reactions: {
     position: 'absolute',
