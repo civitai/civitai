@@ -138,7 +138,7 @@ export async function upsertContact(user: FreshdeskUserInput) {
 
 export async function updateServiceTier(
   userId: number,
-  serviceTier: 'Supporter' | 'Bronze' | 'Silver' | 'Gold' | 'Buzz Purchaser'
+  serviceTier: 'Supporter' | 'Bronze' | 'Silver' | 'Gold' | undefined
 ) {
   const { email } =
     (await dbWrite.user.findUnique({
