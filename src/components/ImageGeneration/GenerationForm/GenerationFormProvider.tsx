@@ -256,7 +256,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
-          // useGenerationFormStore.setState({ sourceImage: storeData.params.image });
+          useGenerationFormStore.setState({ sourceImage: storeData.params.image });
+          if (!storeData.params.image) form.setValue('workflow', 'txt2img');
           break;
         case 'remix':
         case 'run':
@@ -278,7 +279,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
           const values =
             runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources };
-          // if (values.image) useGenerationFormStore.setState({ sourceImage: values.image });
+          if (values.image) useGenerationFormStore.setState({ sourceImage: values.image });
+          if (!values.image) form.setValue('workflow', 'txt2img');
           setValues(values);
           break;
       }
@@ -323,13 +325,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           form.setValue('sampler', 'Euler a');
         }
         prevBaseModelRef.current = watchedValues.baseModel;
-      }
-
-      // handle selected `workflow` based on presence of `image` value
-      if (name === 'image') {
-        if (!watchedValues.image && watchedValues.workflow?.startsWith('img2img')) {
-          form.setValue('workflow', 'txt2img');
-        }
       }
 
       if (name === 'prompt') {
