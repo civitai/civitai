@@ -1,6 +1,5 @@
 import { Text } from '@mantine/core';
 import Router from 'next/router';
-import { title } from 'process';
 import { generationPanel } from '~/store/generation.store';
 import { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
@@ -17,9 +16,6 @@ export const contentGenerationTour: StepWithData[] = [
       styles: { floater: { width: '100%' } },
     },
     disableBeacon: true,
-    data: {
-      onNext: async () => generationPanel.setView('generate'),
-    },
   },
   {
     target: '[data-tour="gen:terms"]',
@@ -114,7 +110,6 @@ export const contentGenerationTour: StepWithData[] = [
     title: 'Your Generation Queue',
     content: 'This is where your generated media is stored, along with all the generation details.',
     data: {
-      onNext: async () => generationPanel.setView('queue'),
       onPrev: async () => generationPanel.setView('generate'),
     },
     disableBeacon: true,
@@ -201,9 +196,6 @@ export const remixContentGenerationTour: StepWithData[] = [
     disableOverlayClose: true,
     floaterProps: {
       styles: { floater: { width: '100%' } },
-    },
-    data: {
-      onNext: async () => generationPanel.setView('generate'),
     },
   },
   {

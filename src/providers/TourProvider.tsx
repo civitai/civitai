@@ -8,6 +8,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TourSettingsSchema } from '~/server/schema/user.schema';
+import { generationPanel } from '~/store/generation.store';
 import { StepData, StepWithData } from '~/types/tour';
 import { TourKey, tourSteps } from '~/utils/tours';
 import { trpc } from '~/utils/trpc';
@@ -63,6 +64,7 @@ export function TourProvider({ children, ...props }: Props) {
     key: 'tours',
     type: 'localStorage',
     defaultValue: {},
+    getInitialValueInEffect: false,
   });
 
   const { data: userSettings, isInitialLoading } = trpc.user.getSettings.useQuery(undefined, {
@@ -89,24 +91,20 @@ export function TourProvider({ children, ...props }: Props) {
       const activeTour = opts?.key ?? state.activeTour;
       const currentTourData =
         userSettings?.tourSettings?.[activeTour ?? ''] ?? localTour[activeTour ?? ''];
+
       if (opts?.step != null && activeTour && !currentTourData?.completed) {
         const tour = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
+        console.log('mutating', { tour });
         if (currentUser) updateUserSettingsMutation.mutate({ tour });
         setLocalTour((old) => ({ ...old, ...tour }));
       }
     },
-    [
-      currentUser,
-      localTour,
-      setLocalTour,
-      state.activeTour,
-      updateUserSettingsMutation,
-      userSettings?.tourSettings,
-    ]
+    [currentUser, localTour, state.activeTour, userSettings?.tourSettings]
   );
 
   const closeTour = useCallback<TourState['closeTour']>(
     (opts) => {
+      console.log('closing tour', { opts, state });
       if (state.activeTour) {
         const tour = {
           [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
@@ -121,7 +119,7 @@ export function TourProvider({ children, ...props }: Props) {
         currentStep: opts?.reset ? 0 : old.currentStep,
       }));
     },
-    [setLocalTour, state.activeTour, state.currentStep, updateUserSettingsMutation, currentUser]
+    [state.activeTour, state.currentStep, currentUser]
   );
 
   const setSteps = (steps: TourState['steps']) => {
@@ -154,9 +152,7 @@ export function TourProvider({ children, ...props }: Props) {
           return;
         }
 
-        setTimeout(() => {
-          runTour({ step: nextStepIndex });
-        }, 400);
+        runTour({ step: nextStepIndex });
       } else if (type === EVENTS.STEP_BEFORE || type === EVENTS.TOUR_START) {
         await step.data?.onBeforeStart?.();
       }
@@ -164,25 +160,38 @@ export function TourProvider({ children, ...props }: Props) {
     [closeTour, runTour]
   );
 
-  useEffect(() => {
-    if (isInitialLoading || state.running) return;
-    // Update currentStep from userSettings
-    setState((old) => ({
-      ...old,
-      currentStep:
-        (userSettings?.tourSettings?.[old.activeTour ?? '']?.currentStep ?? 0) ||
-        (localTour[old.activeTour ?? '']?.currentStep ?? 0),
-    }));
-  }, [localTour, userSettings?.tourSettings, isInitialLoading, state.running]);
-
   const alreadyCompleted = state.activeTour
     ? (userSettings?.tourSettings?.[state.activeTour]?.completed ?? false) ||
       (localTour[state.activeTour]?.completed ?? false)
     : false;
 
   useEffect(() => {
-    if (alreadyCompleted && state.running) closeTour({ reset: true });
-  }, [alreadyCompleted, closeTour, state.running]);
+    if (isInitialLoading) return;
+
+    const currentTourData = userSettings?.tourSettings?.[tourKey ?? ''] ?? localTour[tourKey ?? ''];
+    if (currentTourData?.completed) return;
+    console.log('running effect', { tourKey, currentTourData, isInitialLoading, localTour });
+
+    // Set initial step based on user settings
+    const currentStep = currentTourData?.currentStep ?? 0;
+    setState((old) => ({ ...old, currentStep }));
+
+    // handle initialization of the active tour
+    switch (tourKey) {
+      case 'content-generation':
+        generationPanel.setView(currentStep > 6 ? 'feed' : 'generate');
+        generationPanel.open();
+        break;
+      case 'remix-content-generation':
+        generationPanel.setView(currentStep > 5 ? 'feed' : 'generate');
+        generationPanel.open();
+        break;
+      default:
+        break;
+    }
+  }, [isInitialLoading, tourKey]);
+
+  console.log('tour state', state);
 
   return (
     <TourContext.Provider value={{ ...state, runTour, closeTour, setSteps }}>
@@ -204,7 +213,7 @@ export function TourProvider({ children, ...props }: Props) {
             tooltipComponent={TourPopover}
             run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
             scrollOffset={100}
-            // disableScrollParentFix
+            disableScrollParentFix
             scrollToFirstStep
             showSkipButton
             continuous

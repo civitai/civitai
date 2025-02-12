@@ -23,7 +23,7 @@ export function PostEdit() {
 
   useEffect(() => {
     if (!running && post?.id) {
-      runTour({ key: 'post-generation', step: 0 });
+      runTour({ key: 'post-generation' });
     }
   }, [post?.id]);
 

@@ -36,24 +36,24 @@ export const modelPageTour: StepWithData[] = [
       },
     },
   },
-  // {
-  //   target: '[data-tour="model:discussion"]',
-  //   disableBeacon: true,
-  //   title: 'Join the Discussion',
-  //   placement: 'top',
-  //   content: 'Engage in discussions related to this resource.',
-  // },
-  // {
-  //   target: '[data-tour="model:gallery"]',
-  //   disableBeacon: true,
-  //   title: 'View Gallery',
-  //   content: `View images created with this resource. You can add your review and post your own images that you've created using this resource.`,
-  //   // data: {
-  //   //   onNext: async () => {
-  //   //     await waitForElement({ selector: '[data-tour="model:remix"]' }).catch(() => null);
-  //   //   },
-  //   // },
-  // },
+  {
+    target: '[data-tour="model:discussion"]',
+    disableBeacon: true,
+    title: 'Join the Discussion',
+    placement: 'top',
+    content: 'Engage in discussions related to this resource.',
+  },
+  {
+    target: '[data-tour="model:gallery"]',
+    disableBeacon: true,
+    title: 'View Gallery',
+    content: `View images created with this resource. You can add your review and post your own images that you've created using this resource.`,
+    data: {
+      onNext: async () => {
+        await waitForElement({ selector: '[data-tour="model:remix"]' }).catch(() => null);
+      },
+    },
+  },
   {
     target: '[data-tour="model:remix"]',
     title: 'Remix This Image',

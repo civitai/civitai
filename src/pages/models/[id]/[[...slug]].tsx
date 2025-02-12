@@ -203,7 +203,7 @@ export default function ModelDetailsV2({
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
-  const { activeTour, running, runTour, steps } = useTourContext();
+  const { activeTour, running, runTour } = useTourContext();
 
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
@@ -465,7 +465,7 @@ export default function ModelDetailsV2({
 
   useEffect(() => {
     if (loadingModel) return;
-    if (activeTour === 'model-page' && !running) runTour({ key: 'model-page', step: 0 });
+    if (activeTour === 'model-page' && !running) runTour({ key: 'model-page' });
     // only run first render
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loadingModel, latestVersion]);

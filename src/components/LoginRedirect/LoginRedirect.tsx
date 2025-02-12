@@ -1,5 +1,6 @@
 import { useRouter } from 'next/router';
 import React, { MouseEventHandler, MouseEvent } from 'react';
+import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/providers/TourProvider';
 import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
@@ -34,14 +35,17 @@ export type Props = HookProps & {
 export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
   const user = useCurrentUser();
-  const { running, closeTour } = useTourContext();
+  const { running, closeTour, activeTour } = useTourContext();
+
+  const url = new URL(returnUrl ?? router.asPath, env.NEXT_PUBLIC_BASE_URL);
+  if (running && activeTour) url.searchParams.set('tour', activeTour);
 
   return !user
     ? React.cloneElement(children, {
         ...children.props,
         onClick: (e: MouseEvent<HTMLElement>) => {
           e.preventDefault();
-          router.push(getLoginLink({ returnUrl: returnUrl ?? router.asPath, reason }));
+          router.push(getLoginLink({ returnUrl: url.toString(), reason }));
           if (running) closeTour();
         },
       })

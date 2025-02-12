@@ -97,6 +97,7 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   baseModelLicenses,
@@ -159,6 +160,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   } = useModelVersionPermission({
     modelVersionId: version.id,
   });
+  const mobile = useIsMobile();
 
   // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
   const downloadsDisabled =
@@ -625,7 +627,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2} ref={adContainerRef}>
         <Stack>
-          {model.mode !== ModelModifier.TakenDown && (
+          {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}
               modelVersionId={version.id}
@@ -1374,7 +1376,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
         })}
       >
         <Stack>
-          {model.mode !== ModelModifier.TakenDown && (
+          {model.mode !== ModelModifier.TakenDown && !mobile && (
             <ModelCarousel
               modelId={model.id}
               modelVersionId={version.id}
