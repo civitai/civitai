@@ -12,6 +12,7 @@ import {
   WorkflowStatus,
   WorkflowStep,
 } from '@civitai/client';
+import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server';
@@ -338,11 +339,17 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
-  if (step.$type === 'textToImage')
-    return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
+  if (step.$type === 'textToImage') {
+    const inputResources = getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
       id: x.version,
       strength: x.networkParams.strength,
+      epochNumber: undefined,
     }));
+
+    const metadataResources = (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
+
+    return uniqBy([...inputResources, ...metadataResources], 'id');
+  }
   return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
 }
 
@@ -375,7 +382,14 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
   const versionIds = allResources.map((x) => x.id);
-  const { resources, injectable } = await getResourceDataWithInjects({ ids: versionIds, user });
+  const epochNumbers = allResources
+    .filter((x) => !!x.epochNumber)
+    .map((x) => `${x.id}@${x.epochNumber}`);
+  const { resources, injectable } = await getResourceDataWithInjects({
+    ids: versionIds,
+    user,
+    epochNumbers,
+  });
 
   return workflows.map((workflow) => {
     return {
