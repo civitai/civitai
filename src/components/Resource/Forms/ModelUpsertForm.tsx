@@ -272,64 +272,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col span={12}>
           <Stack>
-            {isTrained && isDraft && (
-              <InputChipGroup
-                grow
-                spacing="sm"
-                name="availability"
-                onChangeCapture={(event) => {
-                  // @ts-ignore eslint-disable-next-line
-                  const value = event.target.value as Availability;
-                  if (value === Availability.Private && !currentUser?.isPaidMember) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    showErrorNotification({
-                      title: 'Private availability is only for paid members',
-                      error: new Error('Upgrade to a paid membership to use this feature'),
-                    });
-                    return;
-                  }
-
-                  if (value === Availability.Private) {
-                    // Open automatic configurator modal:
-                    event.preventDefault();
-                    event.stopPropagation();
-
-                    dialogStore.trigger({
-                      component: PrivateModelAutomaticSetup,
-                      props: form.getValues(),
-                    });
-
-                    return;
-                  }
-                }}
-              >
-                {Object.keys(availabilityDetails).map((type) => {
-                  const details = availabilityDetails[type as keyof typeof availabilityDetails];
-                  const Wrap = ({ children }: { children: React.ReactNode }) =>
-                    type === 'Private' ? (
-                      <SubscriptionRequiredBlock feature="private-models">
-                        {children}
-                      </SubscriptionRequiredBlock>
-                    ) : (
-                      <>{children}</>
-                    );
-
-                  return (
-                    <Wrap key={type}>
-                      <Chip value={type} {...chipProps}>
-                        <Stack spacing={4} align="center">
-                          {details.icon}
-                          <Text weight="bold">{details.label}</Text>
-                          <Text>{details.description}</Text>
-                        </Stack>
-                      </Chip>
-                    </Wrap>
-                  );
-                })}
-              </InputChipGroup>
-            )}
-
             <InputText name="name" label="Name" placeholder="Name" withAsterisk />
             <Stack spacing={5}>
               <Group spacing="sm" grow>
@@ -616,6 +558,92 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 name="attestation"
                 label="I acknowledge that I have reviewed the choices above, selected the appropriate option, and understand that my account may be at risk if the selection is found to be incorrect."
               />
+            )}
+
+            {isTrained && isDraft && (
+              <InputChipGroup
+                grow
+                spacing="sm"
+                name="availability"
+                onChangeCapture={(event) => {
+                  // @ts-ignore eslint-disable-next-line
+                  const value = event.target.value as Availability;
+                  if (value === Availability.Private && !currentUser?.isPaidMember) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    showErrorNotification({
+                      title: 'Private availability is only for paid members',
+                      error: new Error('Upgrade to a paid membership to use this feature'),
+                    });
+                    return;
+                  }
+
+                  if (value === Availability.Private) {
+                    // Open automatic configurator modal:
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    const { attestation } = form.getValues();
+
+                    if (!attestation)
+                      return form.setError(
+                        'attestation',
+                        { message: 'Required', type: 'required' },
+                        { shouldFocus: true }
+                      );
+
+                    const isValid = form.formState.isValid;
+                    if (!isValid) {
+                      const errorKeys: string[] = Object.keys(form.formState.errors ?? {});
+                      if (errorKeys.length > 0) {
+                        // @ts-ignore eslint-disable-next-line
+                        form.setFocus(form.formState.errors[errorKeys[0]].ref.name, {
+                          shouldSelect: true,
+                        });
+                      }
+
+                      showErrorNotification({
+                        title: 'Please fill out all required fields',
+                        error: new Error(
+                          'Looks like you are missing some information about this model before you can make it private'
+                        ),
+                      });
+                      return;
+                    }
+
+                    dialogStore.trigger({
+                      component: PrivateModelAutomaticSetup,
+                      props: form.getValues(),
+                    });
+
+                    return;
+                  }
+                }}
+              >
+                {Object.keys(availabilityDetails).map((type) => {
+                  const details = availabilityDetails[type as keyof typeof availabilityDetails];
+                  const Wrap = ({ children }: { children: React.ReactNode }) =>
+                    type === 'Private' ? (
+                      <SubscriptionRequiredBlock feature="private-models">
+                        {children}
+                      </SubscriptionRequiredBlock>
+                    ) : (
+                      <>{children}</>
+                    );
+
+                  return (
+                    <Wrap key={type}>
+                      <Chip value={type} {...chipProps}>
+                        <Stack spacing={4} align="center">
+                          {details.icon}
+                          <Text weight="bold">{details.label}</Text>
+                          <Text>{details.description}</Text>
+                        </Stack>
+                      </Chip>
+                    </Wrap>
+                  );
+                })}
+              </InputChipGroup>
             )}
           </Stack>
         </ContainerGrid.Col>

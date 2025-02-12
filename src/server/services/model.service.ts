@@ -2737,11 +2737,9 @@ export const privateModelFromTraining = async (
   if (!input.user.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
-
-<<<<<<< Updated upstream
-  const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
-    input;
-=======
+  
+  const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
+  
   const totalPrivateModels = await dbRead.model.count({
     where: { userId: input.user.id, availability: Availability.Private },
   });
@@ -2750,8 +2748,6 @@ export const privateModelFromTraining = async (
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
 
-  const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
->>>>>>> Stashed changes
 
   // don't allow updating of locked properties
   if (!user.isModerator) {
