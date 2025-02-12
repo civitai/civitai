@@ -88,7 +88,6 @@ import {
 import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { RunButton } from '~/components/RunStrategy/RunButton';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { IconCivitai } from '~/components/SVG/IconCivitai';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -812,13 +811,6 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                   )}
                 </Group>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
-                  {!displayCivitaiLink && !isEarlyAccess && !hideDownload && (
-                    <RunButton
-                      variant="light"
-                      modelVersionId={version.id}
-                      disabled={!!model.mode}
-                    />
-                  )}
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
                       <ShareButton
