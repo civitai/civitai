@@ -3,6 +3,8 @@ import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
 import { SignalMessages } from '~/server/common/enums';
+import { useDebouncer } from '~/utils/debouncer';
+import { getRandomInt } from '~/utils/number-helpers';
 import { SignalStatus } from '~/utils/signals/types';
 // import { createSignalWorker, SignalWorker } from '~/utils/signals';
 import { useSignalsWorker, SignalWorker } from '~/utils/signals/useSignalsWorker';
@@ -46,10 +48,12 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
   }, [worker, message]);
 };
 
+const SIGNAL_DATA_REFRESH_DEBOUNCE = 10;
 export function SignalProvider({ children }: { children: React.ReactNode }) {
   const queryUtils = trpc.useUtils();
   const prevStatusRef = useRef<SignalStatus | null>(null);
   const hasConnectedAtLeastOnceRef = useRef(false);
+  const debounce = useDebouncer((SIGNAL_DATA_REFRESH_DEBOUNCE + getRandomInt(-2, 5)) * 1000);
 
   const [status, setStatus] = useState<SignalStatus | null>(null);
   prevStatusRef.current = status ?? null;
@@ -59,8 +63,10 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
       const prevStatus = prevStatusRef.current;
       const hasConnectedAtLeastOnce = hasConnectedAtLeastOnceRef.current;
       if (prevStatus !== state && state === 'connected' && hasConnectedAtLeastOnce) {
-        queryUtils.buzz.getBuzzAccount.invalidate();
-        queryUtils.orchestrator.queryGeneratedImages.invalidate();
+        debounce(() => {
+          queryUtils.buzz.getBuzzAccount.invalidate();
+          queryUtils.orchestrator.queryGeneratedImages.invalidate();
+        });
       }
 
       if (state === 'connected') hasConnectedAtLeastOnceRef.current = true;

@@ -34,7 +34,29 @@ import { ShopSection } from '~/components/Shop/ShopSection';
 import Image from 'next/image';
 import { formatPriceForDisplay } from '~/utils/number-helpers';
 
-import merchProducts from '~/utils/civitai-merch-producst.json';
+import merchProducts from '~/utils/shop/civitai-merch-products.json';
+import projectOdysseyProducts from '~/utils/shop/project-odyssey-products.json';
+
+const merchSections = {
+  civitai: {
+    bannerImage: {
+      url: '/images/shop/civitai-merch/civitai-merch-banner.png',
+      width: 2040,
+      height: 392,
+    },
+    description: '',
+    products: merchProducts,
+  },
+  projectOdyssey: {
+    bannerImage: {
+      url: '/images/shop/project-odyssey/project-odyssey-banner.png',
+      width: 2544,
+      height: 496,
+    },
+    description: '',
+    products: projectOdysseyProducts,
+  },
+} as const;
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -117,7 +139,7 @@ export default function CosmeticShopMain() {
           <div className="ml-auto">
             <ShopFiltersDropdown filters={filters} setFilters={setFilters} />
           </div>
-          {isEmpty(filters) && <MerchShowcaseSection />}
+          {isEmpty(filters) && <MerchShowcaseSection type="projectOdyssey" />}
           {isLoading ? (
             <Center p="xl">
               <Loader />
@@ -161,28 +183,29 @@ export default function CosmeticShopMain() {
 
 const MAX_SHOWN_ITEMS = 4;
 
-function MerchShowcaseSection() {
+function MerchShowcaseSection({ type }: { type: keyof typeof merchSections }) {
   const [opened, { open, close }] = useDisclosure();
-  const displayedItems = merchProducts.slice(0, MAX_SHOWN_ITEMS);
-  const collapsedItems = merchProducts.slice(MAX_SHOWN_ITEMS);
+  const merch = merchSections[type];
+  const displayedItems = merch.products.slice(0, MAX_SHOWN_ITEMS);
+  const collapsedItems = merch.products.slice(MAX_SHOWN_ITEMS);
 
   return (
     <section className="flex flex-col gap-8">
       <div className="hidden w-full overflow-hidden rounded-[20px] md:block">
         <Image
-          src="/images/shop/civitai-merch/civitai-merch-banner.png"
-          width={2040}
-          height={392}
-          alt="banner depicting several AI generated picture from artist Anne Horel"
+          src={merch.bannerImage.url}
+          width={merch.bannerImage.width}
+          height={merch.bannerImage.height}
+          alt="banner depicting merch section"
         />
       </div>
       <div className="block h-44 w-full overflow-hidden rounded-[20px] md:hidden">
         <Image
-          src="/images/shop/civitai-merch/civitai-merch-banner.png"
+          src={merch.bannerImage.url}
           className="h-full object-cover object-center"
-          width={2040}
-          height={392}
-          alt="banner depicting several AI generated picture from artist Anne Horel"
+          width={merch.bannerImage.width}
+          height={merch.bannerImage.height}
+          alt="banner depicting merch section"
         />
       </div>
       {/* <div className="flex flex-col lg:px-11">
@@ -215,8 +238,8 @@ function MerchShowcaseSection() {
           onClick={opened ? close : open}
           color="dark.4"
           radius="xl"
-          fullWidth
           className="mt-auto"
+          fullWidth
         >
           {opened ? 'Show Less' : `View all (${collapsedItems.length} more)`}
         </Button>
@@ -229,6 +252,7 @@ function ProductItem({
   name,
   description,
   imageUrl,
+  imageAlt,
   hoverImageUrl,
   price,
   url,
@@ -236,20 +260,10 @@ function ProductItem({
   return (
     <div key={imageUrl} className="flex flex-col gap-4 rounded-lg bg-[#2F2F2F] p-4">
       <div className="relative mx-auto w-52 overflow-hidden rounded-lg">
-        <Image
-          src={imageUrl}
-          alt="t-shirt with an AI generated face of a cat"
-          width={1000}
-          height={1000}
-        />
+        <Image src={imageUrl} alt={imageAlt} width={1000} height={1000} />
         {hoverImageUrl && (
           <div className="absolute left-0 top-0 opacity-0 transition-opacity duration-300 hover:opacity-100">
-            <Image
-              src={hoverImageUrl}
-              alt="t-shirt with an AI generated face of a cat"
-              width={1000}
-              height={1000}
-            />
+            <Image src={hoverImageUrl} alt={imageAlt} width={1000} height={1000} />
           </div>
         )}
       </div>

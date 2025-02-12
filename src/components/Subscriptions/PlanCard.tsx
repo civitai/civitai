@@ -239,7 +239,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
               </>
             )}
           </Stack>
-          {benefits && <PlanBenefitList benefits={benefits} />}
+          {benefits && <PlanBenefitList benefits={benefits} tier={meta?.tier} />}
         </Stack>
       </Stack>
     </Card>
@@ -315,6 +315,7 @@ export const getPlanDetails: (
             ),
           }
         : null,
+
       features.membershipsV2
         ? {
             icon: <IconBolt size={benefitIconSize} />,
@@ -355,6 +356,7 @@ export const getPlanDetails: (
               ),
           }
         : undefined,
+
       {
         icon: <IconPhotoAi size={benefitIconSize} />,
         iconColor: 'blue',

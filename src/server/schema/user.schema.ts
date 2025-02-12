@@ -4,7 +4,7 @@ import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
-import { featureFlagKeys } from '~/server/services/feature-flags.service';
+import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   ArticleEngagementType,
@@ -22,7 +22,7 @@ import {
   numericString,
 } from '~/utils/zod-helpers';
 
-export const userTierSchema = z.enum(['free', 'founder', 'bronze', 'silver', 'gold']);
+export const userTierSchema = z.enum(userTiers);
 export type UserTier = z.infer<typeof userTierSchema>;
 
 export const userPageQuerySchema = z
