@@ -124,7 +124,7 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { ImageResource } from '~/shared/utils/prisma/models';
-import { fetchBlob } from '~/utils/file-utils';
+import { fetchBlob, getBase64 } from '~/utils/file-utils';
 import { logToDb } from '~/utils/logging';
 import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
@@ -4786,9 +4786,10 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
   });
 
   const data = await upload.done();
+  const meta = await getMetadata(imageUrl);
 
   const response = {
-    meta: await getMetadata(new File([blob], 'image.png')),
+    meta: meta,
     metadata: {
       size: blob.size,
       width: 512, //  This is mostly a safeguard to default.

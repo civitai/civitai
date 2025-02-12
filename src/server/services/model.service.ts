@@ -49,7 +49,10 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { associatedResourceSelect } from '~/server/selectors/model.selector';
+import {
+  associatedResourceSelect,
+  modelSearchIndexSelect,
+} from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
@@ -72,7 +75,7 @@ import {
   bustMvCache,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
-import { createPost } from '~/server/services/post.service';
+import { addPostImage, createPost } from '~/server/services/post.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -2728,20 +2731,30 @@ export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
 
 export const privateModelFromTraining = async (
   input: PrivateModelFromTrainingInput & {
-    userId: number;
-    // meta?: Prisma.ModelCreateInput['meta']; // TODO.manuel: hardcoding meta type since it causes type issues in lots of places if we set it in the schema
-    isModerator?: boolean;
+    user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
   }
 ) => {
-  if (!input.isModerator) {
+  if (!input.user.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
 
+<<<<<<< Updated upstream
   const { id, tagsOnModels, userId, templateId, bountyId, meta, isModerator, status, ...data } =
     input;
+=======
+  const totalPrivateModels = await dbRead.model.count({
+    where: { userId: input.user.id, availability: Availability.Private },
+  });
+
+  if (totalPrivateModels >= 10) {
+    throw throwBadRequestError('You have reached the maximum number of private models');
+  }
+
+  const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
+>>>>>>> Stashed changes
 
   // don't allow updating of locked properties
-  if (!isModerator) {
+  if (!user.isModerator) {
     const lockedProperties = data.lockedProperties ?? [];
     for (const prop of lockedProperties) {
       const key = prop as keyof typeof data;
@@ -2758,7 +2771,7 @@ export const privateModelFromTraining = async (
 
   if (!model) return null;
 
-  const isOwner = model.userId === userId || isModerator;
+  const isOwner = model.userId === user.id || user.isModerator;
   if (!isOwner) return null;
 
   try {
@@ -2841,47 +2854,45 @@ export const privateModelFromTraining = async (
 
           const uploadedImages = (
             await Promise.all(
-              imageUrls.map(async (data) => {
-                return await uploadImageFromUrl({
+              imageUrls.map(async (data, index) => {
+                const image = await uploadImageFromUrl({
                   imageUrl: typeof data === 'string' ? data : data.image_url,
                 });
+
+                return image;
               })
             )
           ).filter((x) => isDefined(x?.url));
 
           // Create post:
           const post = await createPost({
-            userId,
+            userId: user.id,
             modelVersionId: modelVersion.id,
             publishedAt: now,
           });
 
-          // Create images:
-          await dbWrite.image.createMany({
-            data: uploadedImages.map((image) => ({
-              userId,
-              meta: image.meta as any,
-              metadata: image.metadata as any,
-              url: image.url as string,
-              postId: post.id,
-              width: image.metadata?.width,
-              height: image.metadata?.height,
-            })),
-          });
-
-          const images = await dbWrite.image.findMany({
-            where: { postId: post.id },
-            select: { id: true, url: true },
-          });
-
-          await ingestImageBulk({ images, lowPriority: true });
+          await Promise.all(
+            uploadedImages.map((image) =>
+              addPostImage({
+                type: 'image',
+                postId: post.id,
+                modelVersionId: modelVersion.id,
+                width: image.metadata?.width,
+                height: image.metadata?.height,
+                metadata: image.metadata as any,
+                meta: image.meta,
+                url: image.url as string,
+                user,
+              })
+            )
+          );
         })
       );
     }
 
     await preventReplicationLag('model', id);
-
-    await userContentOverviewCache.bust(userId);
+    await userContentOverviewCache.bust(user.id);
+    await dataForModelsCache.bust(id);
 
     return result;
   } catch (error) {

@@ -1769,8 +1769,7 @@ export const privateModelFromTrainingHandler = async ({
 
     const model = await privateModelFromTraining({
       ...input,
-      userId,
-      isModerator: ctx.user.isModerator,
+      user: ctx.user,
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
