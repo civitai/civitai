@@ -389,7 +389,7 @@ const useStyle = createStyles((theme) => ({
 const ResourceBadge = (props: GenerationResource) => {
   const { unstableResources } = useUnstableResources();
 
-  const { model, id, name } = props;
+  const { model, id, name, epochDetails } = props;
   const unstable = unstableResources?.includes(id);
 
   const badge = (
@@ -401,7 +401,7 @@ const ResourceBadge = (props: GenerationResource) => {
       href={`/models/${model.id}?modelVersionId=${id}`}
       onClick={() => generationPanel.close()}
     >
-      {model.name} - {name}
+      {model.name} - {name} {epochDetails ? `(Epoch: ${epochDetails.epochNumber})` : ''}
     </Badge>
   );
 
