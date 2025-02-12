@@ -3,6 +3,7 @@ import jwt from 'jsonwebtoken';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { sleep } from '~/server/utils/concurrency-helpers';
 import { toBase64 } from '~/utils/string-helpers';
 
 export async function createFreshdeskToken(
@@ -43,7 +44,10 @@ type FreshdeskUserInput = { id?: number; username?: string; email?: string; tier
 
 export async function createContact(user: FreshdeskUserInput) {
   if (!env.FRESHDESK_TOKEN || !env.FRESHDESK_DOMAIN) return;
-  if (!user.id || !user.username || !user.email) return;
+  if (!user.id || !user.username || !user.email) {
+    console.log('Missing required fields for Freshdesk contact creation');
+    return;
+  }
 
   try {
     const response = await fetch(`${env.FRESHDESK_DOMAIN}/api/v2/contacts`, {
@@ -57,10 +61,19 @@ export async function createContact(user: FreshdeskUserInput) {
         name: user.username,
         email: user.email,
         unique_external_id: `civitai-${user.id}`,
+        custom_fields: {
+          sla: user.tier,
+        },
       }),
     });
 
     if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get('Retry-After'));
+        console.log(`Rate limited, retrying in ${retryAfter} seconds`);
+        await sleep(retryAfter * 1000);
+        return createContact(user);
+      }
       if (response.status === 409) {
         const data: FreshdeskConflictResponse = await response.json();
         if (data.errors[0].code === 'duplicate_value') {
@@ -109,6 +122,12 @@ export async function updateContact(user: FreshdeskUserInput & { contactId: numb
     });
 
     if (!response.ok) {
+      if (response.status === 429) {
+        const retryAfter = Number(response.headers.get('Retry-After'));
+        console.log(`Rate limited, retrying in ${retryAfter} seconds`);
+        await sleep(retryAfter * 1000);
+        return updateContact(user);
+      }
       logToAxiom(
         {
           name: 'freshdesk',
@@ -137,17 +156,28 @@ export async function upsertContact(user: FreshdeskUserInput) {
   if (contactId) await updateContact({ ...user, contactId });
 }
 
-export async function updateServiceTier(userId: number, serviceTier: string | null) {
+export async function updateServiceTier({
+  userId,
+  email,
+  serviceTier,
+}: {
+  userId?: number;
+  email?: string | null;
+  serviceTier: string | null;
+}) {
+  if (!userId && !email) return;
+
   const supportedTiers = ['Supporter', 'Bronze', 'Silver', 'Gold', 'Buzz Purchaser'];
   const tier = serviceTier ? capitalize(serviceTier) : null;
-
   if (tier && !supportedTiers.includes(tier)) return;
 
-  const { email } =
-    (await dbWrite.user.findUnique({
-      where: { id: userId },
-      select: { email: true },
-    })) ?? {};
+  if (!email) {
+    ({ email } =
+      (await dbWrite.user.findUnique({
+        where: { id: userId },
+        select: { email: true },
+      })) ?? {});
+  }
   if (!email) return;
 
   return upsertContact({ email, tier });

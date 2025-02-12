@@ -160,7 +160,10 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
 
           if (user) {
             const subscription = await getUserSubscription({ userId: user.id });
-            await updateServiceTier(user.id, subscription?.tier ?? serviceTier ?? null);
+            await updateServiceTier({
+              userId: user.id,
+              serviceTier: subscription?.tier ?? serviceTier ?? null,
+            });
           }
         }
 
