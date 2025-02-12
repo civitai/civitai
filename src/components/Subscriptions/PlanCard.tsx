@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import {
   IconBolt,
+  IconCategory,
   IconChevronDown,
   IconChristmasTree,
   IconCloud,
@@ -268,37 +269,7 @@ export const getPlanDetails: (
           </Text>
         ),
       },
-      {
-        icon: <IconBolt size={benefitIconSize} />,
-        iconColor:
-          (metadata?.maxPrivateModels ??
-            constants.memberships.maxPrivateModels[metadata.tier] ??
-            0) === 0
-            ? 'gray'
-            : 'yellow',
-        iconVariant: 'light' as ThemeIconVariant,
-        content: (
-          <Text>
-            <Text
-              span
-              color={
-                (metadata?.maxPrivateModels ??
-                  constants.memberships.maxPrivateModels[metadata.tier] ??
-                  0) === 0
-                  ? undefined
-                  : 'yellow.7'
-              }
-            >
-              {numberWithCommas(
-                metadata?.maxPrivateModels ??
-                  constants.memberships.maxPrivateModels[metadata.tier] ??
-                  0
-              )}{' '}
-              Private Models
-            </Text>
-          </Text>
-        ),
-      },
+
       isHolidaysTime()
         ? {
             icon: <IconChristmasTree size={benefitIconSize} />,
@@ -356,7 +327,22 @@ export const getPlanDetails: (
               ),
           }
         : undefined,
+      {
+        icon: <IconCategory size={benefitIconSize} />,
+        iconColor: 'blue',
 
+        iconVariant: 'light' as ThemeIconVariant,
+        content: (
+          <Text>
+            {numberWithCommas(
+              metadata?.maxPrivateModels ??
+                constants.memberships.maxPrivateModels[metadata.tier] ??
+                0
+            )}{' '}
+            Private Models
+          </Text>
+        ),
+      },
       {
         icon: <IconPhotoAi size={benefitIconSize} />,
         iconColor: 'blue',
