@@ -126,7 +126,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
     isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
       subscription.status
     ),
-    tier: productMeta?.[env.TIER_METADATA_KEY] ?? 'free',
+    tier: (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string,
     productMeta,
   };
 };
