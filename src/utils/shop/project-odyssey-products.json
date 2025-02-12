@@ -1,0 +1,47 @@
+[
+  {
+    "name": "Project Odyssey Holographic Sticker",
+    "description": "Add some sparkle to your life with these holographic stickers. Made from high-quality vinyl, they're easy to peel and stick, and their adhesive backing ensures long-lasting durability.",
+    "price": 500,
+    "imageUrl": "/images/shop/project-odyssey/kiss-cut-holographic-stickers.webp",
+    "imageAlt": "project odyssey logo sticker",
+    "hoverImageUrl": "",
+    "url": "https://shop.civitai.com/products/project-odyssey-holographic-sticker"
+  },
+  {
+    "name": "Project Odyssey Tote",
+    "description": "A spacious and trendy tote bag to help you carry around everything that matters.",
+    "price": 1550,
+    "imageUrl": "/images/shop/project-odyssey/all-over-print-tote-bag-black.jpg",
+    "imageAlt": "project odyssey tote bag",
+    "hoverImageUrl": "",
+    "url": "https://shop.civitai.com/products/project-odyssey-tote"
+  },
+  {
+    "name": "Project Odyssey Fleece Hoodie",
+    "description": "Looking for your new favorite everyday garment? Get cozy in this adidas fleece hoodie.",
+    "price": 5100,
+    "imageUrl": "/images/shop/project-odyssey/adidas-fleece-hoodie-black-front.webp",
+    "imageAlt": "black fleece hoodie with project odyssey logo",
+    "hoverImageUrl": "/images/shop/project-odyssey/adidas-fleece-hoodie-black-left.webp",
+    "url": "https://shop.civitai.com/products/project-odyssey-fleece-hoodie"
+  },
+  {
+    "name": "Project Odyssey Dad Hat",
+    "description": "Dad hats aren't just for dads. This one's got a low profile with an adjustable strap and curved visor.",
+    "price": 1600,
+    "imageUrl": "/images/shop/project-odyssey/classic-dad-hat-black-front.webp",
+    "imageAlt": "black dad hat with project odyssey logo",
+    "hoverImageUrl": "/images/shop/project-odyssey/classic-dad-hat-black-left-side.webp",
+    "url": "https://shop.civitai.com/products/project-odyssey-dad-hat"
+  },
+  {
+    "name": "Project Odyssey Tie Dye Hat",
+    "description": "Bring fun and color to your wardrobe with this 100% cotton tie dye hat. It's stylish, super trendy, and will add extra pizzazz to any outfit.",
+    "price": 2150,
+    "imageUrl": "/images/shop/project-odyssey/tie-dye-hat-cotton-candy-front.webp",
+    "imageAlt": "cotton candy tie dye hat with project odyssey logo",
+    "hoverImageUrl": "/images/shop/project-odyssey/tie-dye-hat-sky-left-front.webp",
+    "url": "https://shop.civitai.com/products/project-odyssey-tie-dye-hat"
+  }
+]
