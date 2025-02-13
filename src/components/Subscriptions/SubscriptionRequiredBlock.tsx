@@ -71,7 +71,7 @@ export const SubscriptionRequiredBlock = ({
           constants.memberships.tierOrder.indexOf(tier) >=
           constants.memberships.tierOrder.indexOf(t)
       )
-    : !!tier;
+    : !!tier && tier !== 'free';
 
   if (isAllowed) {
     return <>{children}</>;

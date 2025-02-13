@@ -568,16 +568,6 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 onChangeCapture={(event) => {
                   // @ts-ignore eslint-disable-next-line
                   const value = event.target.value as Availability;
-                  if (value === Availability.Private && !currentUser?.isPaidMember) {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    showErrorNotification({
-                      title: 'Private availability is only for paid members',
-                      error: new Error('Upgrade to a paid membership to use this feature'),
-                    });
-                    return;
-                  }
-
                   if (value === Availability.Private) {
                     // Open automatic configurator modal:
                     event.preventDefault();
