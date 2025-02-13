@@ -12,7 +12,8 @@ import {
   WorkflowStatus,
   WorkflowStep,
 } from '@civitai/client';
-import { uniqBy } from 'lodash-es';
+import { uniq, uniqBy } from 'lodash-es';
+import { metadata } from 'motion/dist/react-m';
 import type { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server';
@@ -391,10 +392,11 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
+
   const versionIds = allResources.map((x) => x.id);
-  const epochNumbers = allResources
-    .filter((x) => !!x.epochNumber)
-    .map((x) => `${x.id}@${x.epochNumber}`);
+  const epochNumbers = uniq(
+    allResources.filter((x) => !!x.epochNumber).map((x) => `${x.id}@${x.epochNumber}`)
+  );
   const { resources, injectable } = await getResourceDataWithInjects({
     ids: versionIds,
     user,
@@ -418,7 +420,19 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
           workflowId: workflow.id as string,
           // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
           step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
-          resources: [...resources, ...injectable],
+          resources: [...resources, ...injectable].filter((resource) => {
+            const metadataResources =
+              (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
+            const mr = metadataResources.find((x) => x.id === resource.id);
+
+            if (mr && mr.epochNumber) {
+              // Avoids attaching wrong epoch details to resources. The only source of truth we have for that
+              // is the metadata since it's pretty much impossible to tie air <-> modelVersion.
+              return resource.epochDetails?.epochNumber === mr.epochNumber;
+            }
+
+            return true; // Default behavior.
+          }),
         })
       ),
     };

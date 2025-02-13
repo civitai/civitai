@@ -182,7 +182,6 @@ export function QueueItem({
       : undefined;
 
   const queuePosition = images[0]?.queuePosition;
-  console.log(resources, step);
 
   return (
     <Card ref={ref} withBorder px="xs" id={id}>

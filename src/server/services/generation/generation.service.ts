@@ -237,7 +237,6 @@ export const getGenerationData = async ({
   query: GetGenerationDataSchema;
   user?: SessionUser;
 }): Promise<GenerationData> => {
-  console.log(query);
   switch (query.type) {
     case 'image':
     case 'video':
@@ -650,8 +649,10 @@ export async function getResourceData({
       [...initialWithAccess, ...substitutesWithAccess].filter((x) => x.hasAccess).map((x) => x.id)
     );
 
-    return initialWithAccess.map(({ ...item }) => {
+    return initialWithAccess.flatMap(({ ...item }) => {
       const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
+      const trainingFile = modelFilesCached[item.id]?.files.find((f) => f.type === 'Training Data');
+
       const substitute = substitutesWithAccess.find(
         (sub) => sub.model.id === item.model.id && sub.hasAccess
       );
@@ -664,43 +665,44 @@ export async function getResourceData({
           fileSizeKB > 10 * 1024;
       }
 
-      const [, epochNumber] =
-        epochNumbers
-          ?.find((v) => {
-            const [modelVersionId] = v.split('@');
-            if (!modelVersionId) return false;
-            return Number(modelVersionId) === item.id;
-          })
-          ?.split('@') ?? [];
+      const epochs = epochNumbers
+        ?.filter((v) => {
+          const [modelVersionId] = v.split('@');
+          if (!modelVersionId) return false;
+          return Number(modelVersionId) === item.id;
+        })
+        ?.map((s) => Number(s.split('@')[1]));
 
-      const epochDetails =
-        epochNumber && primaryFile
-          ? getTrainingFileEpochNumberDetails(
-              epochNumber
-                ? modelFilesCached[item.id]?.files?.find((f) => f.type === 'Training Data') ??
-                    primaryFile
-                : primaryFile,
-              Number(epochNumber)
-            )
-          : null;
+      const epochsDetails =
+        epochs
+          ?.map((epochNumber) => {
+            const epochDetails =
+              epochNumber && trainingFile
+                ? getTrainingFileEpochNumberDetails(trainingFile, Number(epochNumber))
+                : null;
+
+            return epochDetails;
+          })
+          .filter(isDefined) ?? [];
+
+      let substituteData;
+
+      if (substitute) {
+        const { model, availability, ...sub } = substitute;
+        substituteData = removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess });
+      }
 
       const payload = removeNulls({
         ...item,
         canGenerate: item.covered && item.hasAccess,
         fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
         additionalResourceCost,
-        epochDetails,
+        substitute: substituteData,
       });
 
-      if (substitute) {
-        const { model, availability, ...sub } = substitute;
-        return {
-          ...payload,
-          substitute: removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess }),
-        };
-      }
-
-      return payload;
+      return (epochsDetails?.length ?? 0) > 0
+        ? epochsDetails.map((epochDetails) => ({ ...payload, epochDetails }))
+        : payload;
     });
   });
 }

@@ -160,7 +160,9 @@ export const orchestratorRouter = router({
   // #region [generated images]
   queryGeneratedImages: orchestratorProcedure
     .input(workflowQuerySchema)
-    .query(({ ctx, input }) => queryGeneratedImageWorkflows({ ...input, token: ctx.token })),
+    .query(({ ctx, input }) =>
+      queryGeneratedImageWorkflows({ ...input, token: ctx.token, user: ctx.user })
+    ),
   generateImage: orchestratorGuardedProcedure
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
