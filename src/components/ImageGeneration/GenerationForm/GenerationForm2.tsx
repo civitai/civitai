@@ -1186,7 +1186,7 @@ export function GenerationFormContent() {
                             Terms of Service
                           </Text>{' '}
                           presented during onboarding. Failure to abide by{' '}
-                          <Text component={Link} href="/content/tos" td="underline">
+                          <Text component={Link} href="/safety#content-policies" td="underline">
                             our content policies
                           </Text>{' '}
                           will result in the loss of your access to the image generator.
