@@ -77,7 +77,7 @@ export default MixedAuthEndpoint(async function handler(
         (
             mv."earlyAccessEndsAt" > NOW()
             AND mv."availability" = 'EarlyAccess'
-            AND mv."earlyAccessConfig"->>'freeGeneration' != 'true'
+            AND (mv."earlyAccessConfig"->>'freeGeneration' IS NULL OR mv."earlyAccessConfig"->>'freeGeneration' != 'true')
         )
         OR
         (mv."availability" = 'Private')
