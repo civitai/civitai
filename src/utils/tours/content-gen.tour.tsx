@@ -240,7 +240,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     title: 'Your Generation Queue',
     content: 'This is where your generated media is stored, along with all the generation details.',
     data: {
-      onNext: async () => generationPanel.setView('queue'),
+      onPrev: async () => generationPanel.setView('generate'),
     },
     disableBeacon: true,
   },

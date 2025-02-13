@@ -13,7 +13,7 @@ export const modelPageTour: StepWithData[] = [
     },
   },
   {
-    target: '[data-tour="model:create"]',
+    target: '[data-tour="model:neka"]',
     title: 'Create with Resource',
     content: 'Click here to generate content using this resource, if available in the generator.',
     disableBeacon: true,

@@ -22,9 +22,7 @@ export function PostEdit() {
   const { runTour, running } = useTourContext();
 
   useEffect(() => {
-    if (!running && post?.id) {
-      runTour({ key: 'post-generation' });
-    }
+    if (!running && post?.id) runTour({ key: 'post-generation' });
   }, [post?.id]);
 
   if (!post) return null;

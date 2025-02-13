@@ -72,34 +72,18 @@ export function BuzzTransactionButton({
 
   if (!features.buzz) return null;
 
-  const onClick = (e?: React.MouseEvent) => {
+  const onClick = () => {
     if (!showPurchaseModal) return;
-
-    e?.preventDefault();
-    e?.stopPropagation();
-
-    if (!onPerformTransaction) {
-      return;
-    }
-
-    if (!features.buzz) {
-      // Just perform whatever it is we need
-      onPerformTransaction();
-      return;
-    }
+    if (!onPerformTransaction) return;
+    if (!features.buzz) return onPerformTransaction(); // Just perform whatever it is we need
 
     conditionalPerformTransaction(buzzAmount, onPerformTransaction);
   };
 
-  const blueColor = 'blue.4';
-  const yellowColor = 'yellow.7';
-
   const hasCost = buzzAmount > 0;
   const meetsTypeRequiredAmount = hasTypeRequiredAmount(buzzAmount);
-
   const takesBlue = transactionType === 'Generation';
-  const buttonColor = meetsTypeRequiredAmount && takesBlue ? blueColor : yellowColor;
-
+  const buttonColor = meetsTypeRequiredAmount && takesBlue ? 'blue.4' : 'yellow.7';
   const typeDistrib = getTypeDistribution(buzzAmount);
 
   return (
@@ -110,9 +94,7 @@ export function BuzzTransactionButton({
       className={cx(buttonProps?.className, { [classes.button]: hasCost || loading })}
       pr={hasCost ? 8 : undefined}
       styles={{
-        label: {
-          width: '100%',
-        },
+        label: { width: '100%' },
       }}
       size={size}
       loading={loading}

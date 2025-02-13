@@ -94,17 +94,22 @@ export function TourProvider({ children, ...props }: Props) {
 
       if (opts?.step != null && activeTour && !currentTourData?.completed) {
         const tour = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
-        console.log('mutating', { tour });
         if (currentUser) updateUserSettingsMutation.mutate({ tour });
         setLocalTour((old) => ({ ...old, ...tour }));
       }
     },
-    [currentUser, localTour, state.activeTour, userSettings?.tourSettings]
+    [
+      currentUser,
+      localTour,
+      state.activeTour,
+      userSettings?.tourSettings,
+      setLocalTour,
+      updateUserSettingsMutation,
+    ]
   );
 
   const closeTour = useCallback<TourState['closeTour']>(
     (opts) => {
-      console.log('closing tour', { opts, state });
       if (state.activeTour) {
         const tour = {
           [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
@@ -119,7 +124,7 @@ export function TourProvider({ children, ...props }: Props) {
         currentStep: opts?.reset ? 0 : old.currentStep,
       }));
     },
-    [state.activeTour, state.currentStep, currentUser]
+    [state.activeTour, state.currentStep, currentUser, setLocalTour, updateUserSettingsMutation]
   );
 
   const setSteps = (steps: TourState['steps']) => {
@@ -170,7 +175,6 @@ export function TourProvider({ children, ...props }: Props) {
 
     const currentTourData = userSettings?.tourSettings?.[tourKey ?? ''] ?? localTour[tourKey ?? ''];
     if (currentTourData?.completed) return;
-    console.log('running effect', { tourKey, currentTourData, isInitialLoading, localTour });
 
     // Set initial step based on user settings
     const currentStep = currentTourData?.currentStep ?? 0;

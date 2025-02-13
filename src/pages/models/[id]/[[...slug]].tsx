@@ -466,9 +466,9 @@ export default function ModelDetailsV2({
   useEffect(() => {
     if (loadingModel) return;
     if (activeTour === 'model-page' && !running) runTour({ key: 'model-page' });
-    // only run first render
+    // only run when the model is loaded
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadingModel, latestVersion]);
+  }, [loadingModel]);
 
   if (loadingModel) return <PageLoader />;
 

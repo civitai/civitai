@@ -333,12 +333,18 @@ export function GenerationFormContent() {
   ]);
 
   useEffect(() => {
+    if (!running || currentStep > 0) return;
     // Remove last two steps if user has not generated any images
     if (!loadingGenQueueRequests && !hasGeneratedImages)
       setSteps(
         remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
       );
-  }, [loadingGenQueueRequests, hasGeneratedImages, remixOfId]);
+
+    if (!currentUser)
+      setSteps(
+        remixOfId ? remixContentGenerationTour.slice(0, 4) : contentGenerationTour.slice(0, 6)
+      );
+  }, [loadingGenQueueRequests, hasGeneratedImages, remixOfId, currentUser, running]);
 
   return (
     <Form
