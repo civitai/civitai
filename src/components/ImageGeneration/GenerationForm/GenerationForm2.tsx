@@ -303,7 +303,7 @@ export function GenerationFormContent() {
   }, []);
 
   const workflowOptions = workflowDefinitions
-    .filter((x) => x.selectable !== false && x.key !== undefined)
+    .filter((x) => x.selectable !== false)
     .map(({ key, label }) => ({ label, value: key }));
 
   return (
@@ -364,15 +364,11 @@ export function GenerationFormContent() {
                               </Badge>
                             </div>
                           }
-                          // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
                           className="flex-1"
                           name="workflow"
                           data={[
-                            // ...workflowOptions.filter((x) => x.value.startsWith('txt')),
-                            // ...workflowOptions.filter((x) => x.value.startsWith('img')),
-                            ...workflowDefinitions
-                              .filter((x) => x.selectable !== false)
-                              .map(({ key, label }) => ({ label, value: key })),
+                            ...workflowOptions.filter((x) => x.value.startsWith('txt')),
+                            ...workflowOptions.filter((x) => x.value.startsWith('img')),
                           ]}
                           loading={loadingWorkflows}
                         />
