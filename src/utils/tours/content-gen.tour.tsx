@@ -32,6 +32,7 @@ export const contentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Start Here',
+    placement: 'right',
     spotlightClicks: true,
     disableBeacon: true,
     disableScrolling: true,
@@ -41,6 +42,7 @@ export const contentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Remix Content',
+    placement: 'right',
     content: (
       <div className="flex flex-col gap-2">
         <Text>
@@ -213,6 +215,7 @@ export const remixContentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Start Here',
+    placement: 'right',
     spotlightClicks: true,
     disableScrolling: true,
     disableBeacon: true,

@@ -126,7 +126,7 @@ export function GenerationFormContent() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
-  const { runTour, running, currentStep, setSteps } = useTourContext();
+  const { runTour, running, currentStep, setSteps, activeTour } = useTourContext();
   const loadingGeneratorData = useGenerationStore((state) => state.loading);
   const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
     state.requestsLoading,
@@ -333,18 +333,29 @@ export function GenerationFormContent() {
   ]);
 
   useEffect(() => {
-    if (!running || currentStep > 0) return;
+    if (!running || currentStep > 0 || loadingGeneratorData) return;
+    const isRemix = !!remixOfId && activeTour === 'remix-content-generation';
+
     // Remove last two steps if user has not generated any images
     if (!loadingGenQueueRequests && !hasGeneratedImages)
       setSteps(
-        remixOfId ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
+        isRemix ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
       );
 
+    // Only show first few steps if user is not logged in
     if (!currentUser)
       setSteps(
-        remixOfId ? remixContentGenerationTour.slice(0, 4) : contentGenerationTour.slice(0, 6)
+        isRemix ? remixContentGenerationTour.slice(0, 4) : contentGenerationTour.slice(0, 6)
       );
-  }, [loadingGenQueueRequests, hasGeneratedImages, remixOfId, currentUser, running]);
+  }, [
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    currentUser,
+    running,
+    activeTour,
+    loadingGeneratorData,
+  ]);
 
   return (
     <Form

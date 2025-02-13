@@ -13,7 +13,7 @@ export const modelPageTour: StepWithData[] = [
     },
   },
   {
-    target: '[data-tour="model:neka"]',
+    target: '[data-tour="model:create"]',
     title: 'Create with Resource',
     content: 'Click here to generate content using this resource, if available in the generator.',
     disableBeacon: true,
@@ -40,13 +40,14 @@ export const modelPageTour: StepWithData[] = [
     target: '[data-tour="model:discussion"]',
     disableBeacon: true,
     title: 'Join the Discussion',
-    placement: 'top',
+    placement: 'right',
     content: 'Engage in discussions related to this resource.',
   },
   {
     target: '[data-tour="model:gallery"]',
     disableBeacon: true,
     title: 'View Gallery',
+    placement: 'right',
     content: `View images created with this resource. You can add your review and post your own images that you've created using this resource.`,
     data: {
       onNext: async () => {

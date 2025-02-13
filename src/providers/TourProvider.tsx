@@ -195,8 +195,6 @@ export function TourProvider({ children, ...props }: Props) {
     }
   }, [isInitialLoading, tourKey]);
 
-  console.log('tour state', state);
-
   return (
     <TourContext.Provider value={{ ...state, runTour, closeTour, setSteps }}>
       {children}
