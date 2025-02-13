@@ -348,7 +348,16 @@ function getResources(step: WorkflowStep) {
 
     const metadataResources = (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
 
-    return uniqBy([...inputResources, ...metadataResources], 'id');
+    return inputResources.map((ir) => {
+      const metadataResource = metadataResources.find((x) => x.id === ir.id);
+      if (metadataResource)
+        return {
+          ...ir,
+          epochNumber: metadataResource.epochNumber,
+        };
+
+      return ir;
+    });
   }
   return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
 }
