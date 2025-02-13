@@ -27,15 +27,6 @@
     "url": "https://shop.civitai.com/products/project-odyssey-fleece-hoodie"
   },
   {
-    "name": "Project Odyssey Dad Hat",
-    "description": "Dad hats aren't just for dads. This one's got a low profile with an adjustable strap and curved visor.",
-    "price": 1600,
-    "imageUrl": "/images/shop/project-odyssey/classic-dad-hat-black-front.webp",
-    "imageAlt": "black dad hat with project odyssey logo",
-    "hoverImageUrl": "/images/shop/project-odyssey/classic-dad-hat-black-left-side.webp",
-    "url": "https://shop.civitai.com/products/project-odyssey-dad-hat"
-  },
-  {
     "name": "Project Odyssey Tie Dye Hat",
     "description": "Bring fun and color to your wardrobe with this 100% cotton tie dye hat. It's stylish, super trendy, and will add extra pizzazz to any outfit.",
     "price": 2150,
@@ -43,5 +34,14 @@
     "imageAlt": "cotton candy tie dye hat with project odyssey logo",
     "hoverImageUrl": "/images/shop/project-odyssey/tie-dye-hat-sky-left-front.webp",
     "url": "https://shop.civitai.com/products/project-odyssey-tie-dye-hat"
+  },
+  {
+    "name": "Project Odyssey Dad Hat",
+    "description": "Dad hats aren't just for dads. This one's got a low profile with an adjustable strap and curved visor.",
+    "price": 1600,
+    "imageUrl": "/images/shop/project-odyssey/classic-dad-hat-black-front.webp",
+    "imageAlt": "black dad hat with project odyssey logo",
+    "hoverImageUrl": "/images/shop/project-odyssey/classic-dad-hat-black-left-side.webp",
+    "url": "https://shop.civitai.com/products/project-odyssey-dad-hat"
   }
 ]
