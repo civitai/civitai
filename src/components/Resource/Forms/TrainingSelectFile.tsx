@@ -12,13 +12,16 @@ import {
   Textarea,
   Title,
 } from '@mantine/core';
-import { IconAlertCircle, IconFileDownload, IconSend } from '@tabler/icons-react';
+import { IconAlertCircle, IconArrowRight, IconFileDownload } from '@tabler/icons-react';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
+import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
+import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -58,6 +61,7 @@ const EpochRow = ({
   onPublishClick,
   loading,
   incomplete,
+  modelVersionId,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
   prompts: TrainingResultsV2['sampleImagesPrompts'];
@@ -66,7 +70,10 @@ const EpochRow = ({
   onPublishClick: (modelUrl: string) => void;
   loading?: boolean;
   incomplete?: boolean;
+
+  modelVersionId?: number;
 }) => {
+  const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
 
   return (
@@ -100,14 +107,23 @@ const EpochRow = ({
                   : 'Download'}
               </Text>
             </DownloadButton>
+            {modelVersionId && (
+              <SubscriptionRequiredBlock feature="private-models">
+                <GenerateButton
+                  modelVersionId={modelVersionId}
+                  disabled={!currentUser?.isMember && !currentUser?.isModerator}
+                  epochNumber={epoch.epochNumber}
+                />
+              </SubscriptionRequiredBlock>
+            )}
             <Button
               disabled={incomplete}
               loading={loading}
               onClick={() => onPublishClick(epoch.modelUrl)}
             >
               <Group spacing={4} noWrap>
-                <IconSend size={20} />
-                Publish
+                Continue
+                <IconArrowRight size={20} />
               </Group>
             </Button>
           </Group>
@@ -251,6 +267,7 @@ export default function TrainingSelectFile({
         TRANSMITTER_KEY,
         publishImages.map((url) => ({ url }))
       );
+
       await router.replace({ query: { ...router.query, src: TRANSMITTER_KEY } }, undefined, {
         shallow: true,
         scroll: false,
@@ -408,6 +425,7 @@ export default function TrainingSelectFile({
             onPublishClick={handleSubmit}
             loading={awaitInvalidate}
             incomplete={resultsLoading}
+            modelVersionId={modelVersion.id}
           />
           {epochs.length > 1 && (
             <>
@@ -426,6 +444,7 @@ export default function TrainingSelectFile({
                   onPublishClick={handleSubmit}
                   loading={awaitInvalidate}
                   incomplete={resultsLoading}
+                  modelVersionId={modelVersion.id}
                 />
               ))}
             </>

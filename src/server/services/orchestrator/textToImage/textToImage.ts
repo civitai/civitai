@@ -40,8 +40,9 @@ export async function createTextToImageStep(
     air: stringifyAIR({
       baseModel: resource.baseModel,
       type: resource.model.type,
-      modelId: resource.model.id,
-      id: resource.id,
+      modelId: resource.epochDetails ? resource.epochDetails.jobId : resource.model.id,
+      id: resource.epochDetails ? resource.epochDetails.fileName : resource.id,
+      source: resource.epochDetails ? 'orchestrator' : 'civitai',
     }),
   }));
 

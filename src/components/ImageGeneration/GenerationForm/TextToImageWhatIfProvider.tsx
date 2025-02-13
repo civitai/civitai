@@ -63,10 +63,12 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     if (isSD3 && model?.id) {
       modelId = model.id;
     }
-    const additionalResources = resources.map((x) => (x ? x.id : undefined)).filter(isDefined);
+    const additionalResources = resources
+      .filter((x) => isDefined(x.id))
+      .map((x) => ({ id: x.id as number, epochNumber: x.epochDetails?.epochNumber }));
 
     return {
-      resources: [modelId, ...additionalResources],
+      resources: [{ id: modelId }, ...additionalResources],
       params: {
         ...params,
         ...whatIfQueryOverrides,

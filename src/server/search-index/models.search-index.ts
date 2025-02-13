@@ -24,6 +24,7 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
+import { modelSearchIndexSelect } from '../selectors/model.selector';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -144,67 +145,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 };
 
-const modelSelect = Prisma.validator<Prisma.ModelSelect>()({
-  id: true,
-  name: true,
-  type: true,
-  nsfw: true,
-  nsfwLevel: true,
-  minor: true,
-  status: true,
-  createdAt: true,
-  lastVersionAt: true,
-  publishedAt: true,
-  locked: true,
-  earlyAccessDeadline: true,
-  mode: true,
-  checkpointType: true,
-  availability: true,
-  allowNoCredit: true,
-  allowCommercialUse: true,
-  allowDerivatives: true,
-  allowDifferentLicense: true,
-  // Joins:
-  user: {
-    select: userWithCosmeticsSelect,
-  },
-  modelVersions: {
-    select: getModelVersionsForSearchIndex,
-    orderBy: { index: 'asc' as const },
-    where: {
-      status: ModelStatus.Published,
-      availability: {
-        not: Availability.Unsearchable,
-      },
-    },
-  },
-  tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
-  hashes: {
-    select: modelHashSelect,
-    where: {
-      fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-      hashType: { notIn: ['AutoV1'] as ModelHashType[] },
-    },
-  },
-  metrics: {
-    select: {
-      commentCount: true,
-      favoriteCount: true,
-      thumbsUpCount: true,
-      downloadCount: true,
-      rating: true,
-      ratingCount: true,
-      collectedCount: true,
-      tippedAmountCount: true,
-    },
-    where: {
-      timeframe: MetricTimeframe.AllTime,
-    },
-  },
-});
-
 type Model = Prisma.ModelGetPayload<{
-  select: typeof modelSelect;
+  select: typeof modelSearchIndexSelect;
 }>;
 type PullDataResult = {
   models: Model[];
@@ -409,7 +351,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
         : `${batch.startId} - ${batch.endId}`;
     logger(`PullData :: Pulling data for batch`, batchLogKey);
     const models = await db.model.findMany({
-      select: modelSelect,
+      select: modelSearchIndexSelect,
       where: {
         status: ModelStatus.Published,
         availability: {

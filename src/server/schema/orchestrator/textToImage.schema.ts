@@ -98,7 +98,11 @@ export const generateImageSchema = z.object({
 });
 
 export const generateImageWhatIfSchema = generateImageSchema.extend({
-  resources: z.number().array().min(1),
+  resources: workflowResourceSchema
+    .extend({
+      strength: z.number().optional(),
+    })
+    .array(),
   params: textToImageParamsSchema.extend({
     prompt: z.string().default('what if'),
     negativePrompt: z.string().optional(),

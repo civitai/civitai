@@ -1,6 +1,5 @@
 import { z } from 'zod';
-import { Currency, PaymentProvider } from '~/shared/utils/prisma/enums';
-import { constants } from '~/server/common/constants';
+import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { booleanString } from '~/utils/zod-helpers';
 
 export type GetPlansSchema = z.infer<typeof getPlansSchema>;
@@ -29,6 +28,7 @@ export const subscriptionProductMetadataSchema = z
     // Makes it so that we include it when creating a paddle transaction.
     // Used for Save Details only.
     includeWithTransaction: booleanString().optional(),
+    maxPrivateModels: z.coerce.number().positive().optional(),
   })
   .passthrough();
 

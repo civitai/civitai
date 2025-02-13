@@ -12,6 +12,7 @@ import {
   S3Client,
   UploadPartCommand,
 } from '@aws-sdk/client-s3';
+import { Upload } from '@aws-sdk/lib-storage';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '~/env/server';
 
@@ -267,3 +268,26 @@ export async function getFileMetadata(
     lastModified: data.LastModified,
   };
 }
+
+export const serverUploadImage = async ({
+  file,
+  bucket,
+  key,
+}: {
+  file: File | Blob;
+  bucket: string;
+  key: string;
+}) => {
+  const s3Client = getS3Client('image');
+  return new Upload({
+    client: s3Client,
+    params: {
+      Bucket: bucket,
+      Key: key,
+      Body: file,
+    },
+    queueSize: 4,
+    partSize: 5 * 1024 * 1024,
+    leavePartsOnError: false,
+  });
+};
