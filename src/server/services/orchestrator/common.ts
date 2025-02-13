@@ -348,8 +348,9 @@ function getResources(step: WorkflowStep) {
 
     const metadataResources = (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
 
-    return inputResources.map((ir) => {
+    return uniqBy([...inputResources, ...metadataResources], 'id').map((ir) => {
       const metadataResource = metadataResources.find((x) => x.id === ir.id);
+      // If removed, we re-add the epochInformation
       if (metadataResource)
         return {
           ...ir,
