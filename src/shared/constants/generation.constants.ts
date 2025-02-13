@@ -414,15 +414,15 @@ export const baseModelResourceTypes = {
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Pony.baseModels],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Pony.baseModels],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Pony.baseModels],
+      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
@@ -443,15 +443,15 @@ export const baseModelResourceTypes = {
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Illustrious.baseModels],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Illustrious.baseModels],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Illustrious.baseModels],
+      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
