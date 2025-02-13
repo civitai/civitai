@@ -196,7 +196,10 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     isSelectableInGenerator &&
     features.imageGeneration &&
     version.canGenerate &&
-    (!isEarlyAccess || !!earlyAccessConfig?.chargeForGeneration || hasGeneratePermissions);
+    (!isEarlyAccess ||
+      !!earlyAccessConfig?.chargeForGeneration ||
+      !!earlyAccessConfig?.freeGeneration ||
+      hasGeneratePermissions);
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -919,16 +922,24 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             <AlertWithIcon color="blue" iconColor="blue" icon={<IconBrush size={16} />} size="sm">
               {isDownloadable && !isLoadingAccess ? (
                 <Text>
-                  You've set this model to Generation-Only. Other users will not be able to download this model.
-                  Click{' '}
-                  <Text component={Link} variant="link" td="underline" href={`/models/${version.modelId}/model-versions/${version.id}/edit`}>
+                  You've set this model to Generation-Only. Other users will not be able to download
+                  this model. Click{' '}
+                  <Text
+                    component={Link}
+                    variant="link"
+                    td="underline"
+                    href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
+                  >
                     here
                   </Text>{' '}
                   to change this behavior.
                 </Text>
               ) : (
                 <Text>
-                  The creator has set this model to Generation-Only. <Text variant="link" td="underline" component={Link} href="/articles/11494">Learn more</Text>
+                  The creator has set this model to Generation-Only.{' '}
+                  <Text variant="link" td="underline" component={Link} href="/articles/11494">
+                    Learn more
+                  </Text>
                 </Text>
               )}
             </AlertWithIcon>
