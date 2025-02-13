@@ -342,7 +342,7 @@ function getResources(step: WorkflowStep) {
   if (step.$type === 'textToImage') {
     const inputResources = getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
       id: x.version,
-      strength: x.networkParams.strength,
+      strength: x.networkParams.strength ?? 1,
       epochNumber: undefined,
     }));
 
