@@ -217,7 +217,7 @@ const TrainSteps = ({
       <Stepper.Step label="Edit model">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit model</Title>
-          <ModelUpsertForm model={model} onSubmit={goNext}>
+          <ModelUpsertForm model={model} modelVersionId={modelVersion.id} onSubmit={goNext}>
             {({ loading }) => (
               <Group mt="xl" position="right">
                 <Button variant="default" onClick={goBack}>

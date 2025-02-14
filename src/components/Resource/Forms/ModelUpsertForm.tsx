@@ -111,7 +111,7 @@ const availabilityDetails = {
   },
 };
 
-export function ModelUpsertForm({ model, children, onSubmit }: Props) {
+export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
@@ -603,7 +603,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
 
                     dialogStore.trigger({
                       component: PrivateModelAutomaticSetup,
-                      props: form.getValues(),
+                      props: { ...form.getValues(), modelVersionId },
                     });
 
                     return;
@@ -649,9 +649,13 @@ type Props = {
   onSubmit: (data: { id?: number }) => void;
   children: React.ReactNode | ((data: { loading: boolean }) => React.ReactNode);
   model?: Partial<Omit<ModelById, 'tagsOnModels'> & ModelUpsertInput>;
+  modelVersionId?: number;
 };
 
-export const PrivateModelAutomaticSetup = ({ ...form }: ModelUpsertSchema) => {
+export const PrivateModelAutomaticSetup = ({
+  modelVersionId,
+  ...form
+}: ModelUpsertSchema & { modelVersionId?: number }) => {
   const dialog = useDialogContext();
   const utils = trpc.useContext();
   const currentUser = useCurrentUser();
@@ -665,9 +669,17 @@ export const PrivateModelAutomaticSetup = ({ ...form }: ModelUpsertSchema) => {
       poi: form.poi === 'true',
       id: form.id as number,
       availability: Availability.Private,
+      modelVersionIds: modelVersionId ? [modelVersionId] : undefined,
     });
 
-    await router.replace(`/models/${form.id}`);
+    if (modelVersionId) {
+      utils.model.getById.invalidate({ id: form.id });
+      utils.modelVersion.getById.invalidate({ id: modelVersionId });
+    }
+
+    await router.replace(
+      `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
+    );
     handleClose();
   };
 
@@ -687,7 +699,9 @@ export const PrivateModelAutomaticSetup = ({ ...form }: ModelUpsertSchema) => {
         </Text>
         <Text>
           By clicking continue, we will automatically complete the setup of your private model and
-          you will be able to generate with it.
+          you will be able to generate with it. If you have other trained versions of this model,
+          you will still need to manually select the relevant Epoch File, but they will also be
+          considered private.
         </Text>
         <Group ml="auto">
           <Button

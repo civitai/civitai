@@ -110,6 +110,7 @@ export const getModelVersionHandler = async ({
             nsfw: true,
             uploadType: true,
             user: { select: { id: true } },
+            availability: true,
           },
         },
         files: withFiles ? { select: modelFileSelect } : false,

@@ -61,6 +61,8 @@ import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
+import { uploadImageFromUrl } from '~/server/services/image.service';
+import { addPostImage, createPost } from '~/server/services/post.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1477,4 +1479,81 @@ export type GenerationResourceDataModel = {
     minor: boolean;
     userId: number;
   };
+};
+
+export const createModelVersionPostFromTraining = async ({
+  modelVersionId,
+  user,
+}: {
+  modelVersionId: number;
+  user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
+}) => {
+  const now = new Date();
+  const files = await dbRead.modelFile.findMany({
+    where: { modelVersionId },
+    select: { id: true, metadata: true },
+  });
+  const trainingFile = files.find((file) => {
+    const metadata = file.metadata as ModelFileMetadata;
+    return !!metadata?.trainingResults;
+  });
+
+  if (!trainingFile) {
+    return;
+  }
+
+  const fileMetadata = trainingFile.metadata as ModelFileMetadata;
+
+  const epoch = fileMetadata.selectedEpochUrl
+    ? fileMetadata.trainingResults?.epochs?.find((e) =>
+        'modelUrl' in e
+          ? e.modelUrl === fileMetadata.selectedEpochUrl
+          : e.model_url === fileMetadata.selectedEpochUrl
+      )
+    : fileMetadata.trainingResults?.epochs?.[fileMetadata.trainingResults.epochs?.length - 1];
+
+  if (!epoch) {
+    return;
+  }
+
+  const imageUrls = 'sampleImages' in epoch ? epoch.sampleImages : epoch.sample_images;
+
+  if (!imageUrls || imageUrls?.length === 0) {
+    return;
+  }
+
+  const uploadedImages = (
+    await Promise.all(
+      imageUrls.map(async (data, index) => {
+        const image = await uploadImageFromUrl({
+          imageUrl: typeof data === 'string' ? data : data.image_url,
+        });
+
+        return image;
+      })
+    )
+  ).filter((x) => isDefined(x?.url));
+
+  // Create post:
+  const post = await createPost({
+    userId: user.id,
+    modelVersionId,
+    publishedAt: now,
+  });
+
+  await Promise.all(
+    uploadedImages.map((image) =>
+      addPostImage({
+        type: 'image',
+        postId: post.id,
+        modelVersionId,
+        width: image.metadata?.width,
+        height: image.metadata?.height,
+        metadata: image.metadata as any,
+        meta: image.meta,
+        url: image.url as string,
+        user,
+      })
+    )
+  );
 };

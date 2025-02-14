@@ -73,6 +73,7 @@ import {
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
   bustMvCache,
+  createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
 import { addPostImage, createPost } from '~/server/services/post.service';
@@ -2729,17 +2730,18 @@ export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
   });
 };
 
-export const privateModelFromTraining = async (
-  input: PrivateModelFromTrainingInput & {
-    user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
-  }
-) => {
+export const privateModelFromTraining = async ({
+  modelVersionIds,
+  ...input
+}: PrivateModelFromTrainingInput & {
+  user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
+}) => {
   if (!input.user.isModerator) {
     for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
   }
-  
+
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
-  
+
   const totalPrivateModels = await dbRead.model.count({
     where: { userId: input.user.id, availability: Availability.Private },
   });
@@ -2747,7 +2749,6 @@ export const privateModelFromTraining = async (
   if (totalPrivateModels >= 10) {
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
-
 
   // don't allow updating of locked properties
   if (!user.isModerator) {
@@ -2784,14 +2785,15 @@ export const privateModelFromTraining = async (
         status: true,
         meta: true,
         modelVersions: {
+          where: modelVersionIds
+            ? {
+                id: {
+                  in: modelVersionIds,
+                },
+              }
+            : undefined,
           select: {
             id: true,
-            files: {
-              select: {
-                id: true,
-                metadata: true,
-              },
-            },
           },
         },
       },
@@ -2818,70 +2820,10 @@ export const privateModelFromTraining = async (
       // Create posts:
       await Promise.all(
         result.modelVersions.map(async (modelVersion) => {
-          const trainingFile = modelVersion.files.find((file) => {
-            const metadata = file.metadata as ModelFileMetadata;
-            return !!metadata?.trainingResults;
-          });
-
-          if (!trainingFile) {
-            return;
-          }
-          const fileMetadata = trainingFile.metadata as ModelFileMetadata;
-
-          const epoch = fileMetadata.selectedEpochUrl
-            ? fileMetadata.trainingResults?.epochs?.find((e) =>
-                'modelUrl' in e
-                  ? e.modelUrl === fileMetadata.selectedEpochUrl
-                  : e.model_url === fileMetadata.selectedEpochUrl
-              )
-            : fileMetadata.trainingResults?.epochs?.[
-                fileMetadata.trainingResults.epochs?.length - 1
-              ];
-
-          if (!epoch) {
-            return;
-          }
-
-          const imageUrls = 'sampleImages' in epoch ? epoch.sampleImages : epoch.sample_images;
-
-          if (!imageUrls || imageUrls?.length === 0) {
-            return;
-          }
-
-          const uploadedImages = (
-            await Promise.all(
-              imageUrls.map(async (data, index) => {
-                const image = await uploadImageFromUrl({
-                  imageUrl: typeof data === 'string' ? data : data.image_url,
-                });
-
-                return image;
-              })
-            )
-          ).filter((x) => isDefined(x?.url));
-
-          // Create post:
-          const post = await createPost({
-            userId: user.id,
+          await createModelVersionPostFromTraining({
             modelVersionId: modelVersion.id,
-            publishedAt: now,
+            user,
           });
-
-          await Promise.all(
-            uploadedImages.map((image) =>
-              addPostImage({
-                type: 'image',
-                postId: post.id,
-                modelVersionId: modelVersion.id,
-                width: image.metadata?.width,
-                height: image.metadata?.height,
-                metadata: image.metadata as any,
-                meta: image.meta,
-                url: image.url as string,
-                user,
-              })
-            )
-          );
         })
       );
     }

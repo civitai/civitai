@@ -368,4 +368,5 @@ export const limitOnly = z.object({
 export type PrivateModelFromTrainingInput = z.infer<typeof privateModelFromTrainingSchema>;
 export const privateModelFromTrainingSchema = modelUpsertSchema.extend({
   id: z.number(), // Model should already be created before hand.
+  modelVersionIds: z.array(z.number()).optional(),
 });
