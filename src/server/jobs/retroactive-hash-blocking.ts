@@ -7,19 +7,19 @@ export const retroactiveHashBlocking = createJob(
   'retroactive-hash-blocking',
   '3 2 * * *',
   async () => {
-    const toBlock = await dbWrite.$queryRaw<{ id: number }[]>`
-      SELECT
-        mf."modelVersionId" as id
-      FROM "BlockedModelHashes" b
-      JOIN "ModelFileHash" mfh ON b.hash = mfh.hash AND mfh.type = 'SHA256'
-      JOIN "ModelFile" mf ON mfh."fileId" = mf.id
-      JOIN "ModelVersion" mv ON mf."modelVersionId" = mv.id
-      WHERE mv.status = 'Published';
-    `;
-
-    const tasks = toBlock.map(({ id }) => async () => {
-      await unpublishBlockedModel(id);
-    });
-    await limitConcurrency(tasks, 5);
+    // Disabled until we can refine the definition of blocked model hash
+    // const toBlock = await dbWrite.$queryRaw<{ id: number }[]>`
+    //   SELECT
+    //     mf."modelVersionId" as id
+    //   FROM "BlockedModelHashes" b
+    //   JOIN "ModelFileHash" mfh ON b.hash = mfh.hash AND mfh.type = 'SHA256'
+    //   JOIN "ModelFile" mf ON mfh."fileId" = mf.id
+    //   JOIN "ModelVersion" mv ON mf."modelVersionId" = mv.id
+    //   WHERE mv.status = 'Published';
+    // `;
+    // const tasks = toBlock.map(({ id }) => async () => {
+    //   await unpublishBlockedModel(id);
+    // });
+    // await limitConcurrency(tasks, 5);
   }
 );
