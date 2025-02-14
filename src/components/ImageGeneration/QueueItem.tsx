@@ -4,6 +4,7 @@ import {
   Badge,
   Card,
   createStyles,
+  Group,
   Loader,
   RingProgress,
   RingProgressProps,
@@ -391,18 +392,40 @@ const ResourceBadge = (props: GenerationResource) => {
 
   const { model, id, name, epochDetails } = props;
   const unstable = unstableResources?.includes(id);
+  const hasEpochDetails = !!epochDetails?.epochNumber;
 
   const badge = (
-    <Badge
-      size="sm"
-      color={unstable ? 'yellow' : undefined}
-      sx={{ maxWidth: 200, cursor: 'pointer' }}
-      component={Link}
-      href={`/models/${model.id}?modelVersionId=${id}`}
-      onClick={() => generationPanel.close()}
-    >
-      {model.name} - {name} {epochDetails ? `(Epoch: ${epochDetails.epochNumber})` : ''}
-    </Badge>
+    <Group spacing={0} noWrap>
+      <Badge
+        size="sm"
+        color={unstable ? 'yellow' : undefined}
+        sx={{
+          maxWidth: 200,
+          cursor: 'pointer',
+          borderTopRightRadius: hasEpochDetails ? 0 : undefined,
+          borderBottomRightRadius: hasEpochDetails ? 0 : undefined,
+        }}
+        component={Link}
+        href={`/models/${model.id}?modelVersionId=${id}`}
+        onClick={() => generationPanel.close()}
+      >
+        {model.name} - {name}
+      </Badge>
+      {epochDetails?.epochNumber && (
+        <Tooltip label={`Epoch: #${epochDetails?.epochNumber}`}>
+          <Badge
+            size="sm"
+            color={unstable ? 'yellow' : undefined}
+            sx={{
+              borderTopLeftRadius: hasEpochDetails ? 0 : undefined,
+              borderBottomLeftRadius: hasEpochDetails ? 0 : undefined,
+            }}
+          >
+            #{epochDetails?.epochNumber}
+          </Badge>
+        </Tooltip>
+      )}
+    </Group>
   );
 
   return unstable ? <Tooltip label="Unstable resource">{badge}</Tooltip> : badge;
