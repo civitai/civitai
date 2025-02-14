@@ -52,6 +52,7 @@ import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
+import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
@@ -130,6 +131,7 @@ export const jobs: Job[] = [
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
   dummyJob,
+  retroactiveHashBlocking,
 ];
 
 const log = createLogger('jobs', 'green');
