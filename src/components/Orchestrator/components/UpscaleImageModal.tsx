@@ -36,32 +36,24 @@ export function UpscaleImageModal({
   params: TextToImageInput;
 }) {
   const dialog = useDialogContext();
-  const [size, setSize] = useState<{ width: number; height: number } | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  // const [size, setSize] = useState<{ width: number; height: number } | null>(null);
+  // const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (params.image)
-      getImageData(params.image)
-        .then(({ width, height }) => {
-          setSize({ width, height });
-        })
-        .catch((e) => setError('failed to load image'));
-    else {
-      setSize(null);
-    }
-  }, [params.image]);
+  // useEffect(() => {
+  //   if (params.image)
+  //     getImageData(params.image)
+  //       .then(({ width, height }) => {
+  //         setSize({ width, height });
+  //       })
+  //       .catch((e) => setError('failed to load image'));
+  //   else {
+  //     setSize(null);
+  //   }
+  // }, [params.image]);
 
   return (
     <Modal {...dialog}>
-      {error ? (
-        <Alert color="red">{error}</Alert>
-      ) : !size ? (
-        <div className="flex h-72 items-center justify-center">
-          <Loader />
-        </div>
-      ) : (
-        <UpscalImageForm params={{ ...params, ...size }} resources={resources} />
-      )}
+      <UpscalImageForm params={params} resources={resources} />
     </Modal>
   );
 }
@@ -141,12 +133,16 @@ function UpscalImageForm({
   return (
     <GenerationProvider>
       <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-        {params.image && (
+        {params.sourceImage?.url && (
           <div className="flex flex-col items-end gap-0.5">
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src={params.image} alt="image to upscale" className="mx-auto max-w-full" />
+            <img
+              src={params.sourceImage.url}
+              alt="image to upscale"
+              className="mx-auto max-w-full"
+            />
             <Text color="dimmed" size="sm">
-              Image dimensions: {params.width} x {params.height}
+              Image dimensions: {params.sourceImage.width} x {params.sourceImage.height}
             </Text>
           </div>
         )}

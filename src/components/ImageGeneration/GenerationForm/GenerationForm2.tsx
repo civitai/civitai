@@ -95,7 +95,6 @@ import {
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -104,6 +103,7 @@ import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputSourceImageUplaod } from '~/components/Generation/Input/SourceImageUpload';
 
 let total = 0;
 const tips = {
@@ -138,7 +138,7 @@ export function GenerationFormContent() {
   const { data: workflowDefinitions = [], isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
 
-  const [workflow, image] = form.watch(['workflow', 'image']) ?? 'txt2img';
+  const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -199,7 +199,7 @@ export function GenerationFormContent() {
 
     const {
       model,
-      resources: additionalResources,
+      resources: additionalResources = [],
       vae,
       remixOfId,
       remixSimilarity,
@@ -210,12 +210,6 @@ export function GenerationFormContent() {
     } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
-
-    const { sourceImage, width, height } = useGenerationFormStore.getState();
-
-    const imageDetails = data.workflow.includes('img2img')
-      ? { image: sourceImage, width, height }
-      : undefined;
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
@@ -246,7 +240,6 @@ export function GenerationFormContent() {
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-            ...imageDetails,
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -379,7 +372,7 @@ export function GenerationFormContent() {
                         )}
                       </div>
                     </div>
-                    {features.image && <GenerationImage />}
+                    {features.image && <InputSourceImageUplaod name="sourceImage" />}
                   </>
                 )}
 
@@ -1406,8 +1399,3 @@ const clipSkipMarks = Array(10)
   .fill(0)
   .map((_, index) => ({ value: index + 1 }));
 // #endregion
-
-function GenerationImage() {
-  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-  return <GeneratorImageInput value={sourceImage} onChange={generationFormStore.setsourceImage} />;
-}

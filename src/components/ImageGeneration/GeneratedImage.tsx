@@ -1,5 +1,5 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
-import { ActionIcon, Checkbox, createStyles, Group, Menu, Modal } from '@mantine/core';
+import { ActionIcon, Checkbox, createStyles, Menu, Modal } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -49,6 +49,7 @@ import {
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { getImageData } from '~/utils/media-preprocessors';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -107,7 +108,7 @@ export function GeneratedImage({
     if (image) window.open(image.url, '_blank');
   };
 
-  const handleGenerate = (
+  const handleGenerate = async (
     { seed, ...rest }: Partial<TextToImageParams> = {},
     {
       type,
@@ -131,7 +132,8 @@ export function GeneratedImage({
     });
   };
 
-  const handleSelectWorkflow = (workflow: string) => handleGenerate({ workflow, image: image.url });
+  const handleSelectWorkflow = (workflow: string) =>
+    handleGenerate({ workflow, sourceImage: image.url as any }); // TODO - see if there is a good way to handle this type mismatch. We're converting a string to a sourceImage object after we pass the data to the generation store
 
   const handleDeleteImage = () => {
     openConfirmModal({
@@ -159,7 +161,7 @@ export function GeneratedImage({
     });
   };
 
-  const handleUpscale = (workflow: string) => {
+  const handleUpscale = async (workflow: string) => {
     handleCloseImageLightbox();
     if (step.$type !== 'videoGen')
       dialogStore.trigger({
@@ -168,7 +170,7 @@ export function GeneratedImage({
           resources: step.resources,
           params: {
             ...step.params,
-            image: image.url,
+            sourceImage: await getSourceImageFromUrl(image.url),
             seed: image.seed,
             workflow,
           },
@@ -683,4 +685,8 @@ export function GeneratedImageLightbox({
       </div>
     </Modal>
   );
+}
+
+async function getSourceImageFromUrl(url: string) {
+  return getImageData(url).then(({ width, height }) => ({ url, width, height }));
 }
