@@ -21,7 +21,6 @@ export const contentGenerationTour: StepWithData[] = [
     target: '[data-tour="gen:terms"]',
     title: 'Accept the Terms',
     content: 'Before generating content, you must accept the terms of service.',
-    placement: 'top',
     spotlightClicks: true,
     disableBeacon: true,
     disableOverlayClose: true,
@@ -32,7 +31,6 @@ export const contentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Start Here',
-    placement: 'right',
     spotlightClicks: true,
     disableBeacon: true,
     disableScrolling: true,
@@ -42,7 +40,6 @@ export const contentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Remix Content',
-    placement: 'right',
     content: (
       <div className="flex flex-col gap-2">
         <Text>
@@ -89,7 +86,7 @@ export const contentGenerationTour: StepWithData[] = [
     target: '[data-tour="gen:submit"]',
     title: 'Create Your Image',
     content: `Once your prompt is ready to go, hit the generate button and AI will start doing it's magic!`,
-    placement: 'top',
+    disableOverlayClose: true,
     disableBeacon: true,
     spotlightClicks: true,
     data: {
@@ -104,7 +101,6 @@ export const contentGenerationTour: StepWithData[] = [
     title: 'Cost of Generation',
     content:
       'All AI tools on Civitai run on Buzz. Depending on the complexity of your request, the amount of Buzz may vary.',
-    placement: 'top',
     disableBeacon: true,
   },
   {
@@ -204,7 +200,6 @@ export const remixContentGenerationTour: StepWithData[] = [
     target: '[data-tour="gen:terms"]',
     title: 'Accept the Terms',
     content: 'Before generating content, you must accept the terms of service.',
-    placement: 'top',
     spotlightClicks: true,
     disableBeacon: true,
     disableOverlayClose: true,
@@ -215,7 +210,6 @@ export const remixContentGenerationTour: StepWithData[] = [
   {
     target: '[data-tour="gen:prompt"]',
     title: 'Start Here',
-    placement: 'right',
     spotlightClicks: true,
     disableScrolling: true,
     disableBeacon: true,
@@ -226,7 +220,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     target: '[data-tour="gen:submit"]',
     title: 'Submit Your Prompt',
     content: 'You can submit your prompt by clicking this button and see the magic happen!',
-    placement: 'top',
+    disableOverlayClose: true,
     disableBeacon: true,
     spotlightClicks: true,
   },
@@ -235,7 +229,6 @@ export const remixContentGenerationTour: StepWithData[] = [
     title: 'Cost of Generation',
     content:
       'All AI tools on Civitai run on Buzz. Depending on the complexity of your request, the amount of Buzz may vary.',
-    placement: 'top',
     disableBeacon: true,
   },
   {

@@ -10,7 +10,12 @@ import {
 } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
-import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
+import {
+  GenerationPanelView,
+  generationPanel,
+  useGenerationStore,
+  useRemixStore,
+} from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React, { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useRouter } from 'next/router';
@@ -33,7 +38,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
-  const generationData = useGenerationStore((state) => state.data);
+  const remixOfId = useRemixStore((state) => state.remixOfId);
   if (isImageFeedSeparate && view === 'generate') setView('queue');
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
@@ -70,7 +75,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               tooltip="Need help? Start the tour!"
               onClick={async () => {
                 runTour({
-                  key: generationData?.remixOf ? 'remix-content-generation' : 'content-generation',
+                  key: remixOfId ? 'remix-content-generation' : 'content-generation',
                   step: 0,
                   forceRun: true,
                 });

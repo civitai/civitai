@@ -125,7 +125,7 @@ function ModelCarouselContent({
   const features = useFeatureFlags();
   const { classes, cx } = useStyles();
 
-  const { runTour, activeTour, running, closeTour } = useTourContext();
+  const { runTour, activeTour, running, currentStep } = useTourContext();
 
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
@@ -198,10 +198,7 @@ function ModelCarouselContent({
                                 id: image.id,
                               });
 
-                              if (running && activeTour === 'model-page') {
-                                closeTour({ reset: true });
-                                runTour({ key: 'remix-content-generation', step: 0 });
-                              }
+                              if (running && activeTour === 'model-page') runTour({ step: currentStep + 1 });
                             }}
                           >
                             <IconBrush stroke={2.5} size={16} />

@@ -100,6 +100,7 @@ import {
   generationFormStore,
   useGenerationFormStore,
   useGenerationStore,
+  useRemixStore,
 } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
@@ -128,6 +129,7 @@ export function GenerationFormContent() {
   );
   const { runTour, running, currentStep, setSteps, activeTour } = useTourContext();
   const loadingGeneratorData = useGenerationStore((state) => state.loading);
+  const remixOfId = useRemixStore((state) => state.remixOfId);
   const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
     state.requestsLoading,
     state.hasGeneratedImages,
@@ -168,6 +170,12 @@ export function GenerationFormContent() {
 
   function handleReset() {
     form.reset();
+    useRemixStore.setState({
+      remixOf: undefined,
+      params: undefined,
+      resources: undefined,
+      remixOfId: undefined,
+    });
     clearWarning();
   }
 
@@ -319,7 +327,6 @@ export function GenerationFormContent() {
   //     ?.filter((x) => x.selectable !== false && x.key !== undefined)
   //     .map(({ key, label }) => ({ label, value: key })) ?? [];
 
-  const remixOfId = form.watch('remixOfId');
   useEffect(() => {
     if (!status.available || status.isLoading || loadingGeneratorData) return;
     if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
@@ -330,23 +337,24 @@ export function GenerationFormContent() {
     hasGeneratedImages,
     remixOfId,
     loadingGeneratorData,
-  ]);
+  ]); // These are the dependencies that make it work, please only update if you know what you're doing
 
   useEffect(() => {
     if (!running || currentStep > 0 || loadingGeneratorData) return;
-    const isRemix = !!remixOfId && activeTour === 'remix-content-generation';
+    const isRemix = remixOfId && activeTour === 'remix-content-generation';
+    let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
 
     // Remove last two steps if user has not generated any images
-    if (!loadingGenQueueRequests && !hasGeneratedImages)
-      setSteps(
-        isRemix ? remixContentGenerationTour.slice(0, -2) : contentGenerationTour.slice(0, -2)
-      );
-
+    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = genSteps.slice(0, -2);
     // Only show first few steps if user is not logged in
-    if (!currentUser)
-      setSteps(
-        isRemix ? remixContentGenerationTour.slice(0, 4) : contentGenerationTour.slice(0, 6)
-      );
+    if (!currentUser) genSteps = isRemix ? genSteps.slice(0, 4) : genSteps.slice(0, 6);
+
+    const alreadyReviewedTerms =
+      window?.localStorage?.getItem('review-generation-terms') === 'true';
+    if (alreadyReviewedTerms)
+      genSteps = genSteps.filter((x) => x.target !== '[data-tour="gen:terms"]');
+
+    setSteps(genSteps);
   }, [
     loadingGenQueueRequests,
     hasGeneratedImages,
@@ -355,7 +363,7 @@ export function GenerationFormContent() {
     running,
     activeTour,
     loadingGeneratorData,
-  ]);
+  ]); // These are the dependencies that make it work, please only update if you know what you're doing
 
   return (
     <Form

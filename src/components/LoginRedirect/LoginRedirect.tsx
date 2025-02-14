@@ -31,8 +31,9 @@ export function useLoginRedirect({ reason, returnUrl }: HookProps) {
 
 export type Props = HookProps & {
   children: React.ReactElement<{ onClick?: MouseEventHandler<HTMLElement> }>;
+  beforeRedirect?: () => void;
 };
-export function LoginRedirect({ children, reason, returnUrl }: Props) {
+export function LoginRedirect({ children, reason, returnUrl, beforeRedirect }: Props) {
   const router = useRouter();
   const user = useCurrentUser();
   const { running, closeTour, activeTour } = useTourContext();
@@ -45,6 +46,7 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
         ...children.props,
         onClick: (e: MouseEvent<HTMLElement>) => {
           e.preventDefault();
+          beforeRedirect?.();
           router.push(getLoginLink({ returnUrl: url.toString(), reason }));
           if (running) closeTour();
         },

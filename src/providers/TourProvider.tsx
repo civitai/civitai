@@ -1,7 +1,14 @@
 import { useMantineTheme } from '@mantine/core';
 import { useSearchParams } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
-import Joyride, { ACTIONS, Callback, EVENTS, Props as JoyrideProps, STATUS } from 'react-joyride';
+import Joyride, {
+  ACTIONS,
+  Callback,
+  EVENTS,
+  LIFECYCLE,
+  Props as JoyrideProps,
+  STATUS,
+} from 'react-joyride';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -79,6 +86,14 @@ export function TourProvider({ children, ...props }: Props) {
 
   const runTour = useCallback<TourState['runTour']>(
     (opts) => {
+      const activeTour = opts?.key ?? state.activeTour;
+      const forceRun = opts?.forceRun ?? state.forceRun;
+      const currentTourData =
+        userSettings?.tourSettings?.[activeTour ?? ''] ?? localTour[activeTour ?? ''];
+
+      const alreadyCompleted = currentTourData?.completed ?? false;
+      if (alreadyCompleted && !forceRun) return;
+
       setState((old) => ({
         ...old,
         running: true,
@@ -87,10 +102,6 @@ export function TourProvider({ children, ...props }: Props) {
         forceRun: opts?.forceRun ?? old.forceRun,
         currentStep: opts?.step ?? old.currentStep,
       }));
-
-      const activeTour = opts?.key ?? state.activeTour;
-      const currentTourData =
-        userSettings?.tourSettings?.[activeTour ?? ''] ?? localTour[activeTour ?? ''];
 
       if (opts?.step != null && activeTour && !currentTourData?.completed) {
         const tour = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
@@ -122,6 +133,7 @@ export function TourProvider({ children, ...props }: Props) {
         ...old,
         running: false,
         currentStep: opts?.reset ? 0 : old.currentStep,
+        forceRun: opts?.reset ? false : old.forceRun,
       }));
     },
     [state.activeTour, state.currentStep, currentUser, setLocalTour, updateUserSettingsMutation]
@@ -133,7 +145,13 @@ export function TourProvider({ children, ...props }: Props) {
 
   const handleJoyrideCallback = useCallback<Callback>(
     async (data) => {
-      const { status, type, action, index, step } = data;
+      const { status, type, action, index, step, lifecycle } = data;
+
+      if (action === ACTIONS.UPDATE && lifecycle === LIFECYCLE.TOOLTIP) {
+        const target = document.querySelector(step?.target as string);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        window.dispatchEvent(new Event('resize'));
+      }
 
       if (type === EVENTS.TOUR_END && completeStatus.includes(status)) {
         closeTour({ reset: true });
@@ -212,10 +230,19 @@ export function TourProvider({ children, ...props }: Props) {
               },
               spotlight: { border: `2px solid ${theme.colors.cyan[4]}` },
             }}
+            floaterProps={{
+              styles: {
+                floater: {
+                  position: 'absolute',
+                  top: 0,
+                },
+              },
+            }}
             tooltipComponent={TourPopover}
             run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
             scrollOffset={100}
             disableScrollParentFix
+            disableScrolling
             scrollToFirstStep
             showSkipButton
             continuous

@@ -221,7 +221,6 @@ export default function ModelDetailsV2({
     }
   );
 
-  const view = router.query.view;
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
     (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
@@ -450,6 +449,10 @@ export default function ModelDetailsV2({
       });
   };
 
+  const view = router.query.view;
+  const basicView = view === 'basic' && isModerator;
+  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
+
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
     if (loadingModel) return;
@@ -464,11 +467,11 @@ export default function ModelDetailsV2({
   }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel]);
 
   useEffect(() => {
-    if (loadingModel) return;
+    if (!canLoadBelowTheFold) return;
     if (activeTour === 'model-page' && !running) runTour({ key: 'model-page' });
     // only run when the model is loaded
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadingModel]);
+  }, [canLoadBelowTheFold]);
 
   if (loadingModel) return <PageLoader />;
 
@@ -534,8 +537,6 @@ export default function ModelDetailsV2({
     isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
-  const basicView = view === 'basic' && isModerator;
-  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
   const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
   const unpublishedMessage =
     unpublishedReason !== 'other'
