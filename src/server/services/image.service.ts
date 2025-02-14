@@ -1083,15 +1083,9 @@ export const getAllImages = async (
 
   if (userId && !!reactions?.length) {
     // cacheTime = 0;
-    AND.push(
-      Prisma.sql`EXISTS (
-        SELECT 1
-        FROM "ImageReaction" ir
-        WHERE ir."imageId" = i.id
-          AND ir.reaction::text IN (${Prisma.join(reactions)})
-          AND ir."userId" = ${userId}
-      )`
-    );
+    joins.push(`JOIN "ImageReaction" ir ON ir."imageId" = i.id`);
+    AND.push(Prisma.sql`ir.reaction IN (${Prisma.join(reactions)})`);
+    AND.push(Prisma.sql`ir."userId" = ${userId}`);
   }
 
   if (!!tools?.length) {
