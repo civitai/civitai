@@ -680,6 +680,7 @@ export const PrivateModelAutomaticSetup = ({
     await router.replace(
       `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
     );
+
     handleClose();
   };
 

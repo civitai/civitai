@@ -25,6 +25,7 @@ import { getStaticContent } from '~/server/services/content.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
 import {
   addAdditionalLicensePermissions,
+  createModelVersionPostFromTraining,
   deleteVersionById,
   earlyAccessModelVersionsOnTimeframe,
   earlyAccessPurchase,
@@ -37,6 +38,7 @@ import {
   queryModelVersions,
   toggleNotifyModelVersion,
   unpublishModelVersionById,
+  updateModelVersionById,
   upsertModelVersion,
 } from '~/server/services/model-version.service';
 import { getModel, updateModelEarlyAccessDeadline } from '~/server/services/model.service';
@@ -52,7 +54,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { Availability, ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { removeNulls } from '~/utils/object-helpers';
 import { dbRead } from '../db/client';
 import { modelFileSelect } from '../selectors/modelFile.selector';
@@ -748,4 +750,68 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
     jobId: trainingResults?.jobId as string | null,
     trainingResults,
   };
+}
+
+export async function publishPrivateModelVersionHandler({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: DeepNonNullable<Context>;
+}) {
+  const version = await getVersionById({
+    ...input,
+    select: {
+      id: true,
+      uploadType: true,
+      model: { select: { publishedAt: true, availability: true, userId: true } },
+      files: {
+        select: {
+          metadata: true,
+        },
+      },
+      posts: {
+        select: {
+          id: true,
+        },
+        take: 1,
+      },
+    },
+  });
+
+  if (!version) throw throwNotFoundError();
+
+  if (version.model.userId !== ctx.user.id && !ctx.user?.isModerator) {
+    throw throwAuthorizationError();
+  }
+
+  if (version.model.availability !== Availability.Private) {
+    throw throwBadRequestError('Model is not private');
+  }
+
+  const selectedEpochUrl = version.files.some(
+    (f) => (f?.metadata as FileMetadata)?.selectedEpochUrl
+  );
+
+  if (!selectedEpochUrl) {
+    throw throwBadRequestError('No selected epoch found');
+  }
+
+  if (!version.posts.length) {
+    await createModelVersionPostFromTraining({
+      modelVersionId: version.id,
+      user: ctx.user,
+    });
+  }
+
+  const modelVersion = await updateModelVersionById({
+    id: version.id,
+    data: {
+      status: ModelStatus.Published,
+      publishedAt: new Date(),
+      availability: Availability.Private,
+    },
+  });
+
+  return modelVersion;
 }

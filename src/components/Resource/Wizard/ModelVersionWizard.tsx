@@ -1,5 +1,5 @@
-import { Anchor, Button, Group, Stepper, Text, Title } from '@mantine/core';
-import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { Alert, Anchor, Button, Group, Stack, Stepper, Text, Title } from '@mantine/core';
+import { Availability, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { IconArrowLeft } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NextRouter, useRouter } from 'next/router';
@@ -120,6 +120,20 @@ const TrainSteps = ({
   router: NextRouter;
   postId: number | undefined;
 }) => {
+  const isPrivateModel = modelData?.availability === Availability.Private;
+  const publishPrivateModelVersionMutation =
+    trpc.modelVersion.publishPrivateModelVersion.useMutation();
+  const utils = trpc.useUtils();
+
+  const onPublish = async () => {
+    await publishPrivateModelVersionMutation.mutateAsync({ id: modelVersion.id });
+
+    utils.modelVersion.getById.invalidate({ id: modelVersion.id });
+    utils.model.getById.invalidate({ id: modelData.id });
+
+    router.replace(`/models/${modelData.id}?modelVersionId=${modelVersion.id}`);
+  };
+
   return (
     <Stepper
       active={step - 1}
@@ -163,31 +177,49 @@ const TrainSteps = ({
       <Stepper.Step label="Edit version">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit version</Title>
-          <ModelVersionUpsertForm model={modelData} version={modelVersion} onSubmit={goNext}>
+          <ModelVersionUpsertForm
+            model={modelData}
+            version={modelVersion}
+            onSubmit={isPrivateModel ? onPublish : goNext}
+          >
             {({ loading, canSave }) => (
-              <Group mt="xl" position="right">
-                <Button variant="default" onClick={goBack}>
-                  Back
-                </Button>
-                <Button type="submit" loading={loading} disabled={!canSave}>
-                  Next
-                </Button>
-              </Group>
+              <Stack spacing="xs" mt="xl">
+                {isPrivateModel && (
+                  <Alert color="yellow" title="Private model version">
+                    This model version will be marked as private becuase of the model&rsquo;s
+                    privacy. A post will be automatically created based off of the selected epoch.
+                  </Alert>
+                )}
+                <Group position="right">
+                  <Button variant="default" onClick={goBack}>
+                    Back
+                  </Button>
+                  <Button
+                    type="submit"
+                    loading={loading || publishPrivateModelVersionMutation.isLoading}
+                    disabled={!canSave}
+                  >
+                    {isPrivateModel ? 'Complete' : 'Next'}
+                  </Button>
+                </Group>
+              </Stack>
             )}
           </ModelVersionUpsertForm>
         </div>
       </Stepper.Step>
 
-      {/* Step 3: Post Info */}
-      <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
-        {modelVersion && modelData && (
-          <PostUpsertForm2
-            postId={postId}
-            modelVersionId={modelVersion.id}
-            modelId={modelData.id}
-          />
-        )}
-      </Stepper.Step>
+      {/* Step 3: Post Info - Not required for private models. */}
+      {!isPrivateModel && (
+        <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
+          {modelVersion && modelData && (
+            <PostUpsertForm2
+              postId={postId}
+              modelVersionId={modelVersion.id}
+              modelId={modelData.id}
+            />
+          )}
+        </Stepper.Step>
+      )}
     </Stepper>
   );
 };
@@ -210,9 +242,11 @@ export function ModelVersionWizard({ data }: Props) {
   );
 
   const modelData = modelVersion?.model ?? data;
+  const isPrivateModel = modelData?.availability === Availability.Private;
+  const totalSteps = isPrivateModel ? 2 : MAX_STEPS; // @luis: This whole thing requires a refactor, but anyway.
 
   const goNext = () => {
-    if (step < MAX_STEPS)
+    if (step < totalSteps)
       router
         .replace(`/models/${id}/model-versions/${versionId}/wizard?step=${step + 1}`, undefined, {
           shallow: !isNew,
