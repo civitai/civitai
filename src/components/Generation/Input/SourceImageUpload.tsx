@@ -25,6 +25,8 @@ function SourceImageUpload({
 }: {
   value?: SourceImageProps | null;
   onChange?: (value?: SourceImageProps | null) => void;
+  upscale?: boolean;
+  readonly?: boolean;
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -48,7 +50,6 @@ function SourceImageUpload({
   function handleChange(value?: string) {
     setError(undefined);
     if (!value) onChange?.(null);
-    else if (isOrchestratorUrl(value)) handleUrlChange(value);
     else mutate({ sourceImage: value });
   }
 
