@@ -116,6 +116,6 @@ export async function createTextToImage(
     },
   })) as TextToImageResponse;
 
-  const [formatted] = await formatGenerationResponse([workflow]);
+  const [formatted] = await formatGenerationResponse([workflow], user);
   return formatted;
 }

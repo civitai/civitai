@@ -392,11 +392,11 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
-
   const versionIds = allResources.map((x) => x.id);
   const epochNumbers = uniq(
     allResources.filter((x) => !!x.epochNumber).map((x) => `${x.id}@${x.epochNumber}`)
   );
+
   const { resources, injectable } = await getResourceDataWithInjects({
     ids: versionIds,
     user,
