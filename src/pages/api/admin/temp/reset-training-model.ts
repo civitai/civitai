@@ -25,6 +25,7 @@ export default WebhookEndpoint(async (req, res) => {
     data: {
       status: ModelStatus.Draft,
       availability: Availability.Public,
+      lastVersionAt: null,
     },
   });
 
@@ -37,6 +38,7 @@ export default WebhookEndpoint(async (req, res) => {
     data: {
       status: ModelStatus.Draft,
       availability: Availability.Public,
+      publishedAt: null,
     },
   });
 
