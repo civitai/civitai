@@ -594,7 +594,9 @@ export async function getResourceData({
           !x.hasAccess &&
           x.availability === 'EarlyAccess' &&
           x.earlyAccessEndsAt &&
-          isFutureDate(x.earlyAccessEndsAt)
+          isFutureDate(x.earlyAccessEndsAt) &&
+          // Free generation will technically bypass access checks, but we still want to show the early access badge
+          !x.earlyAccessConfig?.freeGeneration
       )
       .map((x) => x.id);
 
