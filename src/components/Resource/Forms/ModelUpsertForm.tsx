@@ -565,7 +565,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 grow
                 spacing="sm"
                 name="availability"
-                onChangeCapture={(event) => {
+                onChangeCapture={async (event) => {
                   // @ts-ignore eslint-disable-next-line
                   const value = event.target.value as Availability;
                   if (value === Availability.Private) {
@@ -582,7 +582,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                         { shouldFocus: true }
                       );
 
-                    const isValid = form.formState.isValid;
+                    const isValid = await form.trigger();
                     if (!isValid) {
                       const errorKeys: string[] = Object.keys(form.formState.errors ?? {});
                       if (errorKeys.length > 0) {
