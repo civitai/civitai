@@ -12,6 +12,15 @@ export const negativePromptSchema = z
   .max(1000, 'Prompt cannot be longer than 1000 characters')
   .default('');
 
+export type SourceImageProps = z.input<typeof sourceImageSchema>;
+export const sourceImageSchema = z.object({
+  url: z.string().startsWith('https://orchestration').includes('.civitai.com'),
+  width: z.number(),
+  height: z.number(),
+  upscaleWidth: z.number().optional(),
+  upscaleHeight: z.number().optional(),
+});
+
 export const seedSchema = z.number().optional();
 const prioritySchema = z.nativeEnum(Priority).default('low').catch('low');
 
@@ -26,7 +35,5 @@ export const textEnhancementSchema = baseSchema.extend({
 
 export const imageEnhancementSchema = baseSchema.extend({
   type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
-  sourceImage: z.string(),
-  height: z.number().optional(),
-  width: z.number().optional(),
+  sourceImage: sourceImageSchema,
 });

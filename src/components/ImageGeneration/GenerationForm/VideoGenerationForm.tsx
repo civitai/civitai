@@ -61,6 +61,7 @@ import {
 } from '~/server/orchestrator/lightricks/lightricks.schema';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { SourceImageUploadAccordion } from '~/components/Generation/Input/SourceImageUpload';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -148,7 +149,7 @@ export function VideoGenerationForm() {
               data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
             />
             {engineHasImg2Vid && (
-              <AccordionGeneratorImageInput
+              <SourceImageUploadAccordion
                 value={sourceImage}
                 onChange={generationFormStore.setsourceImage}
               />
