@@ -374,7 +374,7 @@ export function sanitizeParamsByWorkflowDefinition(
 ) {
   const features = getWorkflowDefinitionFeatures(workflow);
   for (const key in features) {
-    if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
+    if (!features[key as keyof typeof features]) delete (params as any)[key];
   }
 }
 

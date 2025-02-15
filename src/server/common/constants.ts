@@ -904,6 +904,7 @@ export const generation = {
     fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     model: generationConfig.Flux1.checkpoint,
     priority: 'low',
+    sourceImage: null,
   },
   maxValues: {
     seed: 4294967295,
