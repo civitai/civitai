@@ -3,6 +3,7 @@ import { WorkflowDefinition, workflowDefinitionLabel } from '~/server/services/o
 import { ComfyNode } from '~/shared/types/generation.types';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { parseAIR } from '~/utils/string-helpers';
+import { workflowDefinitions } from '~/server/services/orchestrator/comfy/comfy.types';
 
 const replacementWorkflows: Record<string, string> = {};
 
@@ -31,8 +32,10 @@ export async function clearWorkflowDefinitions() {
 
 export async function getWorkflowDefinition(key: string) {
   const workflowJson = await sysRedis.hGet(REDIS_SYS_KEYS.GENERATION.WORKFLOWS, key);
-  if (!workflowJson) throw new Error('Workflow not found');
-  const workflow = JSON.parse(workflowJson) as WorkflowDefinition;
+  const workflow = workflowJson
+    ? (JSON.parse(workflowJson) as WorkflowDefinition)
+    : workflowDefinitions.find((x) => x.key === key);
+  if (!workflow) throw new Error('Workflow not found');
   if (workflow.key in replacementWorkflows) workflow.template = replacementWorkflows[workflow.key];
   return workflow;
 }
@@ -53,6 +56,9 @@ export async function populateWorkflowDefinition(key: string, data: any) {
   try {
     return JSON.parse(populated);
   } catch (e) {
+    console.log('-------------------');
+    console.log(e);
+    console.log('-------------------');
     throw new Error('Failed to populate workflow');
   }
 }
