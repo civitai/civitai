@@ -103,7 +103,7 @@ import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
-import { InputSourceImageUplaod } from '~/components/Generation/Input/SourceImageUpload';
+import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 
 let total = 0;
 const tips = {
@@ -372,7 +372,7 @@ export function GenerationFormContent() {
                         )}
                       </div>
                     </div>
-                    {features.image && <InputSourceImageUplaod name="sourceImage" />}
+                    {features.image && <InputSourceImageUpload name="sourceImage" />}
                   </>
                 )}
 

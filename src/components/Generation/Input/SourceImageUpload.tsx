@@ -21,6 +21,8 @@ import { useLocalStorage } from '@mantine/hooks';
 function SourceImageUpload({
   value,
   onChange,
+  upscale,
+  readonly,
   ...inputWrapperProps
 }: {
   value?: SourceImageProps | null;
@@ -89,7 +91,7 @@ function SourceImageUpload({
               className="max-h-full shadow-sm shadow-black"
               onLoad={() => setLoaded(true)}
             />
-            {loaded && (
+            {loaded && !readonly && (
               <CloseButton
                 color="red"
                 variant="filled"
@@ -104,7 +106,7 @@ function SourceImageUpload({
   );
 }
 
-export const InputSourceImageUplaod = withController(SourceImageUpload, ({ field }) => ({
+export const InputSourceImageUpload = withController(SourceImageUpload, ({ field }) => ({
   value: field.value,
 }));
 

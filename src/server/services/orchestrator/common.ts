@@ -679,6 +679,8 @@ export function formatComfyStep({
     params.height = size.height;
   }
 
+  const { width = 512, height = 512 } = params?.sourceImage ?? params ?? {};
+
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
       ...acc,
@@ -696,8 +698,8 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width: params?.width ?? 512,
-            height: params?.height ?? 512,
+            width,
+            height,
           })) ?? [],
     }),
     {}
