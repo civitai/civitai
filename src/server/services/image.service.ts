@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { randomUUID } from 'crypto';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
 import { SearchParams, SearchResponse } from 'meilisearch';
@@ -123,10 +124,13 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { ImageResource } from '~/shared/utils/prisma/models';
+import { fetchBlob, getBase64 } from '~/utils/file-utils';
 import { logToDb } from '~/utils/logging';
+import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
+import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -4758,4 +4762,35 @@ export const getMyImages = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => {
+  const blob = await fetchBlob(imageUrl);
+
+  if (!blob) {
+    throw new Error('Failed to fetch image');
+  }
+
+  const imageKey = randomUUID();
+
+  const upload = await serverUploadImage({
+    file: blob,
+    key: imageKey,
+    bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+  });
+
+  const data = await upload.done();
+  const meta = await getMetadata(imageUrl);
+
+  const response = {
+    meta: meta,
+    metadata: {
+      size: blob.size,
+      width: 512, //  This is mostly a safeguard to default.
+      height: 512, //  This is mostly a safeguard to default.
+    },
+    url: data.Key,
+  };
+
+  return response;
 };

@@ -1,11 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelType,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
@@ -20,8 +13,16 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
+import {
+  Availability,
+  CommercialUse,
+  ModelStatus,
+  ModelType,
+  ModelVersionEngagementType,
+} from '~/shared/utils/prisma/enums';
 
 import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
@@ -50,6 +51,7 @@ import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
   throwDbError,
@@ -59,8 +61,8 @@ import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { createCachedArray } from '~/server/utils/cache-helpers';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { uploadImageFromUrl } from '~/server/services/image.service';
+import { addPostImage, createPost } from '~/server/services/post.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -98,7 +100,12 @@ export const getDefaultModelVersion = async ({
         take: 1,
         where: modelVersionId ? { id: modelVersionId } : undefined,
         orderBy: { index: 'asc' },
-        select: { id: true, status: true, model: { select: { userId: true } } },
+        select: {
+          id: true,
+          status: true,
+          model: { select: { userId: true, availability: true } },
+          availability: true,
+        },
       },
     },
   });
@@ -194,9 +201,22 @@ export const upsertModelVersion = async ({
   if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
-      select: { id: true },
+      select: {
+        id: true,
+        model: {
+          select: { availability: true },
+        },
+      },
       orderBy: { index: 'asc' },
     });
+
+    if (
+      existingVersions.length > 0 &&
+      existingVersions[0].model.availability === Availability.Private
+    ) {
+      // Ensures people won't abuse the system by adding versions to private models.
+      throw throwBadRequestError('You cannot add versions to a private model.');
+    }
 
     const [version] = await dbWrite.$transaction([
       dbWrite.modelVersion.create({
@@ -1459,4 +1479,81 @@ export type GenerationResourceDataModel = {
     minor: boolean;
     userId: number;
   };
+};
+
+export const createModelVersionPostFromTraining = async ({
+  modelVersionId,
+  user,
+}: {
+  modelVersionId: number;
+  user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
+}) => {
+  const now = new Date();
+  const files = await dbRead.modelFile.findMany({
+    where: { modelVersionId },
+    select: { id: true, metadata: true },
+  });
+  const trainingFile = files.find((file) => {
+    const metadata = file.metadata as ModelFileMetadata;
+    return !!metadata?.trainingResults;
+  });
+
+  if (!trainingFile) {
+    return;
+  }
+
+  const fileMetadata = trainingFile.metadata as ModelFileMetadata;
+
+  const epoch = fileMetadata.selectedEpochUrl
+    ? fileMetadata.trainingResults?.epochs?.find((e) =>
+        'modelUrl' in e
+          ? e.modelUrl === fileMetadata.selectedEpochUrl
+          : e.model_url === fileMetadata.selectedEpochUrl
+      )
+    : fileMetadata.trainingResults?.epochs?.[fileMetadata.trainingResults.epochs?.length - 1];
+
+  if (!epoch) {
+    return;
+  }
+
+  const imageUrls = 'sampleImages' in epoch ? epoch.sampleImages : epoch.sample_images;
+
+  if (!imageUrls || imageUrls?.length === 0) {
+    return;
+  }
+
+  const uploadedImages = (
+    await Promise.all(
+      imageUrls.map(async (data, index) => {
+        const image = await uploadImageFromUrl({
+          imageUrl: typeof data === 'string' ? data : data.image_url,
+        });
+
+        return image;
+      })
+    )
+  ).filter((x) => isDefined(x?.url));
+
+  // Create post:
+  const post = await createPost({
+    userId: user.id,
+    modelVersionId,
+    publishedAt: now,
+  });
+
+  await Promise.all(
+    uploadedImages.map((image) =>
+      addPostImage({
+        type: 'image',
+        postId: post.id,
+        modelVersionId,
+        width: image.metadata?.width,
+        height: image.metadata?.height,
+        metadata: image.metadata as any,
+        meta: image.meta,
+        url: image.url as string,
+        user,
+      })
+    )
+  );
 };

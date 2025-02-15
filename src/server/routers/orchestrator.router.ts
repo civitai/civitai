@@ -3,7 +3,6 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { env } from '~/env/server';
-import { CacheTTL } from '~/server/common/constants';
 import {
   generate,
   handleGetPriorityVolume,
@@ -161,7 +160,9 @@ export const orchestratorRouter = router({
   // #region [generated images]
   queryGeneratedImages: orchestratorProcedure
     .input(workflowQuerySchema)
-    .query(({ ctx, input }) => queryGeneratedImageWorkflows({ ...input, token: ctx.token })),
+    .query(({ ctx, input }) =>
+      queryGeneratedImageWorkflows({ ...input, token: ctx.token, user: ctx.user })
+    ),
   generateImage: orchestratorGuardedProcedure
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
@@ -191,7 +192,7 @@ export const orchestratorRouter = router({
       try {
         const args = {
           ...input,
-          resources: input.resources.map((id) => ({ id, strength: 1 })),
+          resources: input.resources.map((x) => ({ ...x, strength: 1 })),
           user: ctx.user,
           token: ctx.token,
         };
@@ -230,8 +231,6 @@ export const orchestratorRouter = router({
             }
           }
         }
-
-
 
         return {
           cost: workflow.cost,

@@ -36,6 +36,7 @@ export const getModelData = async ({ input }: { input: GetByIdInput }) => {
         status: true,
         type: true,
         uploadType: true,
+        availability: true,
         modelVersions: {
           select: {
             id: true,

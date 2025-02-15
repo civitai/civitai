@@ -1,9 +1,3 @@
-import {
-  CheckpointType,
-  MetricTimeframe,
-  ModelStatus,
-  ModelType,
-} from '~/shared/utils/prisma/enums';
 import { isEqual } from 'lodash-es';
 import { useRouter } from 'next/router';
 import { useMemo, useState } from 'react';
@@ -17,11 +11,18 @@ import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
 import { GetAllModelsInput, ToggleCheckpointCoverageInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
+import {
+  Availability,
+  CheckpointType,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { booleanString, stringArray } from '~/utils/zod-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 
 const modelQueryParamSchema = z
   .object({
@@ -38,7 +39,7 @@ const modelQueryParamSchema = z
     archived: booleanString(),
     followed: booleanString(),
     view: z.enum(['categories', 'feed']),
-    section: z.enum(['published', 'draft', 'training']),
+    section: z.enum(['published', 'private', 'draft', 'training']),
     collectionId: z.coerce.number(),
     excludedTagIds: z.array(z.coerce.number()),
     excludedImageTagIds: z.array(z.coerce.number()),
@@ -64,6 +65,7 @@ const modelQueryParamSchema = z
       )
       .optional(),
     fromPlatform: booleanString().optional(),
+    availability: z.nativeEnum(Availability).optional(),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;

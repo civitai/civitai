@@ -25,6 +25,7 @@ import {
   IconDownload,
   IconHorse,
   IconInfoCircle,
+  IconLock,
   IconTagOff,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -82,8 +83,12 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
+import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -92,9 +97,6 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
-import { GenerationResource } from '~/server/services/generation/generation.service';
-import { fetchGenerationData } from '~/store/generation.store';
-import { showErrorNotification } from '~/utils/notifications';
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
@@ -104,7 +106,7 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-const tabs = ['all', 'featured', 'recent', 'liked', 'uploaded'] as const;
+const tabs = ['all', 'featured', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
 
 const take = 20;
@@ -184,10 +186,14 @@ export default function ResourceSelectModal({
 
   const { resources = [], excludeIds = [], canGenerate } = options;
   const allowedTabs = tabs.filter((t) => {
-    return !(!currentUser && ['recent', 'liked', 'uploaded'].includes(t));
+    return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
 
-  const filters: string[] = [];
+  const filters: string[] = [
+    // Default filter for visibility:
+    `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
+  ];
+
   const or: string[] = [];
   if (canGenerate !== undefined) filters.push(`canGenerate = ${canGenerate}`);
   for (const { type, baseModels } of resources) {
@@ -254,15 +260,13 @@ export default function ResourceSelectModal({
     if (!!likedModels) {
       filters.push(`id IN [${likedModels.join(',')}]`);
     }
-  } else if (selectedTab === 'uploaded') {
+  } else if (selectedTab === 'mine') {
     if (currentUser) {
       filters.push(`user.id = ${currentUser.id}`);
     }
   }
 
   const totalFilters = [...filters, ...exclude].join(' AND ');
-
-  // console.log(totalFilters);
 
   function handleSelect(value: GenerationResource) {
     onSelect(value);
@@ -399,6 +403,7 @@ function ResourceHitList({
     type: 'models',
     data: items,
   });
+
   const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
@@ -440,7 +445,8 @@ function ResourceHitList({
       </div>
     );
 
-  if (!items.length)
+ 
+  if (!filtered.length)
     return (
       <div className="p-3 py-5">
         <Center>
@@ -899,6 +905,29 @@ function ResourceSelectCard({
                       )}
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
+                    {data.availability === Availability.Private && (
+                      <div className="absolute bottom-2 left-2 flex items-center gap-1">
+                        <Tooltip
+                          label="This is a private model which requires permission to generate with."
+                          position="top"
+                          withArrow
+                          withinPortal
+                          multiline
+                          maw={250}
+                        >
+                          <Badge
+                            color="gray"
+                            variant="filled"
+                            h={30}
+                            w={30}
+                            className="flex items-center justify-center"
+                            p={0}
+                          >
+                            <IconLock size={16} />
+                          </Badge>
+                        </Tooltip>
+                      </div>
+                    )}
                     {!!currentUser && (
                       <div className="absolute bottom-2 right-2 flex items-center gap-1">
                         <Tooltip
