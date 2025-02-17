@@ -7,12 +7,14 @@ import {
   generationConfig,
   getGenerationConfig,
   Sampler,
+  maxUpscaleSize,
 } from '~/server/common/constants';
 import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { getImageData } from '~/utils/media-preprocessors';
 import { findClosest } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
@@ -32,7 +34,6 @@ export const generationServiceCookie = {
   maxAge: 3600,
 };
 
-export const maxUpscaleSize = 8192;
 export function getRoundedUpscaleSize({ width, height }: { width: number; height: number }) {
   const maxWidth = width < maxUpscaleSize ? width : maxUpscaleSize;
   const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
@@ -41,6 +42,19 @@ export function getRoundedUpscaleSize({ width, height }: { width: number; height
     width: Math.ceil((width * ratio) / 64) * 64,
     height: Math.ceil((height * ratio) / 64) * 64,
   };
+}
+
+export async function getSourceImageFromUrl({ url, upscale }: { url: string; upscale?: boolean }) {
+  return getImageData(url).then(({ width, height }) => {
+    let upscaleWidth: number | undefined;
+    let upscaleHeight: number | undefined;
+    if (upscale) {
+      const upscaled = getRoundedUpscaleSize({ width: width * 1.5, height: height * 1.5 });
+      upscaleWidth = upscaled.width;
+      upscaleHeight = upscaled.height;
+    }
+    return { url, width, height, upscaleWidth, upscaleHeight };
+  });
 }
 
 // #region [statuses]

@@ -40,7 +40,11 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
+import {
+  getIsFlux,
+  getIsSD3,
+  getSourceImageFromUrl,
+} from '~/shared/constants/generation.constants';
 import {
   generationStore,
   useGenerationFormStore,
@@ -49,7 +53,6 @@ import {
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { getImageData } from '~/utils/media-preprocessors';
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
 
 export type GeneratedImageProps = {
@@ -174,19 +177,20 @@ export function GeneratedImage({
 
   const handleUpscale = async (workflow: string) => {
     handleCloseImageLightbox();
-    if (step.$type !== 'videoGen')
+    if (step.$type !== 'videoGen') {
       dialogStore.trigger({
         component: UpscaleImageModal,
         props: {
           resources: step.resources,
           params: {
             ...step.params,
-            sourceImage: await getSourceImageFromUrl(image.url),
+            sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
             seed: image.seed,
             workflow,
           },
         },
       });
+    }
   };
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
@@ -708,8 +712,4 @@ export function GeneratedImageLightbox({
       </div>
     </Modal>
   );
-}
-
-async function getSourceImageFromUrl(url: string) {
-  return getImageData(url).then(({ width, height }) => ({ url, width, height }));
 }
