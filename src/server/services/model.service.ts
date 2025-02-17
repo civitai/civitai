@@ -1357,7 +1357,7 @@ export const upsertModel = async (
   }
   if (!id || templateId) {
     const result = await dbWrite.model.create({
-      select: { id: true, nsfwLevel: true, meta: true },
+      select: { id: true, nsfwLevel: true, meta: true, availability: true },
       data: {
         ...data,
         status,
@@ -1436,6 +1436,7 @@ export const upsertModel = async (
         gallerySettings: true,
         status: true,
         meta: true,
+        availability: true,
       },
       where: { id },
       data: {
