@@ -95,13 +95,13 @@ function SourceImageUpload({
             loading={isLoading}
           />
         ) : (
-          <div className="flex justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6">
-            <div className="relative flex flex-col items-end">
+          <div className="flex max-h-96 justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6">
+            <div className="relative ">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={value.url}
                 alt="image to refine"
-                className="max-h-full shadow-sm shadow-black"
+                className="mx-auto max-h-full shadow-sm shadow-black"
                 onLoad={() => setLoaded(true)}
               />
               {loaded && removable && (
