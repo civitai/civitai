@@ -28,13 +28,13 @@ function SourceImageUpload({
   value,
   onChange,
   upscale,
-  readonly,
+  removable = true,
   ...inputWrapperProps
 }: {
   value?: SourceImageProps | null;
   onChange?: (value?: SourceImageProps | null) => void;
   upscale?: boolean;
-  readonly?: boolean;
+  removable?: boolean;
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | undefined>();
@@ -104,7 +104,7 @@ function SourceImageUpload({
                 className="max-h-full shadow-sm shadow-black"
                 onLoad={() => setLoaded(true)}
               />
-              {loaded && !readonly && (
+              {loaded && removable && (
                 <CloseButton
                   color="red"
                   variant="filled"

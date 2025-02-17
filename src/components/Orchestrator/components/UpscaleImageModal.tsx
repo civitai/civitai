@@ -101,7 +101,7 @@ function UpscalImageForm({
   return (
     <GenerationProvider>
       <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-        <InputSourceImageUpload name="sourceImage" readonly upscale />
+        <InputSourceImageUpload name="sourceImage" removable={false} upscale />
         <Divider />
         <GenerateButton
           type="submit"
