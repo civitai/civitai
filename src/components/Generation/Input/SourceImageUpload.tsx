@@ -38,12 +38,11 @@ function SourceImageUpload({
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>) {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | undefined>();
-  const { mutate, isLoading } = trpc.orchestrator.imageUpload.useMutation({
+  const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
     onError: (error) => {
       setError(error.message);
     },
     onSuccess: ({ blob }) => {
-      // if (blob.nsfwLevel === 'na') setError('Could not evaluate. Please try another image.');
       if (blob.url) handleUrlChange(blob.url);
     },
   });
@@ -82,7 +81,11 @@ function SourceImageUpload({
 
   return (
     <>
-      <Input.Wrapper {...inputWrapperProps} error={error ?? inputWrapperProps.error}>
+      <Input.Wrapper
+        {...inputWrapperProps}
+        error={error ?? inputWrapperProps.error}
+        className="min-h-40"
+      >
         {!value ? (
           <ImageDropzone
             allowExternalImageDrop
@@ -92,7 +95,7 @@ function SourceImageUpload({
             maxSize={maxOrchestratorImageFileSize}
             label="Drag image here or click to select a file"
             onDropCapture={handleDropCapture}
-            loading={isLoading}
+            loading={isLoading && !isError}
           />
         ) : (
           <div className="flex max-h-96 justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6">
@@ -112,9 +115,11 @@ function SourceImageUpload({
                   onClick={() => handleChange()}
                 />
               )}
-              <div className="absolute bottom-0 right-0 rounded-tl-md bg-dark-9/50 px-2 text-white">
-                {value.width} x {value.height}
-              </div>
+              {loaded && (
+                <div className="absolute bottom-0 right-0 rounded-tl-md bg-dark-9/50 px-2 text-white">
+                  {value.width} x {value.height}
+                </div>
+              )}
             </div>
           </div>
         )}
