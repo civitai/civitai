@@ -12,12 +12,12 @@ import {
 import {
   engineDefinitions,
   generationFormWorkflowConfigurations,
+  getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { getImageData } from '~/utils/media-preprocessors';
 
 export type RunType = 'run' | 'remix' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
@@ -163,16 +163,12 @@ function withSubstitute(resources: GenerationResource[]) {
   });
 }
 
-async function getSourceImageFromUrl(url: string) {
-  return getImageData(url).then(({ width, height }) => ({ url, width, height }));
-}
-
 async function transformParams(data: Record<string, unknown>) {
   let sourceImage = null;
   if ('image' in data && typeof data.image === 'string')
-    sourceImage = await getSourceImageFromUrl(data.image);
+    sourceImage = await getSourceImageFromUrl({ url: data.image });
   if ('sourceImage' in data && typeof data.sourceImage === 'string')
-    sourceImage = await getSourceImageFromUrl(data.sourceImage);
+    sourceImage = await getSourceImageFromUrl({ url: data.sourceImage });
 
   return { ...data, sourceImage };
 }

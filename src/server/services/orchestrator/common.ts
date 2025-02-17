@@ -112,6 +112,12 @@ export async function parseGenerateImageInput({
 }) {
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
+  if (originalParams.sourceImage) {
+    originalParams.width = originalParams.sourceImage.width;
+    originalParams.height = originalParams.sourceImage.height;
+    originalParams.upscaleWidth = originalParams.sourceImage.upscaleWidth;
+    originalParams.upscaleHeight = originalParams.sourceImage.upscaleHeight;
+  }
 
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
@@ -205,12 +211,6 @@ export async function parseGenerateImageInput({
   ];
 
   // #region [together]
-  // TODO - should be able to remove this 30 days after orchestrator integration
-  if (params.aspectRatio && (!params.width || !params.height)) {
-    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
-    params.width = size.width;
-    params.height = size.height;
-  }
 
   // this needs to come after updating the size from the aspect ratio that is done directly above
   params = sanitizeTextToImageParams(params, limits);
@@ -290,14 +290,19 @@ export async function parseGenerateImageInput({
     params.sampler = 'LCM';
   }
 
-  if (!params.upscaleHeight || !params.upscaleWidth) {
-    params.upscaleHeight = params.height * 1.5;
-    params.upscaleWidth = params.width * 1.5;
+  let upscaleWidth = params.upscaleHeight;
+  let upscaleHeight = params.upscaleWidth;
+  if (params.sourceImage?.upscaleWidth && params.sourceImage.upscaleHeight) {
+    upscaleWidth = params.sourceImage.upscaleWidth;
+    upscaleHeight = params.sourceImage.upscaleHeight;
+  } else if (!params.upscaleHeight || !params.upscaleWidth) {
+    upscaleWidth = params.width * 1.5;
+    upscaleHeight = params.height * 1.5;
   }
 
   const upscale =
-    params.upscaleHeight && params.upscaleWidth
-      ? getRoundedUpscaleSize({ width: params.upscaleWidth, height: params.upscaleHeight })
+    upscaleHeight && upscaleWidth
+      ? getRoundedUpscaleSize({ width: upscaleWidth, height: upscaleHeight })
       : undefined;
 
   const { sourceImage, width, height } = params;
