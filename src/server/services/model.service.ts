@@ -1654,11 +1654,13 @@ export const publishModelById = async ({
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
-  const parsedModel = ingestModelSchema.parse(model);
   // Run it in the background to prevent blocking the request
-  ingestModel({ ...parsedModel }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-  );
+  if (!republishing) {
+    const parsedModel = ingestModelSchema.parse(model);
+    ingestModel({ ...parsedModel }).catch((error) =>
+      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+    );
+  }
 
   return model;
 };
