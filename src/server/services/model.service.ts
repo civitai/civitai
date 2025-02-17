@@ -35,6 +35,7 @@ import {
   ModelUpsertInput,
   PrivateModelFromTrainingInput,
   PublishModelSchema,
+  PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
@@ -2848,11 +2849,38 @@ export const privateModelFromTraining = async ({
   }
 };
 
-export const publishPrivateModel = async ({ modelId }: { modelId: number }) => {
+export const publishPrivateModel = async ({
+  modelId,
+  publishVersions,
+}: PublishPrivateModelInput) => {
+  const versions = await dbRead.modelVersion.findMany({
+    where: { modelId, status: ModelStatus.Published },
+    select: { id: true },
+  });
+
+  if (!versions.length) {
+    throw throwBadRequestError('Model has no published versions');
+  }
+
+  const versionIds = versions.map((v) => v.id);
+  const now = new Date();
+
   await dbWrite.$transaction([
+    dbWrite.post.updateMany({
+      where: {
+        modelVersionId: { in: versionIds },
+      },
+      data: {
+        publishedAt: publishVersions ? now : null,
+      },
+    }),
     dbWrite.modelVersion.updateMany({
-      where: { modelId: modelId },
-      data: { availability: Availability.Public, publishedAt: dayjs().toDate() },
+      where: { id: { in: versionIds } },
+      data: {
+        availability: Availability.Public,
+        status: publishVersions ? ModelStatus.Published : ModelStatus.Draft,
+        publishedAt: publishVersions ? now : null,
+      },
     }),
     dbWrite.model.update({
       where: {
@@ -2860,6 +2888,7 @@ export const publishPrivateModel = async ({ modelId }: { modelId: number }) => {
       },
       data: {
         availability: Availability.Public,
+        status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
       },
     }),
   ]);

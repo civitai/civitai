@@ -38,6 +38,7 @@ import {
   ModelUpsertInput,
   PrivateModelFromTrainingInput,
   PublishModelSchema,
+  PublishPrivateModelInput,
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
@@ -1786,17 +1787,17 @@ export const publishPrivateModelHandler = async ({
   input,
   ctx,
 }: {
-  input: GetByIdInput;
+  input: PublishPrivateModelInput;
   ctx: DeepNonNullable<Context>;
 }) => {
   try {
     const { id: userId } = ctx.user;
     const model = await getModel({
-      id: input.id,
+      id: input.modelId,
       select: { id: true, userId: true, status: true, availability: true },
     });
 
-    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+    if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
 
     if (model.availability !== Availability.Private) {
       throw throwBadRequestError('Model is not private. Cannot publish.');
@@ -1806,10 +1807,10 @@ export const publishPrivateModelHandler = async ({
       throw throwAuthorizationError();
     }
 
-    await publishPrivateModel({ modelId: input.id });
-    await dataForModelsCache.bust(input.id);
+    await publishPrivateModel(input);
+    await dataForModelsCache.bust(input.modelId);
     await modelsSearchIndex.queueUpdate([
-      { id: input.id, action: SearchIndexUpdateQueueAction.Update },
+      { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
     return true;

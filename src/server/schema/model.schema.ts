@@ -370,3 +370,9 @@ export const privateModelFromTrainingSchema = modelUpsertSchema.extend({
   id: z.number(), // Model should already be created before hand.
   modelVersionIds: z.array(z.number()).optional(),
 });
+
+export type PublishPrivateModelInput = z.infer<typeof publishPrivateModelSchema>;
+export const publishPrivateModelSchema = z.object({
+  modelId: z.number(),
+  publishVersions: z.boolean(),
+});

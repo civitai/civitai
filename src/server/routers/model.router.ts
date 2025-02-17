@@ -58,6 +58,7 @@ import {
   modelUpsertSchema,
   privateModelFromTrainingSchema,
   publishModelSchema,
+  publishPrivateModelSchema,
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
   setModelCollectionShowcaseSchema,
@@ -247,7 +248,7 @@ export const modelRouter = router({
     .input(privateModelFromTrainingSchema)
     .mutation(privateModelFromTrainingHandler),
   publishPrivateModel: guardedProcedure
-    .input(getByIdSchema)
+    .input(publishPrivateModelSchema)
     .use(isOwnerOrModerator)
     .mutation(publishPrivateModelHandler),
 });

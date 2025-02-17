@@ -65,6 +65,7 @@ import { CollectionShowcase } from '~/components/Model/CollectionShowcase/Collec
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
+import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
@@ -206,24 +207,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
-  const publishPrivateModelMutation = trpc.model.publishPrivateModel.useMutation({
-    onSuccess: async () => {
-      await queryUtils.model.getById.invalidate({ id: model.id });
-      await queryUtils.modelVersion.getById.invalidate({ id: version.id });
-    },
-  });
+
   const handlePublishPrivateModel = async () => {
-    openConfirmModal({
-      title: 'Make this model public',
-      children: (
-        <Text size="sm">
-          Are you sure you want to make this model public? This action is not reversible.
-        </Text>
-      ),
-      centered: true,
-      labels: { confirm: 'Publish model', cancel: "No, don't publish it" },
-      confirmProps: { color: 'blue' },
-      onConfirm: () => publishPrivateModelMutation.mutateAsync({ id: model.id }),
+    dialogStore.trigger({
+      component: ModelAvailabilityUpdate,
+      props: { modelId: model.id },
     });
   };
 
