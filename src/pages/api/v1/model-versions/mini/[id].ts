@@ -1,15 +1,15 @@
 import { Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
-
 import { Session } from 'next-auth';
+import { z } from 'zod';
 import { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
 import {
-  getUnavailableResources,
   getShouldChargeForResources,
+  getUnavailableResources,
 } from '~/server/services/generation/generation.service';
+import { getFeaturedModels } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
@@ -143,6 +143,8 @@ export default MixedAuthEndpoint(async function handler(
     },
   ]);
 
+  const isFeatured = (await getFeaturedModels()).includes(modelVersion.modelId);
+
   const data = {
     air,
     versionName: modelVersion.versionName,
@@ -157,6 +159,7 @@ export default MixedAuthEndpoint(async function handler(
     downloadUrls: [downloadUrl], // nullable
     format, // nullable
     canGenerate,
+    isFeatured,
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
