@@ -365,7 +365,7 @@ export const constants = {
     },
   },
   modelGallery: {
-    maxPinnedPosts: 10,
+    maxPinnedPosts: 20,
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
