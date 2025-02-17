@@ -59,6 +59,7 @@ import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helper
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = modelUpsertSchema
   .extend({
@@ -151,6 +152,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const hasPoiInNsfw = nsfw && poi === 'true';
   const hasMinorInNsfw = nsfw && minor;
   const { isDirty, errors } = form.formState;
+  const features = useFeatureFlags();
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -560,7 +562,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
               />
             )}
 
-            {isTrained && isDraft && (
+            {isTrained && isDraft && features.privateModels && (
               <InputChipGroup
                 grow
                 spacing="sm"

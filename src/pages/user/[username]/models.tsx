@@ -194,9 +194,10 @@ function ContentToggle({
   const features = useFeatureFlags();
   const tabs = [
     { label: 'Published', value: 'published' },
-    { label: 'Private', value: 'private' },
     { label: 'Draft', value: 'draft' },
   ];
+
+  if (features.privateModels) tabs.push({ label: 'Private', value: 'private' });
   if (features.imageTrainingResults) tabs.push({ label: 'Training', value: 'training' });
 
   return (

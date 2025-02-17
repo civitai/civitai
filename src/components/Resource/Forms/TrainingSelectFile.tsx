@@ -22,6 +22,7 @@ import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
@@ -75,6 +76,7 @@ const EpochRow = ({
 }) => {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
+  const features = useFeatureFlags();
 
   return (
     <Paper
@@ -107,7 +109,7 @@ const EpochRow = ({
                   : 'Download'}
               </Text>
             </DownloadButton>
-            {modelVersionId && (
+            {modelVersionId && features.privateModels && (
               <SubscriptionRequiredBlock feature="private-models">
                 <GenerateButton
                   modelVersionId={modelVersionId}

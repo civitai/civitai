@@ -327,22 +327,24 @@ export const getPlanDetails: (
               ),
           }
         : undefined,
-      {
-        icon: <IconCategory size={benefitIconSize} />,
-        iconColor: 'blue',
+      features.privateModels
+        ? {
+            icon: <IconCategory size={benefitIconSize} />,
+            iconColor: 'blue',
 
-        iconVariant: 'light' as ThemeIconVariant,
-        content: (
-          <Text>
-            {numberWithCommas(
-              metadata?.maxPrivateModels ??
-                constants.memberships.maxPrivateModels[metadata.tier] ??
-                0
-            )}{' '}
-            Private Models
-          </Text>
-        ),
-      },
+            iconVariant: 'light' as ThemeIconVariant,
+            content: (
+              <Text>
+                {numberWithCommas(
+                  metadata?.maxPrivateModels ??
+                    constants.memberships.maxPrivateModels[metadata.tier] ??
+                    0
+                )}{' '}
+                Private Models
+              </Text>
+            ),
+          }
+        : null,
       {
         icon: <IconPhotoAi size={benefitIconSize} />,
         iconColor: 'blue',
