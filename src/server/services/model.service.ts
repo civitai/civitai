@@ -8,6 +8,7 @@ import {
   BaseModel,
   BaseModelType,
   CacheTTL,
+  constants,
   FEATURED_MODEL_COLLECTION_ID,
 } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -2750,7 +2751,11 @@ export const privateModelFromTraining = async ({
     where: { userId: input.user.id, availability: Availability.Private },
   });
 
-  if (totalPrivateModels >= 10) {
+  const maxPrivateModels = input.user.tier
+    ? constants.memberships.maxPrivateModels[input.user.tier] ?? 0
+    : 0;
+
+  if (totalPrivateModels >= maxPrivateModels) {
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
 
@@ -2835,6 +2840,7 @@ export const privateModelFromTraining = async ({
     await preventReplicationLag('model', id);
     await userContentOverviewCache.bust(user.id);
     await dataForModelsCache.bust(id);
+    await bustMvCache(result.modelVersions.map((x) => x.id));
 
     return result;
   } catch (error) {
@@ -2896,5 +2902,5 @@ export const publishPrivateModel = async ({
     }),
   ]);
 
-  return true;
+  return { versionIds };
 };

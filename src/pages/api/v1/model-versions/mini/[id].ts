@@ -128,7 +128,7 @@ export default MixedAuthEndpoint(async function handler(
       }) ?? primaryFile.metadata.trainingResults.epochs?.pop();
 
     if (!epoch) {
-      return res.status(404).json({ error: 'Missing   epoch' });
+      return res.status(404).json({ error: 'Missing epoch' });
     }
 
     downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;

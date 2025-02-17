@@ -70,7 +70,6 @@ export const useGenerationStore = create<GenerationState>()(
             const result = await fetchGenerationData(input);
 
             if (isMedia) {
-              console.log('Setting remix store');
               useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
             }
 

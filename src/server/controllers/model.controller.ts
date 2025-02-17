@@ -1807,8 +1807,9 @@ export const publishPrivateModelHandler = async ({
       throw throwAuthorizationError();
     }
 
-    await publishPrivateModel(input);
+    const { versionIds } = await publishPrivateModel(input);
     await dataForModelsCache.bust(input.modelId);
+    await bustMvCache(versionIds);
     await modelsSearchIndex.queueUpdate([
       { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
     ]);

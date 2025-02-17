@@ -165,8 +165,6 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     return vaes.map((x) => ({ label: x.modelName, value: x.id }));
   }, [vaes]);
 
-  console.log(model);
-
   const defaultValues: Schema = {
     ...version,
     name: version?.name ?? 'v1.0',

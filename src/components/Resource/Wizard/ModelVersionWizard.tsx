@@ -16,6 +16,7 @@ import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById, ModelVersionById } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
+import { showErrorNotification } from '~/utils/notifications';
 
 const MAX_STEPS = 3;
 
@@ -126,12 +127,19 @@ const TrainSteps = ({
   const utils = trpc.useUtils();
 
   const onPublish = async () => {
-    await publishPrivateModelVersionMutation.mutateAsync({ id: modelVersion.id });
+    try {
+      await publishPrivateModelVersionMutation.mutateAsync({ id: modelVersion.id });
 
-    utils.modelVersion.getById.invalidate({ id: modelVersion.id });
-    utils.model.getById.invalidate({ id: modelData.id });
+      utils.modelVersion.getById.invalidate({ id: modelVersion.id });
+      utils.model.getById.invalidate({ id: modelData.id });
 
-    router.replace(`/models/${modelData.id}?modelVersionId=${modelVersion.id}`);
+      router.replace(`/models/${modelData.id}?modelVersionId=${modelVersion.id}`);
+    } catch (error) {
+      showErrorNotification({
+        title: 'Failed to publish private model',
+        error: new Error((error as Error).message),
+      });
+    }
   };
 
   return (
@@ -186,7 +194,7 @@ const TrainSteps = ({
               <Stack spacing="xs" mt="xl">
                 {isPrivateModel && (
                   <Alert color="yellow" title="Private model version">
-                    This model version will be marked as private becuase of the model&rsquo;s
+                    This model version will be marked as private because of the model&rsquo;s
                     privacy. A post will be automatically created based off of the selected epoch.
                   </Alert>
                 )}

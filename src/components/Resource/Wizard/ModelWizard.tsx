@@ -205,7 +205,7 @@ const TrainSteps = ({
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Select Model Iteration</Title>
           <Text mb="sm">
-            Choose a model interation from the results of your training run.
+            Choose a model iteration from the results of your training run.
             <br />
             Sample images are provided for reference.
           </Text>

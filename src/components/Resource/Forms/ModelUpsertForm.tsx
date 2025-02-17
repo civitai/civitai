@@ -666,24 +666,31 @@ export const PrivateModelAutomaticSetup = ({
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();
 
   const handleConfirm = async () => {
-    await privateModelFromTrainingMutation.mutateAsync({
-      ...form,
-      poi: form.poi === 'true',
-      id: form.id as number,
-      availability: Availability.Private,
-      modelVersionIds: modelVersionId ? [modelVersionId] : undefined,
-    });
+    try {
+      await privateModelFromTrainingMutation.mutateAsync({
+        ...form,
+        poi: form.poi === 'true',
+        id: form.id as number,
+        availability: Availability.Private,
+        modelVersionIds: modelVersionId ? [modelVersionId] : undefined,
+      });
 
-    if (modelVersionId) {
-      utils.model.getById.invalidate({ id: form.id });
-      utils.modelVersion.getById.invalidate({ id: modelVersionId });
+      if (modelVersionId) {
+        utils.model.getById.invalidate({ id: form.id });
+        utils.modelVersion.getById.invalidate({ id: modelVersionId });
+      }
+
+      await router.replace(
+        `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
+      );
+
+      handleClose();
+    } catch (error) {
+      showErrorNotification({
+        title: 'Failed to make model private',
+        error: new Error((error as Error).message),
+      });
     }
-
-    await router.replace(
-      `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
-    );
-
-    handleClose();
   };
 
   return (

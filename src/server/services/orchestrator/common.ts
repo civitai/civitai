@@ -13,7 +13,6 @@ import {
   WorkflowStep,
 } from '@civitai/client';
 import { uniq, uniqBy } from 'lodash-es';
-import { metadata } from 'motion/dist/react-m';
 import type { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server';
