@@ -51,7 +51,7 @@ import {
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -107,6 +107,7 @@ import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -153,6 +154,28 @@ export const getServerSideProps = createServerSideProps({
       return { notFound: true };
     }
 
+    if (version?.availability === Availability.Private) {
+      // We'll do a explicit check if we know it's a private model
+      if (!session?.user) {
+        return {
+          notFound: true,
+        };
+      }
+
+      const [access] = await hasEntityAccess({
+        entityIds: [version.id],
+        entityType: 'ModelVersion',
+        userId: session.user.id,
+        isModerator: session.user.isModerator,
+      });
+
+      if (!access.hasAccess) {
+        return {
+          notFound: true,
+        };
+      }
+    }
+
     if (ssg) {
       // if (version)
       //   await ssg.image.getInfinite.prefetchInfinite({
@@ -170,6 +193,7 @@ export const getServerSideProps = createServerSideProps({
           entityId: modelVersionIdParsed as number,
           entityType: 'ModelVersion',
         });
+
         // await ssg.common.getEntityClubRequirement.prefetch({
         //   entityId: modelVersionIdParsed as number,
         //   entityType: 'ModelVersion',
@@ -1005,13 +1029,15 @@ export default function ModelDetailsV2({
             <Group spacing={4} noWrap>
               {isOwner ? (
                 <>
-                  <ButtonTooltip label="Add Version">
-                    <Link href={`/models/${model.id}/model-versions/create`}>
-                      <ActionIcon variant="light" color="blue">
-                        <IconPlus size={14} />
-                      </ActionIcon>
-                    </Link>
-                  </ButtonTooltip>
+                  {model.availability !== Availability.Private && (
+                    <ButtonTooltip label="Add Version">
+                      <Link href={`/models/${model.id}/model-versions/create`}>
+                        <ActionIcon variant="light" color="blue">
+                          <IconPlus size={14} />
+                        </ActionIcon>
+                      </Link>
+                    </ButtonTooltip>
+                  )}
 
                   {versionCount > 1 && (
                     <ButtonTooltip label="Rearrange Versions">

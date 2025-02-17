@@ -28,9 +28,8 @@ import {
   IconExclamationCircle,
   IconExternalLink,
   IconFileDescription,
-  IconSend,
   IconTrash,
-  IconX,
+  IconX
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
@@ -457,11 +456,10 @@ export default function UserTrainingModels() {
                               component="a"
                               radius="xl"
                               size="sm"
-                              rightIcon={<IconSend size={16} />}
                               onClick={(e) => e.stopPropagation()}
                               compact
                             >
-                              Publish
+                              Review
                             </Button>
                           </Link>
                         )}

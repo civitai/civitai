@@ -30,11 +30,13 @@ import {
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
-import { MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
+import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 
 import { fromJson, toJson } from '~/utils/json-helpers';
 
+import { env } from '~/env/server';
+import { getFeaturedModels } from '~/server/services/model.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   baseModelResourceTypes,
@@ -49,9 +51,7 @@ import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
-import { getFeaturedModels } from '~/server/services/model.service';
 import { isDefined } from '~/utils/type-guards';
-import { env } from '~/env/server';
 
 type GenerationResourceSimple = {
   id: number;
@@ -246,11 +246,12 @@ export const getGenerationData = async ({
         versionIds: [query.id],
         user,
         generation: query.generation,
+        epochNumbers: query.epochNumbers,
       });
     case 'modelVersions':
       return await getModelVersionGenerationData({
-        versionIds: query.ids,
         user,
+        versionIds: query.ids,
         generation: query.generation,
       });
     default:
@@ -392,14 +393,16 @@ const getModelVersionGenerationData = async ({
   versionIds,
   user,
   generation,
+  epochNumbers,
 }: {
   versionIds: number[];
   user?: SessionUser;
   generation: boolean;
+  epochNumbers?: string[];
 }) => {
   if (!versionIds.length) throw new Error('missing version ids');
   const fn = generation ? getGenerationResourceData : getResourceData;
-  const resources = await fn({ ids: versionIds, user });
+  const resources = await fn({ ids: versionIds, user, epochNumbers });
   const checkpoint = resources.find((x) => x.baseModel === 'Checkpoint');
   if (checkpoint?.vaeId) {
     const [vae] = await fn({ ids: [checkpoint.vaeId], user });
@@ -505,6 +508,7 @@ type GenerationResourceBase = {
   hasAccess: boolean;
   covered: boolean;
   additionalResourceCost?: boolean;
+  availability?: Availability;
   // settings
   clipSkip?: number;
   minStrength: number;
@@ -522,6 +526,11 @@ export type GenerationResource = GenerationResourceBase & {
     minor?: boolean;
     // userId: number;
   };
+  epochDetails?: {
+    jobId: string;
+    fileName: string;
+    epochNumber: number;
+  };
   substitute?: GenerationResourceBase;
 };
 
@@ -530,8 +539,10 @@ const explicitCoveredModelVersionIds = explicitCoveredModelAirs.map((air) => par
 export async function getResourceData({
   ids,
   user,
+  epochNumbers,
 }: {
   ids: number[];
+  epochNumbers?: string[];
   user?: {
     id?: number;
     isModerator?: boolean;
@@ -558,11 +569,13 @@ export async function getResourceData({
       ),
     };
   }
+
   return await resourceDataCache.fetch(ids).then(async (initialResult) => {
     const initialTransformed = initialResult.map(transformGenerationData);
     const modelIds = initialTransformed
       .filter((x) => !x.covered || !x.hasAccess)
       .map((x) => x.model.id);
+
     const substituteIds = await dbRead.modelVersion
       .findMany({
         where: {
@@ -638,8 +651,10 @@ export async function getResourceData({
       [...initialWithAccess, ...substitutesWithAccess].filter((x) => x.hasAccess).map((x) => x.id)
     );
 
-    return initialWithAccess.map(({ availability, ...item }) => {
+    return initialWithAccess.flatMap(({ ...item }) => {
       const primaryFile = getPrimaryFile(modelFilesCached[item.id]?.files ?? []);
+      const trainingFile = modelFilesCached[item.id]?.files.find((f) => f.type === 'Training Data');
+
       const substitute = substitutesWithAccess.find(
         (sub) => sub.model.id === item.model.id && sub.hasAccess
       );
@@ -652,22 +667,44 @@ export async function getResourceData({
           fileSizeKB > 10 * 1024;
       }
 
+      const epochs = epochNumbers
+        ?.filter((v) => {
+          const [modelVersionId] = v.split('@');
+          if (!modelVersionId) return false;
+          return Number(modelVersionId) === item.id;
+        })
+        ?.map((s) => Number(s.split('@')[1]));
+
+      const epochsDetails =
+        epochs
+          ?.map((epochNumber) => {
+            const epochDetails =
+              epochNumber && trainingFile
+                ? getTrainingFileEpochNumberDetails(trainingFile, Number(epochNumber))
+                : null;
+
+            return epochDetails;
+          })
+          .filter(isDefined) ?? [];
+
+      let substituteData;
+
+      if (substitute) {
+        const { model, availability, ...sub } = substitute;
+        substituteData = removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess });
+      }
+
       const payload = removeNulls({
         ...item,
         canGenerate: item.covered && item.hasAccess,
         fileSizeKB: fileSizeKB ? Math.round(fileSizeKB) : undefined,
         additionalResourceCost,
+        substitute: substituteData,
       });
 
-      if (substitute) {
-        const { model, availability, ...sub } = substitute;
-        return {
-          ...payload,
-          substitute: removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess }),
-        };
-      }
-
-      return payload;
+      return (epochsDetails?.length ?? 0) > 0
+        ? epochsDetails.map((epochDetails) => ({ ...payload, epochDetails }))
+        : payload;
     });
   });
 }
@@ -678,6 +715,7 @@ export async function getGenerationResourceData(args: {
     id?: number;
     isModerator?: boolean;
   };
+  epochNumbers?: string[];
 }) {
   return await getResourceData(args).then((data) =>
     data.filter((resource) => {

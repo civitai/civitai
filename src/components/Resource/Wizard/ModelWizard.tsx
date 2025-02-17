@@ -1,7 +1,6 @@
-import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Title } from '@mantine/core';
-import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
+import { Button, Group, LoadingOverlay, Popover, Stack, Stepper, Text, Title } from '@mantine/core';
 import { NextRouter, useRouter } from 'next/router';
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -14,6 +13,7 @@ import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { ModelById } from '~/types/router';
 import { QS } from '~/utils/qs';
@@ -188,7 +188,7 @@ const TrainSteps = ({
     >
       {/* Step 1: Select File */}
       <Stepper.Step
-        label="Select Model File"
+        label="Select Model Iteration"
         loading={
           modelVersion.trainingStatus === TrainingStatus.Pending ||
           modelVersion.trainingStatus === TrainingStatus.Submitted ||
@@ -203,12 +203,12 @@ const TrainSteps = ({
         }
       >
         <div className="container flex max-w-sm flex-col gap-3">
-          <Title order={3}>Select Model File</Title>
-          <Title mb="sm" order={5}>
-            Choose a model file from the results of your training run.
+          <Title order={3}>Select Model Iteration</Title>
+          <Text mb="sm">
+            Choose a model iteration from the results of your training run.
             <br />
             Sample images are provided for reference.
-          </Title>
+          </Text>
           <TrainingSelectFile model={model} modelVersion={modelVersion} onNextClick={goNext} />
         </div>
       </Stepper.Step>
@@ -217,7 +217,7 @@ const TrainSteps = ({
       <Stepper.Step label="Edit model">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit model</Title>
-          <ModelUpsertForm model={model} onSubmit={goNext}>
+          <ModelUpsertForm model={model} modelVersionId={modelVersion.id} onSubmit={goNext}>
             {({ loading }) => (
               <Group mt="xl" position="right">
                 <Button variant="default" onClick={goBack}>
@@ -395,7 +395,7 @@ export function ModelWizard() {
           <Stack pb="xl">
             <Group position="apart" noWrap>
               <Group spacing={8} noWrap>
-                <Title order={2}>Publish a Model</Title>
+                <Title order={2}>{isTraining ? 'Review your Model' : 'Publish a Model'}</Title>
                 <FeatureIntroductionHelpButton
                   feature="model-upload"
                   contentSlug={['feature-introduction', 'model-upload']}

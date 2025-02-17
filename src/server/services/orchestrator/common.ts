@@ -12,6 +12,7 @@ import {
   WorkflowStatus,
   WorkflowStep,
 } from '@civitai/client';
+import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server';
@@ -38,6 +39,7 @@ import {
   WorkflowDefinition,
 } from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   allInjectableResourceIds,
@@ -56,7 +58,7 @@ import {
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
@@ -87,10 +89,15 @@ export async function getGenerationStatus() {
 export async function getResourceDataWithInjects<T extends GenerationResource>(args: {
   ids: number[];
   user?: SessionUser;
+  epochNumbers?: string[];
   cb?: (resource: GenerationResource) => T;
 }) {
   const ids = [...args.ids, ...allInjectableResourceIds];
-  const results = await getGenerationResourceData({ ids, user: args.user });
+  const results = await getGenerationResourceData({
+    ids,
+    user: args.user,
+    epochNumbers: args.epochNumbers,
+  });
   const allResources = (args.cb ? results.map(args.cb) : results) as T[];
 
   return {
@@ -159,12 +166,27 @@ export async function parseGenerateImageInput({
   const resourceData = await getResourceDataWithInjects({
     ids: originalResources.map((x) => x.id),
     user,
+    epochNumbers: originalResources
+      .filter((x) => !!x.epochNumber)
+      .map((x) => `${x.id}@${x.epochNumber}`),
     cb: (resource) => ({
       ...resource,
       ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
     }),
   });
+
+  if (
+    resourceData.resources.some(
+      (r) => r.availability === Availability.Private || !!r.epochDetails || !!r.epochNumber
+    ) &&
+    !user.isModerator
+  ) {
+    // Confirm the user has a subscription:
+    const subscription = await getUserSubscription({ userId: user.id });
+    if (!subscription)
+      throw throwBadRequestError('Using Private resources require an active subscription.');
+  }
 
   if (
     resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
@@ -317,11 +339,27 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
-  if (step.$type === 'textToImage')
-    return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
+  if (step.$type === 'textToImage') {
+    const inputResources = getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
       id: x.version,
-      strength: x.networkParams.strength,
+      strength: x.networkParams.strength ?? 1,
+      epochNumber: undefined,
     }));
+
+    const metadataResources = (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
+
+    return uniqBy([...inputResources, ...metadataResources], 'id').map((ir) => {
+      const metadataResource = metadataResources.find((x) => x.id === ir.id);
+      // If removed, we re-add the epochInformation
+      if (metadataResource)
+        return {
+          ...ir,
+          epochNumber: metadataResource.epochNumber,
+        };
+
+      return ir;
+    });
+  }
   return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
 }
 
@@ -354,7 +392,15 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
   const versionIds = allResources.map((x) => x.id);
-  const { resources, injectable } = await getResourceDataWithInjects({ ids: versionIds, user });
+  const epochNumbers = uniq(
+    allResources.filter((x) => !!x.epochNumber).map((x) => `${x.id}@${x.epochNumber}`)
+  );
+
+  const { resources, injectable } = await getResourceDataWithInjects({
+    ids: versionIds,
+    user,
+    epochNumbers,
+  });
 
   return workflows.map((workflow) => {
     return {
@@ -373,7 +419,19 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
           workflowId: workflow.id as string,
           // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
           step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
-          resources: [...resources, ...injectable],
+          resources: [...resources, ...injectable].filter((resource) => {
+            const metadataResources =
+              (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
+            const mr = metadataResources.find((x) => x.id === resource.id);
+
+            if (mr && mr.epochNumber) {
+              // Avoids attaching wrong epoch details to resources. The only source of truth we have for that
+              // is the metadata since it's pretty much impossible to tie air <-> modelVersion.
+              return resource.epochDetails?.epochNumber === mr.epochNumber;
+            }
+
+            return true; // Default behavior.
+          }),
         })
       ),
     };
