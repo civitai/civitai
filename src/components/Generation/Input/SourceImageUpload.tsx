@@ -96,7 +96,7 @@ function SourceImageUpload({
           />
         ) : (
           <div className="flex justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6">
-            <div className="relative flex flex-col">
+            <div className="relative flex flex-col items-end">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={value.url}
@@ -112,6 +112,9 @@ function SourceImageUpload({
                   onClick={() => handleChange()}
                 />
               )}
+              <div className="absolute bottom-0 right-0 rounded-tl-md bg-dark-9/50 px-2 text-white">
+                {value.width} x {value.height}
+              </div>
             </div>
           </div>
         )}
@@ -218,6 +221,11 @@ function UpscalePicker({
           ))}
         </RadioGroup>
       </Input.Wrapper>
+
+      <div className="rounded-md bg-gray-2 px-6 py-4 dark:bg-dark-6">
+        <span className="font-bold">Upscale Dimensions:</span> {value.upscaleWidth} x{' '}
+        {value.upscaleHeight}
+      </div>
     </div>
   );
 }
