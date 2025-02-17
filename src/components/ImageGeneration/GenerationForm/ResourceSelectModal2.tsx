@@ -660,7 +660,11 @@ function ResourceSelectCard({
     const { id } = version;
 
     setLoading(true);
-    await fetchGenerationData({ type: 'modelVersion', id }).then((data) => {
+    await fetchGenerationData({
+      type: 'modelVersion',
+      id,
+      generation: selectSource !== 'generation' ? false : undefined,
+    }).then((data) => {
       const resource = data.resources[0];
       if (selectSource !== 'generation') {
         onSelect({ ...resource, image });

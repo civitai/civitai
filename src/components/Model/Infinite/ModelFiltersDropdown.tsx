@@ -103,7 +103,6 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.earlyAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
-    (mergedFilters.archived ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
@@ -118,7 +117,6 @@ export function DumbModelFiltersDropdown({
       supportsGeneration: false,
       followed: false,
       hidden: undefined,
-      archived: undefined,
       fileFormats: undefined,
       fromPlatform: false,
       period: MetricTimeframe.AllTime,
@@ -134,7 +132,6 @@ export function DumbModelFiltersDropdown({
         supportsGeneration: undefined,
         followed: undefined,
         hidden: undefined,
-        archived: undefined,
         fileFormats: undefined,
         fromPlatform: undefined,
         period: MetricTimeframe.AllTime,
@@ -331,13 +328,6 @@ export function DumbModelFiltersDropdown({
               </Chip>
             </>
           )}
-          <Chip
-            checked={mergedFilters.archived}
-            onChange={(checked) => handleChange({ archived: checked })}
-            {...chipProps}
-          >
-            <span>Include Archived</span>
-          </Chip>
         </Group>
       </Stack>
       {filterLength > 0 && (

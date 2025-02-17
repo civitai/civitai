@@ -110,10 +110,7 @@ export function CommentContent({
 
   const isExpanded = !viewOnly && expanded.includes(comment.id);
   const onToggleReplies = () => {
-    const maxDepth =
-      `${entityType}MaxDepth` in constants.comments
-        ? constants.comments[`${entityType}MaxDepth` as keyof typeof constants.comments]
-        : constants.comments.maxDepth;
+    const maxDepth = constants.comments.getMaxDepth({ entityType });
 
     if ((level ?? 0) >= maxDepth && !isExpanded) {
       setRootThread('comment', comment.id);

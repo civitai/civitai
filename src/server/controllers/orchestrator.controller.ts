@@ -8,7 +8,10 @@ import { logToAxiom } from '~/server/logging/client';
 import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
-import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
+import {
+  createWorkflowStep,
+  getPriorityVolume,
+} from '~/server/services/orchestrator/orchestrator.service';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
@@ -140,4 +143,21 @@ export async function whatIf(args: GenerationSchema & Ctx) {
     eta,
     position,
   };
+}
+
+export async function handleGetPriorityVolume({ type }: { type: string }) {
+  const data = await getPriorityVolume();
+  const lowerCaseTarget = type.toLowerCase();
+  let provider = data.find((x) => x.key.toLowerCase() === lowerCaseTarget);
+  if (!provider) provider = data.find((x) => x.key === 'ValdiAI');
+  const summaries = provider?.prioritySummaries ?? {};
+  const keys = Object.keys(summaries).map(Number);
+  for (const key in summaries) {
+    let value = summaries[key];
+    const numKey = Number(key);
+    const smallerKeys = keys.filter((x) => x < numKey);
+    value += smallerKeys.reduce<number>((acc, key) => acc + summaries[key.toString()], 0);
+    summaries[key] = value;
+  }
+  return summaries;
 }

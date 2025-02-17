@@ -871,7 +871,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const { data: ownedEntries, isLoading: isLoadingOwnedEntries } = trpc.bounty.getEntries.useQuery({
     id: bounty.id,
     owned: true,
-    limit: bounty.entryLimit,
+    limit: Math.min(bounty.entryLimit, 200),
   });
 
   const flatEntries = useMemo(() => entries?.pages.flatMap((p) => p.items) ?? [], [entries]);
@@ -889,7 +889,7 @@ const BountyEntries = ({ bounty }: { bounty: BountyGetById }) => {
   const displaySubmitAction =
     !benefactorItem &&
     !isLoadingOwnedEntries &&
-    ownedEntries?.items &&
+    !!ownedEntries?.items &&
     ownedEntries.items.length < bounty.entryLimit &&
     !currentUser?.muted &&
     !bounty.complete &&

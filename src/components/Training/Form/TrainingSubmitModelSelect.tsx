@@ -342,10 +342,8 @@ export const ModelSelect = ({
                     color="red"
                   >
                     <Text>
-                      This model currently does not work properly with kohya.
-                      <br />
-                      We are working on a fix for this - in the meantime, please try a different
-                      model.
+                      This model is not currently available for LoRA training - please select a
+                      different model.
                     </Text>
                   </AlertWithIcon>
                 ) : isCustomModel ? (

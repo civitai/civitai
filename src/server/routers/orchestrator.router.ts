@@ -4,11 +4,18 @@ import dayjs from 'dayjs';
 import { z } from 'zod';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
-import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
+import {
+  generate,
+  handleGetPriorityVolume,
+  whatIf,
+} from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
-import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
+import {
+  generationSchema,
+  requestPrioritySchema,
+} from '~/server/orchestrator/generation/generation.schema';
 import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
 import {
@@ -224,13 +231,10 @@ export const orchestratorRouter = router({
           }
         }
 
-        const fixedTotal = workflow?.cost?.fixed
-          ? Object.values(workflow.cost.fixed).reduce((acc, value) => acc + value, 0)
-          : 0;
-        const trueBaseCost = workflow?.cost?.base ? workflow.cost.base - fixedTotal : 0;
+
 
         return {
-          cost: { ...workflow.cost, base: trueBaseCost },
+          cost: workflow.cost,
           ready,
           eta,
           position,
@@ -252,6 +256,10 @@ export const orchestratorRouter = router({
   generate: orchestratorGuardedProcedure
     .input(z.any())
     .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
+  requestPriority: orchestratorGuardedProcedure
+    .input(requestPrioritySchema)
+    .use(edgeCacheIt({ ttl: 5 }))
+    .query(({ input }) => handleGetPriorityVolume({ type: input.type })),
   // #endregion
 
   // #region [Image upload]

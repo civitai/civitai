@@ -1,8 +1,7 @@
 import { Center, Group, Stack, Tabs, Text, ThemeIcon, createStyles } from '@mantine/core';
-import { IconClock, IconClockHour9, IconLayoutList } from '@tabler/icons-react';
+import { IconClockHour9 } from '@tabler/icons-react';
 import { IconGridDots, IconLock } from '@tabler/icons-react';
-import React, { useState } from 'react';
-import { AppFooter } from '~/components/AppLayout/AppFooter';
+import React from 'react';
 import { Page } from '~/components/AppLayout/Page';
 import { Feed } from '~/components/ImageGeneration/Feed';
 import { GeneratedImageActions } from '~/components/ImageGeneration/GeneratedImageActions';

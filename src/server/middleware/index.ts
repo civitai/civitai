@@ -1,4 +1,4 @@
-import { SessionUser } from 'next-auth';
+import type { SessionUser } from 'next-auth';
 import { getToken } from 'next-auth/jwt';
 import { NextRequest, NextResponse } from 'next/server';
 import { civitaiTokenCookieName } from '~/libs/auth';

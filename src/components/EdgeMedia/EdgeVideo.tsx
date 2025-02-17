@@ -22,6 +22,7 @@ import { fadeInOut } from '~/libs/animations';
 import { useLocalStorage, useTimeout } from '@mantine/hooks';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
+import clsx from 'clsx';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -39,6 +40,7 @@ type VideoProps = Omit<
   options?: Omit<EdgeUrlProps, 'src'>;
   threshold?: number | null;
   disableWebm?: boolean;
+  disablePoster?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -70,6 +72,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       threshold = 0.25,
       thumbnailUrl,
       disableWebm,
+      disablePoster,
       ...props
     },
     forwardedRef
@@ -223,109 +226,110 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       // extra div wrapper to prevent positioning errors of parent components that make their child absolute
       <div
         ref={containerRef}
-        className={cx(classes.iosScroll, wrapperProps?.className, 'overflow-hidden')}
+        className={cx(
+          classes.iosScroll,
+          wrapperProps?.className,
+          'overflow-hidden relative flex items-center justify-center h-full'
+        )}
         {...wrapperProps}
       >
-        <div
-          className={`relative flex items-center justify-center ${contain ? 'h-full' : 'h-auto'}`}
+        <video
+          ref={ref}
+          className={clsx(`block cursor-pointer ${contain ? 'h-full' : 'h-auto'}`)}
+          muted={state.muted}
+          style={style}
+          onLoadedData={handleLoadedData}
+          controls={html5Controls}
+          onClick={handleTogglePlayPause}
+          onPlaying={() => setState((current) => ({ ...current, isPlaying: true }))}
+          onPause={() => setState((current) => ({ ...current, isPlaying: false }))}
+          onVolumeChange={(e) => {
+            !initialMuted ? handleVolumeChange(e.currentTarget.volume) : undefined;
+          }}
+          playsInline
+          onMouseOver={!options?.anim ? handleMouseEnter : undefined}
+          onMouseLeave={!options?.anim ? handleMouseLeave : undefined}
+          autoPlay={options?.anim}
+          loop
+          poster={!disablePoster ? coverUrl : undefined}
+          disablePictureInPicture
+          preload="none"
+          {...props}
         >
-          <video
-            ref={ref}
-            className="block cursor-pointer"
-            muted={state.muted}
-            style={style}
-            onLoadedData={handleLoadedData}
-            controls={html5Controls}
-            onClick={handleTogglePlayPause}
-            onPlaying={() => setState((current) => ({ ...current, isPlaying: true }))}
-            onPause={() => setState((current) => ({ ...current, isPlaying: false }))}
-            onVolumeChange={(e) => {
-              !initialMuted ? handleVolumeChange(e.currentTarget.volume) : undefined;
-            }}
-            playsInline
-            onMouseOver={!options?.anim ? handleMouseEnter : undefined}
-            onMouseLeave={!options?.anim ? handleMouseLeave : undefined}
-            autoPlay={options?.anim}
-            loop
-            poster={coverUrl}
-            disablePictureInPicture
-            {...props}
-          >
-            {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}
-            <source src={videoUrl} type="video/mp4" />
-          </video>
-          {!options?.anim && !showCustomControls && !html5Controls && !mouseOver && (
-            <IconPlayerPlayFilled
-              className={cx(classes.playButton, 'absolute-center pointer-events-none')}
-            />
-          )}
-          {showCustomControls && (
-            <div className={classes.controls}>
+          {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}
+          <source src={videoUrl} type="video/mp4" />
+        </video>
+        {!options?.anim && !showCustomControls && !html5Controls && !mouseOver && (
+          <IconPlayerPlayFilled
+            className={cx(classes.playButton, 'absolute-center pointer-events-none')}
+          />
+        )}
+        {showCustomControls && (
+          <div className={classes.controls}>
+            <ActionIcon
+              onClick={handleTogglePlayPause}
+              className="z-10"
+              variant="light"
+              size="lg"
+              radius="xl"
+            >
+              {state.isPlaying ? (
+                <IconPlayerPauseFilled size={16} />
+              ) : (
+                <IconPlayerPlayFilled size={16} />
+              )}
+            </ActionIcon>
+            <div className="flex flex-nowrap gap-4">
+              {enableAudioControl && (
+                <div className={classes.volumeControl}>
+                  <div className={classes.volumeSlider}>
+                    <input
+                      type="range"
+                      className="w-20"
+                      min="0"
+                      max="1"
+                      step="0.05"
+                      value={volume}
+                      onChange={(e) => handleVolumeChange(e.currentTarget.valueAsNumber)}
+                    />
+                  </div>
+                  <ActionIcon
+                    onClick={handleToggleMuted}
+                    className="z-10"
+                    variant="light"
+                    size="lg"
+                    radius="xl"
+                    disabled={!enableAudioControl}
+                  >
+                    {state.muted || volume === 0 || !enableAudioControl ? (
+                      <IconVolumeOff size={16} />
+                    ) : (
+                      <IconVolume size={16} />
+                    )}
+                  </ActionIcon>
+                </div>
+              )}
               <ActionIcon
-                onClick={handleTogglePlayPause}
+                onClick={handleToggleFullscreen}
                 className="z-10"
                 variant="light"
                 size="lg"
                 radius="xl"
               >
-                {state.isPlaying ? (
-                  <IconPlayerPauseFilled size={16} />
+                {document.fullscreenElement ? (
+                  <IconMinimize size={16} />
                 ) : (
-                  <IconPlayerPlayFilled size={16} />
+                  <IconMaximize size={16} />
                 )}
               </ActionIcon>
-              <div className="flex flex-nowrap gap-4">
-                {enableAudioControl && (
-                  <div className={classes.volumeControl}>
-                    <div className={classes.volumeSlider}>
-                      <input
-                        type="range"
-                        className="w-20"
-                        min="0"
-                        max="1"
-                        step="0.05"
-                        value={volume}
-                        onChange={(e) => handleVolumeChange(e.currentTarget.valueAsNumber)}
-                      />
-                    </div>
-                    <ActionIcon
-                      onClick={handleToggleMuted}
-                      className="z-10"
-                      variant="light"
-                      size="lg"
-                      radius="xl"
-                      disabled={!enableAudioControl}
-                    >
-                      {state.muted || volume === 0 || !enableAudioControl ? (
-                        <IconVolumeOff size={16} />
-                      ) : (
-                        <IconVolume size={16} />
-                      )}
-                    </ActionIcon>
-                  </div>
-                )}
-                <ActionIcon
-                  onClick={handleToggleFullscreen}
-                  className="z-10"
-                  variant="light"
-                  size="lg"
-                  radius="xl"
-                >
-                  {document.fullscreenElement ? (
-                    <IconMinimize size={16} />
-                  ) : (
-                    <IconMaximize size={16} />
-                  )}
-                </ActionIcon>
-              </div>
             </div>
-          )}
-          {state.showPlayIndicator && (
-            <ThemeIcon className={classes.playIndicator} size={64} radius="xl" color="dark">
-              {ref.current?.paused ? <IconPlayerPauseFilled /> : <IconPlayerPlayFilled />}
-            </ThemeIcon>
-          )}
-        </div>
+          </div>
+        )}
+        {state.showPlayIndicator && (
+          <ThemeIcon className={classes.playIndicator} size={64} radius="xl" color="dark">
+            {ref.current?.paused ? <IconPlayerPauseFilled /> : <IconPlayerPlayFilled />}
+          </ThemeIcon>
+        )}
       </div>
     );
 

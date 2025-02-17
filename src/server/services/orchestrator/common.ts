@@ -427,6 +427,8 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
       aspectRatio = width && height ? width / height : 16 / 9;
     } else if (params.type === 'txt2vid') {
       switch (params.engine) {
+        case 'lightricks':
+        case 'kling':
         case 'haiper': {
           if (params.aspectRatio) {
             const [rw, rh] = params.aspectRatio.split(':').map(Number);
@@ -434,13 +436,9 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           }
           break;
         }
-        case 'kling': {
-          if (params.aspectRatio) {
-            const [rw, rh] = params.aspectRatio.split(':').map(Number);
-            aspectRatio = rw / rh;
-          }
+        case 'minimax':
+          aspectRatio = 16 / 9;
           break;
-        }
         case 'mochi':
           width = 848;
           height = 480;

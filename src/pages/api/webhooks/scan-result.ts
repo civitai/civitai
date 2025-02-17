@@ -160,7 +160,7 @@ export default WebhookEndpoint(async (req, res) => {
 const hashTypeMap: Record<string, string> = {};
 for (const t of Object.keys(ModelHashType)) hashTypeMap[t.toLowerCase()] = t;
 
-async function unpublishBlockedModel(modelVersionId: number) {
+export async function unpublishBlockedModel(modelVersionId: number) {
   const { model } = (await dbWrite.modelVersion.findUnique({
     where: { id: modelVersionId },
     select: { id: true, model: true },

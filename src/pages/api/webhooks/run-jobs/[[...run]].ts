@@ -23,6 +23,7 @@ import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
+import { dummyJob } from '~/server/jobs/dummy-job';
 import {
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
@@ -51,6 +52,7 @@ import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
+import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
@@ -128,6 +130,8 @@ export const jobs: Job[] = [
   ...dailyChallengeJobs,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
+  dummyJob,
+  retroactiveHashBlocking,
 ];
 
 const log = createLogger('jobs', 'green');
@@ -187,14 +191,31 @@ async function isLocked(name: string, noCheck?: boolean) {
   return (await sysRedis?.get(`${REDIS_SYS_KEYS.JOB}:${name}`)) === 'true';
 }
 
+const LOCK_REFRESH_INTERVAL = 8; // Every 8 seconds
+const LOCK_BUFFER = 2; // 2 second buffer on redis expiry
+const lockIntervals: Record<string, NodeJS.Timer> = {};
 async function lock(name: string, lockExpiration: number, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
   logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();
-  await sysRedis?.set(`${REDIS_SYS_KEYS.JOB}:${name}`, 'true', { EX: lockExpiration });
+
+  // Use refreshing lock mechanism to handle dying job pods
+  async function refreshLock() {
+    await sysRedis?.set(`${REDIS_SYS_KEYS.JOB}:${name}`, 'true', {
+      EX: LOCK_REFRESH_INTERVAL + LOCK_BUFFER,
+    });
+  }
+  let ttl = lockExpiration;
+  lockIntervals[name] = setInterval(async () => {
+    await refreshLock();
+    ttl -= LOCK_REFRESH_INTERVAL;
+    if (ttl <= 0) unlock(name, noCheck).catch(); // Unlock if expired
+  }, LOCK_REFRESH_INTERVAL * 1000);
+  await refreshLock();
 }
 
 async function unlock(name: string, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
   logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
+  if (lockIntervals[name]) clearInterval(lockIntervals[name]); // Clear lock refresh interval
   await sysRedis?.del(`${REDIS_SYS_KEYS.JOB}:${name}`);
 }
