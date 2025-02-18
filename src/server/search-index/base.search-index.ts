@@ -184,6 +184,22 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
   return {
     indexName,
+    async getData(ids: number[]) {
+      const ctx = {
+        db: dbWrite,
+        pg: pgDbWrite,
+        ch: clickhouse,
+        indexName,
+        logger,
+      };
+
+      const baseData = await processor.pullData(ctx, {
+        type: 'update',
+        ids,
+      });
+
+      return processor.transformData ? await processor.transformData(baseData) : baseData;
+    },
     async update(jobContext: JobContext) {
       const [lastUpdatedAt, setLastUpdate] = await getJobDate(
         `searchIndex:${(jobName ?? indexName).toLowerCase()}`

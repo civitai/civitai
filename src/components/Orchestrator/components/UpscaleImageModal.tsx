@@ -61,7 +61,7 @@ function UpscalImageForm({
 
   const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery(
     {
-      resources: [defaultModel.id],
+      resources: [{ id: defaultModel.id }],
       params: {
         ...params,
         ...whatIfQueryOverrides,

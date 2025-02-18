@@ -6,6 +6,7 @@ import { Form, InputRadioGroup, InputText, useForm } from '~/libs/form';
 import { BaseModel, constants } from '~/server/common/constants';
 import { ModelVersionUpsertInput, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
+  Availability,
   ModelStatus,
   ModelType,
   ModelUploadType,
@@ -133,6 +134,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
             status: request.status,
             type: request.type,
             uploadType: request.uploadType,
+            availability: request.availability ?? Availability.Public,
             modelVersions: [],
           };
 

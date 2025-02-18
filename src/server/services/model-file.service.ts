@@ -29,7 +29,8 @@ export const filesForModelVersionCache = createCachedObject({
         data.map(({ metadata, ...file }) => {
           return {
             ...file,
-            metadata: reduceToBasicFileMetadata(metadata),
+            // TODO: Confirm with Briant whether this can be removed or not. -> reduceToBasicFileMetadata(metadata),
+            metadata: metadata as FileMetadata,
           };
         })
       );

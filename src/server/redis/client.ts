@@ -1,3 +1,4 @@
+import chunk from 'lodash-es/chunk';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
 import { commandOptions, createClient } from 'redis';
@@ -312,15 +313,10 @@ function getCacheClient(legacyMode = false) {
     const tags = Array.isArray(tag) ? tag : [tag];
     for (const tag of tags) {
       const cacheKey = `${REDIS_KEYS.CACHES.TAGGED_CACHE}:${slugit(tag)}` as const;
-      const count = await client.sCard(cacheKey);
-      let processed = 0;
-      while (true) {
-        const keys: RedisKeyTemplateCache[] = await client.sPop(cacheKey, 1000);
-        const hasOverfetched = processed > count * 1.5;
-        if (!keys.length || hasOverfetched) break;
-        await client.del(keys);
-        processed += keys.length;
-      }
+      const keys: RedisKeyTemplateCache[] = await client.sMembers(cacheKey);
+      await client.del(cacheKey);
+      const keyBatches = chunk(keys, 1000);
+      for (const keys of keyBatches) await client.del(keys);
     }
   };
 

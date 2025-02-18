@@ -237,8 +237,8 @@ export function stringifyAIR({
 }: {
   baseModel: BaseModel | string;
   type: ModelType;
-  modelId: number;
-  id?: number;
+  modelId: number | string;
+  id?: number | string;
   source?: string;
 }) {
   const ecosystem =
