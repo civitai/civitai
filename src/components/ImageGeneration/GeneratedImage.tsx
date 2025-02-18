@@ -54,6 +54,7 @@ import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
+import { UpscaleEnhancementModal } from '~/components/Orchestrator/components/UpscaleEnhancementModal';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -170,7 +171,17 @@ export function GeneratedImage({
       component: BackgroundRemovalModal,
       props: {
         workflow: 'img2img-background-removal',
-        sourceImage: await getSourceImageFromUrl(image.url),
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
+    });
+  };
+
+  const handleUpscaleEnhance = async () => {
+    dialogStore.trigger({
+      component: UpscaleEnhancementModal,
+      props: {
+        workflow: 'img2img-upscale-enhancement-realism',
+        sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
       },
     });
   };
@@ -380,7 +391,9 @@ export function GeneratedImage({
                           {workflow.name}
                         </Menu.Item>
                       ))} */}
+
                   <Menu.Item onClick={() => handleRemoveBackground()}>Background Removal</Menu.Item>
+                  <Menu.Item onClick={() => handleUpscaleEnhance()}>Upscale Enhance</Menu.Item>
                   {canImg2Img &&
                     img2imgWorkflows
                       ?.filter((x) => x.key !== 'img2img-upscale')

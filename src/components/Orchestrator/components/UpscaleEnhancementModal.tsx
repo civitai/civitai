@@ -2,7 +2,7 @@ import { Modal } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { Form, useForm } from '~/libs/form';
+import { Form, InputNumberSlider, useForm } from '~/libs/form';
 import { trpc } from '~/utils/trpc';
 import {
   SourceImageProps,
@@ -15,9 +15,10 @@ import { WhatIfAlert } from '~/components/generation/Alerts/WhatIfAlert';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
+  steps: z.number().min(0).max(3).catch(2),
 });
 
-export function BackgroundRemovalModal({
+export function UpscaleEnhancementModal({
   workflow,
   sourceImage,
 }: {
@@ -26,7 +27,7 @@ export function BackgroundRemovalModal({
 }) {
   const dialog = useDialogContext();
 
-  const form = useForm({ defaultValues: { sourceImage }, schema });
+  const form = useForm({ defaultValues: { sourceImage, steps: 2 }, schema });
   const watched = form.watch();
 
   const generate = useGenerate();
@@ -46,22 +47,18 @@ export function BackgroundRemovalModal({
   }
 
   return (
-    <Modal {...dialog} title="Background Removal">
+    <Modal {...dialog} title="Upscale Enhancement">
       <GenerationProvider>
         <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <InputSourceImageUpload name="sourceImage" removable={false} />
+          <InputSourceImageUpload name="sourceImage" removable={false} upscaleMultiplier />
+          <InputNumberSlider name="steps" label="Enhancement Steps" min={0} max={3} step={1} />
           <WhatIfAlert error={whatIf.error} />
           <GenerateButton
             type="submit"
             loading={whatIf.isLoading || generate.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
-            error={
-              !whatIf.isInitialLoading && whatIf.isError
-                ? 'Error calculating cost. Please try updating your values'
-                : undefined
-            }
           >
-            Remove Background
+            Upscale
           </GenerateButton>
         </Form>
       </GenerationProvider>
