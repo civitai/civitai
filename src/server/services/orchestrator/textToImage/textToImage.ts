@@ -18,6 +18,7 @@ import {
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 
@@ -87,6 +88,11 @@ export async function createTextToImageStep(
       resources: input.resources,
       params: inputParams,
       remixOfId: input.remixOfId,
+      maxNsfwLevel: resources.some(
+        (r) => r.availability === Availability.Private || !!r.epochDetails
+      )
+        ? 'pG13'
+        : undefined,
     },
   } as TextToImageStepTemplate;
 }
