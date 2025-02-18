@@ -341,13 +341,27 @@ export const constants = {
       discountPercent: 50,
       tier: 'founder',
     },
-    maxPrivateModels: {
-      // These are our default values but the ones in the product will overwrite these.
-      free: 0,
-      founder: 3,
-      bronze: 3,
-      silver: 10,
-      gold: 100,
+    membershipDetailsAddons: {
+      free: {
+        maxPrivateModels: 0,
+        supportLevel: 'Basic',
+      },
+      founder: {
+        maxPrivateModels: 3,
+        supportLevel: 'Priority',
+      },
+      bronze: {
+        maxPrivateModels: 3,
+        supportLevel: 'Priority',
+      },
+      silver: {
+        maxPrivateModels: 10,
+        supportLevel: 'Premium',
+      },
+      gold: {
+        maxPrivateModels: 100,
+        supportLevel: 'VIP',
+      },
     },
   },
   freeMembershipDetails: {

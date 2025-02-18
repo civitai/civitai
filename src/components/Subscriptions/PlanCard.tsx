@@ -18,6 +18,7 @@ import {
   IconChevronDown,
   IconChristmasTree,
   IconCloud,
+  IconHeartHandshake,
   IconHexagon,
   IconHexagonPlus,
   IconList,
@@ -337,7 +338,8 @@ export const getPlanDetails: (
               <Text>
                 {numberWithCommas(
                   metadata?.maxPrivateModels ??
-                    constants.memberships.maxPrivateModels[metadata.tier] ??
+                    constants.memberships.membershipDetailsAddons[metadata.tier]
+                      ?.maxPrivateModels ??
                     0
                 )}{' '}
                 Private Models
@@ -380,6 +382,20 @@ export const getPlanDetails: (
             iconVariant: 'light' as ThemeIconVariant,
           }
         : undefined,
+      {
+        icon: <IconHeartHandshake size={benefitIconSize} />,
+        iconColor: !!metadata.tier && metadata.tier !== 'free' ? 'blue' : 'gray',
+
+        iconVariant: 'light' as ThemeIconVariant,
+        content: (
+          <Text>
+            {metadata?.supportLevel ??
+              constants.memberships.membershipDetailsAddons[metadata.tier]?.supportLevel ??
+              'Basic'}{' '}
+            Support
+          </Text>
+        ),
+      },
       {
         content:
           metadata.badgeType === 'animated' ? (

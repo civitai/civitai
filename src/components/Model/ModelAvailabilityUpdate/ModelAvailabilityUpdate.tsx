@@ -50,8 +50,8 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
         </Text>
         <Divider mx="-lg" mb="md" />
         <Text>
-          Once a model is made public, it cannot be set back to private. Choose how you'd like to
-          proceed
+          Once a model is made public, it cannot be set back to private. Choose how you&rsquo;d like
+          to proceed
         </Text>
 
         <Radio.Group

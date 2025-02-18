@@ -1730,9 +1730,9 @@ export const privateModelFromTrainingHandler = async ({
 
     const maxPrivateModels =
       membership?.productMeta?.maxPrivateModels ??
-      constants.memberships.maxPrivateModels[
-        membership?.tier as keyof typeof constants.memberships.maxPrivateModels
-      ];
+      constants.memberships.membershipDetailsAddons[
+        membership?.tier as keyof typeof constants.memberships.membershipDetailsAddons
+      ]?.maxPrivateModels;
 
     if (!maxPrivateModels && !ctx.user.isModerator) {
       throw throwAuthorizationError('You must have a subscription to create private models.');

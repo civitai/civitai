@@ -2766,9 +2766,9 @@ export const privateModelFromTraining = async ({
   const subscription = await getUserSubscription({ userId: input.user.id });
 
   const maxPrivateModels = subscription?.tier
-    ? constants.memberships.maxPrivateModels[
-        subscription.tier as keyof typeof constants.memberships.maxPrivateModels
-      ] ?? 0
+    ? constants.memberships.membershipDetailsAddons[
+        subscription.tier as keyof typeof constants.memberships.membershipDetailsAddons
+      ]?.maxPrivateModels ?? 0
     : 0;
 
   if (totalPrivateModels >= maxPrivateModels) {
