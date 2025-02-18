@@ -606,7 +606,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     isOwnerOrMod &&
     (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
     hasFiles &&
-    hasPosts;
+    hasPosts &&
+    model.availability !== Availability.Private;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
