@@ -255,7 +255,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
-    version: 1.1,
+    version: 1.2,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
