@@ -46,31 +46,29 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
     <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
       <Stack spacing="md">
         <Text size="lg" weight="bold">
-          You are about to make this model public and accessible to everyone.
+          Publish this model?
         </Text>
         <Divider mx="-lg" mb="md" />
         <Text>
-          Please select how you want to make this model public. After the model has been made
-          public, it is not possible to make it private again. You can make this model public
-          automatically, or you can mark it as draft again which will allow you to add Early Access
-          if needed.
+          Once a model is made public, it cannot be set back to private. Choose how you'd like to
+          proceed
         </Text>
 
         <Radio.Group
           withAsterisk
-          label="How would you like to make this model public?"
+          label="Publishing Options:"
           value={publishVersions ? 'yes' : 'no'}
           onChange={(value) => setPublishVersions(value === 'yes')}
         >
           <Radio
             value="yes"
-            label="I want to automatically publish all versions right away."
-            description="Ideal if you want to want to make all ready versions public for everyone to use."
+            label="Publish immediately"
+            description="This model, and any associated model versions, will be made public for everyone to use."
           />
           <Radio
             value="no"
-            label="I want to set my versions to draft"
-            description="Ideal if you plan to add early access to your model versions before making them public."
+            label="Set to Draft"
+            description="This model, and any associated model versions, will be sent to your Drafts, allowing further configuration prior to publishing. Use this method if you wish to apply features such as Early Access, or Usage Controls, prior to publishing."
           />
         </Radio.Group>
         <Group ml="auto">
