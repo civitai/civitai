@@ -105,7 +105,6 @@ export async function submitWorkflow({
 
   if (!data) {
     const e = error as any;
-    console.log(e.errors);
     const message = e.errors ? e.errors.messages.join('\n') : e.detail;
 
     if (!isProd) {
