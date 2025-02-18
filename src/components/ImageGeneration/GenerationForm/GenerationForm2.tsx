@@ -311,7 +311,7 @@ export function GenerationFormContent() {
     >
       <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow']}>
         {({ baseModel, fluxMode, draft, model, workflow }) => {
-          const showAspectRatio = workflow.startsWith('txt');
+          const isTxt2Img = workflow.startsWith('txt');
           const isSDXL = getIsSdxl(baseModel);
           const isFlux = getIsFlux(baseModel);
           const isSD3 = getIsSD3(baseModel);
@@ -816,7 +816,7 @@ export function GenerationFormContent() {
                   />
                 )}
 
-                {!isFluxUltra && showAspectRatio && (
+                {!isFluxUltra && isTxt2Img && (
                   <div className="flex flex-col gap-0.5">
                     <Input.Label>Aspect Ratio</Input.Label>
                     <InputSegmentedControl
@@ -1051,7 +1051,7 @@ export function GenerationFormContent() {
                               name="denoise"
                               label="Denoise"
                               min={0}
-                              max={0.75}
+                              max={isTxt2Img ? 0.75 : 1}
                               step={0.05}
                             />
                           )}
