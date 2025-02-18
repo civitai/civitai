@@ -589,3 +589,13 @@ export function getClosestFluxUltraAspectRatio(width: number, height: number) {
   const index = ratios.indexOf(closest);
   return `${index ?? defaultFluxUltraAspectRatioIndex}`;
 }
+
+type GetUpscaleFactorProps = {
+  width: number;
+  height: number;
+};
+export function getUpscaleFactor(original: GetUpscaleFactorProps, upscale: GetUpscaleFactorProps) {
+  const s1 = original.width > original.height ? original.width : original.height;
+  const s2 = upscale.width > upscale.height ? upscale.width : upscale.height;
+  return Math.round((s2 / s1) * 10) / 10;
+}
