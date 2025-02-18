@@ -5,7 +5,8 @@ export const modelPageTour: StepWithData[] = [
   {
     target: '[data-tour="model:start"]',
     title: 'Welcome to the Model Page',
-    content: 'A model is a resource that can be used to generate content. This tour will guide you through the features of this page.',
+    content:
+      'A model is a resource that can be used to generate content. This tour will guide you through the features of this page.',
     placement: 'center',
     disableBeacon: true,
     floaterProps: {
@@ -14,8 +15,8 @@ export const modelPageTour: StepWithData[] = [
   },
   {
     target: '[data-tour="model:create"]',
-    title: 'Create with Resource',
-    content: 'Click here to generate content using this resource, if available in the generator.',
+    title: 'Create with this Resource',
+    content: 'Click here to generate content using this resource!',
     disableBeacon: true,
   },
   {

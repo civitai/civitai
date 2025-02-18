@@ -1,5 +1,5 @@
 import { useMantineTheme } from '@mantine/core';
-import { useSearchParams } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import Joyride, {
   ACTIONS,
@@ -29,6 +29,7 @@ type TourState = {
   setSteps: (steps: StepWithData[]) => void;
   activeTour?: string | null;
   steps?: StepWithData[];
+  returnUrl?: string;
 };
 
 const TourContext = createContext<TourState>({
@@ -55,6 +56,7 @@ export function TourProvider({ children, ...props }: Props) {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
+  const path = usePathname();
   const theme = useMantineTheme();
   const features = useFeatureFlags();
   const tourKey = searchParams.get('tour') as TourKey | null;
@@ -113,6 +115,7 @@ export function TourProvider({ children, ...props }: Props) {
       currentUser,
       localTour,
       state.activeTour,
+      state.forceRun,
       userSettings?.tourSettings,
       setLocalTour,
       updateUserSettingsMutation,
@@ -196,7 +199,7 @@ export function TourProvider({ children, ...props }: Props) {
 
     // Set initial step based on user settings
     const currentStep = currentTourData?.currentStep ?? 0;
-    setState((old) => ({ ...old, currentStep }));
+    setState((old) => ({ ...old, currentStep, returnUrl: path }));
 
     // handle initialization of the active tour
     switch (tourKey) {
@@ -226,7 +229,7 @@ export function TourProvider({ children, ...props }: Props) {
             styles={{
               options: {
                 zIndex: 100000,
-                arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
+                arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
               },
               spotlight: { border: `2px solid ${theme.colors.cyan[4]}` },
             }}

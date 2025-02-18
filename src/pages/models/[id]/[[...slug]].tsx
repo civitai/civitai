@@ -68,6 +68,7 @@ import {
   openReportModal,
 } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -713,6 +714,12 @@ export default function ModelDetailsV2({
                       stroke={1.5}
                       href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
                       tooltip="What is this?"
+                    />
+                    <HelpButton
+                      size="xl"
+                      tooltip="Need help? Start the tour!"
+                      iconProps={{ size: 30, stroke: 1.5 }}
+                      onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
                     />
                     <ToggleModelNotification
                       className={classes.headerButton}

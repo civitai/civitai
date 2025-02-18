@@ -32,7 +32,7 @@ export function GeneratedImageActions({
 }) {
   const router = useRouter();
   const { images, data } = useGetTextToImageRequests();
-  const { running, runTour, currentStep } = useTourContext();
+  const { running, runTour, currentStep, returnUrl } = useTourContext();
   const selectableImages = images.filter((x) => x.status === 'succeeded');
   const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
@@ -109,7 +109,10 @@ export function GeneratedImageActions({
       const post = await createPostMutation.mutateAsync({});
       // updateImages({}) // tODO - show that this image has been posted?
       if (running) runTour({ step: currentStep + 1 });
-      await router.push({ pathname: '/posts/[postId]/edit', query: { postId: post.id, src: key } });
+      await router.push({
+        pathname: '/posts/[postId]/edit',
+        query: { postId: post.id, src: key, returnUrl },
+      });
       generationPanel.close();
       deselect();
     } catch (e) {

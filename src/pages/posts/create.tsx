@@ -18,7 +18,6 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { Page } from '~/components/AppLayout/Page';
 import { BackButton } from '~/components/BackButton/BackButton';
 import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
-import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
 import { PostEditLayout } from '~/components/Post/EditV2/PostEditLayout';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import {
@@ -134,10 +133,6 @@ export default Page(
                   : `Create ${postingVideo ? 'Video' : 'Image'} Post`}
               </Title>
             </div>
-            <FeatureIntroductionHelpButton
-              feature="post-create"
-              contentSlug={['feature-introduction', 'post-images']}
-            />
           </div>
           {tagId && (tag || tagLoading) && (
             <Group spacing="xs">

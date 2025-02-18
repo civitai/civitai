@@ -1,7 +1,7 @@
 import { Button, CloseButton, Group, Paper, Text } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { clsx } from 'clsx';
-import React, { useCallback, useLayoutEffect } from 'react';
+import React from 'react';
 import { TooltipRenderProps } from 'react-joyride';
 
 export function TourPopover(props: TooltipRenderProps) {
@@ -21,7 +21,14 @@ export function TourPopover(props: TooltipRenderProps) {
   const centered = step.placement === 'center';
 
   return (
-    <Paper {...tooltipProps} className={clsx('flex flex-col gap-4', centered && 'mx-auto')} p="sm" radius="md" maw="375px">
+    <Paper
+      {...tooltipProps}
+      className={clsx('flex flex-col gap-4', centered && 'mx-auto')}
+      p="sm"
+      radius="md"
+      bg="dark.6"
+      maw="375px"
+    >
       <Group position="apart" noWrap>
         <Text size="sm" color="dimmed">
           {index + 1} of {size}
