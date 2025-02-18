@@ -1,4 +1,10 @@
 import type { MantineTheme } from '@mantine/core';
+import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
+import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { env } from '~/env/client';
+import { BanReasonCode, ModelSort } from '~/server/common/enums';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,
   Currency,
@@ -8,14 +14,8 @@ import {
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
-import { env } from '~/env/client';
-import { BanReasonCode, ModelSort } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
-import { GenerationResource } from '~/server/services/generation/generation.service';
 
 export const constants = {
   modelFilterDefaults: {
@@ -341,6 +341,14 @@ export const constants = {
       discountPercent: 50,
       tier: 'founder',
     },
+    maxPrivateModels: {
+      // These are our default values but the ones in the product will overwrite these.
+      free: 0,
+      founder: 3,
+      bronze: 3,
+      silver: 10,
+      gold: 100,
+    },
   },
   freeMembershipDetails: {
     name: 'Free',
@@ -352,6 +360,7 @@ export const constants = {
       quantityLimit: 4,
       queueLimit: 4,
       badgeType: 'none',
+      maxPrivateModels: 0,
     },
   },
   cosmeticShop: {
@@ -365,7 +374,7 @@ export const constants = {
     },
   },
   modelGallery: {
-    maxPinnedPosts: 10,
+    maxPinnedPosts: 20,
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,

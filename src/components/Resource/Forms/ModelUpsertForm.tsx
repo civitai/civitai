@@ -1,32 +1,36 @@
 import {
   Alert,
   Anchor,
+  Button,
   Checkbox,
+  Chip,
+  ChipProps,
+  Divider,
   Group,
   Input,
+  Modal,
   Paper,
   Radio,
   Stack,
   Text,
   ThemeIcon,
 } from '@mantine/core';
-import {
-  CheckpointType,
-  CommercialUse,
-  ModelType,
-  ModelUploadType,
-  TagTarget,
-} from '~/shared/utils/prisma/enums';
-import { IconExclamationMark } from '@tabler/icons-react';
+import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { useRouter } from 'next/router';
 import { useEffect } from 'react';
 import { z } from 'zod';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
   InputCheckbox,
+  InputChipGroup,
+  InputCollectionSelect,
   InputMultiSelect,
   InputRadioGroup,
   InputRTE,
@@ -34,18 +38,28 @@ import {
   InputSelect,
   InputTags,
   InputText,
-  InputCollectionSelect,
   useForm,
 } from '~/libs/form';
 import { TagSort } from '~/server/common/enums';
 import { ModelUpsertInput, modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import {
+  Availability,
+  CheckpointType,
+  CommercialUse,
+  ModelStatus,
+  ModelType,
+  ModelUploadType,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { getDisplayName, splitUppercase, titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import styles from './ModelUpsertForm.module.scss';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const schema = modelUpsertSchema
   .extend({
@@ -67,6 +81,9 @@ const schema = modelUpsertSchema
     message:
       'This resource is intended to produce mature themes and cannot be used for NSFW generation',
   });
+
+type ModelUpsertSchema = z.infer<typeof schema>;
+
 const querySchema = z.object({
   category: z.preprocess(parseNumericString, z.number().optional()),
   templateId: z.coerce.number().optional(),
@@ -82,13 +99,28 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
 
 const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
 
-export function ModelUpsertForm({ model, children, onSubmit }: Props) {
+const availabilityDetails = {
+  [Availability.Public]: {
+    label: 'Publish publicly',
+    description:
+      'Civitai users will see your model. You can make it available for Download and/or Generation.',
+    icon: <IconGlobe size={24} />,
+  },
+  [Availability.Private]: {
+    label: 'Keep it private',
+    description:
+      'Only you will see your model. You may use it for Private Generation and Publish it at any time.',
+    icon: <IconClockCheck size={24} />,
+  },
+};
+
+export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: Props) {
   const router = useRouter();
   const result = querySchema.safeParse(router.query);
   const currentUser = useCurrentUser();
 
   const defaultCategory = result.success ? result.data.category ?? 0 : 0;
-  const defaultValues: z.infer<typeof schema> = {
+  const defaultValues: ModelUpsertSchema = {
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? '',
@@ -110,6 +142,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     allowDifferentLicense: model?.allowDifferentLicense ?? true,
     category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
     attestation: !!model?.id,
+    availability: model?.availability ?? Availability.Public,
   };
 
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
@@ -121,6 +154,15 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
   const hasPoiInNsfw = nsfw && poi === 'true';
   const hasMinorInNsfw = nsfw && minor;
   const { isDirty, errors } = form.formState;
+  const features = useFeatureFlags();
+
+  const chipProps: Partial<ChipProps> = {
+    size: 'sm',
+    radius: 'sm',
+    width: '100%',
+    variant: 'filled',
+    className: clsx(styles.availabilityChip, 'my-2'),
+  };
 
   const { data, isLoading: loadingCategories } = trpc.tag.getAll.useQuery({
     categories: true,
@@ -154,6 +196,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
       showErrorNotification({ error: new Error(error.message), title: 'Failed to save model' });
     },
   });
+
   const handleSubmit = ({
     category,
     tagsOnModels = [],
@@ -225,6 +268,9 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
     return model?.lockedProperties?.includes(key) ? 'Locked by moderator' : defaultDescription;
   }
 
+  const isTrained = model?.uploadType === ModelUploadType.Trained;
+  const isDraft = model?.status === ModelStatus.Draft;
+
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <ContainerGrid gutter="xl">
@@ -242,7 +288,7 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                     value: type,
                   }))}
                   onChange={handleModelTypeChange}
-                  disabled={model?.uploadType === ModelUploadType.Trained}
+                  disabled={isTrained}
                   withAsterisk
                 />
                 {type === 'Checkpoint' && (
@@ -517,6 +563,82 @@ export function ModelUpsertForm({ model, children, onSubmit }: Props) {
                 label="I acknowledge that I have reviewed the choices above, selected the appropriate option, and understand that my account may be at risk if the selection is found to be incorrect."
               />
             )}
+
+            {isTrained && isDraft && features.privateModels && (
+              <InputChipGroup
+                grow
+                spacing="sm"
+                name="availability"
+                onChangeCapture={async (event) => {
+                  // @ts-ignore eslint-disable-next-line
+                  const value = event.target.value as Availability;
+                  if (value === Availability.Private) {
+                    // Open automatic configurator modal:
+                    event.preventDefault();
+                    event.stopPropagation();
+
+                    const { attestation } = form.getValues();
+
+                    if (!attestation)
+                      return form.setError(
+                        'attestation',
+                        { message: 'Required', type: 'required' },
+                        { shouldFocus: true }
+                      );
+
+                    const isValid = await form.trigger();
+                    if (!isValid) {
+                      const errorKeys: string[] = Object.keys(form.formState.errors ?? {});
+                      if (errorKeys.length > 0) {
+                        // @ts-ignore eslint-disable-next-line
+                        form.setFocus(form.formState.errors[errorKeys[0]].ref.name, {
+                          shouldSelect: true,
+                        });
+                      }
+
+                      showErrorNotification({
+                        title: 'Please fill out all required fields',
+                        error: new Error(
+                          'Looks like you are missing some information about this model before you can make it private'
+                        ),
+                      });
+                      return;
+                    }
+
+                    dialogStore.trigger({
+                      component: PrivateModelAutomaticSetup,
+                      props: { ...form.getValues(), modelVersionId },
+                    });
+
+                    return;
+                  }
+                }}
+              >
+                {Object.keys(availabilityDetails).map((type) => {
+                  const details = availabilityDetails[type as keyof typeof availabilityDetails];
+                  const Wrap = ({ children }: { children: React.ReactNode }) =>
+                    type === 'Private' ? (
+                      <SubscriptionRequiredBlock feature="private-models">
+                        {children}
+                      </SubscriptionRequiredBlock>
+                    ) : (
+                      <>{children}</>
+                    );
+
+                  return (
+                    <Wrap key={type}>
+                      <Chip value={type} {...chipProps}>
+                        <Stack spacing={4} align="center" w="100%" px="sm">
+                          {details.icon}
+                          <Text weight="bold">{details.label}</Text>
+                          <Text className="text-wrap text-center">{details.description}</Text>
+                        </Stack>
+                      </Chip>
+                    </Wrap>
+                  );
+                })}
+              </InputChipGroup>
+            )}
           </Stack>
         </ContainerGrid.Col>
       </ContainerGrid>
@@ -531,4 +653,86 @@ type Props = {
   onSubmit: (data: { id?: number }) => void;
   children: React.ReactNode | ((data: { loading: boolean }) => React.ReactNode);
   model?: Partial<Omit<ModelById, 'tagsOnModels'> & ModelUpsertInput>;
+  modelVersionId?: number;
+};
+
+export const PrivateModelAutomaticSetup = ({
+  modelVersionId,
+  ...form
+}: ModelUpsertSchema & { modelVersionId?: number }) => {
+  const dialog = useDialogContext();
+  const utils = trpc.useContext();
+  const currentUser = useCurrentUser();
+  const handleClose = dialog.onClose;
+  const router = useRouter();
+  const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();
+
+  const handleConfirm = async () => {
+    try {
+      await privateModelFromTrainingMutation.mutateAsync({
+        ...form,
+        poi: form.poi === 'true',
+        id: form.id as number,
+        availability: Availability.Private,
+        modelVersionIds: modelVersionId ? [modelVersionId] : undefined,
+      });
+
+      if (modelVersionId) {
+        utils.model.getById.invalidate({ id: form.id });
+        utils.modelVersion.getById.invalidate({ id: modelVersionId });
+      }
+
+      await router.replace(
+        `/models/${form.id}?${modelVersionId ? `modelVersionId=${modelVersionId}` : ''}`
+      );
+
+      handleClose();
+    } catch (error) {
+      showErrorNotification({
+        title: 'Failed to make model private',
+        error: new Error((error as Error).message),
+      });
+    }
+  };
+
+  return (
+    <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
+      <Group position="apart" mb="md">
+        <Text size="lg" weight="bold">
+          You are about to create a private model
+        </Text>
+      </Group>
+      <Divider mx="-lg" mb="md" />
+      <Stack spacing="md">
+        <Text>
+          Private models are only visible to you and are not publicly accessible. You can Publish a
+          private model at any time. By continuing, the model setup wizard will complete, and you
+          will be able to use your resource in the Generator
+        </Text>
+        <Text>
+          By clicking continue, we will automatically complete the setup of your private model and
+          you will be able to generate with it. All versions of this model will also be made private
+          automatically.
+        </Text>
+        <Group ml="auto">
+          <Button
+            onClick={handleClose}
+            color="gray"
+            disabled={privateModelFromTrainingMutation.isLoading}
+          >
+            Cancel
+          </Button>
+          <Button
+            onClick={() => {
+              handleConfirm();
+            }}
+            disabled={privateModelFromTrainingMutation.isLoading}
+            loading={privateModelFromTrainingMutation.isLoading}
+          >
+            Make Private
+          </Button>
+        </Group>
+      </Stack>
+    </Modal>
+  );
 };

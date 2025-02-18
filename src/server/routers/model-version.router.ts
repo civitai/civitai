@@ -15,6 +15,7 @@ import {
   modelVersionDonationGoalsHandler,
   getModelVersionOwnerHandler,
   getModelVersionForTrainingReviewHandler,
+  publishPrivateModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
@@ -127,4 +128,7 @@ export const modelVersionRouter = router({
   getTrainingDetails: moderatorProcedure
     .input(getByIdSchema)
     .query(getModelVersionForTrainingReviewHandler),
+  publishPrivateModelVersion: guardedProcedure
+    .input(getByIdSchema)
+    .mutation(publishPrivateModelVersionHandler),
 });

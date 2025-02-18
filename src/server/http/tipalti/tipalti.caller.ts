@@ -1,9 +1,8 @@
+import { createHmac } from 'crypto';
 import { env } from '~/env/server';
 import { HttpCaller } from '~/server/http/httpCaller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { QS } from '~/utils/qs';
-import { createHmac } from 'crypto';
-import { TipaltiStatus } from '~/server/common/enums';
 
 // DOCUMENTATION
 // https://documentation.tipalti.com/reference/quick-start
@@ -112,15 +111,11 @@ class TipaltiCaller extends HttpCaller {
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       });
 
-      console.log('ok', response.ok);
-
       if (!response.ok) {
         throw new Error(`Failed to create payee: ${response.statusText}`);
       }
 
       const data = await response.json();
-
-      console.log(data);
 
       return Tipalti.createPayeeResponseSchema.parse(data);
     } catch (error) {

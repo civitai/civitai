@@ -1,7 +1,8 @@
 import { Button, ButtonProps, Image, Loader, Menu, Modal, Text } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useCallback } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useMutatePaddle } from '~/components/Paddle/util';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
 import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util';
@@ -9,7 +10,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { usePaddle } from '~/providers/PaddleProvider';
 import { showErrorNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
-import { useCallback } from 'react';
 
 export function CancelMembershipAction({
   label = 'Cancel membership',
@@ -113,7 +113,7 @@ export const VaultStorageDowngrade = () => {
         </div>
       ) : (
         <div className="flex flex-col items-start gap-4">
-          <div className="flex flex-nowrap justify-center">
+          <div className="flex w-full flex-nowrap justify-center gap-2">
             {shownItems.map((item) => (
               <Image
                 key={item.id}
@@ -141,11 +141,14 @@ export const VaultStorageDowngrade = () => {
               You will have a 7 day grace period to download models from your Vault.
             </Text>
           </div>
-          <Link href="/user/vault" passHref legacyBehavior>
-            <Button component="a" onClick={handleClose} radius="xl">
-              Go to my Vault
-            </Button>
-          </Link>
+
+          <div className="flex w-full flex-nowrap justify-center gap-2">
+            <Link href="/user/vault" passHref legacyBehavior>
+              <Button component="a" onClick={handleClose} radius="xl">
+                Go to my Vault
+              </Button>
+            </Link>
+          </div>
         </div>
       )}
     </Modal>

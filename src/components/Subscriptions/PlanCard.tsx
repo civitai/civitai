@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import {
   IconBolt,
+  IconCategory,
   IconChevronDown,
   IconChristmasTree,
   IconCloud,
@@ -268,6 +269,7 @@ export const getPlanDetails: (
           </Text>
         ),
       },
+
       isHolidaysTime()
         ? {
             icon: <IconChristmasTree size={benefitIconSize} />,
@@ -325,7 +327,24 @@ export const getPlanDetails: (
               ),
           }
         : undefined,
+      features.privateModels
+        ? {
+            icon: <IconCategory size={benefitIconSize} />,
+            iconColor: 'blue',
 
+            iconVariant: 'light' as ThemeIconVariant,
+            content: (
+              <Text>
+                {numberWithCommas(
+                  metadata?.maxPrivateModels ??
+                    constants.memberships.maxPrivateModels[metadata.tier] ??
+                    0
+                )}{' '}
+                Private Models
+              </Text>
+            ),
+          }
+        : null,
       {
         icon: <IconPhotoAi size={benefitIconSize} />,
         iconColor: 'blue',
