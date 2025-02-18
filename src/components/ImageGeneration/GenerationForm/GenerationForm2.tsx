@@ -309,8 +309,9 @@ export function GenerationFormContent() {
       onError={handleError}
       className="relative flex flex-1 flex-col justify-between gap-2"
     >
-      <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model']}>
-        {({ baseModel, fluxMode, draft, model }) => {
+      <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow']}>
+        {({ baseModel, fluxMode, draft, model, workflow }) => {
+          const showAspectRatio = workflow.startsWith('txt');
           const isSDXL = getIsSdxl(baseModel);
           const isFlux = getIsFlux(baseModel);
           const isSD3 = getIsSD3(baseModel);
@@ -815,7 +816,7 @@ export function GenerationFormContent() {
                   />
                 )}
 
-                {!isFluxUltra && (
+                {!isFluxUltra && showAspectRatio && (
                   <div className="flex flex-col gap-0.5">
                     <Input.Label>Aspect Ratio</Input.Label>
                     <InputSegmentedControl

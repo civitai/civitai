@@ -104,9 +104,9 @@ export function ThemeProvider({
                 itemLabel: { display: 'flex' },
               },
             },
-            InputWrapper: {
-              classNames: { label: 'w-full' },
-            },
+            // InputWrapper: {
+            //   classNames: { label: 'w-full' },
+            // },
           },
           colors: {
             accent: [
