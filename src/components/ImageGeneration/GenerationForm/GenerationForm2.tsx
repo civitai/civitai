@@ -23,7 +23,6 @@ import {
   IconAlertTriangle,
   IconArrowAutofitDown,
   IconCheck,
-  IconInfoCircle,
   IconPlus,
   IconRestore,
   IconX,
@@ -38,6 +37,7 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   useGenerationStatus,
@@ -57,8 +57,8 @@ import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/Genera
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
-  useSubmitCreateImage,
   useInvalidateWhatIf,
+  useSubmitCreateImage,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -111,7 +111,6 @@ import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { contentGenerationTour, remixContentGenerationTour } from '~/utils/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 
 let total = 0;
 const tips = {
@@ -260,7 +259,11 @@ export function GenerationFormContent() {
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.canGenerate !== false);
+      .filter((x) => x.canGenerate !== false)
+      .map((r) => ({
+        ...r,
+        epochNumber: r.epochDetails?.epochNumber,
+      }));
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');

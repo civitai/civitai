@@ -4,6 +4,7 @@ import {
   IconBolt,
   IconBookmark,
   IconDownload,
+  IconLock,
   IconMessageCircle2,
 } from '@tabler/icons-react';
 import {
@@ -23,7 +24,7 @@ import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { UserAvatarSimple } from '~/components/UserAvatar/UserAvatarSimple';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { constants } from '~/server/common/constants';
-import { ModelModifier } from '~/shared/utils/prisma/enums';
+import { Availability, ModelModifier } from '~/shared/utils/prisma/enums';
 import { aDayAgo } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { slugit } from '~/utils/string-helpers';
@@ -59,6 +60,7 @@ export function ModelCard({ data }: Props) {
   const isPOI = data.poi;
   const isSFWOnly = data.minor;
   const isNSFW = data.nsfw;
+  const isPrivate = data.availability === Availability.Private;
 
   const thumbsUpCount = data.rank?.thumbsUpCount ?? 0;
   const thumbsDownCount = data.rank?.thumbsDownCount ?? 0;
@@ -112,6 +114,11 @@ export function ModelCard({ data }: Props) {
                 <Text color="white" size="xs" transform="capitalize">
                   NSFW
                 </Text>
+              </Badge>
+            )}
+            {isPrivate && (
+              <Badge className={cx(classes.infoChip, classes.chip)} variant="light" radius="xl">
+                <IconLock size={16} />
               </Badge>
             )}
             <ModelTypeBadge

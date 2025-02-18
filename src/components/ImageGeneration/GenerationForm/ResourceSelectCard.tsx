@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Anchor,
   Badge,
   Button,
   Group,
@@ -10,15 +11,22 @@ import {
   Text,
   ThemeIcon,
   useMantineTheme,
-  Anchor,
+  Tooltip,
 } from '@mantine/core';
-import { IconAlertTriangle, IconBolt, IconReplace, IconWeight, IconX } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconBolt,
+  IconLock,
+  IconReplace,
+  IconWeight,
+  IconX,
+} from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { GenerationResourceSchema } from '~/server/schema/generation.schema';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 
 type Props = {
@@ -160,6 +168,19 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
               <Badge size="sm" color="dark.5" variant="filled" miw="42px">
                 {resource.name}
               </Badge>
+            )}
+            {'epochDetails' in resource && (
+              <Badge size="sm" color="dark.5" variant="filled" miw="42px">
+                {resource.epochDetails?.epochNumber}
+              </Badge>
+            )}
+
+            {resource.availability === Availability.Private && (
+              <Tooltip label="This resource is private" position="top" withArrow>
+                <ActionIcon size={18} color="dark.5" variant="filled">
+                  <IconLock size={14} />
+                </ActionIcon>
+              </Tooltip>
             )}
 
             {resource.additionalResourceCost && selectSource === 'generation' && (

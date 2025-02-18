@@ -110,7 +110,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
     },
   });
 
-  if (!subscription) return null;
+  if (!subscription || subscription.status === 'canceled') return null;
 
   const productMeta = subscription.product.metadata as SubscriptionProductMetadata;
 
@@ -126,7 +126,8 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
     isBadState: ['incomplete', 'incomplete_expired', 'past_due', 'unpaid'].includes(
       subscription.status
     ),
-    tier: (productMeta?.[env.TIER_METADATA_KEY] as string) ?? 'free',
+    tier: (productMeta?.[env.TIER_METADATA_KEY] ?? 'free') as string,
+    productMeta,
   };
 };
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;

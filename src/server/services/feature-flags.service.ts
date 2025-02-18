@@ -110,6 +110,7 @@ const featureFlags = createFeatureFlags({
   toolSearch: ['public'],
   generationOnlyModels: ['mod', 'granted', 'gold'],
   appTour: ['public'],
+  privateModels: ['mod', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
