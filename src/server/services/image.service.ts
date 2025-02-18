@@ -139,6 +139,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { uniqBy } from 'lodash-es';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -3453,7 +3454,7 @@ const imageReviewQueueJoinMap = {
     `,
     join: `
       LEFT JOIN LATERAL (
-        SELECT * FROM "Appeal" 
+        SELECT * FROM "Appeal"
         WHERE "entityId" = i.id AND "entityType" = 'Image'
         ORDER BY "createdAt" DESC
         LIMIT 1
@@ -4707,7 +4708,14 @@ export async function createImageResources({
   >`SELECT * FROM get_image_resources(${imageId}::int)`;
   if (!resources.length) return null;
 
-  const sql: Prisma.Sql[] = resources.map(
+  const resourcesWithModelVersions = uniqBy(
+    resources.filter((x) => x.modelversionid),
+    'modelversionid'
+  );
+  const resourcesWithoutModelVersions = resources.filter((x) => !x.modelversionid);
+  console.dir({ resourcesWithModelVersions, resourcesWithoutModelVersions }, { depth: null });
+
+  const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
     (r) => Prisma.sql`
         (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
       r.detected

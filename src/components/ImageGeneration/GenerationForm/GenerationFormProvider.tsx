@@ -46,15 +46,13 @@ type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
-  .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true })
+  .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
     resources: generationResourceSchema.array().min(0).default([]),
     vae: generationResourceSchema.optional(),
     prompt: z
       .string()
-      .nonempty('Prompt cannot be empty')
-      .max(1500, 'Prompt cannot be longer than 1500 characters')
       .superRefine((val, ctx) => {
         const { blockedFor, success } = auditPrompt(val);
         if (!success) {
@@ -73,7 +71,8 @@ const formSchema = textToImageParamsSchema
             params: { count },
           });
         }
-      }),
+      })
+      .default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     remixPrompt: z.string().optional(),
@@ -90,11 +89,38 @@ const formSchema = textToImageParamsSchema
     if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
     if (fluxUltraRaw) data.engine = 'flux-pro-raw';
     else data.engine = undefined;
-    return {
+
+    if (!data.workflow.startsWith('img2img')) data.sourceImage = undefined;
+
+    return removeEmpty({
       ...data,
       height,
       width,
-    };
+    });
+  })
+  .superRefine((data, ctx) => {
+    if (data.workflow.startsWith('txt2img')) {
+      if (!data.prompt || data.prompt.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Prompt cannot be empty',
+          path: ['prompt'],
+        });
+      } else if (prompt.length > 1500) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Prompt cannot be longer than 1500 characters',
+          path: ['prompt'],
+        });
+      }
+    }
+    if (data.workflow.startsWith('img2img') && !data.sourceImage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Image is required',
+        path: ['sourceImage'],
+      });
+    }
   });
 export const blockedRequest = (() => {
   let instances: number[] = [];
@@ -253,10 +279,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (type === 'image' && storeData) {
       const { runType, remixOfId, resources, params } = storeData;
+      if (!params.sourceImage && !params.workflow) form.setValue('workflow', 'txt2img');
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
-          // useGenerationFormStore.setState({ sourceImage: storeData.params.image });
           break;
         case 'remix':
         case 'run':
@@ -278,7 +304,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
           const values =
             runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources };
-          // if (values.image) useGenerationFormStore.setState({ sourceImage: values.image });
           setValues(values);
           break;
       }
@@ -323,13 +348,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           form.setValue('sampler', 'Euler a');
         }
         prevBaseModelRef.current = watchedValues.baseModel;
-      }
-
-      // handle selected `workflow` based on presence of `image` value
-      if (name === 'image') {
-        if (!watchedValues.image && watchedValues.workflow?.startsWith('img2img')) {
-          form.setValue('workflow', 'txt2img');
-        }
       }
 
       if (name === 'prompt') {

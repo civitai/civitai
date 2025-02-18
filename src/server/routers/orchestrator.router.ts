@@ -3,18 +3,11 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { env } from '~/env/server';
-import {
-  generate,
-  handleGetPriorityVolume,
-  whatIf,
-} from '~/server/controllers/orchestrator.controller';
+import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
-import {
-  generationSchema,
-  requestPrioritySchema,
-} from '~/server/orchestrator/generation/generation.schema';
+import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
 import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
 import {
@@ -31,6 +24,7 @@ import {
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
+import { getBlobData, nsfwNsfwLevels } from '~/server/services/orchestrator/blob';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
@@ -168,6 +162,11 @@ export const orchestratorRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const args = { ...input, user: ctx.user, token: ctx.token };
+        if ('sourceImage' in args.params && args.params.sourceImage) {
+          const blobId = args.params.sourceImage.url.split('/').reverse()[0];
+          const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
+          args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
+        }
         if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
         else return await createComfy({ ...args });
       } catch (e) {
@@ -255,10 +254,6 @@ export const orchestratorRouter = router({
   generate: orchestratorGuardedProcedure
     .input(z.any())
     .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
-  requestPriority: orchestratorGuardedProcedure
-    .input(requestPrioritySchema)
-    .use(edgeCacheIt({ ttl: 5 }))
-    .query(({ input }) => handleGetPriorityVolume({ type: input.type })),
   // #endregion
 
   // #region [Image upload]

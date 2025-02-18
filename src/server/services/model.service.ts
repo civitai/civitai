@@ -479,7 +479,14 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`m."earlyAccessDeadline" >= ${new Date()}`);
   }
   if (availability) {
+    if (availability === Availability.Private && !(username || isModerator)) {
+      throw throwAuthorizationError();
+    }
+
     AND.push(Prisma.sql`m."availability" = ${availability}::"Availability"`);
+  } else {
+    // Makes it so that our feeds never contain private stuff by default.
+    AND.push(Prisma.sql`m."availability" != 'Private'::"Availability"`);
   }
 
   if (supportsGeneration) {
@@ -2759,9 +2766,9 @@ export const privateModelFromTraining = async ({
   const subscription = await getUserSubscription({ userId: input.user.id });
 
   const maxPrivateModels = subscription?.tier
-    ? constants.memberships.maxPrivateModels[
-        subscription.tier as keyof typeof constants.memberships.maxPrivateModels
-      ] ?? 0
+    ? constants.memberships.membershipDetailsAddons[
+        subscription.tier as keyof typeof constants.memberships.membershipDetailsAddons
+      ]?.maxPrivateModels ?? 0
     : 0;
 
   if (totalPrivateModels >= maxPrivateModels) {
@@ -2820,6 +2827,15 @@ export const privateModelFromTraining = async ({
         ...data,
         availability: Availability.Private,
         status: ModelStatus.Published,
+      },
+    });
+
+    await dbWrite.modelVersion.updateMany({
+      where: { modelId: id },
+      data: {
+        // Ensures things don't break by leaving some versions public.
+        // @luis: TODO: Might be smart to add some DB triggers for this.
+        availability: Availability.Private,
       },
     });
 

@@ -217,7 +217,7 @@ const TrainSteps = ({
       </Stepper.Step>
 
       {/* Step 3: Post Info - Not required for private models. */}
-      {!isPrivateModel && (
+      {(!isPrivateModel || step === 3) && (
         <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
           {modelVersion && modelData && (
             <PostUpsertForm2

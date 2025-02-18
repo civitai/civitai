@@ -709,11 +709,6 @@ export const PrivateModelAutomaticSetup = ({
           private model at any time. By continuing, the model setup wizard will complete, and you
           will be able to use your resource in the Generator
         </Text>
-        <Text>
-          By clicking continue, we will automatically complete the setup of your private model and
-          you will be able to generate with it. All versions of this model will also be made private
-          automatically.
-        </Text>
         <Group ml="auto">
           <Button
             onClick={handleClose}

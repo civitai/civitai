@@ -40,7 +40,11 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
+import {
+  getIsFlux,
+  getIsSD3,
+  getSourceImageFromUrl,
+} from '~/shared/constants/generation.constants';
 import {
   generationStore,
   useGenerationFormStore,
@@ -106,7 +110,7 @@ export function GeneratedImage({
     if (image) window.open(image.url, '_blank');
   };
 
-  const handleGenerate = (
+  const handleGenerate = async (
     { seed, ...rest }: Partial<TextToImageParams> = {},
     {
       type,
@@ -130,7 +134,8 @@ export function GeneratedImage({
     });
   };
 
-  const handleSelectWorkflow = (workflow: string) => handleGenerate({ workflow, image: image.url });
+  const handleSelectWorkflow = (workflow: string) =>
+    handleGenerate({ workflow, sourceImage: image.url as any }); // TODO - see if there is a good way to handle this type mismatch. We're converting a string to a sourceImage object after we pass the data to the generation store
 
   const handleDeleteImage = () => {
     openConfirmModal({
@@ -158,21 +163,22 @@ export function GeneratedImage({
     });
   };
 
-  const handleUpscale = (workflow: string) => {
+  const handleUpscale = async (workflow: string) => {
     handleCloseImageLightbox();
-    if (step.$type !== 'videoGen')
+    if (step.$type !== 'videoGen') {
       dialogStore.trigger({
         component: UpscaleImageModal,
         props: {
           resources: step.resources,
           params: {
             ...step.params,
-            image: image.url,
+            sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
             seed: image.seed,
             workflow,
           },
         },
       });
+    }
   };
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;

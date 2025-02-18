@@ -608,7 +608,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     isOwnerOrMod &&
     (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
     hasFiles &&
-    hasPosts;
+    hasPosts &&
+    model.availability !== Availability.Private;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
@@ -920,7 +921,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               </Text>
             </AlertWithIcon>
           )}
-          {model.availability === Availability.Private && (
+          {model.availability === Availability.Private && isOwnerOrMod && (
             <AlertWithIcon
               color="yellow"
               iconColor="yellow"
@@ -928,7 +929,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               title="Private Model"
             >
               <Text>
-                Want to start earning buzz,{' '}
+                Want to start earning buzz?{' '}
                 <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
               </Text>
             </AlertWithIcon>

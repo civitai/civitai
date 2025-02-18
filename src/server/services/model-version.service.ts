@@ -103,7 +103,7 @@ export const getDefaultModelVersion = async ({
         select: {
           id: true,
           status: true,
-          model: { select: { userId: true, availability: true } },
+          model: { select: { id: true, userId: true, availability: true } },
           availability: true,
         },
       },
@@ -282,6 +282,12 @@ export const upsertModelVersion = async ({
         earlyAccessEndsAt: true,
         earlyAccessConfig: true,
         publishedAt: true,
+        model: {
+          select: {
+            id: true,
+            availability: true,
+          },
+        },
         monetization: {
           select: {
             id: true,
@@ -354,9 +360,7 @@ export const upsertModelVersion = async ({
       where: { id },
       data: {
         ...data,
-        availability: [ModelStatus.Published, ModelStatus.Scheduled].some((s) => s === data?.status)
-          ? Availability.Public
-          : Availability.Private,
+        availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
         earlyAccessConfig:
           updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
         settings: settings !== null ? settings : Prisma.JsonNull,
@@ -625,7 +629,7 @@ export const publishModelVersionById = async ({
       id: true,
       name: true,
       earlyAccessConfig: true,
-      model: { select: { userId: true, name: true } },
+      model: { select: { userId: true, name: true, availability: true } },
     },
   });
 
@@ -655,7 +659,7 @@ export const publishModelVersionById = async ({
             status,
             publishedAt: !republishing ? publishedAt : undefined,
             meta,
-            availability: Availability.Public,
+            availability: currentVersion.model.availability,
           },
           select: {
             id: true,

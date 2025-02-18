@@ -119,6 +119,12 @@ export async function parseGenerateImageInput({
 }) {
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
+  if (originalParams.sourceImage) {
+    originalParams.width = originalParams.sourceImage.width;
+    originalParams.height = originalParams.sourceImage.height;
+    originalParams.upscaleWidth = originalParams.sourceImage.upscaleWidth;
+    originalParams.upscaleHeight = originalParams.sourceImage.upscaleHeight;
+  }
 
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
@@ -227,12 +233,6 @@ export async function parseGenerateImageInput({
   ];
 
   // #region [together]
-  // TODO - should be able to remove this 30 days after orchestrator integration
-  if (params.aspectRatio && (!params.width || !params.height)) {
-    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
-    params.width = size.width;
-    params.height = size.height;
-  }
 
   // this needs to come after updating the size from the aspect ratio that is done directly above
   params = sanitizeTextToImageParams(params, limits);
@@ -312,15 +312,25 @@ export async function parseGenerateImageInput({
     params.sampler = 'LCM';
   }
 
-  if (!params.upscaleHeight || !params.upscaleWidth) {
-    params.upscaleHeight = params.height * 1.5;
-    params.upscaleWidth = params.width * 1.5;
+  let upscaleWidth = params.upscaleHeight;
+  let upscaleHeight = params.upscaleWidth;
+  if (params.sourceImage?.upscaleWidth && params.sourceImage.upscaleHeight) {
+    upscaleWidth = params.sourceImage.upscaleWidth;
+    upscaleHeight = params.sourceImage.upscaleHeight;
+  } else if (!params.upscaleHeight || !params.upscaleWidth) {
+    upscaleWidth = params.width * 1.5;
+    upscaleHeight = params.height * 1.5;
   }
 
   const upscale =
-    params.upscaleHeight && params.upscaleWidth
-      ? getRoundedUpscaleSize({ width: params.upscaleWidth, height: params.upscaleHeight })
+    upscaleHeight && upscaleWidth
+      ? getRoundedUpscaleSize({ width: upscaleWidth, height: upscaleHeight })
       : undefined;
+
+  const { sourceImage, width, height } = params;
+  const rest = sourceImage
+    ? { image: sourceImage.url, width: sourceImage.width, height: sourceImage.height }
+    : { width, height };
 
   return {
     resources: [...availableResources, ...resourcesToInject],
@@ -330,6 +340,7 @@ export async function parseGenerateImageInput({
       batchSize,
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
+      ...rest,
       // temp?
       upscaleWidth: upscale?.width,
       upscaleHeight: upscale?.height,
@@ -474,14 +485,30 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
   const { params } = videoMetadata;
 
+  // handle legacy source image
+  let sourceImage = params && 'sourceImage' in params ? params.sourceImage : undefined;
+  if (
+    params &&
+    'width' in params &&
+    'height' in params &&
+    'sourceImage' in params &&
+    typeof params.sourceImage === 'string'
+  ) {
+    sourceImage = {
+      width: params.width as number,
+      height: params.height as number,
+      url: params.sourceImage,
+    };
+  }
+
   let width: number | undefined;
   let height: number | undefined;
   let aspectRatio = 1;
 
   if (params) {
     if (params.type === 'img2vid') {
-      width = params?.width;
-      height = params?.height;
+      width = sourceImage?.width;
+      height = sourceImage?.height;
       aspectRatio = width && height ? width / height : 16 / 9;
     } else if (params.type === 'txt2vid') {
       switch (params.engine) {
@@ -535,17 +562,6 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   );
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  // need to get sourceImage from original input due to orchestrator not always returning sourceImage in the step input - 01/18/2025
-  const sourceImage =
-    params && 'sourceImage' in params ? (params.sourceImage as string) : undefined;
-
-  // TODO - this should be temporary until Koen updates the orchestrator - 12/11/2024
-  if (
-    input.engine === 'kling' &&
-    (sourceImage || (input as any).sourceImage || (input as any).sourceImageUrl)
-  ) {
-    if ('aspectRatio' in input) delete input.aspectRatio;
-  }
 
   return {
     $type: 'videoGen' as const,
@@ -554,7 +570,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     // workflow and quantity are only here because they are required for other components to function
     params: {
       ...input,
-      sourceImage: sourceImage ?? (input as any).sourceImage ?? (input as any).sourceImageUrl,
+      sourceImage: sourceImage,
       workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
@@ -658,7 +674,9 @@ function formatTextToImageStep({
         }
       : {};
 
-  const params = {
+  const params = metadata?.params;
+
+  const data = {
     baseModel,
     prompt,
     negativePrompt,
@@ -674,22 +692,22 @@ function formatTextToImageStep({
     nsfw: isNsfw,
     workflow: 'txt2img',
     //support using metadata params first (one of the quirks of draft mode makes this necessary)
-    clipSkip: metadata?.params?.clipSkip ?? input.clipSkip,
-    steps: metadata?.params?.steps ?? input.steps,
-    cfgScale: metadata?.params?.cfgScale ?? input.cfgScale,
-    sampler: metadata?.params?.sampler ?? sampler,
+    clipSkip: params?.clipSkip ?? input.clipSkip,
+    steps: params?.steps ?? input.steps,
+    cfgScale: params?.cfgScale ?? input.cfgScale,
+    sampler: params?.sampler ?? sampler,
     ...upscale,
 
-    fluxMode: metadata?.params?.fluxMode ?? undefined,
+    fluxMode: params?.fluxMode ?? undefined,
     fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
   } as TextToImageParams;
 
   if (resources.some((x) => x.id === fluxUltraAirId)) {
-    delete params.steps;
-    delete params.cfgScale;
-    delete params.clipSkip;
-    delete (params as any).draft;
-    delete (params as any).nsfw;
+    delete data.steps;
+    delete data.cfgScale;
+    delete data.clipSkip;
+    delete (data as any).draft;
+    delete (data as any).nsfw;
   }
 
   return {
@@ -698,7 +716,7 @@ function formatTextToImageStep({
     name: step.name,
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
-    params,
+    params: data,
     images,
     status: step.status,
     metadata: metadata,
@@ -724,6 +742,8 @@ export function formatComfyStep({
     params.height = size.height;
   }
 
+  const { width = 512, height = 512 } = params?.sourceImage ?? params ?? {};
+
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
       ...acc,
@@ -741,8 +761,8 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width: params?.width ?? 512,
-            height: params?.height ?? 512,
+            width,
+            height,
           })) ?? [],
     }),
     {}

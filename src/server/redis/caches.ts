@@ -318,7 +318,12 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
       SELECT
         mv.id AS "entityId",
         mmv."userId" AS "userId",
-        mv."availability" AS "availability",
+        -- Model availability prevails if it's private
+        CASE 
+          WHEN mmv.availability = 'Private' 
+            THEN mmv."availability"
+          ELSE mv."availability"
+        END AS "availability",
         mv."publishedAt" AS "publishedAt"
       FROM "ModelVersion" mv
            JOIN "Model" mmv ON mv."modelId" = mmv.id

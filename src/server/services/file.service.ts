@@ -163,6 +163,7 @@ export const getFileForModelVersion = async ({
           userId: true,
           mode: true,
           nsfw: true,
+          availability: true,
         },
       },
       name: true,
@@ -178,7 +179,7 @@ export const getFileForModelVersion = async ({
 
   if (!modelVersion) return { status: 'not-found' };
 
-  const [entityAccess] = await hasEntityAccess({
+  const [versionAccess] = await hasEntityAccess({
     entityIds: [modelVersion?.id],
     entityType: 'ModelVersion',
     userId: user?.id,
@@ -210,14 +211,14 @@ export const getFileForModelVersion = async ({
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
-  if (!(entityAccess?.hasAccess ?? true)) {
+  if (!(versionAccess?.hasAccess ?? true)) {
     return { status: 'unauthorized' };
   }
 
   // Check the early access scenario:
   if (
     inEarlyAccess &&
-    (entityAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
+    (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
     !isMod &&
     !isOwner
   ) {
