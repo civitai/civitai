@@ -7,7 +7,7 @@ import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 export function Queue() {
-  const filters = useFiltersContext((state) => state.markers);
+  const filters = useFiltersContext((state) => state.generation);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError, error } =
     useGetTextToImageRequests();

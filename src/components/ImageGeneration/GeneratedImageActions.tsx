@@ -20,6 +20,7 @@ import { uniqBy } from 'lodash-es';
 import { useState } from 'react';
 import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
+import { SortFilter } from '~/components/Filters';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -189,6 +190,7 @@ export function GeneratedImageActions({
 
   return (
     <div className="flex items-center justify-between gap-6">
+      <SortFilter type="generation" />
       {!selectedCount && <MarkerFiltersDropdown />}
       {hasSelected && (
         <div className="flex gap-2">

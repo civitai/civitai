@@ -147,8 +147,8 @@ export function GenerationFormContent() {
   const { errors } = form.formState;
 
   const { filters, setFilters } = useFiltersContext((state) => ({
-    filters: state.markers,
-    setFilters: state.setMarkerFilters,
+    filters: state.generation,
+    setFilters: state.setGenerationFilters,
   }));
 
   function clearWarning() {

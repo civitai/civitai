@@ -15,15 +15,15 @@ import {
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { ReactNode, useState } from 'react';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { MarkerFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
-import { MarkerType } from '~/server/common/enums';
+import { GenerationFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
+import { GenerationReactType } from '~/server/common/enums';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
-    filters: state.markers,
-    setFilters: state.setMarkerFilters,
+    filters: state.generation,
+    setFilters: state.setGenerationFilters,
   }));
 
   return <DumbMarkerFiltersDropdown {...props} filters={filters} setFilters={setFilters} />;
@@ -50,14 +50,14 @@ export function DumbMarkerFiltersDropdown({
   hideMediaTypes = false,
   ...buttonProps
 }: Props & {
-  filters: Partial<MarkerFilterSchema>;
-  setFilters: (filters: Partial<MarkerFilterSchema>) => void;
+  filters: Partial<GenerationFilterSchema>;
+  setFilters: (filters: Partial<GenerationFilterSchema>) => void;
 }) {
   const { classes, cx, theme } = useStyles();
 
   const [opened, setOpened] = useState(false);
 
-  const [currentMarker, setMarker] = useState<MarkerType | undefined>(filters.marker);
+  const [currentMarker, setMarker] = useState<GenerationReactType | undefined>(filters.marker);
 
   if (filters.marker !== currentMarker) {
     setMarker(filters.marker);
@@ -74,35 +74,6 @@ export function DumbMarkerFiltersDropdown({
     classNames: classes,
     tt: 'capitalize',
   };
-
-  const target = (
-    <Indicator
-      offset={4}
-      label={filterLength ? filterLength : undefined}
-      size={14}
-      zIndex={10}
-      showZero={false}
-      dot={false}
-      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
-      inline
-    >
-      <Button
-        className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        {...buttonProps}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
-        onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
-      >
-        <Group spacing={4} noWrap>
-          <IconFilter size={16} />
-          {text}
-        </Group>
-      </Button>
-    </Indicator>
-  );
 
   const dropdown = (
     <Stack spacing={8}>
@@ -136,7 +107,7 @@ export function DumbMarkerFiltersDropdown({
       )}
       <Divider label="Reactions" labelProps={{ weight: 'bold', size: 'sm' }} />
       <div className="flex gap-2">
-        {Object.values(MarkerType).map((marker) => {
+        {Object.values(GenerationReactType).map((marker) => {
           return (
             <Chip
               key={marker}
@@ -164,7 +135,34 @@ export function DumbMarkerFiltersDropdown({
         onClose={() => setOpened(false)}
         withinPortal
       >
-        <Popover.Target>{target}</Popover.Target>
+        <Indicator
+          offset={4}
+          label={filterLength ? filterLength : undefined}
+          size={14}
+          zIndex={10}
+          showZero={false}
+          dot={false}
+          classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
+          inline
+        >
+          <Popover.Target>
+            <Button
+              className={classes.actionButton}
+              color="gray"
+              radius="xl"
+              variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              {...buttonProps}
+              rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+              onClick={() => setOpened((o) => !o)}
+              data-expanded={opened}
+            >
+              <Group spacing={4} noWrap>
+                <IconFilter size={16} />
+                {text}
+              </Group>
+            </Button>
+          </Popover.Target>
+        </Indicator>
         <Popover.Dropdown maw={576} w="100%">
           <ScrollArea.Autosize maxHeight={'calc(90vh - var(--header-height) - 56px)'} type="hover">
             {dropdown}

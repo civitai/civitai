@@ -63,7 +63,7 @@ export default function TagPage({
         <MasonryContainer>
           <Stack spacing="xs">
             <Group position="right">
-              <SortFilter type="models" variant="button" />
+              <SortFilter type="models" />
               <ModelFiltersDropdown size="sm" compact />
             </Group>
             <ModelsInfinite

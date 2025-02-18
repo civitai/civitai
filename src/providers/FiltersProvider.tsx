@@ -11,8 +11,8 @@ import {
   ClubSort,
   CollectionSort,
   ImageSort,
-  MarkerSort,
-  MarkerType,
+  GenerationSort,
+  GenerationReactType,
   ModelSort,
   PostSort,
   QuestionSort,
@@ -153,10 +153,10 @@ const threadFilterSchema = z.object({
   sort: z.nativeEnum(ThreadSort).default(ThreadSort.Newest),
 });
 
-export type MarkerFilterSchema = z.infer<typeof markerFilterSchema>;
-const markerFilterSchema = z.object({
-  sort: z.nativeEnum(MarkerSort).default(MarkerSort.Newest),
-  marker: z.nativeEnum(MarkerType).optional(),
+export type GenerationFilterSchema = z.infer<typeof generationFilterSchema>;
+const generationFilterSchema = z.object({
+  sort: z.nativeEnum(GenerationSort).default(GenerationSort.Newest),
+  marker: z.nativeEnum(GenerationReactType).optional(),
   tags: z.string().array().optional(),
 });
 
@@ -182,7 +182,7 @@ type StorageState = {
   clubs: ClubFilterSchema;
   videos: VideoFilterSchema;
   threads: ThreadFilterSchema;
-  markers: MarkerFilterSchema;
+  generation: GenerationFilterSchema;
   tools: ToolFilterSchema;
   buzzWithdrawalRequests: BuzzWithdrawalRequestFilterSchema;
 };
@@ -207,7 +207,7 @@ type StoreState = FilterState & {
   setClubFilters: (filters: Partial<ClubFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
-  setMarkerFilters: (filters: Partial<MarkerFilterSchema>) => void;
+  setGenerationFilters: (filters: Partial<GenerationFilterSchema>) => void;
   setToolFilters: (filters: Partial<ToolFilterSchema>) => void;
   setBuzzWithdrawalRequestFilters: (filters: Partial<BuzzWithdrawalRequestFilterSchema>) => void;
 };
@@ -225,7 +225,7 @@ const localStorageSchemas: LocalStorageSchema = {
   clubs: { key: 'clubs-filters', schema: clubFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
-  markers: { key: 'marker-filters', schema: markerFilterSchema },
+  generation: { key: 'generation-filters', schema: generationFilterSchema },
   tools: { key: 'tool-filters', schema: toolFilterSchema },
   buzzWithdrawalRequests: {
     key: 'buzz-withdrawal-request-filters',
@@ -303,8 +303,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
       setThreadFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'threads', data, state })),
-      setMarkerFilters: (data) =>
-        set((state) => handleLocalStorageChange({ key: 'markers', data, state })),
+      setGenerationFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'generation', data, state })),
       setToolFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'tools', data, state })),
       setBuzzWithdrawalRequestFilters: (data) =>
@@ -359,7 +359,7 @@ export function useSetFilters(type: FilterSubTypes) {
           clubs: state.setClubFilters,
           videos: state.setVideoFilters,
           threads: state.setThreadFilters,
-          markers: state.setMarkerFilters,
+          generation: state.setGenerationFilters,
           tools: state.setToolFilters,
           buzzWithdrawalRequests: state.setBuzzWithdrawalRequestFilters,
         }[type]),

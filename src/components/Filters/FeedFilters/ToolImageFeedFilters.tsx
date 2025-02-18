@@ -39,11 +39,8 @@ export function ToolImageFeedFilters({ ...groupProps }: GroupProps) {
       )}
       <SortFilter
         type="images"
-        variant="button"
         value={sort}
-        buttonProps={{
-          className: classes.subnavDropdown,
-        }}
+        className={classes.subnavDropdown}
         onChange={(value) => replace({ sort: value as ImageSort })}
       />
       <MediaFiltersDropdown

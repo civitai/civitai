@@ -204,7 +204,7 @@ export default function ImagesAsPostsInfinite({
                 </Group>
               )}
               <Group ml="auto" spacing={8}>
-                <SortFilter type="modelImages" variant="button" />
+                <SortFilter type="modelImages" />
                 <MediaFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
                 {showModerationOptions && (
                   <>

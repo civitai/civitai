@@ -51,17 +51,6 @@ export function ModelFiltersDropdown(props: Props) {
     setFilters: state.setModelFilters,
   }));
 
-  // const jointFilters = { ...filters, ...queryFilters };
-
-  // function setFiltersAndQuery(filters: Partial<ModelFilterSchema>) {
-  //   const newQueryFilters: Record<string, any> = { ...queryFilters };
-  //   for (const key in filters) {
-  //     if (newQueryFilters[key]) newQueryFilters[key] = undefined;
-  //   }
-  //   setQueryFilters(newQueryFilters);
-  //   setFilters(filters);
-  // }
-
   return <DumbModelFiltersDropdown {...props} filters={filters} setFilters={setFilters} />;
 }
 

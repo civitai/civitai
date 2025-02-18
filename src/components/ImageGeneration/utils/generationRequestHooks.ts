@@ -9,7 +9,7 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { MarkerType, SignalMessages } from '~/server/common/enums';
+import { GenerationReactType, SignalMessages } from '~/server/common/enums';
 import {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
@@ -63,17 +63,17 @@ export function useGetTextToImageRequests(
 ) {
   const currentUser = useCurrentUser();
 
-  const filters = useFiltersContext((state) => state.markers);
+  const filters = useFiltersContext((state) => state.generation);
 
   const tags = useMemo(() => {
     switch (filters.marker) {
-      case MarkerType.Favorited:
+      case GenerationReactType.Favorited:
         return [WORKFLOW_TAGS.FAVORITE];
 
-      case MarkerType.Liked:
+      case GenerationReactType.Liked:
         return [WORKFLOW_TAGS.FEEDBACK.LIKED];
 
-      case MarkerType.Disliked:
+      case GenerationReactType.Disliked:
         return [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
       default:
         return [];

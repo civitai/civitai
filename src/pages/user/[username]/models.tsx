@@ -111,7 +111,6 @@ function UserModelsPage() {
                   <Group className={classes.filtersWrapper} spacing="xs" ml="auto">
                     <SortFilter
                       type="models"
-                      variant="button"
                       value={sort}
                       onChange={(x) => set({ sort: x as ModelSort })}
                     />

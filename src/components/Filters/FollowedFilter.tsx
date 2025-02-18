@@ -47,8 +47,8 @@ function DumbFollowFilter({ type, value, onChange, ...props }: DumbProps) {
       {props.variant === 'button' && (
         <SelectMenuV2
           {...sharedProps}
-          buttonProps={props.buttonProps}
           icon={followed ? <IconUsersGroup size={16} /> : <IconWorld size={16} />}
+          {...props.buttonProps}
         />
       )}
     </>

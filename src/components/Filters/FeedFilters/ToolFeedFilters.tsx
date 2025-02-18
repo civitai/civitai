@@ -8,13 +8,7 @@ export function ToolFeedFilters({ ...groupProps }: GroupProps) {
 
   return (
     <Group className={classes.filtersWrapper} spacing={8} noWrap {...groupProps}>
-      <SortFilter
-        type="tools"
-        variant="button"
-        buttonProps={{
-          className: classes.subnavDropdown,
-        }}
-      />
+      <SortFilter type="tools" className={classes.subnavDropdown} />
       <ToolFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
     </Group>
   );

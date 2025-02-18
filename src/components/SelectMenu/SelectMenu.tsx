@@ -1,9 +1,7 @@
 import {
   Button,
   ButtonProps,
-  CSSObject,
   Drawer,
-  DrawerStylesNames,
   Menu,
   Text,
   UnstyledButton,
@@ -21,8 +19,7 @@ type SelectMenu<T extends string | number> = {
   value?: T;
   disabled?: boolean;
   children?: React.ReactNode;
-  buttonProps?: ButtonProps;
-};
+} & ButtonProps;
 
 export function SelectMenu<T extends string | number>({
   label,
@@ -75,12 +72,10 @@ export function SelectMenuV2<T extends string | number>({
   value,
   disabled,
   children,
-  buttonProps,
   icon,
-  drawerStyles,
+  ...buttonProps
 }: SelectMenu<T> & {
   icon?: React.ReactNode;
-  drawerStyles?: { [p in DrawerStylesNames]?: CSSObject };
 }) {
   const theme = useMantineTheme();
   const [opened, setOpened] = useState(false);
@@ -101,6 +96,12 @@ export function SelectMenuV2<T extends string | number>({
       size="sm"
       compact
       {...buttonProps}
+      className={clsx(
+        'h-8 bg-transparent',
+        'text-gray-8 hover:bg-gray-2 data-[expanded=true]:bg-gray-3',
+        'dark:text-white dark:hover:bg-dark-5 dark:data-[expanded=true]:bg-dark-4',
+        buttonProps?.className
+      )}
       onClick={() => setOpened((o) => !o)}
     >
       <div className="flex items-center gap-1" suppressHydrationWarning>
@@ -119,7 +120,7 @@ export function SelectMenuV2<T extends string | number>({
           opened={opened}
           onClose={() => setOpened(false)}
           styles={{
-            ...drawerStyles,
+            root: { zIndex: 400 },
             body: { padding: 16, paddingTop: 0, overflow: 'auto' },
             drawer: { height: 'auto' },
             header: { padding: '4px 8px' },
