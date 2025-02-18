@@ -70,12 +70,11 @@ export const contentGenerationTour: StepWithData[] = [
     title: 'Remix This Image',
     content: 'Click this button to remix an image and create something new',
     hideFooter: true,
-    hideCloseButton: true,
     disableBeacon: true,
     spotlightClicks: true,
     disableCloseOnEsc: true,
     disableOverlayClose: true,
-    spotlightPadding: 10,
+    spotlightPadding: 16,
     data: {
       onNext: async () => {
         await waitForElement({ selector: '[data-tour="gen:submit"]' }).catch(() => null);
@@ -144,12 +143,11 @@ export const contentGenerationTour: StepWithData[] = [
       </Text>
     ),
     hideFooter: true,
-    hideCloseButton: true,
     disableBeacon: true,
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightClicks: true,
-    spotlightPadding: 10,
+    spotlightPadding: 16,
     data: {
       onNext: async () => {
         await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
@@ -272,12 +270,11 @@ export const remixContentGenerationTour: StepWithData[] = [
       </Text>
     ),
     hideFooter: true,
-    hideCloseButton: true,
     disableBeacon: true,
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightClicks: true,
-    spotlightPadding: 10,
+    spotlightPadding: 16,
     data: {
       onNext: async () => {
         await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
