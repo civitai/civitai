@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { devtools, persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
 import {
   GenerationData,
@@ -11,6 +12,7 @@ import {
 import {
   engineDefinitions,
   generationFormWorkflowConfigurations,
+  getSourceImageFromUrl,
 } from '~/shared/constants/generation.constants';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { QS } from '~/utils/qs';
@@ -37,7 +39,7 @@ type GenerationState = {
     args: GenerationData & {
       type: MediaType;
       workflow?: string;
-      sourceImage?: string;
+      sourceImage?: SourceImageProps;
       engine?: string;
     }
   ) => void;
@@ -68,15 +70,21 @@ export const useGenerationStore = create<GenerationState>()(
           }
           try {
             const result = await fetchGenerationData(input);
+            const { remixOf, ...data } = result;
+            const params = await transformParams(data.params);
 
             if (isMedia) {
-              useRemixStore.setState({ ...result, resources: withSubstitute(result.resources) });
+              useRemixStore.setState({
+                ...result,
+                params,
+                resources: withSubstitute(result.resources),
+              });
             }
 
-            const { remixOf, ...data } = result;
             set((state) => {
               state.data = {
                 ...data,
+                params,
                 resources: withSubstitute(data.resources),
                 runType: input.type === 'image' ? 'remix' : 'run',
               };
@@ -104,12 +112,18 @@ export const useGenerationStore = create<GenerationState>()(
           state.type = type;
         });
       },
-      setData: ({ type, remixOf, workflow, sourceImage, engine, ...data }) => {
+      setData: async ({ type, remixOf, workflow, sourceImage, engine, ...data }) => {
         useGenerationFormStore.setState({ type, workflow, sourceImage });
         if (engine) useGenerationFormStore.setState({ engine });
+        const params = await transformParams(data.params);
         set((state) => {
           state.remixOf = remixOf;
-          state.data = { ...data, resources: withSubstitute(data.resources), runType: 'replay' };
+          state.data = {
+            ...data,
+            params,
+            resources: withSubstitute(data.resources),
+            runType: 'replay',
+          };
           state.counter++;
           if (!location.pathname.includes('generate')) state.view = 'generate';
         });
@@ -149,6 +163,16 @@ function withSubstitute(resources: GenerationResource[]) {
   });
 }
 
+async function transformParams(data: Record<string, unknown>) {
+  let sourceImage = null;
+  if ('image' in data && typeof data.image === 'string')
+    sourceImage = await getSourceImageFromUrl({ url: data.image });
+  if ('sourceImage' in data && typeof data.sourceImage === 'string')
+    sourceImage = await getSourceImageFromUrl({ url: data.sourceImage });
+
+  return { ...data, sourceImage };
+}
+
 const dictionary: Record<string, GenerationData> = {};
 export const fetchGenerationData = async (input: GetGenerationDataInput) => {
   let key = 'default';
@@ -180,10 +204,10 @@ export const useGenerationFormStore = create<{
   type: MediaType;
   engine?: string;
   workflow?: string; // is this needed?
-  sourceImage?: string;
+  sourceImage?: SourceImageProps | null;
   width?: number;
   height?: number;
-}>()(persist((set) => ({ type: 'image' }), { name: 'generation-form' }));
+}>()(persist((set) => ({ type: 'image' }), { name: 'generation-form', version: 1 }));
 
 export const generationFormStore = {
   setType: (type: MediaType) => useGenerationFormStore.setState({ type }),
@@ -201,7 +225,8 @@ export const generationFormStore = {
     useGenerationFormStore.setState({ workflow: updatedWorkflow, engine });
   },
   setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
-  setsourceImage: (sourceImage?: string) => useGenerationFormStore.setState({ sourceImage }),
+  setsourceImage: (sourceImage?: SourceImageProps | null) =>
+    useGenerationFormStore.setState({ sourceImage }),
   reset: () => useGenerationFormStore.setState((state) => ({ type: state.type }), true),
 };
 

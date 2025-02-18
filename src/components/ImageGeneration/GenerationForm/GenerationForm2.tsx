@@ -95,7 +95,6 @@ import {
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
@@ -103,6 +102,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 
 let total = 0;
 const tips = {
@@ -134,10 +134,10 @@ export function GenerationFormContent() {
   });
   const { subscription, meta: subscriptionMeta } = useActiveSubscription();
 
-  const { data: workflowDefinitions, isLoading: loadingWorkflows } =
+  const { data: workflowDefinitions = [], isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
 
-  const [workflow, image] = form.watch(['workflow', 'image']) ?? 'txt2img';
+  const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -198,7 +198,7 @@ export function GenerationFormContent() {
 
     const {
       model,
-      resources: additionalResources,
+      resources: additionalResources = [],
       vae,
       remixOfId,
       remixSimilarity,
@@ -209,16 +209,6 @@ export function GenerationFormContent() {
     } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
-
-    // const {
-    //   sourceImage,
-    //   width = params.width,
-    //   height = params.height,
-    // } = useGenerationFormStore.getState();
-
-    // const imageDetails = data.workflow.includes('img2img')
-    //   ? { image: sourceImage, width, height }
-    //   : { width, height };
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
@@ -253,7 +243,6 @@ export function GenerationFormContent() {
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-            // ...imageDetails,
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -309,10 +298,9 @@ export function GenerationFormContent() {
     };
   }, []);
 
-  const workflowOptions =
-    workflowDefinitions
-      ?.filter((x) => x.selectable !== false && x.key !== undefined)
-      .map(({ key, label }) => ({ label, value: key })) ?? [];
+  const workflowOptions = workflowDefinitions
+    .filter((x) => x.selectable !== false)
+    .map(({ key, label }) => ({ label, value: key }));
 
   return (
     <Form
@@ -357,26 +345,6 @@ export function GenerationFormContent() {
                 {!isFlux && !isSD3 && (
                   <>
                     <div className="flex items-start justify-start gap-3">
-                      {features.image && image && (
-                        <div className="relative mt-3">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={image}
-                            alt="image to refine"
-                            className="max-w-16 rounded-md shadow-sm shadow-black"
-                          />
-                          <ActionIcon
-                            variant="light"
-                            size="sm"
-                            color="red"
-                            radius="xl"
-                            className="absolute -right-2 -top-2"
-                            onClick={() => form.setValue('image', undefined)}
-                          >
-                            <IconX size={16} strokeWidth={2.5} />
-                          </ActionIcon>
-                        </div>
-                      )}
                       <div className="flex-1">
                         <InputSelect
                           label={
@@ -392,17 +360,11 @@ export function GenerationFormContent() {
                               </Badge>
                             </div>
                           }
-                          // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
                           className="flex-1"
                           name="workflow"
                           data={[
-                            // ...workflowOptions.filter((x) => x.value.startsWith('txt')),
-                            // ...workflowOptions.filter((x) => x.value.startsWith('img')),
-                            ...(workflowDefinitions
-                              ?.filter(
-                                (x) => x.type === workflowDefinition?.type && x.selectable !== false
-                              )
-                              .map(({ key, label }) => ({ label, value: key })) ?? []),
+                            ...workflowOptions.filter((x) => x.value.startsWith('txt')),
+                            ...workflowOptions.filter((x) => x.value.startsWith('img')),
                           ]}
                           loading={loadingWorkflows}
                         />
@@ -413,7 +375,7 @@ export function GenerationFormContent() {
                         )}
                       </div>
                     </div>
-                    {/* {features.image && <GenerationImage />} */}
+                    {features.image && <InputSourceImageUpload name="sourceImage" />}
                   </>
                 )}
 
@@ -1440,8 +1402,3 @@ const clipSkipMarks = Array(10)
   .fill(0)
   .map((_, index) => ({ value: index + 1 }));
 // #endregion
-
-function GenerationImage() {
-  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-  return <GeneratorImageInput value={sourceImage} onChange={generationFormStore.setsourceImage} />;
-}

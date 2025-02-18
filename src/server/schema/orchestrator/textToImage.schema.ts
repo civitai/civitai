@@ -2,6 +2,7 @@ import { Priority } from '@civitai/client';
 import { z } from 'zod';
 
 import { baseModelSets, generation } from '~/server/common/constants';
+import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
 import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
@@ -38,7 +39,7 @@ export const textToImageParamsSchema = z.object({
   height: z.number(),
   // temp props?
   denoise: z.number().max(1).optional(),
-  image: z.string().startsWith('https://orchestration').includes('.civitai.com').optional(),
+  // image: z.string().startsWith('https://orchestration').includes('.civitai.com').optional(),
   upscaleWidth: z.number().optional(),
   upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,
@@ -47,6 +48,7 @@ export const textToImageParamsSchema = z.object({
   experimental: z.boolean().optional(),
   engine: z.string().optional(),
   priority: z.nativeEnum(Priority).default('low'),
+  sourceImage: sourceImageSchema.nullish(),
 });
 
 // #endregion
