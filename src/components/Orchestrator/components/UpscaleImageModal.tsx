@@ -14,7 +14,7 @@ import { GenerationResource } from '~/server/services/generation/generation.serv
 import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { WhatIfAlert } from '~/components/generation/Alerts/WhatIfAlert';
+import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -59,7 +59,7 @@ function UpscalImageForm({
     generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
       ?.checkpoint ?? resources[0];
 
-  const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery(
+  const whatIf = trpc.orchestrator.getImageWhatIf.useQuery(
     {
       resources: [{ id: defaultModel.id }],
       params: {
@@ -96,7 +96,7 @@ function UpscalImageForm({
       });
       dialog.onClose();
     }
-    conditionalPerformTransaction(data?.cost?.total ?? 0, performTransaction);
+    conditionalPerformTransaction(whatIf.data?.cost?.total ?? 0, performTransaction);
   }
 
   return (
@@ -112,8 +112,8 @@ function UpscalImageForm({
         <WhatIfAlert error={whatIf.error} />
         <GenerateButton
           type="submit"
-          loading={isLoading || generateImage.isLoading}
-          cost={data?.cost?.total ?? 0}
+          loading={whatIf.isLoading || generateImage.isLoading}
+          cost={whatIf.data?.cost?.total ?? 0}
         >
           Upscale
         </GenerateButton>

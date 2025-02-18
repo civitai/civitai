@@ -11,7 +11,7 @@ import {
 import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { z } from 'zod';
 import { GenerationProvider } from '~/components/ImageGeneration/GenerationProvider';
-import { WhatIfAlert } from '~/components/generation/Alerts/WhatIfAlert';
+import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -55,11 +55,6 @@ export function BackgroundRemovalModal({
             type="submit"
             loading={whatIf.isLoading || generate.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
-            error={
-              !whatIf.isInitialLoading && whatIf.isError
-                ? 'Error calculating cost. Please try updating your values'
-                : undefined
-            }
           >
             Remove Background
           </GenerateButton>
