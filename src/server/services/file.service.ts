@@ -186,14 +186,6 @@ export const getFileForModelVersion = async ({
     isModerator: user?.isModerator ?? undefined,
   });
 
-  // This is a safeguard for private models for the most part.
-  const [modelAccess] = await hasEntityAccess({
-    entityIds: [modelVersion?.model?.id],
-    entityType: 'Model',
-    userId: user?.id,
-    isModerator: user?.isModerator ?? undefined,
-  });
-
   const deadline = modelVersion.earlyAccessEndsAt ?? undefined;
   const inEarlyAccess = deadline !== undefined && new Date() < deadline;
   const isDownloadable = modelVersion.usageControl === ModelUsageControl.Download;
@@ -218,10 +210,6 @@ export const getFileForModelVersion = async ({
 
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
-
-  if (!(modelAccess?.hasAccess ?? true)) {
-    return { status: 'unauthorized' };
-  }
 
   if (!(versionAccess?.hasAccess ?? true)) {
     return { status: 'unauthorized' };

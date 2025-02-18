@@ -479,7 +479,7 @@ export const getModelsRaw = async ({
     AND.push(Prisma.sql`m."earlyAccessDeadline" >= ${new Date()}`);
   }
   if (availability) {
-    if (availability === Availability.Private && (!username || isModerator)) {
+    if (availability === Availability.Private && !(username || isModerator)) {
       throw throwAuthorizationError();
     }
 
