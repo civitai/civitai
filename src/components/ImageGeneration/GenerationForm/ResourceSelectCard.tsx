@@ -11,6 +11,7 @@ import {
   Text,
   ThemeIcon,
   useMantineTheme,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -175,9 +176,11 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
             )}
 
             {resource.availability === Availability.Private && (
-              <ActionIcon size={18} color="dark.5" variant="filled">
-                <IconLock size={14} />
-              </ActionIcon>
+              <Tooltip label="This resource is private" position="top" withArrow>
+                <ActionIcon size={18} color="dark.5" variant="filled">
+                  <IconLock size={14} />
+                </ActionIcon>
+              </Tooltip>
             )}
 
             {resource.additionalResourceCost && selectSource === 'generation' && (

@@ -102,12 +102,14 @@ const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
 const availabilityDetails = {
   [Availability.Public]: {
     label: 'Publish publicly',
-    description: 'Anyone on the site can view this, you earn buzz',
+    description:
+      'Civitai users will see your model. You can make it available for Download and/or Generation.',
     icon: <IconGlobe size={24} />,
   },
   [Availability.Private]: {
     label: 'Keep it private',
-    description: 'Only you can view this. (Only for paid members)',
+    description:
+      'Only you will see your model. You may use it for Private Generation and Publish it at any time.',
     icon: <IconClockCheck size={24} />,
   },
 };
@@ -703,9 +705,9 @@ export const PrivateModelAutomaticSetup = ({
       <Divider mx="-lg" mb="md" />
       <Stack spacing="md">
         <Text>
-          Private models are only visible to you and are not publicly accessible. This feature is
-          only available to paid members of Civitai. You can always make this model public at a
-          later point.
+          Private models are only visible to you and are not publicly accessible. You can Publish a
+          private model at any time. By continuing, the model setup wizard will complete, and you
+          will be able to use your resource in the Generator
         </Text>
         <Text>
           By clicking continue, we will automatically complete the setup of your private model and

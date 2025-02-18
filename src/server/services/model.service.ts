@@ -122,6 +122,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2751,8 +2752,12 @@ export const privateModelFromTraining = async ({
     where: { userId: input.user.id, availability: Availability.Private },
   });
 
-  const maxPrivateModels = input.user.tier
-    ? constants.memberships.maxPrivateModels[input.user.tier] ?? 0
+  const subscription = await getUserSubscription({ userId: input.user.id });
+
+  const maxPrivateModels = subscription?.tier
+    ? constants.memberships.maxPrivateModels[
+        subscription.tier as keyof typeof constants.memberships.maxPrivateModels
+      ] ?? 0
     : 0;
 
   if (totalPrivateModels >= maxPrivateModels) {
