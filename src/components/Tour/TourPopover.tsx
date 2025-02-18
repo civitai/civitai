@@ -23,10 +23,9 @@ export function TourPopover(props: TooltipRenderProps) {
   return (
     <Paper
       {...tooltipProps}
-      className={clsx('flex flex-col gap-4', centered && 'mx-auto')}
+      className={clsx('flex flex-col gap-4 bg-white dark:bg-dark-6', centered && 'mx-auto')}
       p="sm"
       radius="md"
-      bg="dark.6"
       maw="375px"
     >
       <Group position="apart" noWrap>
