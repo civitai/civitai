@@ -628,10 +628,10 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   return (
                     <Wrap key={type}>
                       <Chip value={type} {...chipProps}>
-                        <Stack spacing={4} align="center">
+                        <Stack spacing={4} align="center" w="100%" px="sm">
                           {details.icon}
                           <Text weight="bold">{details.label}</Text>
-                          <Text>{details.description}</Text>
+                          <Text className="text-wrap text-center">{details.description}</Text>
                         </Stack>
                       </Chip>
                     </Wrap>
@@ -711,9 +711,8 @@ export const PrivateModelAutomaticSetup = ({
         </Text>
         <Text>
           By clicking continue, we will automatically complete the setup of your private model and
-          you will be able to generate with it. If you have other trained versions of this model,
-          you will still need to manually select the relevant Epoch File, but they will also be
-          considered private.
+          you will be able to generate with it. All versions of this model will also be made private
+          automatically.
         </Text>
         <Group ml="auto">
           <Button

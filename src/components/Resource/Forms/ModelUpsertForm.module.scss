@@ -1,10 +1,12 @@
  .availabilityChip { 
   height: auto;
+  overflow: hidden;
   
   > label {
     width: 100%;
     height: auto;
     padding: 16px 0;
+    
 
     > span {
       display: none;

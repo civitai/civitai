@@ -15,13 +15,17 @@ const data: Record<
   }
 > = {
   'private-models': {
-    title: 'Creating Private Models Require a Subscription',
+    title: 'Private models require a Civitai Subscription',
     content: (
       <Stack spacing="xs">
-        <Text>Create and use private models in our generator by becoming a Civitai Member!</Text>
         <Text>
-          All our subscription plans support creating private models, so you can choose the one that
-          fits your needs best.
+          Want to create and use private models in our generator? You&rsquo;ll need a Civitai
+          Subscription!
+        </Text>
+        <Text>
+          All our Subscription Plans include private model support &ndash; plus a range of other
+          perks to enhance your experience. Choose the plan that fits your needs and start creating
+          today!
         </Text>
       </Stack>
     ),
@@ -42,7 +46,7 @@ const SubscriptionRequiredModal = ({ feature }: { feature: keyof typeof data }) 
 
         <Stack spacing="xs">
           <Button onClick={handleClose} component={NextLink} href="/pricing" color="blue" fullWidth>
-            Check Subscription Plans
+            View Subscription Plans
           </Button>
           <Button onClick={handleClose} color="gray" fullWidth>
             Close

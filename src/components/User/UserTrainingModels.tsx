@@ -29,7 +29,7 @@ import {
   IconExternalLink,
   IconFileDescription,
   IconTrash,
-  IconX
+  IconX,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
@@ -132,7 +132,8 @@ export const trainingStatusFields: {
   },
   [TrainingStatus.Approved]: {
     color: 'green',
-    description: 'Training is complete, and the results were published to Civitai.',
+    description:
+      'Training is complete, and you have selected an Epoch. You may click here to continue the publishing setup.',
   },
   [TrainingStatus.Failed]: {
     color: 'red',

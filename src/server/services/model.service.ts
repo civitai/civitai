@@ -2749,7 +2749,11 @@ export const privateModelFromTraining = async ({
   const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
 
   const totalPrivateModels = await dbRead.model.count({
-    where: { userId: input.user.id, availability: Availability.Private },
+    where: {
+      userId: input.user.id,
+      availability: Availability.Private,
+      status: ModelStatus.Published,
+    },
   });
 
   const subscription = await getUserSubscription({ userId: input.user.id });
