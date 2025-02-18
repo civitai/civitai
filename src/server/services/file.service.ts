@@ -163,6 +163,7 @@ export const getFileForModelVersion = async ({
           userId: true,
           mode: true,
           nsfw: true,
+          availability: true,
         },
       },
       name: true,
@@ -178,9 +179,17 @@ export const getFileForModelVersion = async ({
 
   if (!modelVersion) return { status: 'not-found' };
 
-  const [entityAccess] = await hasEntityAccess({
+  const [versionAccess] = await hasEntityAccess({
     entityIds: [modelVersion?.id],
     entityType: 'ModelVersion',
+    userId: user?.id,
+    isModerator: user?.isModerator ?? undefined,
+  });
+
+  // This is a safeguard for private models for the most part.
+  const [modelAccess] = await hasEntityAccess({
+    entityIds: [modelVersion?.model?.id],
+    entityType: 'Model',
     userId: user?.id,
     isModerator: user?.isModerator ?? undefined,
   });
@@ -210,14 +219,18 @@ export const getFileForModelVersion = async ({
   const requireAuth = modelVersion.requireAuth || !env.UNAUTHENTICATED_DOWNLOAD;
   if (requireAuth && !userId) return { status: 'unauthorized' };
 
-  if (!(entityAccess?.hasAccess ?? true)) {
+  if (!(modelAccess?.hasAccess ?? true)) {
+    return { status: 'unauthorized' };
+  }
+
+  if (!(versionAccess?.hasAccess ?? true)) {
     return { status: 'unauthorized' };
   }
 
   // Check the early access scenario:
   if (
     inEarlyAccess &&
-    (entityAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
+    (versionAccess.permissions & EntityAccessPermission.EarlyAccessDownload) == 0 &&
     !isMod &&
     !isOwner
   ) {

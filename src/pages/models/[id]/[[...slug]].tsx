@@ -154,6 +154,28 @@ export const getServerSideProps = createServerSideProps({
       return { notFound: true };
     }
 
+    if (version?.model?.availability === Availability.Private) {
+      // We'll do a explicit check if we know it's a private model
+      if (!session?.user) {
+        return {
+          notFound: true,
+        };
+      }
+
+      const [access] = await hasEntityAccess({
+        entityIds: [version?.model.id],
+        entityType: 'Model',
+        userId: session.user.id,
+        isModerator: session.user.isModerator,
+      });
+
+      if (!access.hasAccess) {
+        return {
+          notFound: true,
+        };
+      }
+    }
+
     if (version?.availability === Availability.Private) {
       // We'll do a explicit check if we know it's a private model
       if (!session?.user) {
@@ -163,7 +185,7 @@ export const getServerSideProps = createServerSideProps({
       }
 
       const [access] = await hasEntityAccess({
-        entityIds: [version.id],
+        entityIds: [version?.id],
         entityType: 'ModelVersion',
         userId: session.user.id,
         isModerator: session.user.isModerator,

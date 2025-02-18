@@ -909,7 +909,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               </Text>
             </AlertWithIcon>
           )}
-          {model.availability === Availability.Private && (
+          {model.availability === Availability.Private && isOwnerOrMod && (
             <AlertWithIcon
               color="yellow"
               iconColor="yellow"
@@ -917,7 +917,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               title="Private Model"
             >
               <Text>
-                Want to start earning buzz,{' '}
+                Want to start earning buzz?{' '}
                 <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
               </Text>
             </AlertWithIcon>

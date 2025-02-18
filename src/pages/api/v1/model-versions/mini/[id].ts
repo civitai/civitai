@@ -82,6 +82,8 @@ export default MixedAuthEndpoint(async function handler(
         )
         OR
         (mv."availability" = 'Private')
+        OR 
+        (m."availability" = 'Private')
 
       ) AS "checkPermission",
       (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",

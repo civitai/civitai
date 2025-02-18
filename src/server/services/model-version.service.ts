@@ -103,7 +103,7 @@ export const getDefaultModelVersion = async ({
         select: {
           id: true,
           status: true,
-          model: { select: { userId: true, availability: true } },
+          model: { select: { id: true, userId: true, availability: true } },
           availability: true,
         },
       },
