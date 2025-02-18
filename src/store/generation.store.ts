@@ -163,12 +163,14 @@ function withSubstitute(resources: GenerationResource[]) {
   });
 }
 
-async function transformParams(data: Record<string, unknown>) {
-  let sourceImage = null;
-  if ('image' in data && typeof data.image === 'string')
-    sourceImage = await getSourceImageFromUrl({ url: data.image });
-  if ('sourceImage' in data && typeof data.sourceImage === 'string')
-    sourceImage = await getSourceImageFromUrl({ url: data.sourceImage });
+async function transformParams(data: Record<string, any>) {
+  let sourceImage = data.sourceImage;
+  if (!sourceImage) {
+    if ('image' in data && typeof data.image === 'string')
+      sourceImage = await getSourceImageFromUrl({ url: data.image });
+    if ('sourceImage' in data && typeof data.sourceImage === 'string')
+      sourceImage = await getSourceImageFromUrl({ url: data.sourceImage });
+  }
 
   return { ...data, sourceImage };
 }
