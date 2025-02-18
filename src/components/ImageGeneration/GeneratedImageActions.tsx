@@ -21,6 +21,8 @@ import { useState } from 'react';
 import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
 import { useTourContext } from '~/providers/TourProvider';
+import { removeEmpty } from '~/utils/object-helpers';
+import { usePathname } from 'next/navigation';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -31,6 +33,7 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
+  const path = usePathname();
   const { images, data } = useGetTextToImageRequests();
   const { running, runTour, currentStep, returnUrl } = useTourContext();
   const selectableImages = images.filter((x) => x.status === 'succeeded');
@@ -111,7 +114,7 @@ export function GeneratedImageActions({
       if (running) runTour({ step: currentStep + 1 });
       await router.push({
         pathname: '/posts/[postId]/edit',
-        query: { postId: post.id, src: key, returnUrl },
+        query: removeEmpty({ postId: post.id, src: key, returnUrl: returnUrl || path }),
       });
       generationPanel.close();
       deselect();

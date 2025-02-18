@@ -61,6 +61,35 @@ export const modelPageTour: StepWithData[] = [
     disableBeacon: true,
     spotlightClicks: true,
     disableOverlayClose: true,
-    spotlightPadding: 10,
+    spotlightPadding: 16,
+  },
+];
+
+export const welcomeTour: StepWithData[] = [
+  {
+    target: '[data-tour="model:start"]',
+    title: 'Welcome to Civitai!',
+    content: `Civitai is the leading hub for AI-generated content, connecting creators to share, discover, and collaborate. Let's walk you through the tools we provide to start engaging in the community.`,
+    placement: 'center',
+    showProgress: false,
+    disableBeacon: true,
+    locale: {
+      next: `Let's go!`,
+      skip: 'No thanks',
+    },
+    floaterProps: {
+      styles: { floater: { width: '100%' } },
+    },
+  },
+  {
+    target: '[data-tour="model:remix"]',
+    title: 'Create with this Resource',
+    content: 'Click here to generate content using this resource!',
+    disableBeacon: true,
+    showProgress: false,
+    hideFooter: true,
+    spotlightPadding: 16,
+    spotlightClicks: true,
+    disableOverlayClose: true,
   },
 ];

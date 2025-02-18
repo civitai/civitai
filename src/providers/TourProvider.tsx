@@ -27,7 +27,7 @@ type TourState = {
   runTour: (opts?: { key?: TourKey; step?: number; forceRun?: boolean }) => void;
   closeTour: (opts?: { reset?: boolean }) => void;
   setSteps: (steps: StepWithData[]) => void;
-  activeTour?: string | null;
+  activeTour?: TourKey | null;
   steps?: StepWithData[];
   returnUrl?: string;
 };
@@ -152,7 +152,8 @@ export function TourProvider({ children, ...props }: Props) {
 
       if (action === ACTIONS.UPDATE && lifecycle === LIFECYCLE.TOOLTIP) {
         const target = document.querySelector(step?.target as string);
-        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        if (target && step.placement !== 'center')
+          target.scrollIntoView({ behavior: 'smooth', block: 'center' });
         window.dispatchEvent(new Event('resize'));
       }
 
@@ -233,6 +234,9 @@ export function TourProvider({ children, ...props }: Props) {
               },
               spotlight: { border: `2px solid ${theme.colors.cyan[4]}` },
             }}
+            locale={{
+              nextLabelWithProgress: 'Next',
+            }}
             floaterProps={{
               styles: {
                 floater: {
@@ -243,11 +247,11 @@ export function TourProvider({ children, ...props }: Props) {
             }}
             tooltipComponent={TourPopover}
             run={(state.running && !alreadyCompleted && !isInitialLoading) || state.forceRun}
-            scrollOffset={100}
             disableScrollParentFix
-            disableScrolling
             scrollToFirstStep
+            disableScrolling
             showSkipButton
+            showProgress
             continuous
             {...props}
           />

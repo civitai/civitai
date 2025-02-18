@@ -198,7 +198,7 @@ function ModelCarouselContent({
                                 id: image.id,
                               });
 
-                              if (running && activeTour === 'model-page') runTour({ step: currentStep + 1 });
+                              if (running) runTour({ step: currentStep + 1 });
                             }}
                           >
                             <IconBrush stroke={2.5} size={16} />

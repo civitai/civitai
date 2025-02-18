@@ -35,6 +35,7 @@ import { trpc } from '~/utils/trpc';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
@@ -94,6 +95,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             if (returnUrl) router.push(returnUrl);
             else router.push(`/user/${currentUser?.username}/posts`);
           }
+          await queryUtils.image.getImagesAsPostsInfinite.invalidate();
         },
         onError: (error) => {
           showErrorNotification({

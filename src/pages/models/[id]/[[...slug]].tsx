@@ -493,7 +493,8 @@ export default function ModelDetailsV2({
 
   useEffect(() => {
     if (!canLoadBelowTheFold) return;
-    if (activeTour === 'model-page' && !running) runTour({ key: 'model-page' });
+    if ((activeTour === 'model-page' || activeTour === 'welcome') && !running)
+      runTour({ key: activeTour });
     // only run when the model is loaded
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [canLoadBelowTheFold]);
