@@ -3,7 +3,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { Text } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import ConfirmDialog  from '~/components/Dialog/Common/ConfirmDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function DeletePostButton({

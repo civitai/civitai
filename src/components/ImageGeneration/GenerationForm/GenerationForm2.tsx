@@ -54,6 +54,7 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
   useInvalidateWhatIf,
@@ -78,6 +79,7 @@ import {
 import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
@@ -95,11 +97,13 @@ import {
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
+import { contentGenerationTour, remixContentGenerationTour } from '~/utils/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
@@ -120,6 +124,13 @@ export function GenerationFormContent() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
+  const { runTour, running, currentStep, setSteps, activeTour } = useTourContext();
+  const loadingGeneratorData = useGenerationStore((state) => state.loading);
+  const remixOfId = useRemixStore((state) => state.remixOfId);
+  const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
+    state.requestsLoading,
+    state.hasGeneratedImages,
+  ]);
 
   const form = useGenerationForm();
   const invalidateWhatIf = useInvalidateWhatIf();
@@ -157,6 +168,12 @@ export function GenerationFormContent() {
 
   function handleReset() {
     form.reset();
+    useRemixStore.setState({
+      remixOf: undefined,
+      params: undefined,
+      resources: undefined,
+      remixOfId: undefined,
+    });
     clearWarning();
   }
 
@@ -301,6 +318,44 @@ export function GenerationFormContent() {
   const workflowOptions = workflowDefinitions
     .filter((x) => x.selectable !== false)
     .map(({ key, label }) => ({ label, value: key }));
+
+  useEffect(() => {
+    if (!status.available || status.isLoading || loadingGeneratorData) return;
+    if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
+  }, [
+    status.isLoading,
+    status.available,
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    loadingGeneratorData,
+  ]); // These are the dependencies that make it work, please only update if you know what you're doing
+
+  useEffect(() => {
+    if (!running || currentStep > 0 || loadingGeneratorData) return;
+    const isRemix = remixOfId && activeTour === 'remix-content-generation';
+    let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
+
+    // Remove last two steps if user has not generated any images
+    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = genSteps.slice(0, -2);
+    // Only show first few steps if user is not logged in
+    if (!currentUser) genSteps = isRemix ? genSteps.slice(0, 4) : genSteps.slice(0, 6);
+
+    const alreadyReviewedTerms =
+      window?.localStorage?.getItem('review-generation-terms') === 'true';
+    if (alreadyReviewedTerms)
+      genSteps = genSteps.filter((x) => x.target !== '[data-tour="gen:terms"]');
+
+    setSteps(genSteps);
+  }, [
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    currentUser,
+    running,
+    activeTour,
+    loadingGeneratorData,
+  ]); // These are the dependencies that make it work, please only update if you know what you're doing
 
   return (
     <Form
@@ -724,6 +779,7 @@ export function GenerationFormContent() {
                           >
                             <InputPrompt
                               name="prompt"
+                              data-tour="gen:prompt"
                               placeholder="Your prompt goes here..."
                               autosize
                               unstyled
@@ -1144,7 +1200,7 @@ export function GenerationFormContent() {
                 ) : (
                   <>
                     {!reviewed && (
-                      <Alert color="yellow" title="Image Generation Terms">
+                      <Alert color="yellow" title="Image Generation Terms" data-tour="gen:terms">
                         <Text size="xs">
                           By using the image generator you confirm that you have read and agree to
                           our{' '}
@@ -1160,7 +1216,10 @@ export function GenerationFormContent() {
                         <Button
                           color="yellow"
                           variant="light"
-                          onClick={() => setReviewed(true)}
+                          onClick={() => {
+                            setReviewed(true);
+                            if (running) runTour({ step: currentStep + 1 });
+                          }}
                           style={{ marginTop: 10 }}
                           leftIcon={<IconCheck />}
                           fullWidth
@@ -1252,9 +1311,10 @@ function WhatIfAlert() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
+  const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
+  const { running, runTour, currentStep } = useTourContext();
   const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
@@ -1278,10 +1338,14 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const generateButton = (
     <GenerateButton
       type="submit"
+      data-tour="gen:submit"
       className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
       cost={total}
       disabled={isError}
+      onClick={() => {
+        if (running) runTour({ step: currentStep + 1 });
+      }}
     />
   );
 

@@ -236,6 +236,7 @@ export const useRemixStore = create<{
   resources?: GenerationResource[];
   params?: Record<string, unknown>;
   remixOf?: RemixOfProps;
+  remixOfId?: number;
 }>()(persist(() => ({}), { name: 'remixOf' }));
 
 export function useVideoGenerationWorkflows() {

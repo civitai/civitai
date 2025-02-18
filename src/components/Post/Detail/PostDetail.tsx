@@ -72,6 +72,7 @@ import { Flags } from '~/shared/utils';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { useSearchParams } from 'next/navigation';
 
 type Props = { postId: number };
 
@@ -87,6 +88,7 @@ export function PostDetailContent({ postId }: Props) {
   const theme = useMantineTheme();
   const scrollRef = useScrollAreaRef();
   const currentUser = useCurrentUser();
+  const searchParams = useSearchParams();
   const { query } = useBrowserRouter();
   const { data: post, isLoading: postLoading } = trpc.post.get.useQuery({ id: postId });
   const {
@@ -191,8 +193,10 @@ export function PostDetailContent({ postId }: Props) {
                     </Title>
                   )}
                   {query.dialog && (
-                    <NavigateBack url="/posts">
-                      {({ onClick }) => <CloseButton onClick={onClick} size="lg" ml="auto" />}
+                    <NavigateBack url={searchParams.get('returnUrl') ?? '/posts'}>
+                      {({ onClick }) => (
+                        <CloseButton onClick={onClick} size="lg" ml="auto" title="Close post" />
+                      )}
                     </NavigateBack>
                   )}
                 </div>

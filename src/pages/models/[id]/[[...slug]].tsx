@@ -68,6 +68,7 @@ import {
   openReportModal,
 } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -102,6 +103,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
@@ -248,6 +250,7 @@ export default function ModelDetailsV2({
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
+  const { activeTour, running, runTour } = useTourContext();
 
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
@@ -265,7 +268,6 @@ export default function ModelDetailsV2({
     }
   );
 
-  const view = router.query.view;
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
     (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
@@ -494,6 +496,10 @@ export default function ModelDetailsV2({
       });
   };
 
+  const view = router.query.view;
+  const basicView = view === 'basic' && isModerator;
+  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
+
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
     if (loadingModel) return;
@@ -506,6 +512,14 @@ export default function ModelDetailsV2({
       });
     }
   }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel]);
+
+  useEffect(() => {
+    if (!canLoadBelowTheFold) return;
+    if ((activeTour === 'model-page' || activeTour === 'welcome') && !running)
+      runTour({ key: activeTour });
+    // only run when the model is loaded
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canLoadBelowTheFold]);
 
   if (loadingModel) return <PageLoader />;
 
@@ -571,8 +585,6 @@ export default function ModelDetailsV2({
     isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
-  const basicView = view === 'basic' && isModerator;
-  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
   const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
   const unpublishedMessage =
     unpublishedReason !== 'other'
@@ -605,7 +617,7 @@ export default function ModelDetailsV2({
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
-        <Container size="xl">
+        <Container size="xl" data-tour="model:start">
           <Stack spacing="xl">
             <Stack spacing="xs">
               <Stack spacing={4}>
@@ -725,6 +737,12 @@ export default function ModelDetailsV2({
                       stroke={1.5}
                       href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
                       tooltip="What is this?"
+                    />
+                    <HelpButton
+                      size="xl"
+                      tooltip="Need help? Start the tour!"
+                      iconProps={{ size: 30, stroke: 1.5 }}
+                      onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
                     />
                     <ToggleModelNotification
                       className={classes.headerButton}
@@ -1126,7 +1144,9 @@ export default function ModelDetailsV2({
               <Stack spacing="md">
                 <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                   <Group spacing="xs">
-                    <Title order={2}>Discussion</Title>
+                    <Title order={2} data-tour="model:discussion">
+                      Discussion
+                    </Title>
                     {canDiscuss ? (
                       <>
                         <LoginRedirect reason="create-comment">

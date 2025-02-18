@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { CollectionUploadSettingsWrapper } from '~/components/Collections/components/CollectionUploadSettingsWrapper';
 import { PostCollaboratorSelection } from '~/components/Post/EditV2/Collaborators/PostCollaborators';
 import { EditPostReviews } from '~/components/Post/EditV2/EditPostReviews';
@@ -7,6 +8,7 @@ import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
 import { PostImageCards } from '~/components/Post/EditV2/PostImageCards/PostImageCards';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import { PostReorderImages } from '~/components/Post/EditV2/PostReorderImages';
+import { useTourContext } from '~/providers/TourProvider';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -17,6 +19,11 @@ export function PostEdit() {
     state.collectionId,
   ]);
   const { showPreview } = usePostPreviewContext();
+  const { runTour, running } = useTourContext();
+
+  useEffect(() => {
+    if (!running && post?.id) runTour({ key: 'post-generation' });
+  }, [post?.id]);
 
   if (!post) return null;
 
