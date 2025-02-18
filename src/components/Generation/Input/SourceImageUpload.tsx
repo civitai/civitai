@@ -27,15 +27,18 @@ import clsx from 'clsx';
 function SourceImageUpload({
   value,
   onChange,
-  upscale,
   removable = true,
+  upscaleMultiplier,
+  upscaleResolution,
   ...inputWrapperProps
 }: {
   value?: SourceImageProps | null;
   onChange?: (value?: SourceImageProps | null) => void;
-  upscale?: boolean;
   removable?: boolean;
+  upscaleMultiplier?: boolean;
+  upscaleResolution?: boolean;
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>) {
+  const upscale = upscaleMultiplier || upscaleResolution;
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
@@ -125,7 +128,14 @@ function SourceImageUpload({
         )}
       </Input.Wrapper>
       {/* {value && upscale && <ResolutionSlider value={value} onChange={handleResolutionChange} />} */}
-      {value && upscale && <UpscalePicker value={value} onChange={handleResolutionChange} />}
+      {value && upscale && (
+        <UpscalePicker
+          value={value}
+          onChange={handleResolutionChange}
+          upscaleMultiplier={upscaleMultiplier}
+          upscaleResolution={upscaleResolution}
+        />
+      )}
     </>
   );
 }
@@ -137,9 +147,13 @@ export const InputSourceImageUpload = withController(SourceImageUpload, ({ field
 export function SourceImageUploadAccordion({
   value,
   onChange,
+  upscaleMultiplier,
+  upscaleResolution,
 }: {
   value?: SourceImageProps | null;
   onChange?: (value?: SourceImageProps | null) => void;
+  upscaleMultiplier?: boolean;
+  upscaleResolution?: boolean;
 }) {
   const [checked, setChecked] = useLocalStorage({ key: 'byoi', defaultValue: value !== undefined });
   const actuallyChecked = checked || !!value;
@@ -159,7 +173,12 @@ export function SourceImageUploadAccordion({
       </Card.Section>
       <Collapse in={actuallyChecked}>
         <Card.Section withBorder className="border-b-0 bg-gray-2 dark:bg-dark-6">
-          <SourceImageUpload value={value} onChange={onChange} />
+          <SourceImageUpload
+            value={value}
+            onChange={onChange}
+            upscaleMultiplier={upscaleMultiplier}
+            upscaleResolution={upscaleResolution}
+          />
         </Card.Section>
       </Collapse>
     </Card>
@@ -176,9 +195,13 @@ const upscaleResolutions = [
 function UpscalePicker({
   value,
   onChange,
+  upscaleMultiplier,
+  upscaleResolution,
 }: {
   value: SourceImageProps;
   onChange: (args: { upscaleWidth: number; upscaleHeight: number }) => void;
+  upscaleMultiplier?: boolean;
+  upscaleResolution?: boolean;
 }) {
   const min = Math.max(value.width, value.height);
   const _value = Math.max(value.upscaleHeight ?? 0, value.upscaleWidth ?? 0);
@@ -211,21 +234,25 @@ function UpscalePicker({
   return (
     <div className="flex flex-col gap-3">
       {maxUpscaleSize <= min && <Alert>This image cannot be upscaled any further.</Alert>}
-      <Input.Wrapper label="Upscale Multiplier">
-        <RadioGroup value={_value} onChange={handleChange} className="flex gap-2">
-          {multiplierOptions.map(({ label, value, disabled }) => (
-            <RadioInput key={value} value={value} label={label} disabled={disabled} />
-          ))}
-        </RadioGroup>
-      </Input.Wrapper>
+      {upscaleMultiplier && (
+        <Input.Wrapper label="Upscale Multiplier">
+          <RadioGroup value={_value} onChange={handleChange} className="flex gap-2">
+            {multiplierOptions.map(({ label, value, disabled }) => (
+              <RadioInput key={value} value={value} label={label} disabled={disabled} />
+            ))}
+          </RadioGroup>
+        </Input.Wrapper>
+      )}
 
-      <Input.Wrapper label="Upscale Resolution">
-        <RadioGroup value={_value} onChange={handleChange} className="flex gap-2">
-          {resolutionOptions.map(({ label, value, disabled }) => (
-            <RadioInput key={value} value={value} label={label} disabled={disabled} />
-          ))}
-        </RadioGroup>
-      </Input.Wrapper>
+      {upscaleResolution && (
+        <Input.Wrapper label="Upscale Resolution">
+          <RadioGroup value={_value} onChange={handleChange} className="flex gap-2">
+            {resolutionOptions.map(({ label, value, disabled }) => (
+              <RadioInput key={value} value={value} label={label} disabled={disabled} />
+            ))}
+          </RadioGroup>
+        </Input.Wrapper>
+      )}
 
       <div className="rounded-md bg-gray-2 px-6 py-4 dark:bg-dark-6">
         <span className="font-bold">Upscale Dimensions:</span> {value.upscaleWidth} x{' '}

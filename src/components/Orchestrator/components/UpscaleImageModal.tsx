@@ -14,6 +14,7 @@ import { GenerationResource } from '~/server/services/generation/generation.serv
 import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { WhatIfAlert } from '~/components/generation/Alerts/WhatIfAlert';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -101,18 +102,18 @@ function UpscalImageForm({
   return (
     <GenerationProvider>
       <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-        <InputSourceImageUpload name="sourceImage" removable={false} upscale />
+        <InputSourceImageUpload
+          name="sourceImage"
+          removable={false}
+          upscaleMultiplier
+          upscaleResolution
+        />
         <Divider />
+        <WhatIfAlert error={whatIf.error} />
         <GenerateButton
           type="submit"
-          // onClick={handleSubmit}
           loading={isLoading || generateImage.isLoading}
           cost={data?.cost?.total ?? 0}
-          error={
-            !isInitialLoading && isError
-              ? 'Error calculating cost. Please try updating your values'
-              : undefined
-          }
         >
           Upscale
         </GenerateButton>
