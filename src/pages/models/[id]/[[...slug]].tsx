@@ -201,13 +201,13 @@ export const getServerSideProps = createServerSideProps({
     }
 
     const isTraining = !!version?.trainingStatus;
-    const published = version?.status === 'Published';
+    const draft = version?.status === 'Draft';
     const isOwner = version?.model.userId === session?.user?.id;
 
     if (isTraining && isOwner) {
       // Start checking whether to redirect:
       // TODO: We might wanna redirect to all steps (?).
-      if (!published) {
+      if (draft) {
         return {
           redirect: {
             destination: `/models/${version.model.id}/model-versions/${version.id}/wizard?step=1`,
