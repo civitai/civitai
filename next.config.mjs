@@ -3,6 +3,11 @@ import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import packageJson from './package.json' assert { type: 'json' };
 
+const isProd = process.env.NODE_ENV === 'production';
+const isDev = process.env.NODE_ENV === 'development';
+const analyze = process.env.ANALYZE === 'true';
+const shouldOptimizeImports = (isDev && analyze) || isProd
+
 const withBundleAnalyzer = bundlAnalyzer({
   enabled: process.env.ANALYZE === 'true',
 });
@@ -63,7 +68,7 @@ export default defineNextConfig(
     experimental: {
       // scrollRestoration: true,
       largePageDataBytes: 512 * 100000,
-      optimizePackageImports: ['@civitai/client', './srs/libs/form'],
+      optimizePackageImports: shouldOptimizeImports ? ['@civitai/client', './srs/libs/form'] : [],
     },
     headers: async () => {
       // Add X-Robots-Tag header to all pages matching /sitemap.xml and /sitemap-models.xml /sitemap-articles.xml, etc
