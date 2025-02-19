@@ -1665,10 +1665,14 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   let { browsingLevel, userId } = input;
 
   const sorts: MeiliImageSort[] = [];
-  const filters: string[] = [
-    // Avoids exposing private resources to the public
-    `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`,
-  ];
+  const filters: string[] = [];
+
+  if (!isModerator) {
+    filters.push(
+      // Avoids exposing private resources to the public
+      `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
+    );
+  }
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
