@@ -297,7 +297,7 @@ export const userBasicCache = createCachedObject<UserBasicLookup>({
   ttl: CacheTTL.day,
 });
 
-type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date };
+type ModelVersionAccessCache = EntityAccessDataType & { publishedAt: Date; status: ModelStatus };
 
 export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCache>({
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
@@ -309,7 +309,13 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
     const oneHourAgo = dayjs().subtract(1, 'hour').toDate();
     const isOlderThanOneHour = data.publishedAt < oneHourAgo;
 
-    return data.availability !== 'Public' || !isOlderThanOneHour || !data.publishedAt;
+    return (
+      data.availability !== 'Public' ||
+      !isOlderThanOneHour ||
+      !data.publishedAt ||
+      // No point in caching stuff in testing or unpublished
+      data.status !== ModelStatus.Published
+    );
   },
   lookupFn: async (ids) => {
     const goodIds = ids.filter(isDefined);
@@ -324,7 +330,8 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
             THEN mmv."availability"
           ELSE mv."availability"
         END AS "availability",
-        mv."publishedAt" AS "publishedAt"
+        mv."publishedAt" AS "publishedAt",
+        mv."status" as "status"
       FROM "ModelVersion" mv
            JOIN "Model" mmv ON mv."modelId" = mmv.id
       WHERE

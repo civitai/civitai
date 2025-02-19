@@ -524,6 +524,7 @@ export const addSimpleImagePostHandler = async ({
       collectionId: collection.id,
       publishedAt: collection.read === CollectionReadConfiguration.Public ? new Date() : undefined,
     });
+
     const postImages = await Promise.all(
       images.map((image, index) =>
         addPostImage({

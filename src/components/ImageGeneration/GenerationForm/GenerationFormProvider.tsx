@@ -46,15 +46,13 @@ type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
 const formSchema = textToImageParamsSchema
-  .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true })
+  .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
     resources: generationResourceSchema.array().min(0).default([]),
     vae: generationResourceSchema.optional(),
     prompt: z
       .string()
-      .nonempty('Prompt cannot be empty')
-      .max(1500, 'Prompt cannot be longer than 1500 characters')
       .superRefine((val, ctx) => {
         const { blockedFor, success } = auditPrompt(val);
         if (!success) {
@@ -73,7 +71,8 @@ const formSchema = textToImageParamsSchema
             params: { count },
           });
         }
-      }),
+      })
+      .default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     remixPrompt: z.string().optional(),
@@ -91,7 +90,7 @@ const formSchema = textToImageParamsSchema
     if (fluxUltraRaw) data.engine = 'flux-pro-raw';
     else data.engine = undefined;
 
-    if (!data.workflow.includes('img2img')) data.sourceImage = undefined;
+    if (!data.workflow.startsWith('img2img')) data.sourceImage = null;
 
     return removeEmpty({
       ...data,
@@ -100,12 +99,28 @@ const formSchema = textToImageParamsSchema
     });
   })
   .superRefine((data, ctx) => {
-    if (data.workflow.includes('img2img') && !data.sourceImage)
+    if (data.workflow.startsWith('txt2img')) {
+      if (!data.prompt || data.prompt.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Prompt cannot be empty',
+          path: ['prompt'],
+        });
+      } else if (prompt.length > 1500) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Prompt cannot be longer than 1500 characters',
+          path: ['prompt'],
+        });
+      }
+    }
+    if (data.workflow.startsWith('img2img') && !data.sourceImage) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'Image is required',
         path: ['sourceImage'],
       });
+    }
   });
 export const blockedRequest = (() => {
   let instances: number[] = [];
@@ -224,7 +239,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const type = useGenerationFormStore((state) => state.type);
 
   const getValues = useCallback(
-    (storageValues: DeepPartialFormData) => {
+    (storageValues: any): any => {
       // Ensure we always get similarity accordingly.
       if (storageValues.remixOfId && storageValues.prompt) {
         checkSimilarity(storageValues.remixOfId, storageValues.prompt);
@@ -240,7 +255,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
-    version: 1.1,
+    version: 1.2,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,

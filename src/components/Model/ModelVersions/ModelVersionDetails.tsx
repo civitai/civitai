@@ -98,6 +98,7 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   baseModelLicenses,
@@ -161,6 +162,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   } = useModelVersionPermission({
     modelVersionId: version.id,
   });
+  const mobile = useIsMobile();
 
   // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
   const downloadsDisabled =
@@ -207,6 +209,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+  const isPrivateModel = model.availability === Availability.Private;
 
   const handlePublishPrivateModel = async () => {
     dialogStore.trigger({
@@ -606,7 +609,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     isOwnerOrMod &&
     (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
     hasFiles &&
-    hasPosts;
+    hasPosts &&
+    !isPrivateModel;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
@@ -639,7 +643,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2} ref={adContainerRef}>
         <Stack>
-          {model.mode !== ModelModifier.TakenDown && (
+          {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}
               modelVersionId={version.id}
@@ -661,7 +665,12 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           ) : showPublishButton ? (
             <Stack spacing={4}>
               {version.canGenerate && isOwnerOrMod && (
-                <GenerateButton modelVersionId={version.id} data-activity="create:model" py={8} />
+                <GenerateButton
+                  data-tour="model:create"
+                  modelVersionId={version.id}
+                  data-activity="create:model"
+                  py={8}
+                />
               )}
               <Button.Group>
                 <Button
@@ -703,6 +712,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
                   {canGenerate && (
                     <GenerateButton
+                      data-tour="model:create"
                       modelVersionId={version.id}
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
@@ -760,6 +770,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                   {hideDownload ? null : displayCivitaiLink || canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
+                        data-tour="model:download"
                         canDownload={canDownload}
                         downloadPrice={
                           !hasDownloadPermissions &&
@@ -779,6 +790,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       <Menu position="bottom-end">
                         <Menu.Target>
                           <DownloadButton
+                            data-tour="model:download"
                             canDownload={canDownload}
                             downloadPrice={
                               !hasDownloadPermissions &&
@@ -797,6 +809,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     )
                   ) : (
                     <DownloadButton
+                      data-tour="model:download"
                       component="a"
                       {...getDownloadProps(primaryFile)}
                       canDownload={canDownload}
@@ -841,7 +854,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 
                   {onFavoriteClick && (
                     <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                      <div>
+                      <div data-tour="model:like">
                         <LoginRedirect reason="favorite-model">
                           <Button
                             onClick={() =>
@@ -857,7 +870,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       </div>
                     </Tooltip>
                   )}
-                  {hasDownloadPermissions && !downloadsDisabled && (
+                  {hasDownloadPermissions && !downloadsDisabled && !isPrivateModel && (
                     <ToggleVaultButton modelVersionId={version.id}>
                       {({ isLoading, isInVault, toggleVaultItem }) => (
                         <Tooltip
@@ -909,7 +922,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               </Text>
             </AlertWithIcon>
           )}
-          {model.availability === Availability.Private && isOwnerOrMod && (
+          {isPrivateModel && isOwnerOrMod && (
             <AlertWithIcon
               color="yellow"
               iconColor="yellow"
@@ -1391,7 +1404,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
         })}
       >
         <Stack>
-          {model.mode !== ModelModifier.TakenDown && (
+          {model.mode !== ModelModifier.TakenDown && !mobile && (
             <ModelCarousel
               modelId={model.id}
               modelVersionId={version.id}

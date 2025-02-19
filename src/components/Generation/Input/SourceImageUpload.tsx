@@ -102,7 +102,7 @@ function SourceImageUpload({
           />
         ) : (
           <div className="flex max-h-96 justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6">
-            <div className="relative ">
+            <div className="relative w-full">
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
                 src={value.url}

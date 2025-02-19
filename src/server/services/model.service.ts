@@ -2766,9 +2766,9 @@ export const privateModelFromTraining = async ({
   const subscription = await getUserSubscription({ userId: input.user.id });
 
   const maxPrivateModels = subscription?.tier
-    ? constants.memberships.maxPrivateModels[
-        subscription.tier as keyof typeof constants.memberships.maxPrivateModels
-      ] ?? 0
+    ? constants.memberships.membershipDetailsAddons[
+        subscription.tier as keyof typeof constants.memberships.membershipDetailsAddons
+      ]?.maxPrivateModels ?? 0
     : 0;
 
   if (totalPrivateModels >= maxPrivateModels) {
@@ -2906,6 +2906,7 @@ export const publishPrivateModel = async ({
       },
       data: {
         publishedAt: publishVersions ? now : null,
+        availability: Availability.Public,
       },
     }),
     dbWrite.modelVersion.updateMany({
@@ -2926,6 +2927,20 @@ export const publishPrivateModel = async ({
       },
     }),
   ]);
+
+  const updatedImageIds = await dbRead.image.findMany({
+    where: {
+      post: {
+        modelVersionId: { in: versionIds },
+      },
+    },
+  });
+
+  if (updatedImageIds.length > 0) {
+    await imagesMetricsSearchIndex.queueUpdate(
+      updatedImageIds.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
 
   return { versionIds };
 };

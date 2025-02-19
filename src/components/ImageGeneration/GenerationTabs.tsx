@@ -10,7 +10,12 @@ import {
 } from '@tabler/icons-react';
 import { Feed } from './Feed';
 import { Queue } from './Queue';
-import { GenerationPanelView, generationPanel, useGenerationStore } from '~/store/generation.store';
+import {
+  GenerationPanelView,
+  generationPanel,
+  useGenerationStore,
+  useRemixStore,
+} from '~/store/generation.store';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import React, { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { useRouter } from 'next/router';
@@ -20,16 +25,20 @@ import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { GenerationForm } from '~/components/Generate/GenerationForm';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
+import { useTourContext } from '~/providers/TourProvider';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
+  const { runTour } = useTourContext();
 
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
 
   const view = useGenerationStore((state) => state.view);
   const setView = useGenerationStore((state) => state.setView);
+  const remixOfId = useRemixStore((state) => state.remixOfId);
   if (isImageFeedSeparate && view === 'generate') setView('queue');
 
   const View = isImageFeedSeparate ? tabs.generate.Component : tabs[view].Component;
@@ -38,6 +47,7 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
   );
 
   const isClient = useIsClient();
+
   if (!isClient) return null;
 
   return (
@@ -58,8 +68,19 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
       </SignalStatusNotification>
       <div className="flex w-full flex-col gap-2 p-3">
         <div className="flex w-full items-center justify-between gap-2">
-          <div className="relative flex-1">
+          <div className="relative flex flex-1 flex-nowrap items-center gap-2">
             <ChallengeIndicator />
+            <HelpButton
+              data-tour="gen:reset"
+              tooltip="Need help? Start the tour!"
+              onClick={async () => {
+                runTour({
+                  key: remixOfId ? 'remix-content-generation' : 'content-generation',
+                  step: 0,
+                  forceRun: true,
+                });
+              }}
+            />
           </div>
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl
@@ -67,10 +88,13 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
               key={tabEntries.map(([, item]) => item.label).join('-')}
               className="shrink-0"
               sx={{ overflow: 'visible' }}
+              data-tour="gen:results"
               data={tabEntries.map(([key, { Icon, label }]) => ({
                 label: (
                   <Tooltip label={label} position="bottom" color="dark" openDelay={200} offset={10}>
-                    <Icon size={16} />
+                    <div data-tour={`gen:${key}`}>
+                      <Icon size={16} />
+                    </div>
                   </Tooltip>
                 ),
                 value: key,
