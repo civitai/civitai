@@ -1,5 +1,5 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
-import { ActionIcon, Checkbox, createStyles, Menu, Modal } from '@mantine/core';
+import { ActionIcon, Center, Checkbox, createStyles, Menu, Modal, Text } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -77,6 +77,8 @@ export function GeneratedImage({
     stepName: step.name,
     imageId: image.id,
   });
+
+  const [nsfwLevelError, setNsfwLevelError] = useState(false);
 
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
@@ -271,7 +273,9 @@ export function GeneratedImage({
   return (
     <TwCard
       ref={ref}
-      className={clsx('max-h-full max-w-full', classes.imageWrapper)}
+      className={clsx('max-h-full max-w-full', classes.imageWrapper, {
+        ['!bg-red-9']: nsfwLevelError,
+      })}
       style={{ aspectRatio: image.aspectRatio ?? image.width / image.height }}
     >
       {inView && (
@@ -285,6 +289,13 @@ export function GeneratedImage({
               if (e.button === 1) return handleAuxClick();
             }}
           >
+            {nsfwLevelError && (
+              <Center px="md">
+                <Text align="center" size="sm">
+                  NSFW level too high. Please adjust your prompt.
+                </Text>
+              </Center>
+            )}
             <EdgeMedia2
               src={image.url}
               type={image.type}
@@ -292,9 +303,11 @@ export function GeneratedImage({
               className="max-h-full w-auto max-w-full"
               disableWebm
               disablePoster
-              // onDragStart={(e) => {
-              //   if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
-              // }}
+              onError={(e) => {
+                if (image.url.includes('nsfwLevel')) {
+                  setNsfwLevelError(true);
+                }
+              }}
             />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
