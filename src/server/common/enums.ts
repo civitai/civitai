@@ -211,6 +211,7 @@ export enum OnboardingSteps {
   Profile = 2,
   BrowsingLevels = 4,
   Buzz = 8,
+  CreatorProgram = 16,
 }
 
 export const OnboardingComplete =

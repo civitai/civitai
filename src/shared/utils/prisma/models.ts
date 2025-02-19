@@ -4,6 +4,10 @@ export type BuzzWithdrawalRequestStatus = "Requested" | "Canceled" | "Rejected" 
 
 export type UserPaymentConfigurationProvider = "Stripe" | "Tipalti";
 
+export type CashWithdrawalStatus = "Started" | "Burned" | "Submitted" | "Failed" | "FailedFee" | "Paid";
+
+export type CashWithdrawalMethod = "ACH" | "Check" | "PayPal";
+
 export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
 export type PaymentProvider = "Stripe" | "Paddle";
@@ -256,6 +260,21 @@ export interface BuzzWithdrawalRequest {
   history?: BuzzWithdrawalRequestHistory[];
 }
 
+export interface CashWithdrawal {
+  id: string;
+  transactionId: string | null;
+  userId: number;
+  user?: User;
+  amount: number;
+  method: CashWithdrawalMethod;
+  fee: number;
+  status: CashWithdrawalStatus;
+  note: string | null;
+  metadata: JsonValue;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export interface User {
   id: number;
   name: string | null;
@@ -380,6 +399,7 @@ export interface User {
   collectionItemScores?: CollectionItemScore[];
   appeals?: Appeal[];
   resolvedAppeals?: Appeal[];
+  cashWithdrawals?: CashWithdrawal[];
 }
 
 export interface CustomerSubscription {

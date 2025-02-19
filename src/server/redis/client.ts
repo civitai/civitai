@@ -511,6 +511,14 @@ export const REDIS_KEYS = {
     POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
     EARNED: 'buzz:earned',
   },
+  CREATOR_PROGRAM: {
+    CAPS: 'packed:caches:creator-program:caps',
+    CASH: 'packed:caches:creator-program:cash',
+    BANKED: 'packed:caches:creator-program:banked',
+    POOL_VALUE: 'packed:caches:creator-program:pool-value',
+    POOL_SIZE: 'packed:caches:creator-program:pool-size',
+    POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
+  },
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`

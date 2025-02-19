@@ -18,6 +18,25 @@ export const UserPaymentConfigurationProvider = {
 
 export type UserPaymentConfigurationProvider = (typeof UserPaymentConfigurationProvider)[keyof typeof UserPaymentConfigurationProvider];
 
+export const CashWithdrawalStatus = {
+  Started: 'Started',
+  Burned: 'Burned',
+  Submitted: 'Submitted',
+  Failed: 'Failed',
+  FailedFee: 'FailedFee',
+  Paid: 'Paid',
+} as const;
+
+export type CashWithdrawalStatus = (typeof CashWithdrawalStatus)[keyof typeof CashWithdrawalStatus];
+
+export const CashWithdrawalMethod = {
+  ACH: 'ACH',
+  Check: 'Check',
+  PayPal: 'PayPal',
+} as const;
+
+export type CashWithdrawalMethod = (typeof CashWithdrawalMethod)[keyof typeof CashWithdrawalMethod];
+
 export const RewardsEligibility = {
   Eligible: 'Eligible',
   Ineligible: 'Ineligible',

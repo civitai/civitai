@@ -159,6 +159,39 @@ model BuzzWithdrawalRequest {
   history                     BuzzWithdrawalRequestHistory[]
 }
 
+enum CashWithdrawalStatus {
+  Started
+  Burned
+  Submitted
+  Failed
+  FailedFee
+  Paid
+}
+
+enum CashWithdrawalMethod {
+  ACH
+  Check
+  PayPal
+}
+
+// TODO creators program: create a migration for this addition after confirming that it's ok for Tipalti.
+model CashWithdrawal {
+  id            String               @id @default(cuid())
+  transactionId String?              @unique
+  userId        Int
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Int
+  method        CashWithdrawalMethod
+  fee           Int
+  status        CashWithdrawalStatus
+  note          String?
+  metadata      Json                 @default("{}")
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+
+  @@index([userId])
+}
+
 enum RewardsEligibility {
   Eligible
   Ineligible
@@ -293,6 +326,7 @@ model User {
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
   resolvedAppeals            Appeal[]                       @relation("resolvedAppeals")
+  cashWithdrawals            CashWithdrawal[]
 }
 
 model CustomerSubscription {

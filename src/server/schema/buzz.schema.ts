@@ -26,9 +26,19 @@ export enum TransactionType {
   AuthorizedPurchase = 20,
   Compensation = 21,
   Appeal = 22,
+  Bank = 23,
+  Extract = 24,
+  Fee = 25,
 }
 
-export const buzzAccountTypes = ['user', 'club', 'generation'] as const;
+export const buzzAccountTypes = [
+  'user',
+  'club',
+  'generation',
+  'creator-program:bank',
+  'cash:pending',
+  'cash:settled',
+] as const;
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
 
 function preprocessAccountType(value: unknown) {
