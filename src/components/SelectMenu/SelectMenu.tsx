@@ -10,6 +10,7 @@ import {
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
+import { FilterButton } from '~/components/Buttons/FilterButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type SelectMenu<T extends string | number> = {
@@ -73,6 +74,7 @@ export function SelectMenuV2<T extends string | number>({
   disabled,
   children,
   icon,
+  className,
   ...buttonProps
 }: SelectMenu<T> & {
   icon?: React.ReactNode;
@@ -81,27 +83,22 @@ export function SelectMenuV2<T extends string | number>({
   const [opened, setOpened] = useState(false);
   const mobile = useIsMobile();
 
-  const target = (
+  const targetOld = (
     <Button
-      color="gray"
-      radius="xl"
-      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
       disabled={disabled}
       rightIcon={
         <IconChevronDown
-          className={clsx({ ['rotate-180 transition-transform']: opened })}
+          className="transition-transform group-data-[expanded=true]:rotate-180"
           size={16}
         />
       }
-      size="sm"
-      compact
-      {...buttonProps}
       className={clsx(
-        'h-8 bg-transparent',
+        'group h-8 rounded-3xl bg-transparent px-2',
         'text-gray-8 hover:bg-gray-2 data-[expanded=true]:bg-gray-3',
         'dark:text-white dark:hover:bg-dark-5 dark:data-[expanded=true]:bg-dark-4',
-        buttonProps?.className
+        className
       )}
+      {...buttonProps}
       onClick={() => setOpened((o) => !o)}
     >
       <div className="flex items-center gap-1" suppressHydrationWarning>
@@ -109,6 +106,16 @@ export function SelectMenuV2<T extends string | number>({
         {label}
       </div>
     </Button>
+  );
+
+  const target = (
+    <FilterButton
+      disabled={disabled}
+      icon={IconSortDescending}
+      onClick={() => setOpened((o) => !o)}
+    >
+      {label}
+    </FilterButton>
   );
 
   if (mobile)

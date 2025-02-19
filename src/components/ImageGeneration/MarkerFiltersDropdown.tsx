@@ -14,6 +14,7 @@ import {
 } from '@mantine/core';
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { ReactNode, useState } from 'react';
+import { FilterButton } from '~/components/Buttons/FilterButton';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
@@ -146,7 +147,10 @@ export function DumbMarkerFiltersDropdown({
           inline
         >
           <Popover.Target>
-            <Button
+            <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+              {text}
+            </FilterButton>
+            {/* <Button
               className={classes.actionButton}
               color="gray"
               radius="xl"
@@ -160,7 +164,7 @@ export function DumbMarkerFiltersDropdown({
                 <IconFilter size={16} />
                 {text}
               </Group>
-            </Button>
+            </Button> */}
           </Popover.Target>
         </Indicator>
         <Popover.Dropdown maw={576} w="100%">
