@@ -26,7 +26,7 @@ export const getServerSideProps = createServerSideProps({
     const postId = Number(params.postId);
     if (!isNumber(postId)) return { notFound: true };
     try {
-      const post = await getPostDetail({ id: postId });
+      const post = await getPostDetail({ id: postId, user: session?.user });
 
       if (!post) return { notFound: true };
 
