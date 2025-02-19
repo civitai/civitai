@@ -174,8 +174,6 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
 
   const run = (state.running && !completed && !isInitialLoading) || state.forceRun;
 
-  console.log({ ...state, completed, run, runTour, closeTour, setSteps });
-
   return (
     <TourContext.Provider value={{ ...state, completed, run, runTour, closeTour, setSteps }}>
       {children}
