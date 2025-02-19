@@ -26,7 +26,7 @@ export const useActiveSubscription = ({
 
   return {
     subscription,
-    subscriptionLoading: !isMember ? false : isLoading || isFetching,
+    subscriptionLoading: !isMember || !currentUser ? false : isLoading || isFetching,
     subscriptionPaymentProvider: subscription?.product?.provider,
     isFreeTier: !subscription || meta?.tier === 'free',
     tier: meta?.tier ?? currentUser?.tier ?? 'free',

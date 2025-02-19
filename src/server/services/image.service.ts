@@ -2195,7 +2195,7 @@ export const getImage = async ({
   withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
   const AND = [Prisma.sql`i.id = ${id}`];
-  if (!isModerator)
+  if (!isModerator) {
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
@@ -2214,6 +2214,11 @@ export const getImage = async ({
         ' OR '
       )})`
     );
+
+    if (!withoutPost) {
+      AND.push(Prisma.sql`(p."availability" = 'Public' OR p."userId" = ${userId})`);
+    }
+  }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`

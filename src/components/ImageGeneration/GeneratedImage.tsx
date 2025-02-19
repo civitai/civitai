@@ -304,6 +304,7 @@ export function GeneratedImage({
               disableWebm
               disablePoster
               onError={(e) => {
+                // TODO: We might need a better solution there.
                 if (image.url.includes('nsfwLevel')) {
                   setNsfwLevelError(true);
                 }
