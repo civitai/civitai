@@ -55,8 +55,9 @@ export function UpscaleEnhancementModal({
           <WhatIfAlert error={whatIf.error} />
           <GenerateButton
             type="submit"
-            loading={whatIf.isLoading || generate.isLoading}
+            loading={whatIf.isInitialLoading || generate.isLoading}
             cost={whatIf.data?.cost?.total ?? 0}
+            disabled={whatIf.isError}
           >
             Upscale
           </GenerateButton>

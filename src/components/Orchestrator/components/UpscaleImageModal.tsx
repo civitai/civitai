@@ -112,8 +112,9 @@ function UpscalImageForm({
         <WhatIfAlert error={whatIf.error} />
         <GenerateButton
           type="submit"
-          loading={whatIf.isLoading || generateImage.isLoading}
+          loading={whatIf.isInitialLoading || generateImage.isLoading}
           cost={whatIf.data?.cost?.total ?? 0}
+          disabled={whatIf.isError}
         >
           Upscale
         </GenerateButton>
