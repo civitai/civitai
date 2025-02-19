@@ -41,7 +41,7 @@ export const modelMetrics = createMetricProcessor({
       getVersionBuzzTasks(ctx),
     ]);
     log('modelVersionMetrics update', versionTasks.flat().length, 'tasks');
-    for (const tasks of versionTasks) await limitConcurrency(tasks, 5);
+    for (const tasks of versionTasks) await limitConcurrency(tasks, 10);
 
     const modelTasks = await Promise.all([
       getModelRatingTasks(ctx),
@@ -51,7 +51,7 @@ export const modelMetrics = createMetricProcessor({
       getVersionAggregationTasks(ctx),
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
-    for (const tasks of modelTasks) await limitConcurrency(tasks, 5);
+    for (const tasks of modelTasks) await limitConcurrency(tasks, 10);
 
     // Update the search index
     //---------------------------------------
@@ -306,7 +306,7 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
-    log('getRatingTasks', i + 1, 'of', tasks.length);
+    log('getVersionBuzzTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
       -- update version rating metrics
       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "tippedCount", "tippedAmountCount", "updatedAt")
@@ -340,7 +340,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
-    log('getRatingTasks', i + 1, 'of', tasks.length);
+    log('getModelRatingTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
       -- update model rating metrics
       INSERT INTO "ModelMetric" ("modelId", timeframe, "thumbsUpCount", "thumbsDownCount")
@@ -362,7 +362,7 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
       ON CONFLICT ("modelId", timeframe) DO UPDATE
         SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
     `;
-    log('getRatingTasks', i + 1, 'of', tasks.length, 'done');
+    log('getModelRatingTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
