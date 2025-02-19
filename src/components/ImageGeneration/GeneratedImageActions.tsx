@@ -20,7 +20,7 @@ import { uniqBy } from 'lodash-es';
 import { useState } from 'react';
 import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { usePathname } from 'next/navigation';
 

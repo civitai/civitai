@@ -65,7 +65,7 @@ import '~/styles/globals.css';
 import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
 import { getToken } from 'next-auth/jwt';
 import { civitaiTokenCookieName } from '~/libs/auth';
-import { TourProvider } from '~/providers/TourProvider';
+import { ToursProvider } from '~/components/Tours/ToursProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -161,7 +161,7 @@ function MyApp(props: CustomAppProps) {
                                           >
                                             <BrowserRouterProvider>
                                               <IntersectionObserverProvider>
-                                                <TourProvider>
+                                                <ToursProvider>
                                                   <BaseLayout>
                                                     {isProd && <TrackPageView />}
                                                     <ChatContextProvider>
@@ -173,7 +173,7 @@ function MyApp(props: CustomAppProps) {
                                                       </CustomModalsProvider>
                                                     </ChatContextProvider>
                                                   </BaseLayout>
-                                                </TourProvider>
+                                                </ToursProvider>
                                               </IntersectionObserverProvider>
                                             </BrowserRouterProvider>
                                           </NotificationsProvider>
