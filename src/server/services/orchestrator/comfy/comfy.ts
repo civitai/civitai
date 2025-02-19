@@ -17,7 +17,9 @@ import {
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 
 export async function createComfyStep(
@@ -89,8 +91,13 @@ export async function createComfyStep(
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata: {
       resources: input.resources,
-      params: input.params,
+      params: removeEmpty(input.params),
       remixOfId: input.remixOfId,
+      maxNsfwLevel: resources.some(
+        (r) => r.availability === Availability.Private || !!r.epochDetails
+      )
+        ? 'pG13'
+        : undefined,
     },
   } as ComfyStepTemplate;
 }

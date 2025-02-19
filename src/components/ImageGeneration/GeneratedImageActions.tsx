@@ -21,6 +21,9 @@ import { useState } from 'react';
 import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
 import { SortFilter } from '~/components/Filters';
+import { useTourContext } from '~/providers/TourProvider';
+import { removeEmpty } from '~/utils/object-helpers';
+import { usePathname } from 'next/navigation';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -31,7 +34,9 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
-  const { images, steps, data } = useGetTextToImageRequests();
+  const path = usePathname();
+  const { images, data } = useGetTextToImageRequests();
+  const { running, runTour, currentStep, returnUrl } = useTourContext();
   const selectableImages = images.filter((x) => x.status === 'succeeded');
   const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
@@ -107,8 +112,11 @@ export function GeneratedImageActions({
       orchestratorMediaTransmitter.setUrls(key, imageData);
       const post = await createPostMutation.mutateAsync({});
       // updateImages({}) // tODO - show that this image has been posted?
-      const pathname = `/posts/${post.id}/edit?src=${key}`;
-      await router.push(pathname);
+      if (running) runTour({ step: currentStep + 1 });
+      await router.push({
+        pathname: '/posts/[postId]/edit',
+        query: removeEmpty({ postId: post.id, src: key, returnUrl: returnUrl || path }),
+      });
       generationPanel.close();
       deselect();
     } catch (e) {
@@ -216,6 +224,7 @@ export function GeneratedImageActions({
           </Tooltip>
           <Tooltip label="Post your generations to earn buzz!">
             <Button
+              data-tour="gen:post"
               color="blue"
               size="sm"
               h={34}

@@ -736,11 +736,11 @@ export function formatComfyStep({
   const { output, jobs, metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
 
-  if (params?.aspectRatio) {
-    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
-    params.width = size.width;
-    params.height = size.height;
-  }
+  // if (params?.aspectRatio) {
+  //   const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
+  //   params.width = size.width;
+  //   params.height = size.height;
+  // }
 
   const { width = 512, height = 512 } = params?.sourceImage ?? params ?? {};
 

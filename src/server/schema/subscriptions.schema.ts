@@ -29,6 +29,7 @@ export const subscriptionProductMetadataSchema = z
     // Used for Save Details only.
     includeWithTransaction: booleanString().optional(),
     maxPrivateModels: z.coerce.number().positive().optional(),
+    supportLevel: z.string().optional(),
   })
   .passthrough();
 

@@ -12,10 +12,7 @@ const workflowKeySchema = z.string().default('txt2img');
 export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
-  prompt: z
-    .string()
-    .nonempty('Prompt cannot be empty')
-    .max(1500, 'Prompt cannot be longer than 1500 characters'),
+  prompt: z.string().default(''),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30).optional(),
   sampler: z
@@ -48,7 +45,7 @@ export const textToImageParamsSchema = z.object({
   experimental: z.boolean().optional(),
   engine: z.string().optional(),
   priority: z.nativeEnum(Priority).default('low'),
-  sourceImage: sourceImageSchema.nullish(),
+  sourceImage: sourceImageSchema.nullable().default(null).catch(null),
 });
 
 // #endregion
