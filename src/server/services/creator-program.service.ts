@@ -151,7 +151,7 @@ export async function getCreatorRequirements(userId: number) {
       JOIN "Product" p ON p.id = cs."productId"
       WHERE status IN ('incomplete', 'active') AND cs."userId" = u.id
     ) as membership
-    FROM "User"
+    FROM "User" u
     WHERE id = ${userId};
   `;
 
