@@ -207,7 +207,7 @@ export function ModelVersionList({
               variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => {
-                if (showExtraIcons) {
+                if (showExtraIcons && !currentUser?.isModerator) {
                   if (!published && isTraining) {
                     return router.push(
                       `/models/${version.modelId}/model-versions/${version.id}/wizard?step=1`

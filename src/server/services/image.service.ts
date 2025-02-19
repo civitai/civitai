@@ -2216,7 +2216,7 @@ export const getImage = async ({
     );
 
     if (!withoutPost) {
-      AND.push(Prisma.sql`(p."availability" = 'Public' OR p."userId" = ${userId})`);
+      AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
     }
   }
 
