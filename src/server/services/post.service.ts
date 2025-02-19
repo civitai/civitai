@@ -618,7 +618,7 @@ export const createPost = async ({
   let availability: Availability = Availability.Public;
 
   if (data.modelVersionId) {
-    const modelVersion = await dbRead.modelVersion.findUnique({
+    const modelVersion = await dbWrite.modelVersion.findUnique({
       where: { id: data.modelVersionId },
       select: { model: { select: { availability: true } } },
     });
