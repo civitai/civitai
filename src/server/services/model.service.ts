@@ -2906,6 +2906,7 @@ export const publishPrivateModel = async ({
       },
       data: {
         publishedAt: publishVersions ? now : null,
+        availability: Availability.Public,
       },
     }),
     dbWrite.modelVersion.updateMany({
@@ -2926,6 +2927,20 @@ export const publishPrivateModel = async ({
       },
     }),
   ]);
+
+  const updatedImageIds = await dbRead.image.findMany({
+    where: {
+      post: {
+        modelVersionId: { in: versionIds },
+      },
+    },
+  });
+
+  if (updatedImageIds.length > 0) {
+    await imagesMetricsSearchIndex.queueUpdate(
+      updatedImageIds.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
 
   return { versionIds };
 };
