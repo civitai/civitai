@@ -2,8 +2,7 @@ import Head from 'next/head';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function MetaPWA() {
-  const featureFlags = useFeatureFlags();
-  const { isGreen } = featureFlags;
+  const { isGreen } = useFeatureFlags();
 
   return (
     <Head>

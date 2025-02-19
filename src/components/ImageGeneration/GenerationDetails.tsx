@@ -15,7 +15,7 @@ export function GenerationDetails({
 }: Props) {
   const detailItems = Object.entries(params)
     .filter(([, value]) => {
-      if (Array.isArray(value)) return false;
+      if (Array.isArray(value) || typeof value === 'object') return false;
       if (typeof value === 'string') return !!value.length;
       return value !== undefined;
     })

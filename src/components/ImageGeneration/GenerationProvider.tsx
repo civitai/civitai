@@ -30,6 +30,7 @@ type GenerationState = {
   requestLimit: number;
   requestsRemaining: number;
   requestsLoading: boolean;
+  hasGeneratedImages: boolean;
   canGenerate: boolean;
   userLimits?: GenerationLimits;
   userTier: UserTier;
@@ -46,6 +47,7 @@ const createGenerationStore = () =>
         canGenerate: false,
         userTier: 'free',
         requestsLoading: true,
+        hasGeneratedImages: false,
       }),
       { store: 'generation-context' }
     )
@@ -64,6 +66,7 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   const {
     data: requests,
     steps,
+    images,
     isLoading,
   } = useGetTextToImageRequests(undefined, { enabled: opened, includeTags: false });
   const generationStatus = useGenerationStatus();
@@ -165,8 +168,8 @@ export function GenerationProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => {
     const store = storeRef.current;
     if (!store) return;
-    store.setState({ requestsLoading: isLoading });
-  }, [isLoading]);
+    store.setState({ requestsLoading: isLoading, hasGeneratedImages: images.length > 0 });
+  }, [images, isLoading]);
   // #endregion
 
   if (!storeRef.current) storeRef.current = createGenerationStore();

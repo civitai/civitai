@@ -10,12 +10,12 @@ import {
   ThemeIcon,
   Tooltip,
 } from '@mantine/core';
-import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@tabler/icons-react';
-import { useMemo, useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -32,15 +32,17 @@ import { useInView } from '~/hooks/useInView';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { useImageStore } from '~/store/image.store';
-import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
+import { useTourContext } from '~/providers/TourProvider';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
+  const { running, runTour, currentStep } = useTourContext();
 
   const image = useImageStore(data);
   const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
@@ -57,6 +59,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const showVotes = !!tags?.length && isScanned;
 
   const onSite = image.onSite;
+  const isRemix = !!image.remixOfId;
   const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
 
@@ -64,12 +67,16 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+
       generationPanel.open({
         type: image.type,
         id: image.id,
       });
+
+      // Go to next step in tour when clicking
+      if (running) runTour({ step: currentStep + 1 });
     },
-    [image.type, image.id]
+    [image.type, image.id, running, runTour, currentStep]
   );
 
   const twCardStyle = useMemo(() => {
@@ -125,10 +132,10 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         alt={image.name ?? undefined}
                         skip={getSkipValue(image)}
                         type={image.type}
-                        wrapperProps={{ style: { height: '100%' } }}
+                        wrapperProps={{ className: 'flex-1 h-full' }}
                         width={450}
                         placeholder="empty"
-                        contain={!!image.cosmetic?.data}
+                        contain
                         // fadeIn
                       />
                     ) : (
@@ -149,13 +156,14 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                   {safe && (
                     <div className="absolute right-2 top-2 flex flex-col gap-2">
                       {!isBlocked && <ImageContextMenu image={image} />}
-                      {features.imageGeneration && image.hasMeta && (
+                      {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
                         <HoverActionButton
                           label="Remix"
                           size={30}
                           color="white"
                           variant="filled"
                           data-activity="remix:image-card"
+                          data-tour={image.type === MediaType.image ? 'gen:remix' : undefined}
                           onClick={handleRemixClick}
                         >
                           <IconBrush stroke={2.5} size={16} />
@@ -234,7 +242,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                       </div>
                     </Alert>
                   )}
-                  {onSite && <OnsiteIndicator />}
+                  {onSite && <OnsiteIndicator isRemix={isRemix} />}
                 </div>
                 <div>
                   <Reactions

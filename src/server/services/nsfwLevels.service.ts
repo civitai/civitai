@@ -1,18 +1,18 @@
 import { Prisma } from '@prisma/client';
-import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { isDefined } from '~/utils/type-guards';
 import { chunk, uniq } from 'lodash-es';
+import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   articlesSearchIndex,
   bountiesSearchIndex,
   collectionsSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
-import { ImageConnectionType, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { CollectionItemStatus } from '~/shared/utils/prisma/enums';
+import { isDefined } from '~/utils/type-guards';
 
 async function getImageConnectedEntities(imageIds: number[]) {
   // these dbReads could be run concurrently
@@ -420,8 +420,10 @@ export async function updateModelNsfwLevels(modelIds: number[]) {
 export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
   if (!modelVersionIds.length) return;
   const updateSystemNsfwLevel =
-    (await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'update-system-model-version-nsfw-level')) !==
-    'false';
+    (await sysRedis.hGet(
+      REDIS_SYS_KEYS.SYSTEM.FEATURES,
+      'update-system-model-version-nsfw-level'
+    )) !== 'false';
 
   await dbWrite.$queryRaw<{ id: number }[]>(Prisma.sql`
     WITH level as (

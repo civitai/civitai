@@ -1,4 +1,10 @@
 import type { MantineTheme } from '@mantine/core';
+import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
+import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { env } from '~/env/client';
+import { BanReasonCode, ModelSort } from '~/server/common/enums';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,
   Currency,
@@ -8,12 +14,6 @@ import {
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
-import { env } from '~/env/client';
-import { BanReasonCode, ModelSort } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import type { GenerationResource } from '~/shared/constants/generation.constants';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
 
@@ -294,9 +294,15 @@ export const constants = {
     coverImageWidth: 850,
   },
   comments: {
-    imageMaxDepth: 3,
-    bountyEntryMaxDepth: 3,
-    maxDepth: 5,
+    getMaxDepth({ entityType }: { entityType: string }) {
+      switch (entityType) {
+        case 'image':
+        case 'bountyEntry':
+          return 3;
+        default:
+          return 5;
+      }
+    },
   },
   altTruncateLength: 125,
   system: {
@@ -335,6 +341,28 @@ export const constants = {
       discountPercent: 50,
       tier: 'founder',
     },
+    membershipDetailsAddons: {
+      free: {
+        maxPrivateModels: 0,
+        supportLevel: 'Basic',
+      },
+      founder: {
+        maxPrivateModels: 3,
+        supportLevel: 'Priority',
+      },
+      bronze: {
+        maxPrivateModels: 3,
+        supportLevel: 'Priority',
+      },
+      silver: {
+        maxPrivateModels: 10,
+        supportLevel: 'Premium',
+      },
+      gold: {
+        maxPrivateModels: 100,
+        supportLevel: 'VIP',
+      },
+    },
   },
   freeMembershipDetails: {
     name: 'Free',
@@ -346,6 +374,7 @@ export const constants = {
       quantityLimit: 4,
       queueLimit: 4,
       badgeType: 'none',
+      maxPrivateModels: 0,
     },
   },
   cosmeticShop: {
@@ -359,7 +388,7 @@ export const constants = {
     },
   },
   modelGallery: {
-    maxPinnedPosts: 10,
+    maxPinnedPosts: 20,
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
@@ -432,79 +461,77 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
-export type BaseModelSetType = (typeof baseModelSetTypes)[number];
-export const baseModelSetTypes = [
-  'SD1',
-  'SD2',
-  'SD3',
-  'SD3_5M',
-  'SDXL',
-  'SDXLDistilled',
-  'SCascade',
-  'Pony',
-  'PixArtA',
-  'PixArtE',
-  'Lumina',
-  'Kolors',
-  'HyDit1',
-  'ODOR',
-  'Flux1',
-  'Illustrious',
-  'Other',
-  'Mochi',
-  'LTXV',
-  'CogVideoX',
-] as const;
+class BaseModelSet<TBaseModel, THidden extends TBaseModel> {
+  name: string;
+  baseModels: StringLiteral<TBaseModel>[];
+  hidden?: StringLiteral<THidden>[];
+  constructor(args: {
+    name: string;
+    baseModels: StringLiteral<TBaseModel>[];
+    hidden?: StringLiteral<THidden>[];
+  }) {
+    this.name = args.name;
+    this.baseModels = args.baseModels;
+    this.hidden = args.hidden;
+  }
+}
 
-const defineBaseModelSets = <T extends Record<BaseModelSetType, BaseModel[]>>(args: T) => args;
-export const baseModelSets = defineBaseModelSets({
-  SD1: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
-  SD2: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
-  SD3: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
-  SD3_5M: ['SD 3.5 Medium'],
-  Flux1: ['Flux.1 S', 'Flux.1 D'],
-  SDXL: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SDXL Lightning', 'SDXL Hyper', 'SDXL Turbo'],
-  SDXLDistilled: ['SDXL Distilled'],
-  PixArtA: ['PixArt a'],
-  PixArtE: ['PixArt E'],
-  Lumina: ['Lumina'],
-  Kolors: ['Kolors'],
-  HyDit1: ['Hunyuan 1'],
-  HyV1: ['Hunyuan Video'],
-  SCascade: ['Stable Cascade'],
-  Pony: ['Pony'],
-  ODOR: ['ODOR'],
-  Illustrious: ['Illustrious'],
-  Other: ['Other'],
-  Mochi: ['Mochi'],
-  LTXV: ['LTXV'],
-  CogVideoX: ['CogVideoX'],
-});
+export const baseModelSets = {
+  SD1: new BaseModelSet({
+    name: 'Stable Diffusion',
+    baseModels: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
+  }),
+  SD2: new BaseModelSet({
+    name: 'Stable Diffusion',
+    baseModels: ['SD 2.0', 'SD 2.0 768', 'SD 2.1', 'SD 2.1 768', 'SD 2.1 Unclip'],
+    hidden: ['SD 2.1 768', 'SD 2.1 Unclip', 'SD 2.0 768'],
+  }),
+  SD3: new BaseModelSet({
+    name: 'Stable Diffusion',
+    baseModels: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
+  }),
+  SD3_5M: new BaseModelSet({
+    name: 'Stable Diffusion',
+    baseModels: ['SD 3.5 Medium'],
+  }),
+  Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'] }),
+  SDXL: new BaseModelSet({
+    name: 'Stable Diffusion XL',
+    baseModels: [
+      'SDXL 0.9',
+      'SDXL 1.0',
+      'SDXL 1.0 LCM',
+      'SDXL Lightning',
+      'SDXL Hyper',
+      'SDXL Turbo',
+    ],
+    hidden: ['SDXL 0.9', 'SDXL Turbo', 'SDXL 1.0 LCM'],
+  }),
+  SDXLDistilled: new BaseModelSet({
+    name: 'Stable Diffusion XL',
+    baseModels: ['SDXL Distilled'],
+    hidden: ['SDXL Distilled'],
+  }),
+  PixArtA: new BaseModelSet({ name: 'PixArt alpha', baseModels: ['PixArt a'] }),
+  PixArtE: new BaseModelSet({ name: 'PixArt sigma', baseModels: ['PixArt E'] }),
+  Lumina: new BaseModelSet({ name: 'Lumina', baseModels: ['Lumina'] }),
+  Kolors: new BaseModelSet({ name: 'Kolors', baseModels: ['Kolors'] }),
+  HyDit1: new BaseModelSet({ name: 'Hunyuan DiT', baseModels: ['Hunyuan 1'] }),
+  HyV1: new BaseModelSet({ name: 'Hunyuan Video', baseModels: ['Hunyuan Video'] }),
+  SCascade: new BaseModelSet({ name: 'Stable Cascade', baseModels: ['Stable Cascade'] }),
+  ODOR: new BaseModelSet({ name: 'ODOR', baseModels: ['Odor'], hidden: ['Odor'] }),
+  Pony: new BaseModelSet({ name: 'Stable Diffusion', baseModels: ['Pony'] }),
+  Illustrious: new BaseModelSet({ name: 'Illustrious', baseModels: ['Illustrious'] }),
+  Other: new BaseModelSet({ name: 'Other', baseModels: ['Other'] }),
+  Mochi: new BaseModelSet({ name: 'Mochi', baseModels: ['Mochi'] }),
+  LTXV: new BaseModelSet({ name: 'LTXV', baseModels: ['LTXV'] }),
+  CogVideoX: new BaseModelSet({ name: 'CogVideoX', baseModels: ['CogVideoX'] }),
+};
 
-const defineBaseModelSetNames = <T extends Record<BaseModelSetType, string>>(args: T) => args;
-export const baseModelSetNames = defineBaseModelSetNames({
-  SD1: 'Stable Diffusion',
-  SD2: 'Stable Diffusion',
-  SD3: 'Stable Diffusion',
-  SD3_5M: 'Stable Diffusion',
-  Flux1: 'Flux',
-  SDXL: 'Stable Diffusion XL',
-  SDXLDistilled: 'Stable Diffusion XL',
-  PixArtA: 'PixArt alpha',
-  PixArtE: 'PixArt sigma',
-  Lumina: 'Lumina',
-  Kolors: 'Kolors',
-  HyDit1: 'Hunyuan DiT',
-  HyV1: 'Hunyuan Video',
-  SCascade: 'Stable Cascade',
-  Pony: 'Stable Diffusion',
-  ODOR: 'ODOR',
-  Illustrious: 'Illustrious',
-  Other: 'Other',
-  Mochi: 'Mochi',
-  LTXV: 'LTXV',
-  CogVideoX: 'CogVideoX',
-});
+type BaseModelSets = typeof baseModelSets;
+export type BaseModelSetType = keyof BaseModelSets;
+// export const baseModelSetTypes = Object.keys(baseModelSets) as BaseModelSetType[];
+// type BaseModels = BaseModelSets[BaseModelSetType]['baseModels'][number];
 
 type LicenseDetails = {
   url: string;
@@ -695,16 +722,18 @@ export const generationConfig = {
       id: 128713,
       name: '8',
       trainedWords: [],
-      modelId: 4384,
-      modelName: 'DreamShaper',
-      modelType: 'Checkpoint',
       baseModel: 'SD 1.5',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
       covered: true,
-      minor: false,
-      available: true,
+      model: {
+        id: 4384,
+        name: 'DreamShaper',
+        type: 'Checkpoint',
+      },
     } as GenerationResource,
   },
   SDXL: {
@@ -717,16 +746,18 @@ export const generationConfig = {
       id: 128078,
       name: 'v1.0 VAE fix',
       trainedWords: [],
-      modelId: 101055,
-      modelName: 'SD XL',
-      modelType: 'Checkpoint',
       baseModel: 'SDXL 1.0',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
       covered: true,
-      minor: false,
-      available: true,
+      model: {
+        id: 101055,
+        name: 'SD XL',
+        type: 'Checkpoint',
+      },
     } as GenerationResource,
   },
   Pony: {
@@ -739,16 +770,18 @@ export const generationConfig = {
       id: 290640,
       name: 'V6 (start with this one)',
       trainedWords: [],
-      modelId: 257749,
-      modelName: 'Pony Diffusion V6 XL',
-      modelType: 'Checkpoint',
       baseModel: 'Pony',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
       covered: true,
-      minor: false,
-      available: true,
+      model: {
+        id: 257749,
+        name: 'Pony Diffusion V6 XL',
+        type: 'Checkpoint',
+      },
     } as GenerationResource,
   },
   Illustrious: {
@@ -761,16 +794,18 @@ export const generationConfig = {
       id: 889818,
       name: 'v0.1',
       trainedWords: [],
-      modelId: 795765,
-      modelName: 'Illustrious-XL',
-      modelType: 'Checkpoint',
       baseModel: 'Illustrious',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
       covered: true,
-      minor: false,
-      available: true,
+      model: {
+        id: 795765,
+        name: 'Illustrious-XL',
+        type: 'Checkpoint',
+      },
     } as GenerationResource,
   },
   Flux1: {
@@ -783,16 +818,18 @@ export const generationConfig = {
       id: 691639,
       name: '',
       trainedWords: [],
-      modelId: 618692,
-      modelName: 'FLUX',
-      modelType: 'Checkpoint',
       baseModel: 'Flux.1 D',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
       covered: true,
-      minor: false,
-      available: true,
+      model: {
+        id: 618692,
+        name: 'FLUX',
+        type: 'Checkpoint',
+      },
     } as GenerationResource,
   },
   SD3: {
@@ -805,16 +842,18 @@ export const generationConfig = {
       id: 983309,
       name: 'Large',
       trainedWords: [],
-      modelId: 878387,
-      modelName: 'Stable Diffusion 3.5 Large',
-      modelType: 'Checkpoint',
       baseModel: 'SD 3.5',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
       covered: true,
-      minor: false,
-      available: true,
+      model: {
+        id: 878387,
+        name: 'Stable Diffusion 3.5 Large',
+        type: 'Checkpoint',
+      },
     } as GenerationResource,
   },
   SD3_5M: {
@@ -827,16 +866,18 @@ export const generationConfig = {
       id: 1003708,
       name: 'Medium',
       trainedWords: [],
-      modelId: 896953,
-      modelName: 'Stable Diffusion 3.5 Medium',
-      modelType: 'Checkpoint',
       baseModel: 'SD 3.5 Medium',
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
       covered: true,
-      minor: false,
-      available: true,
+      model: {
+        id: 896953,
+        name: 'Stable Diffusion 3.5 Medium',
+        type: 'Checkpoint',
+      },
     } as GenerationResource,
   },
   Other: {
@@ -845,16 +886,18 @@ export const generationConfig = {
       id: 164821,
       name: '',
       trainedWords: [],
-      modelId: 147759,
-      modelName: 'Remacri',
-      modelType: 'Upscaler',
       baseModel: 'Other',
-      covered: true,
-      available: true,
       strength: 1,
       minStrength: -1,
       maxStrength: 2,
-      minor: false,
+      canGenerate: true,
+      hasAccess: true,
+      covered: true,
+      model: {
+        id: 147759,
+        name: 'Remacri',
+        type: 'Upscaler',
+      },
     } as GenerationResource,
   },
 };
@@ -865,7 +908,7 @@ export const generation = {
   lcmSamplers: ['LCM', 'Euler a'] as Sampler[],
   defaultValues: {
     workflow: 'txt2img',
-    cfgScale: 7,
+    cfgScale: 3.5,
     steps: 25,
     sampler: 'DPM++ 2M Karras',
     seed: undefined,
@@ -883,6 +926,8 @@ export const generation = {
     fluxUltraAspectRatio: '4',
     fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     model: generationConfig.Flux1.checkpoint,
+    priority: 'low',
+    sourceImage: null,
   },
   maxValues: {
     seed: 4294967295,
@@ -890,6 +935,7 @@ export const generation = {
   },
 } as const;
 export const maxRandomSeed = 2147483647;
+export const maxUpscaleSize = 8192;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 
@@ -1079,3 +1125,5 @@ export const banReasonDetails: Record<
 export const HOLIDAY_PROMO_VALUE = 0.2;
 
 export const MAX_APPEAL_MESSAGE_LENGTH = 220;
+
+export const FEATURED_MODEL_COLLECTION_ID = 104;

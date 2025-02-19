@@ -41,6 +41,7 @@ export function ChatButton() {
         <ActionIcon
           variant={state.open ? 'filled' : undefined}
           onClick={() => setState((prev) => ({ ...prev, open: !state.open }))}
+          data-testid="open-chat"
         >
           <IconMessage2 />
         </ActionIcon>

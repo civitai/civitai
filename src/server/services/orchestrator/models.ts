@@ -1,11 +1,14 @@
 import { getResource, invalidateResource } from '@civitai/client';
+import { chunk } from 'lodash-es';
 import { z } from 'zod';
 import { getModelByAirSchema } from '~/server/schema/orchestrator/models.schema';
+import { resourceDataCache } from '~/server/services/model-version.service';
 import {
   createOrchestratorClient,
-  getResourceDataWithAirs,
   internalOrchestratorClient,
 } from '~/server/services/orchestrator/common';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 export async function getModel({
   token,
@@ -18,16 +21,27 @@ export async function getModel({
 
 export async function bustOrchestratorModelCache(versionIds: number | number[], userId?: number) {
   if (!Array.isArray(versionIds)) versionIds = [versionIds];
-  const resources = await getResourceDataWithAirs(versionIds);
+  const resources = await resourceDataCache.fetch(versionIds);
   if (!resources.length) return;
 
-  await Promise.all(
-    resources.map((resource) =>
-      invalidateResource({
-        client: internalOrchestratorClient,
-        path: { air: resource.air },
-        query: userId ? { userId: [userId] } : undefined,
+  const tasks = chunk(resources, 100).map((chunk) => async () => {
+    await Promise.all(
+      chunk.map(async (resource) => {
+        const air = stringifyAIR({
+          baseModel: resource.baseModel,
+          type: resource.model.type,
+          modelId: resource.model.id,
+          id: resource.id,
+        });
+
+        await invalidateResource({
+          client: internalOrchestratorClient,
+          path: { air },
+          query: userId ? { userId: [userId] } : undefined,
+        });
       })
-    )
-  );
+    );
+  });
+
+  await limitConcurrency(tasks, 3);
 }

@@ -1,7 +1,8 @@
 import { mergeWith } from 'lodash-es';
 import { z } from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { getDbWithoutLag } from '~/server/db/db-helpers';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 
 const challengeConfigSchema = z.object({
   challengeType: z.string(),
@@ -36,7 +37,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
   judgedTagId: 299729,
   reviewMeTagId: 301770,
   userCooldown: '14 day',
-  resourceCooldown: '45 day',
+  resourceCooldown: '90 day',
   prizes: [
     { buzz: 5000, points: 150 },
     { buzz: 2500, points: 100 },
@@ -52,7 +53,7 @@ export const dailyChallengeConfig: ChallengeConfig = {
 export async function getChallengeConfig() {
   let config: Partial<ChallengeConfig> = {};
   try {
-    const redisConfig = await redis.packed.get<any>(REDIS_KEYS.DAILY_CHALLENGE.CONFIG);
+    const redisConfig = await sysRedis.packed.get<any>(REDIS_SYS_KEYS.DAILY_CHALLENGE.CONFIG);
     if (redisConfig) config = challengeConfigSchema.partial().parse(redisConfig);
   } catch (e) {
     console.error('Invalid daily challenge config in redis:', e);
@@ -152,7 +153,8 @@ type DailyChallengeDetails = {
   entryPrize: Prize;
 };
 export async function getChallengeDetails(articleId: number) {
-  const rows = await dbRead.$queryRaw<DailyChallengeDetails[]>`
+  const db = await getDbWithoutLag('article', articleId);
+  const rows = await db.$queryRaw<DailyChallengeDetails[]>`
     SELECT
       a."id" as "articleId",
       (a.metadata->>'challengeType') as "type",

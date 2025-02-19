@@ -24,6 +24,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { ImageSort } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -124,6 +125,8 @@ function ModelCarouselContent({
   const features = useFeatureFlags();
   const { classes, cx } = useStyles();
 
+  const { runTour, activeTour, running, currentStep } = useTourContext();
+
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
     prioritizedUserIds: [modelUserId],
@@ -178,20 +181,24 @@ function ModelCarouselContent({
                       <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                       <Stack spacing="xs" align="flex-end" className="absolute right-2 top-2 z-10">
                         <ImageContextMenu image={image} />
-                        {features.imageGeneration && image.hasMeta && (
+                        {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
                           <HoverActionButton
                             label="Remix"
                             size={30}
                             color="white"
                             variant="filled"
                             data-activity="remix:model-carousel"
+                            data-tour="model:remix"
                             onClick={(e) => {
                               e.preventDefault();
                               e.stopPropagation();
+
                               generationPanel.open({
                                 type: image.type,
                                 id: image.id,
                               });
+
+                              if (running) runTour({ step: currentStep + 1 });
                             }}
                           >
                             <IconBrush stroke={2.5} size={16} />
@@ -211,7 +218,7 @@ function ModelCarouselContent({
                             image={image}
                             edgeImageProps={{ width: 450 }}
                             aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
-                            radius="md"
+                            // radius="md"
                             style={{ width: '100%' }}
                             nsfw={!safe}
                           />

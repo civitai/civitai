@@ -25,6 +25,7 @@ import {
   IconDownload,
   IconHorse,
   IconInfoCircle,
+  IconLock,
   IconTagOff,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -82,9 +83,12 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { Generation } from '~/server/services/generation/generation.types';
-import { GenerationResource, getIsSdxl } from '~/shared/constants/generation.constants';
+import { GenerationResource } from '~/server/services/generation/generation.service';
+import { getIsSdxl } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
+import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
+import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, parseAIRSafe } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
@@ -96,13 +100,13 @@ import {
 
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
-  onSelect: (value: Generation.Resource) => void;
+  onSelect: (value: GenerationResource) => void;
   onClose?: () => void;
   options?: ResourceSelectOptions;
   selectSource?: ResourceSelectSource;
 };
 
-const tabs = ['all', 'featured', 'recent', 'liked', 'uploaded'] as const;
+const tabs = ['all', 'featured', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
 
 const take = 20;
@@ -132,7 +136,7 @@ export default function ResourceSelectModal({
     data: featuredModels,
     isFetching: isLoadingFeatured,
     // isError: isErrorFeatured,
-  } = trpc.model.getFeaturedModels.useQuery({ take }, { enabled: selectedTab === 'featured' });
+  } = trpc.model.getFeaturedModels.useQuery();
 
   const {
     steps,
@@ -182,10 +186,14 @@ export default function ResourceSelectModal({
 
   const { resources = [], excludeIds = [], canGenerate } = options;
   const allowedTabs = tabs.filter((t) => {
-    return !(!currentUser && ['recent', 'liked', 'uploaded'].includes(t));
+    return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
 
-  const filters: string[] = [];
+  const filters: string[] = [
+    // Default filter for visibility:
+    `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
+  ];
+
   const or: string[] = [];
   if (canGenerate !== undefined) filters.push(`canGenerate = ${canGenerate}`);
   for (const { type, baseModels } of resources) {
@@ -222,7 +230,7 @@ export default function ResourceSelectModal({
     if (selectSource === 'generation') {
       if (!!steps) {
         const usedResources = uniq(
-          steps.flatMap(({ resources }) => resources.map((r) => r.modelId))
+          steps.flatMap(({ resources }) => resources.map((r) => r.model.id))
         );
         filters.push(`id IN [${usedResources.join(',')}]`);
       }
@@ -252,15 +260,13 @@ export default function ResourceSelectModal({
     if (!!likedModels) {
       filters.push(`id IN [${likedModels.join(',')}]`);
     }
-  } else if (selectedTab === 'uploaded') {
+  } else if (selectedTab === 'mine') {
     if (currentUser) {
       filters.push(`user.id = ${currentUser.id}`);
     }
   }
 
   const totalFilters = [...filters, ...exclude].join(' AND ');
-
-  // console.log(totalFilters);
 
   function handleSelect(value: GenerationResource) {
     onSelect(value);
@@ -327,6 +333,7 @@ export default function ResourceSelectModal({
                 canGenerate={canGenerate}
                 excludeIds={excludeIds}
                 likes={likedModels}
+                selectSource={selectSource}
               />
             )}
           </InstantSearch>
@@ -377,9 +384,11 @@ function ResourceHitList({
   resources,
   excludeIds,
   likes,
+  selectSource,
 }: ResourceSelectOptions &
   Required<Pick<ResourceSelectOptions, 'resources' | 'excludeIds'>> & {
     likes: number[] | undefined;
+    selectSource?: ResourceSelectSource;
   }) {
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
@@ -394,6 +403,7 @@ function ResourceHitList({
     type: 'models',
     data: items,
   });
+
   const loading =
     status === 'loading' || status === 'stalled' || loadingPreferences || !startedRef.current;
 
@@ -435,7 +445,8 @@ function ResourceHitList({
       </div>
     );
 
-  if (!items.length)
+ 
+  if (!filtered.length)
     return (
       <div className="p-3 py-5">
         <Center>
@@ -475,6 +486,7 @@ function ResourceHitList({
               key={model.id}
               data={model}
               isFavorite={!!likes && likes.includes(model.id)}
+              selectSource={selectSource}
             />
           ))}
       </div>
@@ -627,14 +639,17 @@ const TopRightIcons = ({
 function ResourceSelectCard({
   data,
   isFavorite,
+  selectSource,
 }: {
   data: SearchIndexDataMap['models'][number];
   isFavorite: boolean;
+  selectSource?: ResourceSelectSource;
 }) {
   // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
   const { onSelect } = useResourceSelectContext();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
+  const [loading, setLoading] = useState(false);
 
   const image = data.images[0];
   const { classes, cx, theme } = useCardStyles({
@@ -645,28 +660,30 @@ function ResourceSelectCard({
   const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
   const [flipped, setFlipped] = useState(false);
 
-  const handleSelect = () => {
+  const handleSelect = async () => {
     const version = versions.find((x) => x.id === selected);
     if (!version) return;
-    const { id, name, trainedWords, baseModel, settings } = version;
+    const { id } = version;
 
-    onSelect({
+    setLoading(true);
+    await fetchGenerationData({
+      type: 'modelVersion',
       id,
-      name,
-      trainedWords,
-      baseModel,
-      modelId: data.id,
-      modelName: data.name,
-      modelType: data.type,
-      minor: data.minor,
-      image: image,
-      covered: data.canGenerate,
-      available:
-        data.canGenerate && (data.availability === 'Public' || data.availability === 'Private'),
-      strength: settings?.strength ?? 1,
-      minStrength: settings?.minStrength ?? -1,
-      maxStrength: settings?.maxStrength ?? 2,
+      generation: selectSource !== 'generation' ? false : undefined,
+    }).then((data) => {
+      const resource = data.resources[0];
+      if (selectSource !== 'generation') {
+        onSelect({ ...resource, image });
+      } else {
+        if (resource?.canGenerate || resource.substitute?.canGenerate)
+          onSelect({ ...resource, image });
+        else
+          showErrorNotification({
+            error: new Error('This model is no longer available for generation'),
+          });
+      }
     });
+    setLoading(false);
   };
 
   const favoriteMutation = useToggleFavoriteMutation();
@@ -888,6 +905,29 @@ function ResourceSelectCard({
                       )}
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
+                    {data.availability === Availability.Private && (
+                      <div className="absolute bottom-2 left-2 flex items-center gap-1">
+                        <Tooltip
+                          label="This is a private model which requires permission to generate with."
+                          position="top"
+                          withArrow
+                          withinPortal
+                          multiline
+                          maw={250}
+                        >
+                          <Badge
+                            color="gray"
+                            variant="filled"
+                            h={30}
+                            w={30}
+                            className="flex items-center justify-center"
+                            p={0}
+                          >
+                            <IconLock size={16} />
+                          </Badge>
+                        </Tooltip>
+                      </div>
+                    )}
                     {!!currentUser && (
                       <div className="absolute bottom-2 right-2 flex items-center gap-1">
                         <Tooltip
@@ -947,6 +987,7 @@ function ResourceSelectCard({
               styles={{ input: { cursor: versions.length <= 1 ? 'auto !important' : undefined } }}
             />
             <Button
+              loading={loading}
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();

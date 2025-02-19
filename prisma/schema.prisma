@@ -434,6 +434,7 @@ enum ModelType {
   Poses
   Wildcards
   Workflows
+  Detection
   Other
 }
 
@@ -517,6 +518,12 @@ enum CheckpointType {
 enum ModelUploadType {
   Created
   Trained
+}
+
+enum ModelUsageControl {
+  Download
+  Generation
+  InternalGeneration
 }
 
 enum ModelModifier {
@@ -688,37 +695,38 @@ model ModelVersionMonetization {
 }
 
 model ModelVersion {
-  id                Int             @id @default(autoincrement())
+  id                Int               @id @default(autoincrement())
   index             Int?
   name              String
   description       String?
   modelId           Int
-  model             Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  model             Model             @relation(fields: [modelId], references: [id], onDelete: Cascade)
   trainedWords      String[]
   steps             Int?
   epochs            Int?
   clipSkip          Int?
   vaeId             Int?
-  vae               ModelVersion?   @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
-  createdAt         DateTime        @default(now())
-  updatedAt         DateTime        @updatedAt
+  vae               ModelVersion?     @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
   publishedAt       DateTime?
-  status            ModelStatus     @default(Draft)
+  status            ModelStatus       @default(Draft)
   trainingStatus    TrainingStatus?
   trainingDetails   Json?
-  fromImport        Import?         @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImport        Import?           @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
   fromImportId      Int?
-  inaccurate        Boolean         @default(false)
+  inaccurate        Boolean           @default(false)
   baseModel         String
   baseModelType     String?
-  meta              Json            @default("{}")
-  requireAuth       Boolean         @default(false)
+  meta              Json              @default("{}")
+  requireAuth       Boolean           @default(false)
   settings          Json?
-  availability      Availability    @default(Public)
-  nsfwLevel         Int             @default(0)
+  availability      Availability      @default(Public)
+  nsfwLevel         Int               @default(0)
   earlyAccessEndsAt DateTime?
   earlyAccessConfig Json?
-  uploadType        ModelUploadType @default(Created)
+  uploadType        ModelUploadType   @default(Created)
+  usageControl      ModelUsageControl @default(Download)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1549,6 +1557,7 @@ enum TagSource {
   ImageHash
   Hive
   MinorDetection
+  HiveDemographics
 }
 
 model TagsOnImage {
@@ -1882,19 +1891,20 @@ model AnswerMetric {
 }
 
 model CommentV2 {
-  id           Int      @id @default(autoincrement())
+  id           Int       @id @default(autoincrement())
   content      String
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  nsfw         Boolean  @default(false)
-  tosViolation Boolean  @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  nsfw         Boolean   @default(false)
+  tosViolation Boolean   @default(false)
   userId       Int
-  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   threadId     Int
-  thread       Thread   @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
-  childThread  Thread?  @relation("childThread")
+  thread       Thread    @relation("thread", fields: [threadId], references: [id], onDelete: Cascade)
+  childThread  Thread?   @relation("childThread")
   metadata     Json?
-  hidden       Boolean? @default(false)
+  hidden       Boolean?  @default(false)
+  pinnedAt     DateTime?
 
   reactions CommentV2Reaction[]
   reports   CommentV2Report[]
@@ -1944,6 +1954,7 @@ model Thread {
   @@index([questionId], type: Hash)
   @@index([imageId], type: Hash)
   @@index([articleId], type: Hash)
+  @@index([rootThreadId], type: Hash)
 }
 
 model QuestionReaction {
@@ -2733,7 +2744,7 @@ model Link {
 
 enum Availability {
   Public
-  Unsearchable // Ignored from search results.
+  Unsearchable // Public but Ignored from search results.
   Private
   EarlyAccess
 }
@@ -3188,6 +3199,7 @@ model Tool {
   supported   Boolean     @default(false)
   company     String?
   metadata    Json        @default("{}")
+  alias       String?
 }
 
 model ImageTool {

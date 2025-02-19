@@ -1,8 +1,9 @@
-import { AspectRatio, Box, BoxProps, createStyles, MantineNumberSize } from '@mantine/core';
+import { createStyles, MantineNumberSize } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CSSProperties } from 'react';
 import { EdgeMedia2, EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageGetInfinite } from '~/types/router';
+import clsx from 'clsx';
 
 type ImagePreviewProps = {
   nsfw?: boolean;
@@ -17,7 +18,9 @@ type ImagePreviewProps = {
   onClick?: React.MouseEventHandler<HTMLImageElement>;
   radius?: MantineNumberSize;
   cropFocus?: 'top' | 'bottom' | 'left' | 'right' | 'center';
-} & Omit<BoxProps, 'component'>;
+  className?: string;
+  style?: CSSProperties;
+};
 
 export function ImagePreview({
   image: { id, url, name, type, width, height, hash, metadata },
@@ -29,11 +32,8 @@ export function ImagePreview({
   onClick,
   className,
   radius = 0,
-  cropFocus,
   ...props
 }: ImagePreviewProps) {
-  const { classes, cx } = useStyles({ radius });
-
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
   edgeImageProps.width ??= width ?? undefined;
 
@@ -50,46 +50,27 @@ export function ImagePreview({
     maxWidth: '100%',
   };
   if (style?.height || style?.maxHeight) edgeImageStyle.maxHeight = '100%';
-  const Image = nsfw ? (
-    <MediaHash hash={hash} width={width} height={height} />
-  ) : (
-    <EdgeMedia2
-      src={url}
-      name={name ?? id.toString()}
-      alt={name ?? undefined}
-      type={type}
-      {...edgeImageProps}
-      onClick={onClick}
-      metadata={metadata}
-      style={edgeImageStyle}
-    />
-  );
 
   return (
-    <Box className={cx(classes.root, className)} style={{ ...style }} {...props}>
-      {aspectRatio === 0 ? (
-        Image
+    <div
+      className={clsx('relative overflow-hidden rounded-md', className)}
+      style={{ ...style, aspectRatio }}
+      {...props}
+    >
+      {nsfw ? (
+        <MediaHash hash={hash} width={width} height={height} />
       ) : (
-        <AspectRatio
-          ratio={aspectRatio}
-          sx={{
-            color: 'white',
-            ['& > img, & > video']: {
-              objectPosition: cropFocus ?? 'center',
-            },
-          }}
-        >
-          {Image}
-        </AspectRatio>
+        <EdgeMedia2
+          src={url}
+          name={name ?? id.toString()}
+          alt={name ?? undefined}
+          type={type}
+          {...edgeImageProps}
+          onClick={onClick}
+          metadata={metadata}
+          style={edgeImageStyle}
+        />
       )}
-    </Box>
+    </div>
   );
 }
-
-const useStyles = createStyles((theme, { radius }: { radius?: MantineNumberSize }) => ({
-  root: {
-    position: 'relative',
-    overflow: 'hidden',
-    borderRadius: theme.fn.radius(radius),
-  },
-}));

@@ -64,7 +64,6 @@ import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { VideoMetadata } from '~/server/schema/media.schema';
-import { Generation } from '~/server/services/generation/generation.types';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
 import {
   getBaseModelResourceTypes,
@@ -398,9 +397,8 @@ const ResourceHeader = () => {
                 loading: isAddingResource,
                 disabled: cantAdd,
               }}
-              onChange={(val) => {
-                const vals = val as Generation.Resource[] | undefined;
-                if (!vals || !vals.length || cantAdd) return;
+              onChange={(vals) => {
+                if (!vals?.length || cantAdd) return;
                 vals.forEach((val) => {
                   addResource(val.id);
                 });
@@ -662,7 +660,11 @@ function EditDetail() {
           )}
           {/* #endregion */}
 
-          <div className={`flex w-full flex-1 flex-col gap-3 ${!showPreview ? '@sm:gap-4' : ''}`}>
+          <div
+            className={`flex w-full flex-1 flex-col gap-3 ${
+              !showPreview ? '@sm:w-4/6 @sm:gap-4' : ''
+            }`}
+          >
             {/*
           // #region [TOS Violation]
           */}

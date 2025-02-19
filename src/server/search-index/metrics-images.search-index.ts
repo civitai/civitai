@@ -8,6 +8,7 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -47,6 +48,8 @@ const filterableAttributes = [
   'publishedAtUnix',
   'existedAtUnix',
   'flags.promptNsfw',
+  'remixOfId',
+  'availability',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -139,6 +142,9 @@ export type SearchBaseImage = {
   minor?: boolean;
   promptNsfw?: boolean;
   blockedFor: BlockedReason | null;
+  remixOfId?: number | null;
+  hasPositivePrompt?: boolean;
+  availability?: Availability;
 };
 
 type Metrics = {
@@ -318,6 +324,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."blockedFor",
         i.minor,
         p."publishedAt",
+        p."availability",
         (
           CASE
             WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
@@ -325,6 +332,14 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ELSE FALSE
           END
         ) AS "hasMeta",
+        (
+          CASE
+            WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+              AND i.meta->>'prompt' IS NOT NULL
+            THEN TRUE
+            ELSE FALSE
+          END
+        ) AS "hasPositivePrompt",
         (
           CASE
             WHEN i.meta->>'civitaiResources' IS NOT NULL
@@ -335,7 +350,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ELSE FALSE
           END
         ) as "onSite",
-        p."modelVersionId" as "postedToId"
+        p."modelVersionId" as "postedToId",
+        i."meta"->'extra'->'remixOfId' as "remixOfId"
         FROM "Image" i
         JOIN "Post" p ON p."id" = i."postId"
         WHERE ${Prisma.join(where, ' AND ')}

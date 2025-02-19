@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.422",
+  "version": "5.0.496",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -39,7 +39,11 @@
     "analyze:server": "cross-env BUNDLE_ANALYZE=server next build",
     "analyze:browser": "cross-env BUNDLE_ANALYZE=browser next build",
     "tsc:trace": "tsc  --generateTrace trace --incremental false",
-    "tsc:analyze": "npx analyze-trace trace"
+    "tsc:analyze": "npx analyze-trace trace",
+    "test": "cross-env NODE_ENV=development npx playwright test",
+    "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
+    "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
+    "test:reset": "make bootstrap-db"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -52,7 +56,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "0.1.9-beta.17",
+    "@civitai/client": "^0.1.9-beta.21",
     "@civitai/next-axiom": "^0.17.0",
     "@clickhouse/client": "^0.2.2",
     "@cloudamqp/amqp-client": "^2.1.1",
@@ -65,7 +69,7 @@
     "@essentials/memoize-one": "^1.1.0",
     "@essentials/one-key-map": "^1.2.0",
     "@google-cloud/recaptcha-enterprise": "^5.1.1",
-    "@headlessui/react": "^2.0.3",
+    "@headlessui/react": "2.2",
     "@hookform/resolvers": "^2.9.10",
     "@mailchimp/mailchimp_marketing": "^3.0.80",
     "@mantine/carousel": "^5.10.4",
@@ -88,7 +92,7 @@
     "@paddle/paddle-js": "^1.2.1",
     "@paddle/paddle-node-sdk": "^1.4.1",
     "@paypal/react-paypal-js": "^8.1.3",
-    "@prisma/client": "^5.17.0",
+    "@prisma/client": "^6.3.0",
     "@rajesh896/broprint.js": "^2.1.1",
     "@react-hook/window-size": "^3.1.1",
     "@react-pdf/renderer": "^3.3.8",
@@ -189,6 +193,7 @@
     "react-instantsearch": "7.12.0",
     "react-instantsearch-router-nextjs": "7.12.0",
     "react-intersection-observer": "^9.4.0",
+    "react-joyride": "^2.9.3",
     "react-lottie": "^1.2.4",
     "react-markdown": "^9.0.1",
     "react-social-media-embed": "^2.5.9",
@@ -230,6 +235,7 @@
   "devDependencies": {
     "@faker-js/faker": "^9.0.3",
     "@next/eslint-plugin-next": "^12.1.4",
+    "@playwright/test": "^1.50.0",
     "@prisma/generator-helper": "^5.22.0",
     "@types/archiver": "^6.0.2",
     "@types/cloudflare": "^2.7.9",
@@ -276,7 +282,7 @@
     "pg-format": "^1.0.4",
     "postcss": "^8.4.38",
     "prettier": "^2.8.8",
-    "prisma": "^5.17.0",
+    "prisma": "^6.3.0",
     "prisma-generator-typescript-interfaces": "^1.6.1",
     "tailwindcss": "^3.4.3",
     "ts-node": "^10.9.1",

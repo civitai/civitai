@@ -3,13 +3,12 @@ import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { env } from '~/env/server';
-import { CacheTTL } from '~/server/common/constants';
 import { generate, whatIf } from '~/server/controllers/orchestrator.controller';
 import { reportProhibitedRequestHandler } from '~/server/controllers/user.controller';
 import { logToAxiom } from '~/server/logging/client';
 import { edgeCacheIt } from '~/server/middleware.trpc';
 import { generationSchema } from '~/server/orchestrator/generation/generation.schema';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, sysRedis } from '~/server/redis/client';
 import { generatorFeedbackReward } from '~/server/rewards';
 import {
   generateImageSchema,
@@ -25,6 +24,7 @@ import {
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
+import { getBlobData, nsfwNsfwLevels } from '~/server/services/orchestrator/blob';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
@@ -50,14 +50,14 @@ import { getEncryptedCookie, setEncryptedCookie } from '~/server/utils/cookie-en
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
 import { generationServiceCookie } from '~/shared/constants/generation.constants';
 
-const TOKEN_STORE: 'redis' | 'cookie' = 'redis';
+const TOKEN_STORE: 'redis' | 'cookie' = false ? 'cookie' : 'redis';
 const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const user = ctx.user;
   if (!user) throw throwAuthorizationError();
   const redisKey = user.id.toString();
   let token: string | null =
     TOKEN_STORE === 'redis'
-      ? await redis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
+      ? await sysRedis.hGet(REDIS_KEYS.GENERATION.TOKENS, redisKey).then((x) => x ?? null)
       : getEncryptedCookie(ctx, generationServiceCookie.name);
   if (env.ORCHESTRATOR_MODE === 'dev') token = env.ORCHESTRATOR_ACCESS_TOKEN;
   if (!token) {
@@ -71,8 +71,8 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
     });
     if (TOKEN_STORE === 'redis') {
       await Promise.all([
-        redis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
-        redis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
+        sysRedis.hSet(REDIS_KEYS.GENERATION.TOKENS, redisKey, token),
+        sysRedis.hExpire(REDIS_KEYS.GENERATION.TOKENS, redisKey, generationServiceCookie.maxAge),
       ]);
     } else
       setEncryptedCookie(ctx, {
@@ -154,12 +154,19 @@ export const orchestratorRouter = router({
   // #region [generated images]
   queryGeneratedImages: orchestratorProcedure
     .input(workflowQuerySchema)
-    .query(({ ctx, input }) => queryGeneratedImageWorkflows({ ...input, token: ctx.token })),
+    .query(({ ctx, input }) =>
+      queryGeneratedImageWorkflows({ ...input, token: ctx.token, user: ctx.user })
+    ),
   generateImage: orchestratorGuardedProcedure
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
       try {
         const args = { ...input, user: ctx.user, token: ctx.token };
+        if ('sourceImage' in args.params && args.params.sourceImage) {
+          const blobId = args.params.sourceImage.url.split('/').reverse()[0];
+          const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
+          args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
+        }
         if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
         else return await createComfy({ ...args });
       } catch (e) {
@@ -178,25 +185,28 @@ export const orchestratorRouter = router({
     }),
   getImageWhatIf: orchestratorGuardedProcedure
     .input(generateImageWhatIfSchema)
-    .use(edgeCacheIt({ ttl: CacheTTL.hour }))
+    // can't use edge cache due to values dependent on individual users
+    // .use(edgeCacheIt({ ttl: CacheTTL.hour }))
     .query(async ({ ctx, input }) => {
       try {
         const args = {
           ...input,
-          resources: input.resources.map((id) => ({ id, strength: 1 })),
+          resources: input.resources.map((x) => ({ ...x, strength: 1 })),
           user: ctx.user,
           token: ctx.token,
         };
 
         let step: TextToImageStepTemplate | ComfyStepTemplate;
-        if (args.params.workflow === 'txt2img') step = await createTextToImageStep(args);
-        else step = await createComfyStep(args);
+        if (args.params.workflow === 'txt2img')
+          step = await createTextToImageStep({ ...args, whatIf: true });
+        else step = await createComfyStep({ ...args, whatIf: true });
 
         const workflow = await submitWorkflow({
           token: args.token,
           body: {
             steps: [step],
             tips: args.tips,
+            experimental: env.ORCHESTRATOR_EXPERIMENTAL,
           },
           query: {
             whatif: true,

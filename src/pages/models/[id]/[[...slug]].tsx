@@ -51,7 +51,7 @@ import {
 import { truncate } from 'lodash-es';
 import { InferGetServerSidePropsType } from 'next';
 import { useRouter } from 'next/router';
-import React, { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -68,6 +68,7 @@ import {
   openReportModal,
 } from '~/components/Dialog/dialog-registry';
 import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
@@ -102,11 +103,13 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
+import { hasEntityAccess } from '~/server/services/common.service';
 import { getDefaultModelVersion } from '~/server/services/model-version.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -153,6 +156,67 @@ export const getServerSideProps = createServerSideProps({
       return { notFound: true };
     }
 
+    if (version?.model?.availability === Availability.Private) {
+      // We'll do a explicit check if we know it's a private model
+      if (!session?.user) {
+        return {
+          notFound: true,
+        };
+      }
+
+      const [access] = await hasEntityAccess({
+        entityIds: [version?.model.id],
+        entityType: 'Model',
+        userId: session.user.id,
+        isModerator: session.user.isModerator,
+      });
+
+      if (!access.hasAccess) {
+        return {
+          notFound: true,
+        };
+      }
+    }
+
+    if (version?.availability === Availability.Private) {
+      // We'll do a explicit check if we know it's a private model
+      if (!session?.user) {
+        return {
+          notFound: true,
+        };
+      }
+
+      const [access] = await hasEntityAccess({
+        entityIds: [version?.id],
+        entityType: 'ModelVersion',
+        userId: session.user.id,
+        isModerator: session.user.isModerator,
+      });
+
+      if (!access.hasAccess) {
+        return {
+          notFound: true,
+        };
+      }
+    }
+
+    const isTraining = !!version?.trainingStatus;
+    const published = version?.status === 'Published';
+    const isOwner = version?.model.userId === session?.user?.id;
+
+    if (isTraining && isOwner) {
+      // Start checking whether to redirect:
+      // TODO: We might wanna redirect to all steps (?).
+      if (!published) {
+        return {
+          redirect: {
+            destination: `/models/${version.model.id}/model-versions/${version.id}/wizard?step=1`,
+            permanent: false,
+          },
+        };
+      }
+    }
+
     if (ssg) {
       // if (version)
       //   await ssg.image.getInfinite.prefetchInfinite({
@@ -170,11 +234,12 @@ export const getServerSideProps = createServerSideProps({
           entityId: modelVersionIdParsed as number,
           entityType: 'ModelVersion',
         });
-        await ssg.common.getEntityClubRequirement.prefetch({
-          entityId: modelVersionIdParsed as number,
-          entityType: 'ModelVersion',
-        });
-        await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
+
+        // await ssg.common.getEntityClubRequirement.prefetch({
+        //   entityId: modelVersionIdParsed as number,
+        //   entityType: 'ModelVersion',
+        // });
+        // await ssg.generation.checkResourcesCoverage.prefetch({ id: modelVersionIdParsed });
       }
       await ssg.model.getById.prefetch({ id });
       await ssg.model.getCollectionShowcase.prefetch({ id });
@@ -202,6 +267,7 @@ export default function ModelDetailsV2({
   const queryUtils = trpc.useUtils();
   const isClient = useIsClient();
   const features = useFeatureFlags();
+  const { activeTour, running, runTour } = useTourContext();
 
   const [opened, { toggle }] = useDisclosure();
   const discussionSectionRef = useRef<HTMLDivElement | null>(null);
@@ -219,7 +285,6 @@ export default function ModelDetailsV2({
     }
   );
 
-  const view = router.query.view;
   const rawVersionId = router.query.modelVersionId;
   const modelVersionId = Number(
     (Array.isArray(rawVersionId) ? rawVersionId[0] : rawVersionId) ?? model?.modelVersions[0]?.id
@@ -448,6 +513,10 @@ export default function ModelDetailsV2({
       });
   };
 
+  const view = router.query.view;
+  const basicView = view === 'basic' && isModerator;
+  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
+
   useEffect(() => {
     // Change the selected modelVersion based on querystring param
     if (loadingModel) return;
@@ -460,6 +529,14 @@ export default function ModelDetailsV2({
       });
     }
   }, [id, publishedVersions, selectedVersion, modelVersionId, loadingModel]);
+
+  useEffect(() => {
+    if (!canLoadBelowTheFold) return;
+    if ((activeTour === 'model-page' || activeTour === 'welcome') && !running)
+      runTour({ key: activeTour });
+    // only run when the model is loaded
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canLoadBelowTheFold]);
 
   if (loadingModel) return <PageLoader />;
 
@@ -525,8 +602,6 @@ export default function ModelDetailsV2({
     isFutureDate(selectedVersion.earlyAccessDeadline);
   const category = model.tagsOnModels.find(({ tag }) => !!tag.isCategory)?.tag;
   const tags = model.tagsOnModels.filter(({ tag }) => !tag.isCategory).map((tag) => tag.tag);
-  const basicView = view === 'basic' && isModerator;
-  const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
   const unpublishedReason = model.meta?.unpublishedReason ?? 'other';
   const unpublishedMessage =
     unpublishedReason !== 'other'
@@ -559,7 +634,7 @@ export default function ModelDetailsV2({
       <SensitiveShield nsfw={model.nsfw} contentNsfwLevel={model.nsfwLevel}>
         <TrackView entityId={model.id} entityType="Model" type="ModelView" />
         {!model.nsfw && <RenderAdUnitOutstream minContainerWidth={2800} />}
-        <Container size="xl">
+        <Container size="xl" data-tour="model:start">
           <Stack spacing="xl">
             <Stack spacing="xs">
               <Stack spacing={4}>
@@ -680,6 +755,12 @@ export default function ModelDetailsV2({
                       href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
                       tooltip="What is this?"
                     />
+                    <HelpButton
+                      size="xl"
+                      tooltip="Need help? Start the tour!"
+                      iconProps={{ size: 30, stroke: 1.5 }}
+                      onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
+                    />
                     <ToggleModelNotification
                       className={classes.headerButton}
                       modelId={model.id}
@@ -768,32 +849,6 @@ export default function ModelDetailsV2({
                             >
                               Edit Model
                             </Menu.Item>
-                            {!model.mode ? (
-                              <>
-                                <Menu.Item
-                                  icon={<IconArchive size={14} stroke={1.5} />}
-                                  onClick={() => handleChangeMode(ModelModifier.Archived)}
-                                >
-                                  Archive
-                                </Menu.Item>
-                                {isModerator && (
-                                  <Menu.Item
-                                    icon={<IconCircleMinus size={14} stroke={1.5} />}
-                                    onClick={() => handleChangeMode(ModelModifier.TakenDown)}
-                                  >
-                                    Take Down
-                                  </Menu.Item>
-                                )}
-                              </>
-                            ) : model.mode === ModelModifier.Archived ||
-                              (isModerator && model.mode === ModelModifier.TakenDown) ? (
-                              <Menu.Item
-                                icon={<IconReload size={14} stroke={1.5} />}
-                                onClick={() => handleChangeMode(null)}
-                              >
-                                Bring Back
-                              </Menu.Item>
-                            ) : null}
                           </>
                         )}
                         {features.collections && (
@@ -876,6 +931,29 @@ export default function ModelDetailsV2({
                                   entityId={model.id}
                                   key="toggle-searchable-menu-item"
                                 />
+                                {!model.mode ? (
+                                  <>
+                                    <Menu.Item
+                                      icon={<IconArchive size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(ModelModifier.Archived)}
+                                    >
+                                      Archive
+                                    </Menu.Item>
+                                    <Menu.Item
+                                      icon={<IconCircleMinus size={14} stroke={1.5} />}
+                                      onClick={() => handleChangeMode(ModelModifier.TakenDown)}
+                                    >
+                                      Take Down
+                                    </Menu.Item>
+                                  </>
+                                ) : (
+                                  <Menu.Item
+                                    icon={<IconReload size={14} stroke={1.5} />}
+                                    onClick={() => handleChangeMode(null)}
+                                  >
+                                    Bring Back
+                                  </Menu.Item>
+                                )}
                               </>
                             )}
                           </>
@@ -1008,13 +1086,15 @@ export default function ModelDetailsV2({
             <Group spacing={4} noWrap>
               {isOwner ? (
                 <>
-                  <ButtonTooltip label="Add Version">
-                    <Link href={`/models/${model.id}/model-versions/create`}>
-                      <ActionIcon variant="light" color="blue">
-                        <IconPlus size={14} />
-                      </ActionIcon>
-                    </Link>
-                  </ButtonTooltip>
+                  {model.availability !== Availability.Private && (
+                    <ButtonTooltip label="Add Version">
+                      <Link href={`/models/${model.id}/model-versions/create`}>
+                        <ActionIcon variant="light" color="blue">
+                          <IconPlus size={14} />
+                        </ActionIcon>
+                      </Link>
+                    </ButtonTooltip>
+                  )}
 
                   {versionCount > 1 && (
                     <ButtonTooltip label="Rearrange Versions">
@@ -1081,7 +1161,9 @@ export default function ModelDetailsV2({
               <Stack spacing="md">
                 <Group ref={discussionSectionRef} sx={{ justifyContent: 'space-between' }}>
                   <Group spacing="xs">
-                    <Title order={2}>Discussion</Title>
+                    <Title order={2} data-tour="model:discussion">
+                      Discussion
+                    </Title>
                     {canDiscuss ? (
                       <>
                         <LoginRedirect reason="create-comment">

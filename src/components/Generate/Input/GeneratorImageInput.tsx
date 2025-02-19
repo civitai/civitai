@@ -1,4 +1,15 @@
-import { CloseButton, Divider, LoadingOverlay, TextInput, Input } from '@mantine/core';
+import {
+  CloseButton,
+  Divider,
+  LoadingOverlay,
+  TextInput,
+  Input,
+  Card,
+  Switch,
+  Text,
+  Paper,
+  Collapse,
+} from '@mantine/core';
 import { useEffect, useRef, useState } from 'react';
 import { z } from 'zod';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
@@ -9,6 +20,7 @@ import { getBase64 } from '~/utils/file-utils';
 import { getImageData, isImage } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
 import clsx from 'clsx';
+import { useLocalStorage } from '@mantine/hooks';
 
 // TODO - if the image is being uploaded, don't make a whatIf query
 export function GeneratorImageInput({
@@ -133,5 +145,39 @@ function ImageWithCloseButton({
         />
       )}
     </div>
+  );
+}
+
+export function AccordionGeneratorImageInput({
+  value,
+  onChange,
+}: {
+  value?: string;
+  onChange?: (value?: string) => void;
+}) {
+  const [checked, setChecked] = useLocalStorage({ key: 'byoi', defaultValue: value !== undefined });
+  const actuallyChecked = checked || !!value?.length;
+
+  return (
+    <Card withBorder p={0}>
+      <Card.Section p="xs" className="flex items-center justify-between">
+        <Text weight={500}>Start from an image</Text>
+        <Switch
+          checked={actuallyChecked}
+          onChange={(e) => {
+            const checked = e.target.checked;
+            setChecked(e.target.checked);
+            if (!checked) onChange?.(undefined);
+          }}
+        />
+      </Card.Section>
+      <Collapse in={actuallyChecked}>
+        <Card.Section withBorder className="border-b-0">
+          <Paper p="xs">
+            <GeneratorImageInput value={value} onChange={onChange} />
+          </Paper>
+        </Card.Section>
+      </Collapse>
+    </Card>
   );
 }

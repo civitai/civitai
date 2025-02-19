@@ -48,6 +48,7 @@ export interface ImageProps {
   tags?: Array<{ id: number }> | number[];
   metadata?: MixedObject | null;
   publishedAt?: Date | null;
+  thumbnailUrl?: string | null;
 }
 
 type ImageViewerState = {

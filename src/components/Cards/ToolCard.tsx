@@ -74,19 +74,20 @@ export function ToolCard({ data }: Props) {
               </CustomMarkdown>
             </Text>
           )}
-          {data.supported && (
+          {data.alias && (
             <Button
+              data-activity="generate:tool"
               onClick={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
 
                 const isVideo = data.type === ToolType.Video;
+                const engine = isVideo ? data.alias : undefined;
                 generationStore.setData({
                   resources: [],
                   params: {},
                   type: isVideo ? 'video' : 'image',
-                  // TODO.gen: have to think this through on how to get the right workflow
-                  workflow: isVideo ? `${data.name.toLowerCase()}-txt2vid` : undefined,
+                  engine,
                 });
                 generationPanel.open();
               }}

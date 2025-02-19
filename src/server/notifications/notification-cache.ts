@@ -1,6 +1,6 @@
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
 
 // #region Notification Cache
 const NOTIFICATION_CACHE_TIME = CacheTTL.week;
@@ -10,11 +10,11 @@ export type NotificationCategoryCount = {
 };
 
 function getUserKey(userId: number) {
-  return `${REDIS_KEYS.SYSTEM.NOTIFICATION_COUNTS}:${userId}`;
+  return `${REDIS_KEYS.SYSTEM.NOTIFICATION_COUNTS}:${userId}` as RedisKeyTemplateCache;
 }
 
 async function getUser(userId: number) {
-  const key = `${REDIS_KEYS.SYSTEM.NOTIFICATION_COUNTS}:${userId}`;
+  const key = `${REDIS_KEYS.SYSTEM.NOTIFICATION_COUNTS}:${userId}` as const;
   const counts = await redis.hGetAll(key);
   if (!Object.keys(counts).length) return undefined;
   return Object.entries(counts).map(([category, count]) => {

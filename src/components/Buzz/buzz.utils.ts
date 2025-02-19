@@ -1,6 +1,9 @@
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { useBuzz } from '~/components/Buzz/useBuzz';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
 import { env } from '~/env/client';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -10,9 +13,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
-import type { BuyBuzzModalProps } from '~/components/Modals/BuyBuzzModal';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import dynamic from 'next/dynamic';
 
 export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?: () => void }) => {
   const router = useRouter();

@@ -16,27 +16,17 @@ export const commentV2Select = Prisma.validator<Prisma.CommentV2Select>()({
   content: true,
   hidden: true,
   threadId: true,
+  pinnedAt: true,
   user: {
     select: userWithCosmeticsSelect,
   },
   reactions: {
     select: getReactionsSelectV2,
   },
-  childThread: {
-    select: {
-      id: true,
-      locked: true,
-      _count: {
-        select: {
-          comments: true,
-        },
-      },
-    },
-  },
 });
 
 export type CommentV2Model = Prisma.CommentV2GetPayload<typeof commentV2>;
-const commentV2 = Prisma.validator<Prisma.CommentV2Args>()({ select: commentV2Select });
+const commentV2 = Prisma.validator<Prisma.CommentV2FindManyArgs>()({ select: commentV2Select });
 
 //TODO - come up with a better way of prefetching data and communicating the limits of that prefetched data to the client component
 // When I  prefetch relational messages and `take` a number of messages, the client Comments component needs to know the `take` number so that it knows when to display a show more message

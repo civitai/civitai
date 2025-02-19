@@ -8,6 +8,20 @@ export function mergeWithPartial<T>(src: T, partial: Partial<T>) {
   return { ...src, ...removeEmpty(partial) } as T;
 }
 
+type PickNullable<T> = {
+  [P in keyof T as null extends T[P] ? P : never]: T[P];
+};
+
+type PickNotNullable<T> = {
+  [P in keyof T as null extends T[P] ? never : P]: T[P];
+};
+
+type OptionalNullable<T> = {
+  [K in keyof PickNullable<T>]?: Exclude<T[K], null>;
+} & {
+  [K in keyof PickNotNullable<T>]: T[K];
+};
+
 type BrowserNativeObject = Date | FileList | File;
 type NonNullibleAllowUndefined<T> = T extends null ? NonNullable<T> | undefined : T;
 type RemoveNulls<T> = T extends BrowserNativeObject | Blob
@@ -15,7 +29,7 @@ type RemoveNulls<T> = T extends BrowserNativeObject | Blob
   : T extends Array<infer U>
   ? Array<RemoveNulls<U>>
   : T extends object
-  ? { [K in keyof T]: T[K] extends object ? RemoveNulls<T[K]> : NonNullibleAllowUndefined<T[K]> }
+  ? Prettify<OptionalNullable<T>>
   : NonNullibleAllowUndefined<T>;
 
 export function removeNulls<T extends object>(obj: T): RemoveNulls<T> {

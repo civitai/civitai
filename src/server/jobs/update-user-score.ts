@@ -2,12 +2,12 @@ import { PrismaClient } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { clickhouse, CustomClickHouseClient } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
+import { AugmentedPool, templateHandler } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { createJob, getJobDate, JobContext } from './job';
-import { AugmentedPool, templateHandler } from '~/server/db/db-helpers';
 
 const BATCH_SIZE = 500;
 const log = createLogger('update-user-score');
@@ -226,7 +226,9 @@ type ScoreMultipliers = {
 type ScoreCategory = keyof ScoreMultipliers | 'total';
 
 async function getScoreMultipliers() {
-  const data = await redis.packed.get<ScoreMultipliers>(REDIS_KEYS.SYSTEM.USER_SCORE_MULTIPLIERS);
+  const data = await sysRedis.packed.get<ScoreMultipliers>(
+    REDIS_SYS_KEYS.SYSTEM.USER_SCORE_MULTIPLIERS
+  );
   if (!data) throw new Error('User score multipliers not found in redis');
   return data;
 }

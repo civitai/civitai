@@ -38,7 +38,7 @@ import {
 } from '~/server/services/image.service';
 import { findOrCreateTagsByName, getVotableImageTags } from '~/server/services/tag.service';
 import { getTechniqueByName } from '~/server/services/technique.service';
-import { getToolByDomain, getToolByName } from '~/server/services/tool.service';
+import { getToolByDomain, getToolByName, getToolByAlias } from '~/server/services/tool.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustCacheTag, queryCache } from '~/server/utils/cache-helpers';
 import { getPeriods } from '~/server/utils/enum-helpers';
@@ -153,10 +153,10 @@ export const getPostsInfinite = async ({
     }
   }
 
-  // TODO.clubs: This is temporary until we are fine with displaying club stuff in public feeds.
-  // At that point, we should be relying more on unlisted status which is set by the owner.
-  const hidePrivatePosts =
-    !ids && !clubId && !isOwnerRequest && !(!!user && followed) && !(collectionId && !!user?.id);
+  if (!isOwnerRequest && !isModerator) {
+    // Makes it so private posts are not shown to the public
+    AND.push(Prisma.sql`p."availability" != 'Private'`);
+  }
 
   // Filter only followed users
   if (!!user && followed) {
@@ -418,11 +418,6 @@ export const getPostsInfinite = async ({
     items: postsRaw
       // remove unlisted resources the user has no access to:
       .filter((p) => {
-        // Hide private posts from the main feed.
-        if (hidePrivatePosts && p.availability === Availability.Private) {
-          return false;
-        }
-
         // Allow mods and owners to view all.
         if (user?.isModerator || p.userId === user?.id) return true;
 
@@ -569,8 +564,6 @@ export const getPostEditDetail = async ({ id, user }: GetByIdInput & { user: Ses
     collectionItemExists = !!collectionItem;
   }
 
-  console.log(collectionItemExists);
-
   return { ...post, collectionTagId, images, collectionItemExists };
 };
 
@@ -622,8 +615,24 @@ export const createPost = async ({
   }
   const tagData = tagsToAdd.map((t) => ({ tagId: t }));
 
+  let availability: Availability = Availability.Public;
+
+  if (data.modelVersionId) {
+    const modelVersion = await dbWrite.modelVersion.findUnique({
+      where: { id: data.modelVersionId },
+      select: { model: { select: { availability: true } } },
+    });
+
+    availability = modelVersion?.model.availability ?? Availability.Public;
+  }
+
   const post = await dbWrite.post.create({
-    data: { ...data, userId, tags: tagsToAdd.length > 0 ? { create: tagData } : undefined },
+    data: {
+      ...data,
+      availability,
+      userId,
+      tags: tagsToAdd.length > 0 ? { create: tagData } : undefined,
+    },
     select: postSelect,
   });
 
@@ -657,7 +666,7 @@ export const updatePost = async ({
   id,
   user,
   ...data
-}: PostUpdateInput & { user: SessionUser }) => {
+}: PostUpdateInput & { user: SessionUser; availability?: Availability }) => {
   if (data.title) await throwOnBlockedLinkDomain(data.title);
   if (data.detail) await throwOnBlockedLinkDomain(data.detail);
   const post = await dbWrite.post.update({
@@ -847,7 +856,7 @@ export const addPostImage = async ({
   let toolId: number | undefined;
   const { name: sourceName, homepage: sourceHomepage } = meta?.external?.source ?? {};
   if (meta && 'engine' in meta) {
-    toolId = (await getToolByName(meta.engine as string))?.id;
+    toolId = (await getToolByAlias(meta.engine as string))?.id;
   } else if (sourceName || sourceHomepage) {
     if (sourceName) {
       toolId = (await getToolByName(sourceName))?.id;

@@ -55,7 +55,7 @@ export function QueueSnackbar() {
   function renderQueuePendingProcessing() {
     return (
       <>
-        <span>{`${queued.length} job${queued.length > 0 && 's'} in `}</span>
+        <span>{`${queued.length} job${queued.length > 1 ? 's' : ''} in `}</span>
         {includeQueueLink ? (
           <Text
             inline
@@ -109,7 +109,7 @@ export function QueueSnackbar() {
             //   withinPortal
             // >
             <Popover withinPortal withArrow>
-              <Popover.Target refProp="innerRef">
+              <Popover.Target>
                 <CurrencyBadge
                   currency="BUZZ"
                   size="sm"
@@ -147,9 +147,19 @@ export function QueueSnackbar() {
         </div>
         <div className="flex flex-1 flex-col items-center justify-center gap-1 py-2">
           <Text weight={500} className="flex items-center gap-1 text-sm">
-            {!!queued.length && queueStatus
-              ? dictionary[queueStatus]()
-              : `${requestsRemaining} jobs available`}
+            {!!queued.length && queueStatus ? (
+              dictionary[queueStatus]()
+            ) : includeQueueLink ? (
+              <Text
+                variant="link"
+                className="cursor-pointer"
+                onClick={() => generationPanel.setView('queue')}
+              >
+                View generation queue
+              </Text>
+            ) : (
+              `${requestsRemaining} jobs available`
+            )}
           </Text>
           <div className="flex w-full justify-center gap-2">
             {slots.map((slot, i) => {

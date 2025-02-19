@@ -1,21 +1,21 @@
 import { Anchor, Button, Card, Checkbox, Divider, Text } from '@mantine/core';
-import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
 import { IconBan, IconCheck, IconTournament } from '@tabler/icons-react';
 import { InfiniteData } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
-import React, { useState } from 'react';
+import { useState } from 'react';
+import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
+import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
+import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { CollectionItemStatus, CollectionType } from '~/shared/utils/prisma/enums';
 import { CollectionGetAllItems } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
-import { showSuccessNotification, showErrorNotification } from '~/utils/notifications';
-import { trpc, queryClient } from '~/utils/trpc';
-import { ContestCollectionItemScorer } from '~/components/Collections/components/ContestCollections/ContestCollectionItemScorer';
-import { CollectionItemNSFWLevelSelector } from '~/components/Collections/components/ContestCollections/CollectionItemNSFWLevelSelector';
-import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
-import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
+import { queryClient, trpc } from '~/utils/trpc';
 
 export const ImageContestCollectionDetails = ({
   image,
@@ -210,10 +210,7 @@ export const ImageContestCollectionDetails = ({
                       />
                     )}
 
-                    <Text>
-                      Share the link to your submission in the contest and have your friends react
-                      on it.
-                    </Text>
+                    <Text>Share the link to your submission and have your friends react.</Text>
                     <Text>
                       Please note than an account is required to react and reaction votes are
                       limited to one per account.

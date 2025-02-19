@@ -55,7 +55,7 @@ export const generationRouter = router({
     .query(({ ctx, input }) => getGenerationResources({ ...input, user: ctx.user })),
   getGenerationData: publicProcedure
     .input(getGenerationDataSchema)
-    .query(({ input }) => getGenerationData(input)),
+    .query(({ input, ctx }) => getGenerationData({ query: input, user: ctx.user })),
   checkResourcesCoverage: publicProcedure
     .input(checkResourcesCoverageSchema)
     .use(edgeCacheIt({ ttl: CacheTTL.sm }))

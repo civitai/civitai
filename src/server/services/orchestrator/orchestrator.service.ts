@@ -11,10 +11,14 @@ export async function createWorkflowStep(args: GenerationSchema) {
   }
 }
 
-export async function createVideoGenStep(data: VideoGenerationSchema) {
+export async function createVideoGenStep({ priority, ...data }: VideoGenerationSchema) {
+  let sourceImage: string | undefined;
+  if ('sourceImage' in data) sourceImage = data.sourceImage.url;
+
   return {
     $type: 'videoGen' as const,
-    input: data,
+    priority,
+    input: { ...data, sourceImage },
     metadata: { params: removeEmpty(data) },
   };
 }

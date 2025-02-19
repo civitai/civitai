@@ -657,6 +657,11 @@ export function Collection({
                   <Stack>
                     <Group spacing={4} ml="auto" sx={{ alignSelf: 'flex-start' }} noWrap>
                       {collection.mode === CollectionMode.Contest &&
+                      // Respect the submission period:
+                      (!metadata.submissionEndDate ||
+                        new Date(metadata.submissionEndDate) > new Date()) &&
+                      (!metadata.submissionStartDate ||
+                        new Date(metadata.submissionStartDate) < new Date()) &&
                       [CollectionType.Image, CollectionType.Post].some(
                         (x) => x === collection.type
                       ) ? (
@@ -781,11 +786,11 @@ export function Collection({
                                       : 'red';
 
                                   const label = capitalize(status.toLowerCase());
-                                  const entryDetails = entryCountDetails[status];
+                                  const entryCount = entryCountDetails[status];
 
-                                  return entryDetails
+                                  return entryCount
                                     ? {
-                                        value: (entryDetails / totalEntries) * 100,
+                                        value: (entryCount / totalEntries) * 100,
                                         color,
                                         // label,
                                         tooltip: `${label}: ${entryCountDetails[status]}`,

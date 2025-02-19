@@ -28,7 +28,6 @@ import {
   IconExclamationCircle,
   IconExternalLink,
   IconFileDescription,
-  IconSend,
   IconTrash,
   IconX,
 } from '@tabler/icons-react';
@@ -133,7 +132,8 @@ export const trainingStatusFields: {
   },
   [TrainingStatus.Approved]: {
     color: 'green',
-    description: 'Training is complete, and the results were published to Civitai.',
+    description:
+      'Training is complete, and you have selected an Epoch. You may click here to continue the publishing setup.',
   },
   [TrainingStatus.Failed]: {
     color: 'red',
@@ -457,11 +457,10 @@ export default function UserTrainingModels() {
                               component="a"
                               radius="xl"
                               size="sm"
-                              rightIcon={<IconSend size={16} />}
                               onClick={(e) => e.stopPropagation()}
                               compact
                             >
-                              Publish
+                              Review
                             </Button>
                           </Link>
                         )}

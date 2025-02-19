@@ -1,7 +1,10 @@
+import { Priority } from '@civitai/client';
 import { z } from 'zod';
-import { isProd } from '~/env/other';
-import { baseModelSetTypes, generation } from '~/server/common/constants';
+
+import { baseModelSets, generation } from '~/server/common/constants';
+import { sourceImageSchema } from '~/server/orchestrator/infrastructure/base.schema';
 import { workflowResourceSchema } from '~/server/schema/orchestrator/workflows.schema';
+import { zodEnumFromObjKeys } from '~/utils/zod-helpers';
 
 // #region [step input]
 const workflowKeySchema = z.string().default('txt2img');
@@ -9,10 +12,7 @@ const workflowKeySchema = z.string().default('txt2img');
 export type TextToImageInput = z.input<typeof textToImageParamsSchema>;
 export type TextToImageParams = z.infer<typeof textToImageParamsSchema>;
 export const textToImageParamsSchema = z.object({
-  prompt: z
-    .string()
-    .nonempty('Prompt cannot be empty')
-    .max(1500, 'Prompt cannot be longer than 1500 characters'),
+  prompt: z.string().default(''),
   negativePrompt: z.string().max(1000, 'Prompt cannot be longer than 1000 characters').optional(),
   cfgScale: z.coerce.number().min(1).max(30).optional(),
   sampler: z
@@ -31,17 +31,12 @@ export const textToImageParamsSchema = z.object({
   draft: z.boolean().default(false),
   aspectRatio: z.string().optional(),
   fluxUltraAspectRatio: z.string().optional(),
-  baseModel: z.enum(baseModelSetTypes),
+  baseModel: zodEnumFromObjKeys(baseModelSets),
   width: z.number(),
   height: z.number(),
   // temp props?
   denoise: z.number().max(1).optional(),
-  image: z
-    .string()
-    .startsWith(
-      isProd ? 'https://orchestration.civitai.com' : 'https://orchestration-dev.civitai.com'
-    )
-    .optional(),
+  // image: z.string().startsWith('https://orchestration').includes('.civitai.com').optional(),
   upscaleWidth: z.number().optional(),
   upscaleHeight: z.number().optional(),
   workflow: workflowKeySchema,
@@ -49,6 +44,8 @@ export const textToImageParamsSchema = z.object({
   fluxUltraRaw: z.boolean().optional(),
   experimental: z.boolean().optional(),
   engine: z.string().optional(),
+  priority: z.nativeEnum(Priority).default('low'),
+  sourceImage: sourceImageSchema.nullable().default(null).catch(null),
 });
 
 // #endregion
@@ -96,11 +93,15 @@ export const generateImageSchema = z.object({
       creators: z.number().min(0).max(1).default(0),
       civitai: z.number().min(0).max(1).default(0),
     })
-    .optional(),
+    .default({ creators: 0, civitai: 0 }),
 });
 
 export const generateImageWhatIfSchema = generateImageSchema.extend({
-  resources: z.number().array().min(1),
+  resources: workflowResourceSchema
+    .extend({
+      strength: z.number().optional(),
+    })
+    .array(),
   params: textToImageParamsSchema.extend({
     prompt: z.string().default('what if'),
     negativePrompt: z.string().optional(),

@@ -18,9 +18,7 @@ export async function logToAxiom(data: MixedObject, datastream?: string) {
     if (!datastream) return;
 
     await axiom.ingestEvents(datastream, sendData);
-    // await axiom.ingestEvents(datastream, data);
   } else {
     console.log('logToAxiom', sendData);
-    // console.log('logToAxiom', data);
   }
 }

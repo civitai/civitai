@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useEffect, useState } from 'react';
+import React, { createContext, useContext } from 'react';
 
-type AppContext = { seed: number };
+type AppContext = { seed: number; canIndex: boolean };
 const Context = createContext<AppContext | null>(null);
 export function useAppContext() {
   const context = useContext(Context);
@@ -11,11 +11,5 @@ export function AppProvider({
   children,
   ...appContext
 }: { children: React.ReactNode } & AppContext) {
-  const [seed, setSeed] = useState(appContext.seed);
-
-  useEffect(() => {
-    if (!seed && appContext.seed) setSeed(appContext.seed);
-  }, []);
-
-  return <Context.Provider value={{ seed }}>{children}</Context.Provider>;
+  return <Context.Provider value={appContext}>{children}</Context.Provider>;
 }

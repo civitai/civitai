@@ -1,11 +1,10 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import requestIp from 'request-ip';
 import { z } from 'zod';
-
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { colorDomains, constants, getRequestDomainColor } from '~/server/common/constants';
 import { dbRead } from '~/server/db/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { addUserDownload } from '~/server/services/download.service';
 import { getFileForModelVersion } from '~/server/services/file.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
@@ -24,7 +23,7 @@ const schema = z.object({
 
 const downloadLimiter = createLimiter({
   counterKey: REDIS_KEYS.DOWNLOAD.COUNT,
-  limitKey: REDIS_KEYS.DOWNLOAD.LIMITS,
+  limitKey: REDIS_SYS_KEYS.DOWNLOAD.LIMITS,
   fetchCount: async (userKey) => {
     const isIP = userKey.includes(':') || userKey.includes('.');
     if (!clickhouse) return 0;
@@ -123,6 +122,13 @@ export default PublicEndpoint(
           getLoginLink({ reason: 'download-auth', returnUrl: `/model-versions/${modelVersionId}` })
         );
     }
+
+    if (fileResult.status === 'downloads-disabled')
+      return res.status(401).json({
+        error: 'Unauthorized',
+        message: 'The creator of this asset has disabled downloads on this file',
+      });
+
     if (fileResult.status !== 'success') return errorResponse(500, 'Error getting file');
 
     // Check for misalignment
@@ -138,6 +144,12 @@ export default PublicEndpoint(
 
     // Track download
     try {
+      if (!fileResult.isDownloadable) {
+        throw new Error(
+          'File not downloadable. Either a moderator or the resource owner disabled downloads for this version'
+        );
+      }
+
       const now = new Date();
 
       const tracker = new Tracker(req, res);

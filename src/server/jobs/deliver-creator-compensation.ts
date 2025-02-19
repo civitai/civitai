@@ -19,13 +19,14 @@ export const updateCreatorResourceCompensation = createJob(
     if (!clickhouse) return;
 
     await clickhouse.$query`
-      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total)
+      INSERT INTO buzz_resource_compensation (date, modelVersionId, comp, tip, total, count)
       SELECT
         toStartOfDay(createdAt) as date,
         modelVersionId,
         FLOOR(SUM(comp)) as comp,
         FLOOR(SUM(tip)) AS tip,
-        comp + tip as total
+        comp + tip as total,
+        count(*) as count
       FROM (
         SELECT
         modelVersionId,
@@ -52,11 +53,12 @@ export const updateCreatorResourceCompensation = createJob(
               arrayJoin(resourcesUsed) AS modelVersionId,
               length(arrayFilter(x -> NOT x IN (250708, 250712, 106916), resourcesUsed)) as resource_count,
               createdAt,
-              jobCost,
+              cost as jobCost,
               jobId,
               creatorsTip
-            FROM orchestration.textToImageJobs
-            WHERE createdAt BETWEEN toStartOfDay(subtractDays(now(), 1)) AND toStartOfDay(now())
+            FROM orchestration.jobs
+            WHERE jobType IN ('TextToImageV2')
+              AND createdAt BETWEEN toStartOfDay(subtractDays(now(), 1)) AND toStartOfDay(now())
               AND modelVersionId NOT IN (250708, 250712, 106916)
           ) rj
           JOIN civitai_pg.ModelVersion mv ON mv.id = rj.modelVersionId

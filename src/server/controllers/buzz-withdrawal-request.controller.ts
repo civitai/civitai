@@ -1,11 +1,16 @@
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import { constants } from '~/server/common/constants';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { GetByIdStringInput } from '~/server/schema/base.schema';
+import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
+import { Context } from '../createContext';
 import {
+  buzzWithdrawalRequestServiceStatusSchema,
   CreateBuzzWithdrawalRequestSchema,
   GetPaginatedBuzzWithdrawalRequestSchema,
   GetPaginatedOwnedBuzzWithdrawalRequestSchema,
   UpdateBuzzWithdrawalRequestSchema,
 } from '../schema/buzz-withdrawal-request.schema';
-import { Context } from '../createContext';
 import {
   cancelBuzzWithdrawalRequest,
   createBuzzWithdrawalRequest,
@@ -14,10 +19,8 @@ import {
   updateBuzzWithdrawalRequest,
 } from '../services/buzz-withdrawal-request.service';
 import { throwAuthorizationError, throwDbError } from '../utils/errorHandling';
-import { GetByIdStringInput } from '~/server/schema/base.schema';
-import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
 
-export function createBuzzWithdrawalRequestHandler({
+export async function createBuzzWithdrawalRequestHandler({
   input,
   ctx,
 }: {
@@ -25,6 +28,19 @@ export function createBuzzWithdrawalRequestHandler({
   ctx: DeepNonNullable<Context>;
 }) {
   try {
+    const status = buzzWithdrawalRequestServiceStatusSchema.parse(
+      JSON.parse(
+        (await sysRedis.hGet(
+          REDIS_SYS_KEYS.SYSTEM.FEATURES,
+          REDIS_SYS_KEYS.BUZZ_WITHDRAWAL_REQUEST.STATUS
+        )) ?? '{}'
+      )
+    );
+
+    if (status.maxAmount && input.amount > status.maxAmount * constants.buzz.buzzDollarRatio) {
+      throw new Error('You requested an amount higher than the current allowed maximum.');
+    }
+
     return createBuzzWithdrawalRequest({ userId: ctx.user.id, ...input });
   } catch (error) {
     throw getTRPCErrorFromUnknown(error);
@@ -89,6 +105,11 @@ export function updateBuzzWithdrawalRequestHandler({
       ) &&
       !buzzWithdrawalTransfer
     ) {
+      // Ensure this user has permission to do this:
+      throw throwAuthorizationError('You do not have permission to perform this action');
+    }
+
+    if (!ctx.user.isModerator) {
       // Ensure this user has permission to do this:
       throw throwAuthorizationError('You do not have permission to perform this action');
     }

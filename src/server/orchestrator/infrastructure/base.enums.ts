@@ -12,6 +12,13 @@ export const OrchestratorEngine = {
   Haiper: 'haiper',
   Minimax: 'minimax',
   Vidu: 'vidu',
+  Lightricks: 'lightricks',
 } as const;
 export type OrchestratorEngine = (typeof orchestratorEngines)[number];
 const orchestratorEngines = Object.values(OrchestratorEngine);
+
+export const GenerationPriorityLevelMap = {
+  high: 10,
+  normal: 20,
+  low: 30,
+};

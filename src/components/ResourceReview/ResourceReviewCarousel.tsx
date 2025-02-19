@@ -156,6 +156,7 @@ export function ResourceReviewCarousel({
                 <Button
                   component={Link}
                   href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`}
+                  rel="nofollow"
                   variant="outline"
                   fullWidth
                   className={classes.viewMore}

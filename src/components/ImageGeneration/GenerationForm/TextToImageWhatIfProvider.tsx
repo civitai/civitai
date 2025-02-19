@@ -2,12 +2,10 @@ import { useDebouncedValue } from '@mantine/hooks';
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { useWatch } from 'react-hook-form';
 import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { generation, generationConfig } from '~/server/common/constants';
+import { generationConfig } from '~/server/common/constants';
+import { TextToImageInput } from '~/server/schema/orchestrator/textToImage.schema';
 import {
-  TextToImageInput,
-  generateImageWhatIfSchema,
-} from '~/server/schema/orchestrator/textToImage.schema';
-import {
+  fluxStandardAir,
   getBaseModelSetType,
   getIsFlux,
   getIsSD3,
@@ -17,9 +15,11 @@ import {
 import { trpc } from '~/utils/trpc';
 
 import { UseTRPCQueryResult } from '@trpc/react-query/shared';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { GenerationWhatIfResponse } from '~/server/services/orchestrator/types';
 import { parseAIR } from '~/utils/string-helpers';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
+// import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 const Context = createContext<UseTRPCQueryResult<
   GenerationWhatIfResponse | undefined,
@@ -42,11 +42,13 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       ?.checkpoint ?? watched.model;
 
   const query = useMemo(() => {
-    const { model, resources, vae, ...params } = watched;
+    const { model, resources = [], vae, ...params } = watched;
     if (params.aspectRatio) {
       const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
-      params.width = size.width;
-      params.height = size.height;
+      if (size) {
+        params.width = size.width;
+        params.height = size.height;
+      }
     }
 
     let modelId = defaultModel.id;
@@ -54,16 +56,19 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
     if (isFlux && watched.fluxMode) {
       const { version } = parseAIR(watched.fluxMode);
       modelId = version;
+      if (watched.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
     const isSD3 = getIsSD3(watched.baseModel);
     if (isSD3 && model?.id) {
       modelId = model.id;
     }
+    const additionalResources = resources
+      .filter((x) => isDefined(x.id))
+      .map((x) => ({ id: x.id as number, epochNumber: x.epochDetails?.epochNumber }));
 
     return {
-      resources: [modelId],
-      // resources: [model, ...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined),
+      resources: [{ id: modelId }, ...additionalResources],
       params: {
         ...params,
         ...whatIfQueryOverrides,

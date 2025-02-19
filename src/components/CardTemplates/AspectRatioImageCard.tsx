@@ -1,20 +1,20 @@
-import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import styles from './AspectRatioImageCard.module.scss';
-import { useInView } from '~/hooks/useInView';
+import { Text } from '@mantine/core';
 import clsx from 'clsx';
 import React, { type Key } from 'react';
-import { ConnectType, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
-import { MediaType } from '~/shared/utils/prisma/enums';
-import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
-import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
-import { VideoMetadata } from '~/server/schema/media.schema';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
-import { Text } from '@mantine/core';
-import { NextLink } from '~/components/NextLink/NextLink';
+import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import type { DialogKey, DialogState } from '~/components/Dialog/routed-dialog-registry';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
-import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
+import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { ConnectType, ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useInView } from '~/hooks/useInView';
+import { VideoMetadata } from '~/server/schema/media.schema';
+import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+import { MediaType } from '~/shared/utils/prisma/enums';
+import styles from './AspectRatioImageCard.module.scss';
 
 type AspectRatio = keyof typeof aspectRatioMap;
 const aspectRatioMap = {
@@ -49,7 +49,7 @@ type ImageProps = {
 
 type RoutedDialogProps<T extends DialogKey> = { name: T; state: DialogState<T> };
 
-type AspectRatioImageCardProps<T extends DialogKey> = {
+export type AspectRatioImageCardProps<T extends DialogKey> = {
   href?: string;
   aspectRatio?: AspectRatio;
   onClick?: React.MouseEventHandler;
@@ -61,6 +61,9 @@ type AspectRatioImageCardProps<T extends DialogKey> = {
   footerGradient?: boolean;
   onSite?: boolean;
   routedDialog?: RoutedDialogProps<T>;
+  target?: string;
+  isRemix?: boolean;
+  explain?: boolean;
 } & ContentTypeProps;
 
 const IMAGE_CARD_WIDTH = 450;
@@ -79,6 +82,9 @@ export function AspectRatioImageCard<T extends DialogKey>({
   footerGradient,
   onSite,
   routedDialog,
+  target,
+  isRemix,
+  explain,
 }: AspectRatioImageCardProps<T>) {
   const { ref, inView } = useInView({ key: cosmetic ? 1 : 0 });
 
@@ -102,6 +108,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 connectId={contentId as any}
                 connectType={contentType as any}
                 image={image}
+                explain={explain}
               >
                 {(safe) => (
                   <>
@@ -110,6 +117,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                       onClick={onClick}
                       routedDialog={routedDialog}
                       className={styles.linkOrClick}
+                      target={target}
                     >
                       {!safe ? (
                         <MediaHash {...image} />
@@ -125,7 +133,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
                           className={clsx(styles.image, {
                             [styles.top]: originalAspectRatio < 1,
                           })}
-                          wrapperProps={{ className: 'flex-1' }}
+                          wrapperProps={{ className: 'flex-1 h-full' }}
                           width={
                             originalAspectRatio > 1
                               ? IMAGE_CARD_WIDTH * originalAspectRatio
@@ -151,17 +159,26 @@ export function AspectRatioImageCard<T extends DialogKey>({
                 )}
               </ImageGuard2>
             ) : (
-              <div className="flex h-full items-center justify-center">
-                <Text color="dimmed">No Image</Text>
+              <>
+                <LinkOrClick
+                  href={href}
+                  onClick={onClick}
+                  routedDialog={routedDialog}
+                  className={styles.linkOrClick}
+                >
+                  <div className="flex h-full items-center justify-center">
+                    <Text color="dimmed">No Image</Text>
+                  </div>
+                </LinkOrClick>
                 {header && <div className={styles.header}>{header}</div>}
-              </div>
+              </>
             )}
             {footer && (
               <div className={clsx(styles.footer, { [styles.gradient]: footerGradient })}>
                 {footer}
               </div>
             )}
-            {onSite && <OnsiteIndicator />}
+            {onSite && <OnsiteIndicator isRemix={isRemix} />}
           </>
         )}
       </div>
@@ -175,15 +192,17 @@ function LinkOrClick<T extends DialogKey>({
   children,
   routedDialog,
   className,
+  target,
 }: {
   href?: string;
   onClick?: React.MouseEventHandler;
   children: React.ReactElement;
   routedDialog?: RoutedDialogProps<T>;
   className?: string;
+  target?: string;
 }) {
   return href ? (
-    <NextLink href={href} className={className}>
+    <NextLink href={href} className={className} target={target}>
       {children}
     </NextLink>
   ) : routedDialog ? (

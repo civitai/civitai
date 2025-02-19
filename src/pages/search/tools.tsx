@@ -15,6 +15,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ToolCard } from '~/components/Cards/ToolCard';
+import { trpc } from '~/utils/trpc';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -63,6 +64,7 @@ export function ToolHitList() {
   const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'tools'>();
   const { status } = useInstantSearch();
   const { classes, cx } = useSearchLayoutStyles();
+  const { data } = trpc.generation.getGenerationEngines.useQuery();
 
   if (items.length === 0) {
     const NotFound = (
@@ -116,7 +118,10 @@ export function ToolHitList() {
         }}
       >
         {items.map((hit) => {
-          return <ToolCard key={hit.id} data={hit} />;
+          const match = data?.find((x) => x.engine === hit.alias && !x.disabled);
+          return (
+            <ToolCard key={hit.id} data={{ ...hit, alias: match?.engine as string | undefined }} />
+          );
         })}
       </Box>
       {items.length > 0 && !isLastPage && (

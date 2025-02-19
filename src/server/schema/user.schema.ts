@@ -4,7 +4,7 @@ import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
 import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
-import { featureFlagKeys } from '~/server/services/feature-flags.service';
+import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import {
   ArticleEngagementType,
@@ -22,7 +22,7 @@ import {
   numericString,
 } from '~/utils/zod-helpers';
 
-export const userTierSchema = z.enum(['free', 'founder', 'bronze', 'silver', 'gold']);
+export const userTierSchema = z.enum(userTiers);
 export type UserTier = z.infer<typeof userTierSchema>;
 
 export const userPageQuerySchema = z
@@ -193,6 +193,14 @@ export const reportProhibitedRequestSchema = z.object({
 export const userByReferralCodeSchema = z.object({ userReferralCode: z.string().min(3) });
 export type UserByReferralCodeSchema = z.infer<typeof userByReferralCodeSchema>;
 
+export type TourSettingsSchema = z.infer<typeof tourSettingsSchema>;
+const tourSettingsSchema = z.record(
+  z.object({
+    completed: z.boolean().optional(),
+    currentStep: z.number().optional(),
+  })
+);
+
 export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
@@ -211,6 +219,7 @@ export const userSettingsSchema = z.object({
     .omit({ pinnedPosts: true, images: true })
     .partial()
     .optional(),
+  tourSettings: tourSettingsSchema.optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -226,6 +235,7 @@ export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
+  tour: tourSettingsSchema.optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });
@@ -263,6 +273,7 @@ export const userScoreMetaSchema = z.object({
   reportsActioned: z.number().optional(),
   reportsAgainst: z.number().optional(),
 });
+
 export const userMeta = z.object({
   firstImage: z.date().optional(),
   scores: userScoreMetaSchema.optional(),
@@ -279,6 +290,7 @@ export const userMeta = z.object({
       detailsInternal: z.string().optional(),
     })
     .optional(),
+  membershipChangedAt: z.date().optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 

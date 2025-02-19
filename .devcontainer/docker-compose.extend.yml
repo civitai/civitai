@@ -18,6 +18,7 @@ services:
       - db
       - notification-db
       - redis
+      - redis-sys
     environment:
       DATABASE_URL: 'postgresql://postgres:postgres@db:5432/civitai'
       DATABASE_REPLICA_URL: 'postgresql://postgres:postgres@db:5432/civitai'
@@ -26,6 +27,7 @@ services:
       NOTIFICATION_DB_URL: 'postgresql://postgres:postgres@notification-db:5432/postgres'
       NOTIFICATION_DB_REPLICA_URL: 'postgresql://postgres:postgres@notification-db:5432/postgres'
       REDIS_URL: 'redis://:redis@redis:6379'
+      REDIS_SYS_URL: 'redis://:redis@redis-sys:6379'
       CLICKHOUSE_HOST: 'http://clickhouse:8123'
       # CLICKHOUSE_TRACKER_URL: 'https://clickhouse-tracker-dev.civitai.com'
       SEARCH_HOST: 'http://meilisearch:7700'

@@ -1,9 +1,9 @@
 import dayjs from 'dayjs';
 import { NotificationCategory } from '~/server/common/enums';
-import { redis } from '~/server/redis/client';
+import { cosmeticCache, cosmeticEntityCaches } from '~/server/redis/caches';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
 import { createEvent, DonationCosmeticData } from './base.event';
-import { cosmeticCache, cosmeticEntityCaches } from '~/server/redis/caches';
 
 type CosmeticData = {
   lights: number;
@@ -17,7 +17,7 @@ const donationRewards = {
   Donor: 5000,
   'Golden Donor': 25000,
 };
-export const holiday2024 = createEvent('holiday2024', {
+export const holiday2024 = createEvent(REDIS_KEYS.HOLIDAY['2024']['BASE'], {
   title: 'Get Lit & Give Back 2024',
   startDate: new Date('2024-12-14T00:00:00.000Z'),
   endDate: new Date('2025-01-01T08:00:00.000Z'),
@@ -31,7 +31,7 @@ export const holiday2024 = createEvent('holiday2024', {
 
     // Check to see if they've already engaged for the day
     const dayStr = dayjs().utc().format('YYYY-MM-DD');
-    const dayKey = `packed:holiday2024:${dayStr}`;
+    const dayKey = `${REDIS_KEYS.HOLIDAY['2024']['CACHE']}:${dayStr}` as const;
     const alreadyEngaged = await redis.packed.hGet<true>(dayKey, `${userId}`);
     if (alreadyEngaged) return;
 
@@ -148,7 +148,7 @@ export const holiday2024 = createEvent('holiday2024', {
   },
   async onDailyReset({ scores, db }) {
     const yesterdayStr = dayjs().utc().subtract(1, 'day').format('YYYY-MM-DD');
-    const yesterdayKey = `packed:holiday2024:${yesterdayStr}`;
+    const yesterdayKey = `${REDIS_KEYS.HOLIDAY['2024']['CACHE']}:${yesterdayStr}` as const;
     await redis.del(yesterdayKey);
 
     // Update light brightness

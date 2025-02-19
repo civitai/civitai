@@ -50,7 +50,9 @@ export const ImageCSSAspectRatioWrap = ({
   const { classes, cx } = useStyles({ aspectRatio });
   return (
     <div className={cx(classes.wrap, className)} style={style}>
-      <div className={classes.cover}>{children}</div>
+      <div className={classes.cover}>
+        <div className="size-full">{children}</div>
+      </div>
     </div>
   );
 };

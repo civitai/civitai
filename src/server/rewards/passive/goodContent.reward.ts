@@ -5,7 +5,7 @@ const CUTOFF_DAYS = 30;
 const type = 'goodContent' as const;
 export const goodContentReward = createBuzzEvent({
   type,
-  toAccountType: 'user',
+  toAccountType: 'generation',
   includeTypes: reactableEntities.map((x) => `${type}:${x}`),
   description: 'Content that you posted was liked by someone else',
   triggerDescription: 'For each user that reacts to anything you created in the last 30 days',

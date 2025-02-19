@@ -26,7 +26,6 @@ import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector'
 import { hasPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { Flags } from '~/shared/utils';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 const mapAvatarTextSize: Record<MantineSize, { textSize: MantineSize; subTextSize: MantineSize }> =
@@ -126,7 +125,7 @@ export function UserAvatar({
   const nsfwLevel = avatarUser.profilePicture?.nsfwLevel ?? 0;
   const blockedProfilePicture =
     avatarUser.profilePicture?.ingestion === 'Blocked' ||
-    (!canViewNsfw ? !hasPublicBrowsingLevel(nsfwLevel) : !Flags.hasFlag(browsingLevel, nsfwLevel));
+    (!canViewNsfw ? !hasPublicBrowsingLevel(nsfwLevel) : nsfwLevel > browsingLevel);
   const avatarBgColor =
     theme.colorScheme === 'dark' ? 'rgba(255,255,255,0.31)' : 'rgba(0,0,0,0.31)';
 

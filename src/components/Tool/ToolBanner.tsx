@@ -74,19 +74,20 @@ export function ToolBanner({
                     Visit
                   </Button>
                 )} */}
-                {selected.supported && (
+                {selected.alias && (
                   <Button
                     color="blue"
                     radius="xl"
                     rightIcon={<IconBrush size={18} />}
+                    data-activity="generate:tool"
                     onClick={() => {
                       const isVideo = selected.type === ToolType.Video;
+                      const engine = isVideo ? selected.alias : undefined;
                       generationStore.setData({
                         resources: [],
                         params: {},
                         type: isVideo ? 'video' : 'image',
-                        // TODO.gen: have to think this through on how to get the right workflow
-                        workflow: isVideo ? `${selected.name.toLowerCase}-txt2vid` : undefined,
+                        engine,
                       });
                       generationPanel.open();
                     }}

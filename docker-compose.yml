@@ -44,6 +44,15 @@ services:
     volumes:
       - redis:/data/redis
 
+  redis-sys:
+    image: redis:7-bookworm
+    command: redis-server --requirepass "redis"
+    restart: unless-stopped
+    ports:
+      - "6378:6379"
+    volumes:
+      - redis-sys:/data/redis
+
   minio:
     image: minio/minio
     ports:
@@ -119,6 +128,7 @@ volumes:
   db:
   notification-db:
   redis:
+  redis-sys:
   minio:
   meilisearch:
   clickhouse:

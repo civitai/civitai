@@ -4,14 +4,13 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
   id: true,
   name: true,
   trainedWords: true,
-  index: true,
   baseModel: true,
-  baseModelType: true,
   settings: true,
-  generationCoverage: { select: { covered: true } },
   availability: true,
   clipSkip: true,
   vaeId: true,
+  earlyAccessEndsAt: true,
+  earlyAccessConfig: true,
   model: {
     select: {
       id: true,
@@ -20,12 +19,12 @@ export const generationResourceSelect = Prisma.validator<Prisma.ModelVersionSele
       nsfw: true,
       poi: true,
       minor: true,
-      availability: true,
+      userId: true,
+    },
+  },
+  generationCoverage: {
+    select: {
+      covered: true,
     },
   },
 });
-
-const generationResource = Prisma.validator<Prisma.ModelVersionArgs>()({
-  select: generationResourceSelect,
-});
-export type GenerationResourceSelect = Prisma.ModelVersionGetPayload<typeof generationResource>;

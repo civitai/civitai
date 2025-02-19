@@ -1,11 +1,12 @@
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { BaseModel, constants, generation } from '~/server/common/constants';
-import { userTierSchema } from '~/server/schema/user.schema';
-import { auditPrompt } from '~/utils/metadata/audit';
-import { imageSchema } from './image.schema';
 import { GenerationRequestStatus } from '~/server/common/enums';
-import { numericStringArray } from '~/utils/zod-helpers';
+import { modelVersionEarlyAccessConfigSchema } from '~/server/schema/model-version.schema';
+import { userTierSchema } from '~/server/schema/user.schema';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
+import { auditPrompt } from '~/utils/metadata/audit';
+import { booleanString, stringArray } from '~/utils/zod-helpers';
+import { imageSchema } from './image.schema';
 // export type GetGenerationResourceInput = z.infer<typeof getGenerationResourceSchema>;
 // export const getGenerationResourceSchema = z.object({
 //   type: z.nativeEnum(ModelType),
@@ -37,23 +38,41 @@ export const getGenerationRequestsSchema = z.object({
   detailed: z.boolean().optional(),
 });
 
-export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
-export const generationResourceSchema = z.object({
+const generationResourceSchemaBase = z.object({
   id: z.number(),
+  strength: z.number().default(1),
   name: z.string(),
   trainedWords: z.string().array().default([]),
-  modelId: z.number(),
-  modelName: z.string(),
-  modelType: z.nativeEnum(ModelType),
-  strength: z.number().optional(),
-  minStrength: z.number().optional(),
-  maxStrength: z.number().optional(),
-  image: imageSchema.pick({ url: true }).optional(),
-  minor: z.boolean().optional(),
-
-  // navigation props
-  covered: z.boolean().optional(),
   baseModel: z.string(),
+  earlyAccessEndsAt: z.coerce.date().optional(),
+  earlyAccessConfig: modelVersionEarlyAccessConfigSchema.optional(),
+  canGenerate: z.boolean(),
+  minStrength: z.number().default(-1),
+  maxStrength: z.number().default(2),
+  image: imageSchema.pick({ url: true }).optional(),
+  covered: z.boolean(),
+  hasAccess: z.boolean(),
+  additionalResourceCost: z.boolean().optional(),
+  availability: z.nativeEnum(Availability).optional(),
+  epochDetails: z
+    .object({
+      jobId: z.string(),
+      epochNumber: z.number(),
+      fileName: z.string(),
+    })
+    .optional(),
+});
+export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
+export const generationResourceSchema = generationResourceSchemaBase.extend({
+  model: z.object({
+    id: z.number(),
+    name: z.string(),
+    type: z.nativeEnum(ModelType),
+    nsfw: z.boolean().optional(),
+    poi: z.boolean().optional(),
+    minor: z.boolean().optional(),
+  }),
+  substitute: generationResourceSchemaBase.optional(),
 });
 
 const baseGenerationParamsSchema = z.object({
@@ -260,13 +279,25 @@ export const checkResourcesCoverageSchema = z.object({
   id: z.number(),
 });
 
-export type GetGenerationDataInput = z.infer<typeof getGenerationDataSchema>;
+const baseSchema = z.object({ generation: booleanString().default(true) });
+export type GetGenerationDataInput = z.input<typeof getGenerationDataSchema>;
+export type GetGenerationDataSchema = z.infer<typeof getGenerationDataSchema>;
 export const getGenerationDataSchema = z.discriminatedUnion('type', [
-  z.object({ type: z.literal('image'), id: z.coerce.number() }),
-  z.object({ type: z.literal('video'), id: z.coerce.number() }),
-  z.object({ type: z.literal('audio'), id: z.coerce.number() }),
-  z.object({ type: z.literal('modelVersion'), id: z.coerce.number() }),
-  z.object({ type: z.literal('modelVersions'), ids: numericStringArray() }),
+  baseSchema.extend({ type: z.literal('image'), id: z.coerce.number() }),
+  baseSchema.extend({ type: z.literal('video'), id: z.coerce.number() }),
+  baseSchema.extend({ type: z.literal('audio'), id: z.coerce.number() }),
+  baseSchema.extend({
+    type: z.literal('modelVersion'),
+    id: z.coerce.number(),
+    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+  }),
+  baseSchema.extend({
+    type: z.literal('modelVersions'),
+    ids: z
+      .union([z.array(z.coerce.number()), z.coerce.number()])
+      .transform((val) => (Array.isArray(val) ? val : [val])),
+    epochNumbers: stringArray().optional(), // Formatted as modelVersion@epoch
+  }),
 ]);
 
 export type BulkDeleteGeneratedImagesInput = z.infer<typeof bulkDeleteGeneratedImagesSchema>;

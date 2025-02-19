@@ -2,6 +2,7 @@
 import { z } from 'zod';
 import { zc } from '~/utils/schema-helpers';
 import {
+  booleanString,
   commaDelimitedStringArray,
   commaDelimitedStringObject,
   stringToArray,
@@ -25,6 +26,8 @@ export const serverSchema = z.object({
   DATABASE_READ_TIMEOUT: z.coerce.number().optional(),
   DATABASE_WRITE_TIMEOUT: z.coerce.number().optional(),
   REDIS_URL: z.string().url(),
+  REDIS_URL_DIRECT: commaDelimitedStringArray().default([]),
+  REDIS_SYS_URL: z.string().url(),
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
@@ -91,6 +94,7 @@ export const serverSchema = z.object({
   ORCHESTRATOR_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
   ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
+  ORCHESTRATOR_EXPERIMENTAL: booleanString().default(false),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
   AXIOM_DATASTREAM: z.string().optional(),
@@ -205,6 +209,10 @@ export const serverSchema = z.object({
   VIMEO_SECRET: z.string().optional(),
   VIMEO_CLIENT_ID: z.string().optional(),
   VIMEO_VIDEO_UPLOAD_URL: z.string().optional(),
+
+  // Creator Program Related:
+  CREATOR_POOL_TAXES: z.coerce.number().optional(),
+  CREATOR_POOL_PORTION: z.coerce.number().optional(),
 });
 
 /**

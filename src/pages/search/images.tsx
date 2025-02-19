@@ -70,34 +70,30 @@ function RenderFilters() {
         sortBy={['name']}
         attribute="aspectRatio"
       />
-      <SearchableMultiSelectRefinementList
-        title="Users"
-        attribute="user.username"
-        searchable={true}
-      />
+      <SearchableMultiSelectRefinementList title="Users" attribute="user.username" searchable />
       <SearchableMultiSelectRefinementList
         title="Tags"
         attribute="tagNames"
         operator="and"
-        searchable={true}
+        searchable
       />
       <SearchableMultiSelectRefinementList
         title="Tools"
         attribute="toolNames"
         operator="and"
-        searchable={true}
+        searchable
       />
       <SearchableMultiSelectRefinementList
         title="Techniques"
         attribute="techniqueNames"
         operator="and"
-        searchable={true}
+        searchable
       />
       <ChipRefinementList
         title="Filter by Base Model"
         sortBy={['name']}
         attribute="baseModel"
-        limit={30}
+        limit={100}
       />
     </>
   );

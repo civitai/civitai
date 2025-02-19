@@ -27,7 +27,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
@@ -115,7 +114,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const router = useRouter();
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { balance } = useBuzz(currentUser?.id, 'user');
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance) =>
       `You don't have enough funds to train this model. Required Buzz: ${numberWithCommas(
@@ -190,7 +188,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     } else if (cost !== selectedRun.buzzCost) {
       updateRun(model.id, selectedRun.id, { hasIssue: false, buzzCost: cost });
     }
-  }, [dryRunResult.data?.cost]);
+  }, [dryRunResult.data?.cost, dryRunResult.isLoading, runs.length]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation();
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation();
@@ -301,6 +299,23 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
         return;
       }
+
+      // specific check for batch
+      if (
+        ['flux', 'sd35'].includes(r.baseType) &&
+        r.params.engine === 'kohya' &&
+        r.params.trainBatchSize > 2 &&
+        r.params.resolution > 512
+      ) {
+        showErrorNotification({
+          error: new Error(
+            `Due to hardware constraints, batch sizes >2 are not supported for resolutions >512. Please lower the batch size (this will affect steps) or decrease the resolution.`
+          ),
+          title: 'Batch size too high',
+          autoClose: false,
+        });
+        return;
+      }
     }
 
     const performTransaction = () => {
@@ -318,17 +333,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                 <CurrencyIcon currency={Currency.BUZZ} size={12} />
                 <Text span inline>
                   {totalBuzzCost.toLocaleString()}
-                </Text>
-              </Group>
-            </Group>
-            <Group>
-              <Text span inline>
-                Your remaining balance will be:{' '}
-              </Text>
-              <Group spacing={2}>
-                <CurrencyIcon currency={Currency.BUZZ} size={12} />
-                <Text span inline>
-                  {(balance - totalBuzzCost).toLocaleString()}
                 </Text>
               </Group>
             </Group>

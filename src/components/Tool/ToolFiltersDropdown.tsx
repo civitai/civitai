@@ -62,7 +62,7 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
   const target = (
     <Indicator
       offset={4}
-      label={filterLength ? filterLength : undefined}
+      label={isClient && filterLength ? filterLength : undefined}
       size={16}
       zIndex={10}
       showZero={false}
@@ -93,6 +93,8 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
     </Indicator>
   );
 
+  if (!isClient) return target;
+
   const dropdown = (
     <Stack spacing="lg">
       <Stack spacing="md">
@@ -122,8 +124,6 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
       )}
     </Stack>
   );
-
-  if (!isClient) return target;
 
   if (mobile)
     return (

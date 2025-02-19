@@ -36,7 +36,9 @@ import {
   ModelGallerySettingsSchema,
   ModelMeta,
   ModelUpsertInput,
+  PrivateModelFromTrainingInput,
   PublishModelSchema,
+  PublishPrivateModelInput,
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
@@ -68,10 +70,13 @@ import {
   getModelsRaw,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getPrivateModelCount,
   getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
+  privateModelFromTraining,
   publishModelById,
+  publishPrivateModel,
   restoreModelById,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
@@ -82,6 +87,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   BlockedByUsers,
@@ -104,6 +110,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  Availability,
   BountyType,
   CollectionItemStatus,
   MetricTimeframe,
@@ -112,13 +119,28 @@ import {
   ModelStatus,
   ModelType,
   ModelUploadType,
+  ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { getDownloadUrl } from '~/utils/delivery-worker';
+import { removeNulls } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { redis } from '../redis/client';
+import { redis, REDIS_KEYS } from '../redis/client';
 import { BountyDetailsSchema } from '../schema/bounty.schema';
-import { getUnavailableResources } from '../services/generation/generation.service';
+import {
+  getResourceData,
+  getUnavailableResources,
+} from '../services/generation/generation.service';
 
+// TODO.Briant - determine all the logic to check when getting model versions
+/*
+  1. If the model version status is not published, only return the version if the user is an owner or moderator
+  2. Check if the user is blocked from using a model version (this should probably be done during page load)
+  3. Don't fetch posts each time you get the model versions, only need to check for posts when a model is not published
+  4  don't check for entity access on each version. Doesn't need to happen for versions that are already available
+  5. ensure that we aren't fetching vae files when `!vadIds.length`
+  6. get suggested resources in another api call
+  7. getUnavailableResources needs to go. We can't have another source of truth for generation coverage
+*/
 export type GetModelReturnType = AsyncReturnType<typeof getModelHandler>;
 export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx: Context }) => {
   try {
@@ -169,6 +191,14 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       userId: ctx.user?.id,
     });
 
+    const recommendedResourceIds =
+      model.modelVersions.flatMap((version) => version?.recommendedResources.map((x) => x.id)) ??
+      [];
+    const generationResources = await getResourceData({
+      ids: recommendedResourceIds,
+      user: ctx?.user,
+    });
+
     return {
       ...model,
       metrics: undefined,
@@ -207,13 +237,15 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           earlyAccessDeadline = undefined;
 
         const entityAccessForVersion = entityAccess.find((x) => x.entityId === version.id);
-
+        const isDownloadable = version.usageControl === ModelUsageControl.Download || isOwner;
         const canDownload =
+          isDownloadable &&
           model.mode !== ModelModifier.Archived &&
           entityAccessForVersion?.hasAccess &&
           (!earlyAccessDeadline ||
             (entityAccessForVersion?.permissions ?? 0) >=
               EntityAccessPermission.EarlyAccessDownload);
+
         const canGenerate =
           !!version.generationCoverage?.covered &&
           unavailableGenResources.indexOf(version.id) === -1;
@@ -221,16 +253,19 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
         // sort version files by file type, 'Model' type goes first
         const vaeFile = vaeFiles.filter((x) => x.modelVersionId === version.vaeId);
         version.files.push(...vaeFile);
-        const files = version.files
-          .filter((x) => x.visibility === 'Public' || canManage)
-          .sort((a, b) => {
-            const aType = a.type as ModelFileType;
-            const bType = b.type as ModelFileType;
+        const files = isDownloadable
+          ? version.files
+              .filter((x) => x.visibility === 'Public' || canManage)
+              .sort((a, b) => {
+                const aType = a.type as ModelFileType;
+                const bType = b.type as ModelFileType;
 
-            if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
-            else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType]) return 1;
-            else return 0;
-          });
+                if (constants.modelFileOrder[aType] < constants.modelFileOrder[bType]) return -1;
+                else if (constants.modelFileOrder[aType] > constants.modelFileOrder[bType])
+                  return 1;
+                else return 0;
+              })
+          : [];
 
         const hashes = version.files
           .filter((file) =>
@@ -268,16 +303,13 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
           meta: version.meta as ModelVersionMeta,
           trainingDetails: version.trainingDetails as TrainingDetailsObj | undefined,
           settings: version.settings as RecommendedSettingsSchema | undefined,
-          recommendedResources: version.recommendedResources.map(({ resource, settings }) => ({
-            id: resource.id,
-            name: resource.name,
-            baseModel: resource.baseModel,
-            trainedWords: resource.trainedWords,
-            modelId: resource.model.id,
-            modelName: resource.model.name,
-            modelType: resource.model.type,
-            strength: (settings as RecommendedSettingsSchema)?.strength,
-          })),
+          recommendedResources: version.recommendedResources
+            .map((item) => {
+              const match = generationResources.find((x) => x.id === item.resource.id);
+              if (!match) return null;
+              return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
+            })
+            .filter(isDefined),
         };
       }),
     };
@@ -722,6 +754,7 @@ export const getDownloadCommandHandler = async ({
             nsfw: true,
           },
         },
+        usageControl: true,
         // images: {
         //   select: {
         //     image: { select: { url: true } },
@@ -748,6 +781,14 @@ export const getDownloadCommandHandler = async ({
       orderBy: { index: 'asc' },
     });
     if (!modelVersion) throw throwNotFoundError();
+
+    const isOwner = ctx.user?.id === modelVersion.model.userId;
+    const isDownloadable =
+      modelVersion.usageControl === ModelUsageControl.Download || isOwner || ctx.user?.isModerator;
+
+    if (!isDownloadable) {
+      throw throwAuthorizationError();
+    }
 
     const [access] = await hasEntityAccess({
       entityType: 'ModelVersion',
@@ -787,13 +828,18 @@ export const getDownloadCommandHandler = async ({
 
     const now = new Date();
     await addUserDownload({ userId, modelVersionId: modelVersion.id, downloadAt: now });
-    ctx.track.modelVersionEvent({
-      type: 'Download',
-      modelId: modelVersion.model.id,
-      modelVersionId: modelVersion.id,
-      nsfw: modelVersion.model.nsfw,
-      time: now,
-    });
+
+    if (isDownloadable) {
+      // Best not to track for versions that are not downloadable.
+      // Safer for us.
+      ctx.track.modelVersionEvent({
+        type: 'Download',
+        modelId: modelVersion.model.id,
+        modelVersionId: modelVersion.id,
+        nsfw: modelVersion.model.nsfw,
+        time: now,
+      });
+    }
 
     const fileName = getDownloadFilename({ model, modelVersion, file });
     const { url } = await getDownloadUrl(file.url, fileName);
@@ -1569,7 +1615,7 @@ export const updateGallerySettingsHandler = async ({
       data: { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull },
     });
     // Clear cache
-    await redis.del(`model:gallery-settings:${id}`);
+    await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
 
     return { ...updatedModel, gallerySettings };
   } catch (error) {
@@ -1666,3 +1712,111 @@ export function setModelCollectionShowcaseHandler({
     throw throwDbError(error);
   }
 }
+
+export const privateModelFromTrainingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PrivateModelFromTrainingInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { nsfw, poi, minor } = input;
+
+    const membership = await getUserSubscription({ userId });
+    if (!membership && !ctx.user.isModerator)
+      throw throwAuthorizationError('You must have a subscription to create private models.');
+
+    const maxPrivateModels =
+      membership?.productMeta?.maxPrivateModels ??
+      constants.memberships.membershipDetailsAddons[
+        membership?.tier as keyof typeof constants.memberships.membershipDetailsAddons
+      ]?.maxPrivateModels;
+
+    if (!maxPrivateModels && !ctx.user.isModerator) {
+      throw throwAuthorizationError('You must have a subscription to create private models.');
+    }
+
+    const currentPrivateModels = await getPrivateModelCount({ userId });
+
+    if (currentPrivateModels >= maxPrivateModels && !ctx.user.isModerator) {
+      throw throwAuthorizationError(
+        `You have reached the limit of ${maxPrivateModels} private models. You may upgrade your subscription to create more.`
+      );
+    }
+
+    if (nsfw && poi)
+      throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+
+    if (nsfw && minor)
+      throw throwBadRequestError('Mature content depicting minors is not permitted.');
+
+    // Check tags for multiple categories
+    const { tagsOnModels } = input;
+    if (tagsOnModels?.length) {
+      const modelCategories = await getCategoryTags('model');
+      const matchedTags = tagsOnModels.filter((tag) =>
+        modelCategories.some((categoryTag) => categoryTag.name === tag.name)
+      );
+
+      if (matchedTags.length > 1)
+        throw throwBadRequestError(
+          `Model cannot have multiple categories. Please include only one from: ${matchedTags
+            .map((tag) => tag.name)
+            .join(', ')}`
+        );
+    }
+
+    const model = await privateModelFromTraining({
+      ...input,
+      user: ctx.user,
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    if (input.id) await dataForModelsCache.bust(input.id);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const publishPrivateModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PublishPrivateModelInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const model = await getModel({
+      id: input.modelId,
+      select: { id: true, userId: true, status: true, availability: true },
+    });
+
+    if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
+
+    if (model.availability !== Availability.Private) {
+      throw throwBadRequestError('Model is not private. Cannot publish.');
+    }
+
+    if (model.userId !== userId && !ctx.user.isModerator) {
+      throw throwAuthorizationError();
+    }
+
+    const { versionIds } = await publishPrivateModel(input);
+    await dataForModelsCache.bust(input.modelId);
+    await bustMvCache(versionIds);
+    await modelsSearchIndex.queueUpdate([
+      { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
+    return true;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};

@@ -8,7 +8,7 @@ import type {
   TrainingDetailsBaseModel,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
-import { Generation } from '~/server/services/generation/generation.types';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 import { TrainingBaseModelType } from '~/utils/training';
 
 export type ImageDataType = {
@@ -109,7 +109,7 @@ export type TrainingRun = {
   id: number;
   base: TrainingDetailsBaseModel;
   baseType: TrainingBaseModelType;
-  customModel?: Generation.Resource;
+  customModel?: GenerationResource;
   samplePrompts: string[];
   params: TrainingDetailsParams;
   highPriority: boolean;

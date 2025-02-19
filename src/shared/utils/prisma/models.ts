@@ -12,7 +12,7 @@ export type UserEngagementType = "Follow" | "Hide" | "Block";
 
 export type LinkType = "Sponsorship" | "Social" | "Other";
 
-export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "Poses" | "Wildcards" | "Workflows" | "Other";
+export type ModelType = "Checkpoint" | "TextualInversion" | "Hypernetwork" | "AestheticGradient" | "LORA" | "LoCon" | "DoRA" | "Controlnet" | "Upscaler" | "MotionModule" | "VAE" | "Poses" | "Wildcards" | "Workflows" | "Detection" | "Other";
 
 export type ImportStatus = "Pending" | "Processing" | "Failed" | "Completed";
 
@@ -25,6 +25,8 @@ export type CommercialUse = "None" | "Image" | "RentCivit" | "Rent" | "Sell";
 export type CheckpointType = "Trained" | "Merge";
 
 export type ModelUploadType = "Created" | "Trained";
+
+export type ModelUsageControl = "Download" | "Generation" | "InternalGeneration";
 
 export type ModelModifier = "Archived" | "TakenDown";
 
@@ -76,7 +78,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -647,6 +649,7 @@ export interface ModelVersion {
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig: JsonValue | null;
   uploadType: ModelUploadType;
+  usageControl: ModelUsageControl;
   monetization?: ModelVersionMonetization | null;
   metrics?: ModelVersionMetric[];
   files?: ModelFile[];
@@ -1500,6 +1503,7 @@ export interface CommentV2 {
   childThread?: Thread | null;
   metadata: JsonValue | null;
   hidden: boolean | null;
+  pinnedAt: Date | null;
   reactions?: CommentV2Reaction[];
   reports?: CommentV2Report[];
 }
@@ -2422,6 +2426,7 @@ export interface Tool {
   supported: boolean;
   company: string | null;
   metadata: JsonValue;
+  alias: string | null;
 }
 
 export interface ImageTool {

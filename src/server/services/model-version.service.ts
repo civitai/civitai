@@ -1,16 +1,10 @@
 import { Prisma } from '@prisma/client';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
-import { constants } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import {
   EntityAccessPermission,
   NotificationCategory,
@@ -18,14 +12,20 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 import {
-  dataForModelsCache,
-  modelVersionAccessCache,
-  resourceDataCache,
-} from '~/server/redis/caches';
+  Availability,
+  CommercialUse,
+  ModelStatus,
+  ModelType,
+  ModelVersionEngagementType,
+} from '~/shared/utils/prisma/enums';
 
+import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
@@ -36,6 +36,7 @@ import {
   ModelVersionUpsertInput,
   PublishVersionInput,
   QueryModelVersionSchema,
+  RecommendedSettingsSchema,
   UpsertExplorationPromptInput,
 } from '~/server/schema/model-version.schema';
 import { ModelMeta, UnpublishModelSchema } from '~/server/schema/model.schema';
@@ -44,11 +45,13 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
   throwDbError,
@@ -58,9 +61,8 @@ import { getBaseModelSet } from '~/shared/constants/generation.constants';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { logToAxiom } from '~/server/logging/client';
-import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { uploadImageFromUrl } from '~/server/services/image.service';
+import { addPostImage, createPost } from '~/server/services/post.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -98,7 +100,13 @@ export const getDefaultModelVersion = async ({
         take: 1,
         where: modelVersionId ? { id: modelVersionId } : undefined,
         orderBy: { index: 'asc' },
-        select: { id: true, status: true, model: { select: { userId: true } } },
+        select: {
+          id: true,
+          status: true,
+          model: { select: { id: true, userId: true, availability: true } },
+          availability: true,
+          trainingStatus: true,
+        },
       },
     },
   });
@@ -194,9 +202,22 @@ export const upsertModelVersion = async ({
   if (!id || templateId) {
     const existingVersions = await dbRead.modelVersion.findMany({
       where: { modelId: data.modelId },
-      select: { id: true },
+      select: {
+        id: true,
+        model: {
+          select: { availability: true },
+        },
+      },
       orderBy: { index: 'asc' },
     });
+
+    if (
+      existingVersions.length > 0 &&
+      existingVersions[0].model.availability === Availability.Private
+    ) {
+      // Ensures people won't abuse the system by adding versions to private models.
+      throw throwBadRequestError('You cannot add versions to a private model.');
+    }
 
     const [version] = await dbWrite.$transaction([
       dbWrite.modelVersion.create({
@@ -262,6 +283,12 @@ export const upsertModelVersion = async ({
         earlyAccessEndsAt: true,
         earlyAccessConfig: true,
         publishedAt: true,
+        model: {
+          select: {
+            id: true,
+            availability: true,
+          },
+        },
         monetization: {
           select: {
             id: true,
@@ -334,9 +361,7 @@ export const upsertModelVersion = async ({
       where: { id },
       data: {
         ...data,
-        availability: [ModelStatus.Published, ModelStatus.Scheduled].some((s) => s === data?.status)
-          ? Availability.Public
-          : Availability.Private,
+        availability: existingVersion.model.availability, // Will ensure a version keeps the parent's availability.
         earlyAccessConfig:
           updatedEarlyAccessConfig !== null ? updatedEarlyAccessConfig : Prisma.JsonNull,
         settings: settings !== null ? settings : Prisma.JsonNull,
@@ -605,7 +630,7 @@ export const publishModelVersionById = async ({
       id: true,
       name: true,
       earlyAccessConfig: true,
-      model: { select: { userId: true, name: true } },
+      model: { select: { userId: true, name: true, availability: true } },
     },
   });
 
@@ -635,7 +660,7 @@ export const publishModelVersionById = async ({
             status,
             publishedAt: !republishing ? publishedAt : undefined,
             meta,
-            availability: Availability.Public,
+            availability: currentVersion.model.availability,
           },
           select: {
             id: true,
@@ -842,8 +867,8 @@ export const getModelVersionsByModelType = async ({
   const sqlAnd = [Prisma.sql`mv.status = 'Published' AND m.type = ${type}::"ModelType"`];
   if (baseModel) {
     const baseModelSet = getBaseModelSet(baseModel);
-    if (baseModelSet.length)
-      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet, ',')})`);
+    if (baseModelSet.baseModels.length)
+      sqlAnd.push(Prisma.sql`mv."baseModel" IN (${Prisma.join(baseModelSet.baseModels, ',')})`);
   }
   if (query) {
     const pgQuery = '%' + query + '%';
@@ -943,18 +968,13 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   const generationData = await clickhouse.$query<Row>`
     SELECT
-        resourceId as modelVersionId,
-        createdAt,
-        SUM(1) as generations
-    FROM (
-        SELECT
-            arrayJoin(resourcesUsed) as resourceId,
-            createdAt::date as createdAt
-        FROM orchestration.textToImageJobs
-        WHERE createdAt >= ${date}
-    )
-    WHERE resourceId IN (${modelVersions.map((x) => x.id)})
-    GROUP BY resourceId, createdAt
+      modelVersionId,
+      date as createdAt,
+      MAX(count) as generations
+    FROM buzz_resource_compensation
+    WHERE createdAt >= ${date}
+    AND modelVersionId IN (${modelVersions.map((x) => x.id)})
+    GROUP BY modelVersionId, date
     ORDER BY createdAt DESC, generations DESC;
   `;
 
@@ -1390,4 +1410,155 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
 
   return trainingResults.workflowId ?? null;
+};
+
+export const resourceDataCache = createCachedArray({
+  key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
+  lookupFn: async (ids) => {
+    if (!ids.length) return {};
+    const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
+      SELECT
+        mv."id",
+        mv."name",
+        mv."trainedWords",
+        mv."baseModel",
+        mv."settings",
+        mv."availability",
+        mv."clipSkip",
+        mv."vaeId",
+        mv."earlyAccessEndsAt",
+        (CASE WHEN mv."availability" = 'EarlyAccess' THEN mv."earlyAccessConfig" END) as "earlyAccessConfig",
+        gc."covered",
+        (
+          SELECT to_json(obj)
+          FROM (
+            SELECT
+              m."id",
+              m."name",
+              m."type",
+              m."nsfw",
+              m."poi",
+              m."minor",
+              m."userId"
+            FROM "Model" m
+            WHERE m.id = mv."modelId"
+          ) as obj
+        ) as model
+      FROM "ModelVersion" mv
+      LEFT JOIN "GenerationCoverage" gc ON gc."modelVersionId" = mv.id
+      WHERE mv.id IN (${Prisma.join(ids)})
+    `;
+
+    const results = dbResults.reduce<Record<number, GenerationResourceDataModel>>(
+      (acc, result) => ({ ...acc, [result.id]: result }),
+      {}
+    );
+    return results;
+  },
+  idKey: 'id',
+  dontCacheFn: (data) => {
+    const cacheable = ['Public', 'Unsearchable'].includes(data.availability);
+    return !cacheable || !data.covered;
+  },
+  ttl: CacheTTL.hour,
+});
+
+export type GenerationResourceDataModel = {
+  id: number;
+  name: string;
+  trainedWords: string[];
+  clipSkip: number | null;
+  vaeId: number | null;
+  baseModel: string;
+  settings: RecommendedSettingsSchema | null;
+  availability: Availability;
+  earlyAccessEndsAt: Date | null;
+  earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
+  covered: boolean | null;
+  model: {
+    id: number;
+    name: string;
+    type: ModelType;
+    nsfw: boolean;
+    poi: boolean;
+    minor: boolean;
+    userId: number;
+  };
+};
+
+export const createModelVersionPostFromTraining = async ({
+  modelVersionId,
+  user,
+}: {
+  modelVersionId: number;
+  user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
+}) => {
+  const now = new Date();
+  const files = await dbRead.modelFile.findMany({
+    where: { modelVersionId },
+    select: { id: true, metadata: true },
+  });
+  const trainingFile = files.find((file) => {
+    const metadata = file.metadata as ModelFileMetadata;
+    return !!metadata?.trainingResults;
+  });
+
+  if (!trainingFile) {
+    return;
+  }
+
+  const fileMetadata = trainingFile.metadata as ModelFileMetadata;
+
+  const epoch = fileMetadata.selectedEpochUrl
+    ? fileMetadata.trainingResults?.epochs?.find((e) =>
+        'modelUrl' in e
+          ? e.modelUrl === fileMetadata.selectedEpochUrl
+          : e.model_url === fileMetadata.selectedEpochUrl
+      )
+    : fileMetadata.trainingResults?.epochs?.[fileMetadata.trainingResults.epochs?.length - 1];
+
+  if (!epoch) {
+    return;
+  }
+
+  const imageUrls = 'sampleImages' in epoch ? epoch.sampleImages : epoch.sample_images;
+
+  if (!imageUrls || imageUrls?.length === 0) {
+    return;
+  }
+
+  const uploadedImages = (
+    await Promise.all(
+      imageUrls.map(async (data, index) => {
+        const image = await uploadImageFromUrl({
+          imageUrl: typeof data === 'string' ? data : data.image_url,
+        });
+
+        return image;
+      })
+    )
+  ).filter((x) => isDefined(x?.url));
+
+  // Create post:
+  const post = await createPost({
+    userId: user.id,
+    modelVersionId,
+    publishedAt: now,
+  });
+
+  await Promise.all(
+    uploadedImages.map((image) =>
+      addPostImage({
+        type: 'image',
+        postId: post.id,
+        modelVersionId,
+        width: image.metadata?.width,
+        height: image.metadata?.height,
+        metadata: image.metadata as any,
+        meta: image.meta,
+        url: image.url as string,
+        user,
+      })
+    )
+  );
 };

@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { randomUUID } from 'crypto';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
 import { SearchParams, SearchResponse } from 'meilisearch';
@@ -31,13 +32,12 @@ import {
   imageMetaCache,
   imageMetadataCache,
   imagesForModelVersionsCache,
-  resourceDataCache,
   tagCache,
   tagIdsForImagesCache,
   thumbnailCache,
   userContentOverviewCache,
 } from '~/server/redis/caches';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
@@ -106,10 +106,7 @@ import {
   onlySelectableLevels,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import {
-  formatGenerationResources,
-  generationFormWorkflowConfigurations,
-} from '~/shared/constants/generation.constants';
+import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 import { Flags } from '~/shared/utils';
 import {
   AppealStatus,
@@ -127,10 +124,13 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { ImageResource } from '~/shared/utils/prisma/models';
+import { fetchBlob, getBase64 } from '~/utils/file-utils';
 import { logToDb } from '~/utils/logging';
+import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
+import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -139,6 +139,7 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { uniqBy } from 'lodash-es';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -190,8 +191,8 @@ async function markImagesDeleted(id: number | number[]) {
 
   const toSet = Object.fromEntries(id.map((x) => [x, x]));
   await Promise.all([
-    redis.packed.hmSet(REDIS_KEYS.INDEXES.IMAGE_DELETED, toSet),
-    redis.hExpire(REDIS_KEYS.INDEXES.IMAGE_DELETED, Object.keys(toSet), CacheTTL.hour),
+    sysRedis.packed.hmSet(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, toSet),
+    sysRedis.hExpire(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, Object.keys(toSet), CacheTTL.hour),
   ]);
 }
 
@@ -199,7 +200,7 @@ const filterOutDeleted = async <T extends object>(data: (T & { id: number })[]) 
   const keys = data.map((x) => x.id.toString());
   if (!keys.length) return data;
   const deleted = (
-    (await redis.packed.hmGet<number>(REDIS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
+    (await sysRedis.packed.hmGet<number>(REDIS_SYS_KEYS.INDEXES.IMAGE_DELETED, keys)) ?? []
   ).filter(isDefined);
   return data.filter((x) => !deleted.includes(x.id));
 };
@@ -475,7 +476,7 @@ const defaultScanTypes = [
   ...(env.MINOR_SCANNER === 'custom'
     ? [ImageScanType.MinorDetection]
     : env.MINOR_SCANNER === 'hive'
-    ? [ImageScanType.HiveDemographic]
+    ? [ImageScanType.HiveDemographics]
     : []),
 ];
 
@@ -716,6 +717,8 @@ type GetAllImagesRaw = {
   baseModel?: string;
   availability: Availability;
   minor: boolean;
+  remixOfId?: number | null;
+  hasPositivePrompt?: boolean;
 };
 
 type GetAllImagesInput = GetInfiniteImagesOutput & {
@@ -733,6 +736,7 @@ export const getAllImages = async (
     limit,
     cursor,
     skip,
+    sort,
     postId,
     postIds,
     collectionId, // TODO - call this from separate method?
@@ -765,7 +769,7 @@ export const getAllImages = async (
     collectionTagId,
     excludedUserIds,
   } = input;
-  let { sort, browsingLevel, userId: targetUserId } = input;
+  let { browsingLevel, userId: targetUserId } = input;
 
   const AND: Prisma.Sql[] = [Prisma.sql`i."postId" IS NOT NULL`];
   const WITH: Prisma.Sql[] = [];
@@ -776,11 +780,11 @@ export const getAllImages = async (
   const isModerator = user?.isModerator ?? false;
   const includeCosmetics = include?.includes('cosmetics'); // TODO: This must be done similar to user cosmetics.
 
-  // TODO.fix remove test
-  if (modelVersionId) {
-    const shouldBypassSort = JSON.parse((await redis.get('bypassSort')) ?? '[]') as number[];
-    if (shouldBypassSort.includes(modelVersionId)) sort = ImageSort.Newest;
-  }
+  // nb - test code
+  // if (modelVersionId) {
+  //   const shouldBypassSort = JSON.parse((await redis.get('bypassSort')) ?? '[]') as number[];
+  //   if (shouldBypassSort.includes(modelVersionId)) sort = ImageSort.Newest;
+  // }
 
   // Exclude unselectable browsing levels
   browsingLevel = onlySelectableLevels(browsingLevel);
@@ -1084,22 +1088,19 @@ export const getAllImages = async (
 
   if (userId && !!reactions?.length) {
     // cacheTime = 0;
-    AND.push(
-      Prisma.sql`EXISTS (
-        SELECT 1
-        FROM "ImageReaction" ir
-        WHERE ir."imageId" = i.id
-          AND ir.reaction::text IN (${Prisma.join(reactions)})
-          AND ir."userId" = ${userId}
-      )`
-    );
+    joins.push(`JOIN "ImageReaction" ir ON ir."imageId" = i.id`);
+    AND.push(Prisma.sql`ir.reaction IN (${Prisma.join(reactions)})`);
+    AND.push(Prisma.sql`ir."userId" = ${userId}`);
   }
 
   if (!!tools?.length) {
+    // Bring in images that contain the selected tools
     AND.push(Prisma.sql`EXISTS (
       SELECT 1
       FROM "ImageTool" it
-      WHERE it."imageId" = i.id AND it."toolId" IN (${Prisma.join(tools)})
+      WHERE it."imageId" = i.id
+      GROUP BY it."imageId"
+      HAVING array_agg(it."toolId" ORDER BY it."toolId") @> ARRAY[${Prisma.join(tools)}]::integer[]
     )`);
   }
   if (!!techniques?.length) {
@@ -1173,6 +1174,14 @@ export const getAllImages = async (
       ) AS "hasMeta",
       (
         CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
+      (
+        CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
             OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
               ${Prisma.join(workflows)}
@@ -1181,6 +1190,7 @@ export const getAllImages = async (
           ELSE FALSE
         END
       ) as "onSite",
+      i."meta"->'extra'->'remixOfId' as "remixOfId",
       i."createdAt",
       GREATEST(p."publishedAt", i."scannedAt", i."createdAt") as "sortAt",
       i."mimeType",
@@ -1341,6 +1351,8 @@ export const getAllImages = async (
       modelVersionIds?: number[];
       modelVersionIdsManual?: number[];
       thumbnailUrl?: string;
+      remixOfId?: number | null;
+      hasPositivePrompt?: boolean;
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -1645,12 +1657,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     modelId,
     prioritizedUserIds,
     useCombinedNsfwLevel,
+    remixOfId,
+    remixesOnly,
+    nonRemixesOnly,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
 
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
+
+  if (!isModerator) {
+    filters.push(
+      // Avoids exposing private resources to the public
+      `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
+    );
+  }
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
@@ -1736,6 +1758,18 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     }
 
     filters.push(`(${versionFilters.join(' OR ')})`);
+  }
+
+  if (remixOfId) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
+  }
+
+  if (remixesOnly && !nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', '>= 0'));
+  }
+
+  if (nonRemixesOnly) {
+    filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
   /*
@@ -1923,9 +1957,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     });
 
     if (fullData.length) {
-      redis.packed
+      sysRedis.packed
         .sAdd(
-          REDIS_KEYS.QUEUES.SEEN_IMAGES,
+          REDIS_SYS_KEYS.QUEUES.SEEN_IMAGES,
           fullData.map((i) => i.id)
         )
         .catch((e) => {
@@ -2212,6 +2246,14 @@ export const getImage = async ({
       ) AS "hasMeta",
       (
         CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
+      (
+        CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
             OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
               ${Prisma.join(workflows)}
@@ -2220,6 +2262,7 @@ export const getImage = async ({
           ELSE FALSE
         END
       ) as "onSite",
+      i."meta"->'extra'->'remixOfId' as "remixOfId",
       u.id as "userId",
       u.username,
       u.image as "userImage",
@@ -2264,9 +2307,14 @@ export const getImage = async ({
 
   const imageMetrics = await getImageMetricsObject([firstRawImage]);
   const match = imageMetrics[firstRawImage.id];
+  const imageCosmetics = await getCosmeticsForEntity({
+    ids: [firstRawImage.id],
+    entity: 'Image',
+  });
 
   const image = {
     ...firstRawImage,
+    cosmetic: imageCosmetics?.[firstRawImage.id] ?? null,
     user: {
       id: creatorId,
       username,
@@ -2327,45 +2375,6 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
   return resources;
 };
 
-export async function getImageGenerationResources(id: number) {
-  const imageResources = await dbRead.imageResource.findMany({
-    where: { imageId: id },
-    select: { imageId: true, modelVersionId: true, hash: true, strength: true },
-  });
-  const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
-  const resourceData = await resourceDataCache.fetch(versionIds);
-
-  // TODO - determine a good way to return resources when some resources are unavailable
-  const index = resourceData.findIndex((x) => x.model.type === 'Checkpoint');
-  if (index > -1 && !resourceData[index].available) {
-    const checkpoint = resourceData[index];
-    const latestVersion = await dbRead.modelVersion.findFirst({
-      where: {
-        modelId: checkpoint.model.id,
-        availability: { in: ['Public', 'EarlyAccess'] },
-        generationCoverage: { covered: true },
-      },
-      select: { id: true },
-      orderBy: { index: 'asc' },
-    });
-    if (latestVersion) {
-      const [newCheckpoint] = await resourceDataCache.fetch([latestVersion.id]);
-      if (newCheckpoint) resourceData[index] = newCheckpoint;
-    }
-  }
-
-  return formatGenerationResources(resourceData)
-    .map((resource) => {
-      const imageResource = imageResources.find((x) => x.modelVersionId === resource.id);
-      return {
-        ...resource,
-        hash: imageResource?.hash ?? undefined,
-        strength: imageResource?.strength ? imageResource.strength / 100 : resource.strength,
-      };
-    })
-    .filter((x) => x.available);
-}
-
 export type ImagesForModelVersions = {
   id: number;
   userId: number;
@@ -2384,6 +2393,8 @@ export type ImagesForModelVersions = {
   sizeKB?: number;
   onSite: boolean;
   hasMeta: boolean;
+  remixOfId?: number | null;
+  hasPositivePrompt?: boolean;
 };
 
 export const getImagesForModelVersion = async ({
@@ -2500,6 +2511,14 @@ export const getImagesForModelVersion = async ({
       ) AS "hasMeta",
       (
         CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
+      (
+        CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
             OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
               ${Prisma.join(workflows)}
@@ -2507,7 +2526,8 @@ export const getImagesForModelVersion = async ({
           THEN TRUE
           ELSE FALSE
         END
-      ) as "onSite"
+      ) as "onSite",
+      i."meta"->'extra'->'remixOfId' as "remixOfId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id
     JOIN "Post" p ON p.id = i."postId"
@@ -2657,6 +2677,8 @@ export const getImagesForPosts = async ({
       metadata: ImageMetadata | VideoMetadata | null;
       hasMeta: boolean;
       onSite: boolean;
+      remixOfId?: number | null;
+      hasPositivePrompt?: boolean;
     }[]
   >`
     SELECT
@@ -2680,6 +2702,14 @@ export const getImagesForPosts = async ({
       ) AS "hasMeta",
       (
         CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
+      (
+        CASE
           WHEN i.meta->>'civitaiResources' IS NOT NULL
             OR i.meta->>'workflow' IS NOT NULL AND i.meta->>'workflow' = ANY(ARRAY[
                 ${Prisma.join(workflows)}
@@ -2687,7 +2717,8 @@ export const getImagesForPosts = async ({
           THEN TRUE
           ELSE FALSE
         END
-      ) as "onSite"
+      ) as "onSite",
+      i.metadata->>'remixOfId' as "remixOfId"
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
@@ -2855,6 +2886,7 @@ type GetImageConnectionRaw = {
   metadata: ImageMetadata | VideoMetadata;
   entityId: number;
   hasMeta: boolean;
+  hasPositivePrompt?: boolean;
 };
 
 export const getImagesByEntity = async ({
@@ -2940,6 +2972,14 @@ export const getImagesByEntity = async ({
           ELSE TRUE
         END
       ) AS "hasMeta",
+      (
+        CASE
+          WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+            AND i.meta->>'prompt' IS NOT NULL
+          THEN TRUE
+          ELSE FALSE
+        END
+      ) AS "hasPositivePrompt",
       t."entityId"
     FROM targets t
     JOIN "Image" i ON i.id = t.id`;
@@ -3060,10 +3100,12 @@ export const createEntityImages = async ({
   const batches = chunk(imageRecords, 50);
   for (const batch of batches) {
     if (shouldAddImageResources) {
-      await Promise.all(batch.map((image) => createImageResources({ imageId: image.id, tx })));
+      const tasks = batch.map((image) => () => createImageResources({ imageId: image.id, tx }));
+      await limitConcurrency(tasks, 10);
     }
 
-    await Promise.all(batch.map((image) => ingestImage({ image, tx })));
+    const tasks = batch.map((image) => () => ingestImage({ image, tx }));
+    await limitConcurrency(tasks, 10);
   }
 
   if (entityType && entityId) {
@@ -3418,7 +3460,12 @@ const imageReviewQueueJoinMap = {
       ma."createdAt" as "removedAt",
     `,
     join: `
-      JOIN "Appeal" appeal ON appeal."entityId" = i.id AND appeal."entityType" = 'Image'
+      LEFT JOIN LATERAL (
+        SELECT * FROM "Appeal"
+        WHERE "entityId" = i.id AND "entityType" = 'Image'
+        ORDER BY "createdAt" DESC
+        LIMIT 1
+      ) appeal ON true
       JOIN "User" au ON au.id = appeal."userId"
       JOIN "ModActivity" ma ON ma."entityId" = i.id AND ma."entityType" = 'image'
       JOIN "User" mu ON mu.id = ma."userId"
@@ -4436,6 +4483,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
     techniques,
     external,
     canRemix: !image.hideMeta && !!meta?.prompt,
+    remixOfId: meta?.extra?.remixOfId,
   };
 }
 
@@ -4504,7 +4552,7 @@ export function addBlockedImage({
 }) {
   return clickhouse?.insert({
     table: 'blocked_images',
-    values: [{ hash, reason }],
+    values: [{ hash: Number(hash), reason }],
     format: 'JSONEachRow',
   });
 }
@@ -4667,7 +4715,14 @@ export async function createImageResources({
   >`SELECT * FROM get_image_resources(${imageId}::int)`;
   if (!resources.length) return null;
 
-  const sql: Prisma.Sql[] = resources.map(
+  const resourcesWithModelVersions = uniqBy(
+    resources.filter((x) => x.modelversionid),
+    'modelversionid'
+  );
+  const resourcesWithoutModelVersions = resources.filter((x) => !x.modelversionid);
+  console.dir({ resourcesWithModelVersions, resourcesWithoutModelVersions }, { depth: null });
+
+  const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
     (r) => Prisma.sql`
         (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
       r.detected
@@ -4722,4 +4777,35 @@ export const getMyImages = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => {
+  const blob = await fetchBlob(imageUrl);
+
+  if (!blob) {
+    throw new Error('Failed to fetch image');
+  }
+
+  const imageKey = randomUUID();
+
+  const upload = await serverUploadImage({
+    file: blob,
+    key: imageKey,
+    bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+  });
+
+  const data = await upload.done();
+  const meta = await getMetadata(imageUrl);
+
+  const response = {
+    meta: meta,
+    metadata: {
+      size: blob.size,
+      width: 512, //  This is mostly a safeguard to default.
+      height: 512, //  This is mostly a safeguard to default.
+    },
+    url: data.Key,
+  };
+
+  return response;
 };

@@ -134,7 +134,7 @@ export const modelNotifications = createNotificationProcessor({
         FROM "ModelVersion" mv
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE m."userId" > 0
-          AND mv."publishedAt" - m."publishedAt" > INTERVAL '12 hour'
+          AND mv."publishedAt" - m."publishedAt" > INTERVAL '2 hour'
           AND (
             -- handle scheduled posts - these can take a little while to update via another job
             (mv."publishedAt" BETWEEN '${lastSent}'::timestamptz - interval '59 second' AND now() AND mv.status = 'Published')

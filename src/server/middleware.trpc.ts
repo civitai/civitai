@@ -1,5 +1,5 @@
 import { TRPCError } from '@trpc/server';
-import { isProd } from '~/env/other';
+import { isDev, isProd, isTest } from '~/env/other';
 import { purgeCache } from '~/server/cloudflare/client';
 import { CacheTTL } from '~/server/common/constants';
 import { logToAxiom } from '~/server/logging/client';
@@ -64,7 +64,9 @@ export function cacheIt<TInput extends object>({
         if (value) cacheKeyObj[key] = value;
       }
     }
-    const cacheKey = `packed:trpc:${key ?? path.replace('.', ':')}:${hashifyObject(cacheKeyObj)}`;
+    const cacheKey = `${REDIS_KEYS.TRPC.BASE}:${key ?? path.replace('.', ':')}:${hashifyObject(
+      cacheKeyObj
+    )}` as const;
     const cached = await redis.packed.get(cacheKey);
     if (cached) {
       return { ok: true, data: cached, marker: 'fromCache' as any, ctx };
@@ -81,7 +83,7 @@ export function cacheIt<TInput extends object>({
         await Promise.all(
           cacheTags
             .map((tag) => {
-              const key = REDIS_KEYS.CACHES.TAGGED_CACHE + ':' + tag;
+              const key = `${REDIS_KEYS.CACHES.TAGGED_CACHE}:${tag}` as const;
               return [redis.sAdd(key, cacheKey), redis.expire(key, ttl)];
             })
             .flat()
@@ -104,7 +106,7 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
 
   return middleware(async ({ ctx, next, path }) => {
     // Skip if user is a moderator
-    if (ctx.user?.isModerator) return await next();
+    if (ctx.user?.isModerator || isDev || isTest) return await next();
 
     // Get valid limits
     let validLimits: RateLimit[] = [];
@@ -117,7 +119,7 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
     }
 
     // Get user's attempts
-    const cacheKey = `packed:trpc:limit:${path.replace('.', ':')}`;
+    const cacheKey = `${REDIS_KEYS.TRPC.LIMIT.BASE}:${path.replace('.', ':')}` as const;
     const hashKey = ctx.user?.id?.toString() ?? ctx.ip;
     const attempts = (await redis.packed.hGet<number[]>(cacheKey, hashKey)) ?? [];
 
@@ -141,7 +143,7 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
     const longestPeriod = Math.max(...validLimits.map((x) => x.period!));
     const updatedAttempts = attempts.filter((x) => x > Date.now() - longestPeriod * 1000);
     await redis.packed.hSet(cacheKey, hashKey, updatedAttempts);
-    await redis.sAdd('packed:trpc:limit:keys', cacheKey);
+    await redis.sAdd(REDIS_KEYS.TRPC.LIMIT.KEYS, cacheKey);
     return await next();
   });
 }
@@ -174,7 +176,7 @@ export function edgeCacheIt({ ttl = 60 * 3, expireAt, tags }: EdgeCacheItProps =
           await Promise.all(
             cacheTags
               .map((tag) => {
-                const key = REDIS_KEYS.CACHES.EDGE_CACHED + ':' + tag;
+                const key = `${REDIS_KEYS.CACHES.EDGE_CACHED}:${tag}` as const;
                 return [redis.sAdd(key, ctx.req.url!), redis.expire(key, ttl)];
               })
               .flat()

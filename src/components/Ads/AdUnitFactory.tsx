@@ -9,7 +9,7 @@ import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { useRouter } from 'next/router';
+import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
 
 type AdSize = [width: number, height: number];
 type ContainerSize = [minWidth?: number, maxWidth?: number];
@@ -110,8 +110,8 @@ function AdWrapper({
   preserveLayout?: boolean;
   onDismount?: OnDismount;
 }) {
-  const router = useRouter();
-  const key = router.asPath.split('?')[0];
+  // const router = useRouter();
+  // const key = router.asPath.split('?')[0];
   const { adsBlocked, ready, isMember } = useAdsContext();
 
   const { classes } = useAdWrapperStyles({ sizes, lutSizes, maxHeight, maxWidth });
@@ -135,7 +135,7 @@ function AdWrapper({
             <SupportUsImage sizes={adSizes ?? undefined} />
           ) : ready && adSizes !== undefined ? (
             <AdUnitContent
-              key={key}
+              // key={key}
               adUnit={adUnit}
               sizes={adSizes ?? undefined}
               id={id}
@@ -169,7 +169,7 @@ export function adUnitFactory(factoryArgs: {
   id?: string;
   onDismount?: OnDismount;
 }) {
-  return function AdUnit({
+  function AdUnit({
     withFeedback,
     browsingLevel,
     className,
@@ -196,7 +196,13 @@ export function adUnitFactory(factoryArgs: {
         />
       </AdUnitRenderable>
     );
+  }
+
+  AdUnit.useImpressionTracked = function () {
+    return useAdUnitImpressionTracked(factoryArgs.adUnit);
   };
+
+  return AdUnit;
 }
 
 function getMaxHeight(sizes: AdSize[], args?: { maxHeight?: number; maxWidth?: number }) {

@@ -16,6 +16,7 @@ import { useRef, useState } from 'react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { ReorderImagesButton } from '~/components/Post/EditV2/PostReorderImages';
@@ -23,6 +24,8 @@ import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useTourContext } from '~/providers/TourProvider';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -32,9 +35,12 @@ import { trpc } from '~/utils/trpc';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
+  const queryUtils = trpc.useUtils();
   const router = useRouter();
   const params = usePostEditParams();
-  const { returnUrl, afterPublish } = params;
+  const currentUser = useCurrentUser();
+  const { runTour } = useTourContext();
+
   const [deleted, setDeleted] = useState(false);
   const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId, images] =
     usePostEditStore((state) => [
@@ -46,9 +52,12 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       state.collectionTagId,
       state.images,
     ]);
-  const canPublish = hasImages && !isReordering;
   const todayRef = useRef(new Date());
+
+  const canPublish = hasImages && !isReordering;
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
+  const { returnUrl, afterPublish } = params;
+
   const { collection } = usePostContestCollectionDetails(
     { id: post.id },
     { enabled: !!collectionId }
@@ -82,10 +91,11 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           });
           if (publishedAt && afterPublish) await afterPublish({ postId: id, publishedAt });
           else {
-            router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
-            // if (returnUrl) router.push(returnUrl);
-            // else router.push(`/user/${currentUser.username}/posts`);
+            // router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
+            if (returnUrl) router.push(returnUrl);
+            else router.push(`/user/${currentUser?.username}/posts`);
           }
+          await queryUtils.image.getImagesAsPostsInfinite.invalidate();
         },
         onError: (error) => {
           showErrorNotification({
@@ -154,6 +164,10 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Title size="sm">{postLabel}</Title>
+            <HelpButton
+              tooltip="Need help? Start the tour!"
+              onClick={() => runTour({ key: 'post-generation', step: 0, forceRun: true })}
+            />
           </div>
           <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">
             {mutating > 0 ? 'Saving' : 'Saved'}
@@ -205,6 +219,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
               disabled={!canPublish || !!mutating}
               onClick={() => handlePublish()}
               loading={updatePostMutation.isLoading}
+              data-tour="post:publish"
             >
               {publishLabel}
             </Button>
@@ -215,6 +230,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
                 onClick={() => handlePublish()}
                 loading={updatePostMutation.isLoading}
                 className="flex-1"
+                data-tour="post:publish"
               >
                 {publishLabel}
               </Button>

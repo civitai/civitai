@@ -1,20 +1,36 @@
-import React from 'react';
-import { trpc } from '~/utils/trpc';
-import { ActionIcon, Button, Divider, Group, Modal, Paper, Stack, Text } from '@mantine/core';
-import { useMutateBuzzWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/buzzWithdrawalRequest.util';
-import { createBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { showSuccessNotification } from '~/utils/notifications';
-import { Form, InputNumber, useForm } from '~/libs/form';
+import {
+  ActionIcon,
+  Alert,
+  Button,
+  Divider,
+  Group,
+  Modal,
+  Paper,
+  Stack,
+  Text,
+} from '@mantine/core';
 import { IconMoodDollar, IconX } from '@tabler/icons-react';
-import { constants } from '~/server/common/constants';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
-import { formatCurrencyForDisplay, getBuzzWithdrawalDetails } from '~/utils/number-helpers';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
+import {
+  useBuzzWithdrawalRequestStatus,
+  useMutateBuzzWithdrawalRequest,
+} from '~/components/Buzz/WithdrawalRequest/buzzWithdrawalRequest.util';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { Form, InputNumber, useForm } from '~/libs/form';
+import { constants } from '~/server/common/constants';
+import { createBuzzWithdrawalRequestSchema } from '~/server/schema/buzz-withdrawal-request.schema';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { showSuccessNotification } from '~/utils/notifications';
+import {
+  formatCurrencyForDisplay,
+  getBuzzWithdrawalDetails,
+  numberWithCommas,
+} from '~/utils/number-helpers';
+import { trpc } from '~/utils/trpc';
 
 const schema = createBuzzWithdrawalRequestSchema;
 
@@ -25,6 +41,7 @@ export const CreateWithdrawalRequest = () => {
   const handleClose = dialog.onClose;
   const { createBuzzWithdrawalRequest, creatingBuzzWithdrawalRequest } =
     useMutateBuzzWithdrawalRequest();
+  const { data: status, isLoading: isLoadingStatus } = useBuzzWithdrawalRequestStatus();
 
   const { classes } = useBuzzDashboardStyles();
 
@@ -79,6 +96,11 @@ export const CreateWithdrawalRequest = () => {
         </Stack>
         <Form form={form} onSubmit={handleSubmit}>
           <Stack>
+            {status?.message && (
+              <Alert title="Important" color="yellow">
+                <Text>{status.message} </Text>
+              </Alert>
+            )}
             <Paper withBorder radius="md" px="md" py="xs" className={classes.tileCard}>
               <Stack>
                 <Group spacing="xs">
@@ -94,7 +116,11 @@ export const CreateWithdrawalRequest = () => {
                     format={undefined}
                     currency={Currency.BUZZ}
                     min={constants.buzz.minBuzzWithdrawal}
-                    max={constants.buzz.maxBuzzWithdrawal}
+                    max={
+                      status?.maxAmount
+                        ? status?.maxAmount * constants.buzz.buzzDollarRatio
+                        : constants.buzz.maxBuzzWithdrawal
+                    }
                     step={constants.buzz.buzzDollarRatio}
                   />
 
@@ -127,6 +153,16 @@ export const CreateWithdrawalRequest = () => {
                 </Stack>
               </Stack>
             </Paper>
+
+            {status?.maxAmount && (
+              <Text size="xs" color="yellow.6">
+                You can request up to{' '}
+                <Text size="xs" component="span" weight="bold">
+                  {numberWithCommas(status.maxAmount * constants.buzz.buzzDollarRatio)}{' '}
+                </Text>{' '}
+                Buzz
+              </Text>
+            )}
             <Group ml="auto">
               <Button
                 type="button"

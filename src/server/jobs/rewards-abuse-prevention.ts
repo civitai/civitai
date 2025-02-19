@@ -6,7 +6,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
 import { userMultipliersCache } from '~/server/redis/caches';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createNotification } from '~/server/services/notification.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
@@ -15,7 +15,9 @@ export const rewardsAbusePrevention = createJob(
   '0 3 * * *',
   async () => {
     const abuseLimits = abuseLimitsSchema.parse(
-      JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, 'rewards:abuse-limits')) ?? '{}')
+      JSON.parse(
+        (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, 'rewards:abuse-limits')) ?? '{}'
+      )
     );
     const abusers = await clickhouse?.$query<Abuser>(`
       SELECT

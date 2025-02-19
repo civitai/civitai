@@ -1,7 +1,7 @@
 import { CacheTTL } from '~/server/common/constants';
 import { BlocklistType } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
 import { RemoveBlocklistItemSchema, UpsertBlocklistSchema } from '~/server/schema/blocklist.schema';
 import { throwNotFoundError } from '~/server/utils/errorHandling';
 
@@ -14,7 +14,7 @@ export type BlocklistDTO = {
 const blocklists = new Map<string, BlocklistDTO>();
 
 function getBlocklistKey(type: string) {
-  return `${REDIS_KEYS.SYSTEM.BLOCKLIST}:${type}`;
+  return `${REDIS_KEYS.SYSTEM.BLOCKLIST}:${type}` as RedisKeyTemplateCache;
 }
 
 async function setCache({ type, data }: { type: string; data: BlocklistDTO }) {

@@ -13,7 +13,7 @@ import {
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SUB_KEYS } from '~/server/redis/client';
 import * as rewards from '~/server/rewards';
 import { firstDailyFollowReward } from '~/server/rewards/active/firstDailyFollow.reward';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
@@ -500,7 +500,9 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
   const { id } = ctx.user;
 
   try {
-    const engagementsCache = await redis.get(`user:${id}:model-engagements`);
+    const engagementsCache = await redis.get(
+      `${REDIS_KEYS.USER.BASE}:${id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`
+    );
     if (engagementsCache) return JSON.parse(engagementsCache) as Record<EngagedModelType, number[]>;
 
     const engagements = await getUserEngagedModels({ id });
@@ -515,9 +517,13 @@ export const getUserEngagedModelsHandler = async ({ ctx }: { ctx: DeepNonNullabl
     }, {} as Record<EngagedModelType, number[]>);
     engagedModels.Recommended = recommendedReviews.map((r) => r.modelId).filter(isDefined);
 
-    await redis.set(`user:${id}:model-engagements`, JSON.stringify(engagedModels), {
-      EX: 60 * 60 * 24,
-    });
+    await redis.set(
+      `${REDIS_KEYS.USER.BASE}:${id}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`,
+      JSON.stringify(engagedModels),
+      {
+        EX: 60 * 60 * 24,
+      }
+    );
 
     return engagedModels;
   } catch (error) {
@@ -773,7 +779,7 @@ export const toggleHideModelHandler = async ({
         modelId: input.modelId,
       });
     }
-    await redis.del(`user:${userId}:model-engagements`);
+    await redis.del(`${REDIS_KEYS.USER.BASE}:${userId}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`);
   } catch (error) {
     throw throwDbError(error);
   }
@@ -829,7 +835,7 @@ export async function toggleFavoriteHandler({
       });
   }
 
-  await redis.del(`user:${userId}:model-engagements`);
+  await redis.del(`${REDIS_KEYS.USER.BASE}:${userId}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`);
 
   return reviewResult;
 }
@@ -858,7 +864,7 @@ export const toggleNotifyModelHandler = async ({
         modelId: input.modelId,
       });
     }
-    await redis.del(`user:${userId}:model-engagements`);
+    await redis.del(`${REDIS_KEYS.USER.BASE}:${userId}:${REDIS_SUB_KEYS.USER.MODEL_ENGAGEMENTS}`);
 
     return result;
   } catch (error) {
@@ -1285,9 +1291,16 @@ export const getUserFeatureFlagsHandler = async ({ ctx }: { ctx: DeepNonNullable
     const { id } = ctx.user;
     const { features = {} } = await getUserSettings(id);
 
+    // filter toggleable features from user settings
+    const filteredUserFeatures = Object.keys(features).reduce(
+      (acc, key) =>
+        toggleableFeatures.some((x) => x.key === key) ? { ...acc, [key]: features[key] } : acc,
+      {} as FeatureAccess
+    );
+
     return {
       ...defaultToggleableFeatures,
-      ...features,
+      ...filteredUserFeatures,
     } as FeatureAccess;
   } catch (error) {
     throw throwDbError(error);
@@ -1341,8 +1354,13 @@ export const setUserSettingHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { ...restSettings } = await getUserSettings(id);
-    const newSettings = { ...restSettings, ...input };
+    const { tour, ...restInput } = input;
+    const { tourSettings, ...restSettings } = await getUserSettings(id);
+    const newSettings = {
+      ...restSettings,
+      ...restInput,
+      tourSettings: tourSettings ? { ...tourSettings, ...tour } : { ...tour },
+    };
 
     await setUserSetting(id, newSettings);
     return newSettings;

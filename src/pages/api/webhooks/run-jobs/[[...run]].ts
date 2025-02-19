@@ -11,15 +11,19 @@ import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
+import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
+import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
 import { collectionGameProcessing } from '~/server/jobs/collection-game-processing';
 import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-random-id';
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { countReviewImages } from '~/server/jobs/count-review-images';
+import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
 import { deliverLeaderboardCosmetics } from '~/server/jobs/deliver-leaderboard-cosmetics';
 import { deliverPurchasedCosmetics } from '~/server/jobs/deliver-purchased-cosmetics';
+import { dummyJob } from '~/server/jobs/dummy-job';
 import {
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
@@ -48,6 +52,7 @@ import { removeOldDrafts } from '~/server/jobs/remove-old-drafts';
 import { resetImageViewCounts } from '~/server/jobs/reset-image-view-counts';
 import { resetToDraftWithoutRequirements } from '~/server/jobs/reset-to-draft-without-requirements';
 import { resourceGenerationAvailability } from '~/server/jobs/resource-generation-availability';
+import { retroactiveHashBlocking } from '~/server/jobs/retroactive-hash-blocking';
 import { rewardsAbusePrevention } from '~/server/jobs/rewards-abuse-prevention';
 import { rewardsAdImpressions } from '~/server/jobs/rewards-ad-impressions';
 import { scanFilesJob } from '~/server/jobs/scan-files';
@@ -58,15 +63,12 @@ import { sendWebhooksJob } from '~/server/jobs/send-webhooks';
 import { tempSetMissingNsfwLevel } from '~/server/jobs/temp-set-missing-nsfw-level';
 import { metricJobs } from '~/server/jobs/update-metrics';
 import { updateUserScore } from '~/server/jobs/update-user-score';
+import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 import { logToAxiom } from '~/server/logging/client';
-import { redis } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
 import { booleanString } from '~/utils/zod-helpers';
-import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
-import { contestCollectionYoutubeUpload } from '~/server/jobs/collection-contest-youtube-upload';
-import { contestCollectionVimeoUpload } from '~/server/jobs/collection-contest-vimeo-upload';
-import { userDeletedCleanup } from '~/server/jobs/user-deleted-cleanup';
 
 export const jobs: Job[] = [
   scanFilesJob,
@@ -128,6 +130,8 @@ export const jobs: Job[] = [
   ...dailyChallengeJobs,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
+  dummyJob,
+  retroactiveHashBlocking,
 ];
 
 const log = createLogger('jobs', 'green');
@@ -184,17 +188,34 @@ export default WebhookEndpoint(async (req, res) => {
 
 async function isLocked(name: string, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return false;
-  return (await redis?.get(`job:${name}`)) === 'true';
+  return (await sysRedis?.get(`${REDIS_SYS_KEYS.JOB}:${name}`)) === 'true';
 }
 
+const LOCK_REFRESH_INTERVAL = 8; // Every 8 seconds
+const LOCK_BUFFER = 2; // 2 second buffer on redis expiry
+const lockIntervals: Record<string, NodeJS.Timer> = {};
 async function lock(name: string, lockExpiration: number, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
   logToAxiom({ type: 'job-lock', message: 'lock', job: name }, 'webhooks').catch();
-  await redis?.set(`job:${name}`, 'true', { EX: lockExpiration });
+
+  // Use refreshing lock mechanism to handle dying job pods
+  async function refreshLock() {
+    await sysRedis?.set(`${REDIS_SYS_KEYS.JOB}:${name}`, 'true', {
+      EX: LOCK_REFRESH_INTERVAL + LOCK_BUFFER,
+    });
+  }
+  let ttl = lockExpiration;
+  lockIntervals[name] = setInterval(async () => {
+    await refreshLock();
+    ttl -= LOCK_REFRESH_INTERVAL;
+    if (ttl <= 0) unlock(name, noCheck).catch(); // Unlock if expired
+  }, LOCK_REFRESH_INTERVAL * 1000);
+  await refreshLock();
 }
 
 async function unlock(name: string, noCheck?: boolean) {
   if (!isProd || name === 'prepare-leaderboard' || noCheck) return;
   logToAxiom({ type: 'job-lock', message: 'unlock', job: name }, 'webhooks').catch();
-  await redis?.del(`job:${name}`);
+  if (lockIntervals[name]) clearInterval(lockIntervals[name]); // Clear lock refresh interval
+  await sysRedis?.del(`${REDIS_SYS_KEYS.JOB}:${name}`);
 }

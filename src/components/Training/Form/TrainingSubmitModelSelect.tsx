@@ -28,7 +28,6 @@ import {
   trainingDetailsBaseModelsXL,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
-import { Generation } from '~/server/services/generation/generation.types';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import {
   defaultBase,
@@ -149,8 +148,7 @@ const ModelSelector = ({
             allowRemove={true}
             selectSource="training"
             value={selectedRun.customModel}
-            onChange={(val) => {
-              const gVal = val as Generation.Resource | undefined;
+            onChange={(gVal) => {
               if (!gVal) {
                 makeDefaultParams({
                   base: defaultBase,
@@ -158,24 +156,29 @@ const ModelSelector = ({
                   customModel: null,
                 });
               } else {
-                const { baseModel, modelType, modelId, id: mvId } = gVal;
+                const { baseModel, model, id: mvId } = gVal;
 
                 const castBase = (
                   [
-                    ...baseModelSets.SDXL,
-                    ...baseModelSets.SDXLDistilled,
-                    ...baseModelSets.Pony,
-                    ...baseModelSets.Illustrious,
+                    ...baseModelSets.SDXL.baseModels,
+                    ...baseModelSets.SDXLDistilled.baseModels,
+                    ...baseModelSets.Pony.baseModels,
+                    ...baseModelSets.Illustrious.baseModels,
                   ] as string[]
                 ).includes(baseModel)
                   ? 'sdxl'
-                  : ([...baseModelSets.Flux1] as string[]).includes(baseModel)
+                  : ([...baseModelSets.Flux1.baseModels] as string[]).includes(baseModel)
                   ? 'flux'
-                  : ([...baseModelSets.SD3] as string[]).includes(baseModel)
+                  : ([...baseModelSets.SD3.baseModels] as string[]).includes(baseModel)
                   ? 'sd35'
                   : 'sd15';
 
-                const cLink = stringifyAIR({ baseModel, type: modelType, modelId, id: mvId });
+                const cLink = stringifyAIR({
+                  baseModel,
+                  type: model.type,
+                  modelId: model.id,
+                  id: mvId,
+                });
 
                 makeDefaultParams({
                   base: cLink,
@@ -339,10 +342,8 @@ export const ModelSelect = ({
                     color="red"
                   >
                     <Text>
-                      This model currently does not work properly with kohya.
-                      <br />
-                      We are working on a fix for this - in the meantime, please try a different
-                      model.
+                      This model is not currently available for LoRA training - please select a
+                      different model.
                     </Text>
                   </AlertWithIcon>
                 ) : isCustomModel ? (

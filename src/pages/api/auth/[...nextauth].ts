@@ -10,7 +10,7 @@ import GithubProvider from 'next-auth/providers/github';
 import GoogleProvider from 'next-auth/providers/google';
 import RedditProvider from 'next-auth/providers/reddit';
 import { v4 as uuid } from 'uuid';
-import { isDev } from '~/env/other';
+import { isDev, isTest } from '~/env/other';
 import { env } from '~/env/server';
 import { callbackCookieName, civitaiTokenCookieName, useSecureCookies } from '~/libs/auth';
 import { civTokenDecrypt } from '~/pages/api/auth/civ-token'; // TODO move this to server
@@ -20,7 +20,7 @@ import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
 import { getBlockedEmailDomains } from '~/server/services/blocklist.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -241,6 +241,33 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           }
         },
       }),
+      ...(isDev || isTest
+        ? [
+            CredentialsProvider({
+              id: 'testing-login',
+              name: 'Testing Login',
+              credentials: {
+                id: { label: 'id', type: 'text' },
+              },
+              async authorize(credentials) {
+                if (!(isDev || isTest)) return null;
+
+                const { id } = credentials ?? {};
+                if (!id) throw new Error('No id provided.');
+
+                try {
+                  const userId = Number(id);
+                  const user = await getSessionUser({ userId });
+                  if (!user) throw new Error('No user found.');
+                  return user;
+                } catch (e: unknown) {
+                  const err = e as Error;
+                  throw new Error(`Failed to authenticate: ${err.message}.`);
+                }
+              },
+            }),
+          ]
+        : []),
     ],
     cookies: {
       sessionToken: {
@@ -377,7 +404,7 @@ export default async function auth(req: NextApiRequest, res: NextApiResponse) {
 
 const emailLimiter = createLimiter({
   counterKey: REDIS_KEYS.COUNTERS.EMAIL_VERIFICATIONS,
-  limitKey: REDIS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
+  limitKey: REDIS_SYS_KEYS.LIMITS.EMAIL_VERIFICATIONS,
   fetchCount: async () => 0,
   refetchInterval: CacheTTL.day,
 });

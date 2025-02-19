@@ -1,8 +1,14 @@
 import { Prisma } from '@prisma/client';
-import { getModelVersionDetailsSelect } from '~/server/selectors/modelVersion.selector';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
+import {
+  getModelVersionDetailsSelect,
+  getModelVersionsForSearchIndex,
+} from '~/server/selectors/modelVersion.selector';
+import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { profileImageSelect } from './image.selector';
 import { modelFileSelect } from './modelFile.selector';
+import { Availability, MetricTimeframe, ModelHashType, ModelStatus } from '~/shared/utils/prisma/enums';
+import { modelHashSelect } from './modelHash.selector';
+import { ModelFileType } from '../common/constants';
 
 export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -125,6 +131,7 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       requireAuth: true,
       nsfwLevel: true,
       uploadType: true,
+      usageControl: true,
       metrics: {
         where: { timeframe: 'AllTime' },
         select: {
@@ -147,10 +154,10 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
           resource: {
             select: {
               id: true,
-              name: true,
-              baseModel: true,
-              trainedWords: true,
-              model: { select: { id: true, name: true, type: true } },
+              // name: true,
+              // baseModel: true,
+              // trainedWords: true,
+              // model: { select: { id: true, name: true, type: true } },
             },
           },
           settings: true,
@@ -190,7 +197,66 @@ export const associatedResourceSelect = Prisma.validator<Prisma.ModelSelect>()({
   nsfwLevel: true,
   user: { select: simpleUserSelect },
 });
-const associatedResource = Prisma.validator<Prisma.ModelArgs>()({
+const associatedResource = Prisma.validator<Prisma.ModelFindManyArgs>()({
   select: associatedResourceSelect,
 });
 export type AssociatedResourceModel = Prisma.ModelGetPayload<typeof associatedResource>;
+
+export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
+  id: true,
+  name: true,
+  type: true,
+  nsfw: true,
+  nsfwLevel: true,
+  minor: true,
+  status: true,
+  createdAt: true,
+  lastVersionAt: true,
+  publishedAt: true,
+  locked: true,
+  earlyAccessDeadline: true,
+  mode: true,
+  checkpointType: true,
+  availability: true,
+  allowNoCredit: true,
+  allowCommercialUse: true,
+  allowDerivatives: true,
+  allowDifferentLicense: true,
+  // Joins:
+  user: {
+    select: userWithCosmeticsSelect,
+  },
+  modelVersions: {
+    select: getModelVersionsForSearchIndex,
+    orderBy: { index: 'asc' as const },
+    where: {
+      status: ModelStatus.Published,
+      availability: {
+        not: Availability.Unsearchable,
+      },
+    },
+  },
+  tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
+  hashes: {
+    select: modelHashSelect,
+    where: {
+      fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
+      hashType: { notIn: ['AutoV1'] as ModelHashType[] },
+    },
+  },
+  metrics: {
+    select: {
+      commentCount: true,
+      favoriteCount: true,
+      thumbsUpCount: true,
+      downloadCount: true,
+      rating: true,
+      ratingCount: true,
+      collectedCount: true,
+      tippedAmountCount: true,
+    },
+    where: {
+      timeframe: MetricTimeframe.AllTime,
+    },
+  },
+});

@@ -23,7 +23,9 @@ import {
   getMyDraftModelsHandler,
   getMyTrainingModelsHandler,
   getSimpleModelsInfiniteHandler,
+  privateModelFromTrainingHandler,
   publishModelHandler,
+  publishPrivateModelHandler,
   reorderModelVersionsHandler,
   requestReviewHandler,
   restoreModelHandler,
@@ -54,7 +56,9 @@ import {
   migrateResourceToCollectionSchema,
   modelByHashesInput,
   modelUpsertSchema,
+  privateModelFromTrainingSchema,
   publishModelSchema,
+  publishPrivateModelSchema,
   reorderModelVersionsSchema,
   setAssociatedResourcesSchema,
   setModelCollectionShowcaseSchema,
@@ -148,9 +152,7 @@ export const modelRouter = router({
   getRecentlyRecommended: protectedProcedure
     .input(limitOnly)
     .query(({ ctx, input }) => getRecentlyRecommended({ userId: ctx.user.id, ...input })),
-  getFeaturedModels: publicProcedure
-    .input(limitOnly)
-    .query(({ input }) => getFeaturedModels({ ...input })),
+  getFeaturedModels: publicProcedure.query(() => getFeaturedModels().then((x) => x.slice(200))),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)
@@ -242,4 +244,11 @@ export const modelRouter = router({
     .input(migrateResourceToCollectionSchema)
     .use(isOwnerOrModerator)
     .mutation(({ input }) => migrateResourceToCollection(input)),
+  privateModelFromTraining: guardedProcedure
+    .input(privateModelFromTrainingSchema)
+    .mutation(privateModelFromTrainingHandler),
+  publishPrivateModel: guardedProcedure
+    .input(publishPrivateModelSchema)
+    .use(isOwnerOrModerator)
+    .mutation(publishPrivateModelHandler),
 });

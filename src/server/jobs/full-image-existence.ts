@@ -2,7 +2,7 @@ import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createJob, getJobDate } from './job';
 
 const jobName = 'full-image-existence';
@@ -67,7 +67,7 @@ export const fullImageExistence = createJob(jobName, '40 6 * * *', async () => {
     //   });
     // }
 
-    await redis.set(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC, firstTime);
+    await sysRedis.set(REDIS_SYS_KEYS.INDEX_UPDATES.IMAGE_METRIC, firstTime);
     await setLastRun();
   } catch (e) {
     const error = e as Error;

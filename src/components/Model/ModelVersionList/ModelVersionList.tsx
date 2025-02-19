@@ -32,10 +32,7 @@ import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.ut
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { ModelById } from '~/types/router';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '~/shared/utils/prisma/enums';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -272,7 +269,7 @@ export function ModelVersionList({
 
           if (!showExtraIcons)
             return (
-              <Group spacing={0} noWrap>
+              <Group key={version.id} spacing={0} noWrap>
                 {versionButton} {isEarlyAccess && earlyAccessButton}
               </Group>
             );

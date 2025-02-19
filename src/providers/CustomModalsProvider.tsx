@@ -24,7 +24,6 @@ const CivitaiLinkSuccessModal = dynamic(
   () => import('~/components/CivitaiLink/CivitaiLinkSuccessModal')
 );
 const UnpublishModal = dynamic(() => import('~/components/Modals/UnpublishModal'));
-const BoostModal = dynamic(() => import('~/components/ImageGeneration/BoostModal'));
 const AddToCollectionModal = dynamic(() => import('~/components/Collections/AddToCollectionModal'));
 const ManageHomeBlocksModal = dynamic(
   () => import('~/components/HomeBlocks/ManageHomeBlocksModal')
@@ -113,7 +112,6 @@ export const CustomModalsProvider = ({ children }: { children: React.ReactNode }
       modals={
         {
           questionsInfo: QuestionsInfoModal,
-          boostModal: BoostModal,
           'civitai-link-success': CivitaiLinkSuccessModal,
           ...(Object.keys(registry) as Array<keyof typeof registry>).reduce<any>((acc, key) => {
             acc[key] = registry[key].Component;

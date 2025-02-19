@@ -4,6 +4,8 @@ import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm
 import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { useGenerationStore } from '~/store/generation.store';
 
 export function GenerateButton({
   cost = 0,
@@ -17,11 +19,15 @@ export function GenerateButton({
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const canGenerate = useGenerationContext((state) => state.canGenerate);
+  const close = useGenerationStore((state) => state.close);
+  const isMobile = useIsMobile();
 
   const { size = 'lg' } = buttonProps;
 
   return !status.charge || !currentUser ? (
-    <LoginRedirect reason="image-gen">
+    <LoginRedirect reason="image-gen" beforeRedirect={() => {
+      if (isMobile) close();
+    }}>
       <Button
         {...buttonProps}
         size={size}

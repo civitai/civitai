@@ -1,11 +1,11 @@
-import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { tagsNeedingReview } from '~/libs/tags';
+import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { FeatureFlagKey } from '~/server/services/feature-flags.service';
+import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
-import { NsfwLevel } from '~/server/common/enums';
 import { isDefined } from '~/utils/type-guards';
 
 const log = createLogger('system-cache', 'green');
@@ -105,7 +105,7 @@ export async function getSystemTags() {
 }
 
 export async function getSystemPermissions(): Promise<Record<string, number[]>> {
-  const cachedPermissions = await redis.get(REDIS_KEYS.SYSTEM.PERMISSIONS);
+  const cachedPermissions = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS);
   if (cachedPermissions) return JSON.parse(cachedPermissions);
 
   return {};
@@ -116,7 +116,7 @@ export async function addSystemPermission(permission: FeatureFlagKey, userIds: n
   const permissions = await getSystemPermissions();
   if (!permissions[permission]) permissions[permission] = [];
   permissions[permission] = [...new Set([...permissions[permission], ...userIds])];
-  await redis.set(REDIS_KEYS.SYSTEM.PERMISSIONS, JSON.stringify(permissions));
+  await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS, JSON.stringify(permissions));
 }
 
 export async function removeSystemPermission(
@@ -130,7 +130,7 @@ export async function removeSystemPermission(
   permissions[permission] = permissions[permission].filter(
     (x) => !(userIds as number[]).includes(x)
   );
-  await redis.set(REDIS_KEYS.SYSTEM.PERMISSIONS, JSON.stringify(permissions));
+  await sysRedis.set(REDIS_SYS_KEYS.SYSTEM.PERMISSIONS, JSON.stringify(permissions));
 }
 
 const colorPriority = [
@@ -147,7 +147,7 @@ const colorPriority = [
 
 export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'article') {
   let categories: TypeCategory[] | undefined;
-  const categoriesCache = await redis.get(`system:categories:${type}`);
+  const categoriesCache = await redis.get(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`);
   if (categoriesCache) categories = JSON.parse(categoriesCache);
 
   if (!categories) {
@@ -166,7 +166,8 @@ export async function getCategoryTags(type: 'image' | 'model' | 'post' | 'articl
         priority: indexOfOr(colorPriority, c.color ?? 'grey', colorPriority.length),
       }))
       .sort((a, b) => a.priority - b.priority);
-    if (categories.length) await redis.set(`system:categories:${type}`, JSON.stringify(categories));
+    if (categories.length)
+      await redis.set(`${REDIS_KEYS.SYSTEM.CATEGORIES}:${type}`, JSON.stringify(categories));
   }
 
   return categories;

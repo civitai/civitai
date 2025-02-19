@@ -10,7 +10,7 @@ export type ImagesContextState = {
 const ImagesContext = createContext<ImagesContextState | null>(null);
 export const useImagesContext = () => {
   const context = useContext(ImagesContext);
-  if (!context) throw new Error('missing ImagesContext');
+  if (!context) return {};
   return context;
 };
 

@@ -1,10 +1,16 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { ManipulateType } from 'dayjs';
+import dayjs, { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
-import { BaseModel, BaseModelType, CacheTTL } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelType,
+  CacheTTL,
+  constants,
+  FEATURED_MODEL_COLLECTION_ID,
+} from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -13,8 +19,9 @@ import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
+import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
@@ -27,7 +34,9 @@ import {
   ModelInput,
   ModelMeta,
   ModelUpsertInput,
+  PrivateModelFromTrainingInput,
   PublishModelSchema,
+  PublishPrivateModelInput,
   SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
   ToggleModelLockInput,
@@ -42,7 +51,10 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { associatedResourceSelect } from '~/server/selectors/model.selector';
+import {
+  associatedResourceSelect,
+  modelSearchIndexSelect,
+} from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
@@ -53,19 +65,23 @@ import {
 } from '~/server/services/collection.service';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getUnavailableResources } from '~/server/services/generation/generation.service';
-import { getSystemHomeBlocks } from '~/server/services/home-block.service';
 import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   ImagesForModelVersions,
+  ingestImageBulk,
+  uploadImageFromUrl,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
   bustMvCache,
+  createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
+import { addPostImage, createPost } from '~/server/services/post.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { getEarlyAccessDeadline } from '~/server/utils/early-access-helpers';
 import {
@@ -86,8 +102,8 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  Availability,
   CommercialUse,
-  HomeBlockType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,
@@ -106,6 +122,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -184,6 +201,7 @@ type ModelRaw = {
     image: string;
   };
   cosmetic?: WithClaimKey<ContentDecorationCosmetic> | null;
+  availability?: Availability;
 };
 
 export const getModelsRaw = async ({
@@ -232,6 +250,7 @@ export const getModelsRaw = async ({
     browsingLevel,
     excludedUserIds,
     collectionTagId,
+    availability,
   } = input;
 
   let pending = input.pending;
@@ -459,6 +478,16 @@ export const getModelsRaw = async ({
   if (earlyAccess) {
     AND.push(Prisma.sql`m."earlyAccessDeadline" >= ${new Date()}`);
   }
+  if (availability) {
+    if (availability === Availability.Private && !(username || isModerator)) {
+      throw throwAuthorizationError();
+    }
+
+    AND.push(Prisma.sql`m."availability" = ${availability}::"Availability"`);
+  } else {
+    // Makes it so that our feeds never contain private stuff by default.
+    AND.push(Prisma.sql`m."availability" != 'Private'::"Availability"`);
+  }
 
   if (supportsGeneration) {
     AND.push(
@@ -595,6 +624,7 @@ export const getModelsRaw = async ({
       m."locked",
       m."earlyAccessDeadline",
       m."mode",
+      m."availability",
       jsonb_build_object(
         'downloadCount', mm."downloadCount",
         'thumbsUpCount', mm."thumbsUpCount",
@@ -1336,7 +1366,7 @@ export const upsertModel = async (
   }
   if (!id || templateId) {
     const result = await dbWrite.model.create({
-      select: { id: true, nsfwLevel: true, meta: true },
+      select: { id: true, nsfwLevel: true, meta: true, availability: true },
       data: {
         ...data,
         status,
@@ -1415,6 +1445,7 @@ export const upsertModel = async (
         gallerySettings: true,
         status: true,
         meta: true,
+        availability: true,
       },
       where: { id },
       data: {
@@ -1470,7 +1501,7 @@ export const upsertModel = async (
     const newGallerySettings = result.gallerySettings as ModelGallerySettingsSchema;
     const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
 
-    if (galleryBrowsingLevelChanged) await redis.del(`model:gallery-settings:${id}`);
+    if (galleryBrowsingLevelChanged) await redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`);
 
     await userContentOverviewCache.bust(userId);
 
@@ -1633,11 +1664,13 @@ export const publishModelById = async ({
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
   );
 
-  const parsedModel = ingestModelSchema.parse(model);
   // Run it in the background to prevent blocking the request
-  ingestModel({ ...parsedModel }).catch((error) =>
-    logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
-  );
+  if (!republishing) {
+    const parsedModel = ingestModelSchema.parse(model);
+    ingestModel({ ...parsedModel }).catch((error) =>
+      logToAxiom({ type: 'error', name: 'model-ingestion', error, modelId: parsedModel.id })
+    );
+  }
 
   return model;
 };
@@ -1759,7 +1792,7 @@ export const getVaeFiles = async ({ vaeIds }: { vaeIds: number[] }) => {
     })
   ).map((x) => {
     x.type = 'VAE';
-    return x;
+    return { ...x, metadata: x.metadata as BasicFileMetadata };
   });
 
   return files;
@@ -1871,22 +1904,22 @@ export const getRecentlyRecommended = async ({ take, userId }: LimitOnly & { use
   return uniq(data.map((d) => d.resource.modelId));
 };
 
-export const getFeaturedModels = async ({ take }: LimitOnly) => {
-  const homeblocks = await getSystemHomeBlocks({ input: {} });
-  const featuredModelCollection = homeblocks.find(
-    (h) => h.type === HomeBlockType.Collection && h.metadata.link === '/models'
-  );
-  const collectionId = featuredModelCollection?.metadata?.collection?.id ?? 104;
+// export const getFeaturedModels = async ({ take }: LimitOnly) => {
+//   const homeblocks = await getSystemHomeBlocks({ input: {} });
+//   const featuredModelCollection = homeblocks.find(
+//     (h) => h.type === HomeBlockType.Collection && h.metadata.link === '/models'
+//   );
+//   const collectionId = featuredModelCollection?.metadata?.collection?.id ?? 104;
 
-  const featured = await dbRead.collectionItem.findMany({
-    where: { collectionId },
-    select: { modelId: true },
-    orderBy: { createdAt: 'desc' },
-    take,
-  });
+//   const featured = await dbRead.collectionItem.findMany({
+//     where: { collectionId },
+//     select: { modelId: true },
+//     orderBy: { createdAt: 'desc' },
+//     take,
+//   });
 
-  return featured.map(({ modelId }) => modelId).filter(isDefined);
-};
+//   return featured.map(({ modelId }) => modelId).filter(isDefined);
+// };
 
 export const toggleLockModel = async ({ id, locked }: ToggleModelLockInput) => {
   const model = await dbWrite.model.update({ where: { id }, data: { locked } });
@@ -2147,7 +2180,9 @@ export const setAssociatedResources = async (
 // #endregion
 
 export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
-  const cachedSettings = await redis.get(`model:gallery-settings:${id}`);
+  const cacheKey = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
+
+  const cachedSettings = await redis.get(cacheKey);
   if (cachedSettings)
     return fromJson<ReturnType<typeof getGalleryHiddenPreferences>>(cachedSettings);
 
@@ -2162,7 +2197,7 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
         settings: model.gallerySettings as ModelGallerySettingsSchema,
       })
     : null;
-  await redis.set(`model:gallery-settings:${id}`, toJson(settings), { EX: CacheTTL.week });
+  await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
 
   return settings;
 };
@@ -2359,8 +2394,9 @@ export async function getModelsWithVersions({
       }) => ({
         ...model,
         user: user.username === 'civitai' ? undefined : user,
+        supportsGeneration: modelVersions.some((x) => x.covered),
         modelVersions: modelVersions.map(
-          ({ trainingStatus, vaeId, earlyAccessTimeFrame, covered, ...version }) => {
+          ({ trainingStatus, vaeId, earlyAccessTimeFrame, ...version }) => {
             const stats = getStatsForVersion(version.id);
             const vaeFile = vaeFiles.filter((x) => x.modelVersionId === vaeId);
             const files = groupedFiles[version.id]?.files ?? [];
@@ -2459,7 +2495,7 @@ export async function copyGallerySettingsToAllModelsByUser({
   const models = await dbWrite.model.findMany({ where: { userId }, select: { id: true } });
   const modelIds = models.map((x) => x.id);
 
-  await Promise.all(modelIds.map((id) => redis.del(`model:gallery-settings:${id}`)));
+  await Promise.all(modelIds.map((id) => redis.del(`${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}`)));
   return result;
 }
 
@@ -2678,3 +2714,233 @@ export async function ingestModel(data: IngestModelInput) {
   if (response.status === 202) return true;
   else return false;
 }
+
+export async function getFeaturedModels() {
+  const featuredModels = await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
+    const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
+      SELECT ci."modelId"
+      FROM "CollectionItem" ci
+      WHERE ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
+      AND EXISTS (
+        SELECT 1
+        FROM "GenerationCoverage" gc
+        WHERE gc."modelId" = ci."modelId"
+        AND gc.covered
+      )
+    `;
+    return query.map((row) => row.modelId);
+  });
+
+  return featuredModels;
+}
+export async function bustFeaturedModelsCache() {
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
+}
+
+export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
+  return await dbRead.model.count({
+    where: { userId, availability: Availability.Private },
+  });
+};
+
+export const privateModelFromTraining = async ({
+  modelVersionIds,
+  ...input
+}: PrivateModelFromTrainingInput & {
+  user: SessionUser; // @luis: Against this personally, but the way createPostImage is implemented requires this.
+}) => {
+  if (!input.user.isModerator) {
+    for (const key of input.lockedProperties ?? []) delete input[key as keyof typeof input];
+  }
+
+  const { id, tagsOnModels, user, templateId, bountyId, meta, status, ...data } = input;
+
+  const totalPrivateModels = await dbRead.model.count({
+    where: {
+      userId: input.user.id,
+      availability: Availability.Private,
+      status: ModelStatus.Published,
+    },
+  });
+
+  const subscription = await getUserSubscription({ userId: input.user.id });
+
+  const maxPrivateModels = subscription?.tier
+    ? constants.memberships.membershipDetailsAddons[
+        subscription.tier as keyof typeof constants.memberships.membershipDetailsAddons
+      ]?.maxPrivateModels ?? 0
+    : 0;
+
+  if (totalPrivateModels >= maxPrivateModels) {
+    throw throwBadRequestError('You have reached the maximum number of private models');
+  }
+
+  // don't allow updating of locked properties
+  if (!user.isModerator) {
+    const lockedProperties = data.lockedProperties ?? [];
+    for (const prop of lockedProperties) {
+      const key = prop as keyof typeof data;
+      if (data[key] !== undefined) delete data[key];
+    }
+  }
+
+  const model = await dbRead.model.findUnique({
+    where: { id },
+    select: {
+      userId: true,
+    },
+  });
+
+  if (!model) return null;
+
+  const isOwner = model.userId === user.id || user.isModerator;
+  if (!isOwner) return null;
+
+  try {
+    const result = await dbWrite.model.update({
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        nsfwLevel: true,
+        poi: true,
+        minor: true,
+        nsfw: true,
+        gallerySettings: true,
+        status: true,
+        meta: true,
+        modelVersions: {
+          where: modelVersionIds
+            ? {
+                id: {
+                  in: modelVersionIds,
+                },
+              }
+            : undefined,
+          select: {
+            id: true,
+          },
+        },
+      },
+      where: { id },
+      data: {
+        ...data,
+        availability: Availability.Private,
+        status: ModelStatus.Published,
+      },
+    });
+
+    await dbWrite.modelVersion.updateMany({
+      where: { modelId: id },
+      data: {
+        // Ensures things don't break by leaving some versions public.
+        // @luis: TODO: Might be smart to add some DB triggers for this.
+        availability: Availability.Private,
+      },
+    });
+
+    if (result.modelVersions.length > 0) {
+      const now = new Date();
+      // Make this private:
+      await dbWrite.modelVersion.updateMany({
+        where: { id: { in: result.modelVersions.map((x) => x.id) } },
+        data: {
+          availability: Availability.Private,
+          publishedAt: now,
+          status: ModelStatus.Published,
+        },
+      });
+
+      // Create posts:
+      await Promise.all(
+        result.modelVersions.map(async (modelVersion) => {
+          await createModelVersionPostFromTraining({
+            modelVersionId: modelVersion.id,
+            user,
+          });
+        })
+      );
+    }
+
+    await preventReplicationLag('model', id);
+    await userContentOverviewCache.bust(user.id);
+    await dataForModelsCache.bust(id);
+    await bustMvCache(result.modelVersions.map((x) => x.id));
+
+    return result;
+  } catch (error) {
+    await dbWrite.model.update({
+      where: { id },
+      data: { status: ModelStatus.Draft, availability: Availability.Public },
+    });
+
+    await dbWrite.modelVersion.updateMany({
+      where: { modelId: id },
+      data: { status: ModelStatus.Draft, publishedAt: null },
+    });
+
+    throw throwDbError(error);
+  }
+};
+
+export const publishPrivateModel = async ({
+  modelId,
+  publishVersions,
+}: PublishPrivateModelInput) => {
+  const versions = await dbRead.modelVersion.findMany({
+    where: { modelId, status: ModelStatus.Published },
+    select: { id: true },
+  });
+
+  if (!versions.length) {
+    throw throwBadRequestError('Model has no published versions');
+  }
+
+  const versionIds = versions.map((v) => v.id);
+  const now = new Date();
+
+  await dbWrite.$transaction([
+    dbWrite.post.updateMany({
+      where: {
+        modelVersionId: { in: versionIds },
+      },
+      data: {
+        publishedAt: publishVersions ? now : null,
+        availability: Availability.Public,
+      },
+    }),
+    dbWrite.modelVersion.updateMany({
+      where: { id: { in: versionIds } },
+      data: {
+        availability: Availability.Public,
+        status: publishVersions ? ModelStatus.Published : ModelStatus.Draft,
+        publishedAt: publishVersions ? now : null,
+      },
+    }),
+    dbWrite.model.update({
+      where: {
+        id: modelId,
+      },
+      data: {
+        availability: Availability.Public,
+        status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
+      },
+    }),
+  ]);
+
+  const updatedImageIds = await dbRead.image.findMany({
+    where: {
+      post: {
+        modelVersionId: { in: versionIds },
+      },
+    },
+  });
+
+  if (updatedImageIds.length > 0) {
+    await imagesMetricsSearchIndex.queueUpdate(
+      updatedImageIds.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
+
+  return { versionIds };
+};

@@ -17,18 +17,23 @@ import {
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToComfySamplers } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
+import { removeEmpty } from '~/utils/object-helpers';
+import { stringifyAIR } from '~/utils/string-helpers';
 
 export async function createComfyStep(
   input: z.infer<typeof generateImageSchema> & {
     user: SessionUser;
+    whatIf?: boolean;
   }
 ) {
-  input.params.seed =
-    input.params.seed ?? getRandomInt(input.params.quantity, maxRandomSeed) - input.params.quantity;
+  const { priority, ...inputParams } = input.params;
+  inputParams.seed =
+    inputParams.seed ?? getRandomInt(inputParams.quantity, maxRandomSeed) - inputParams.quantity;
 
-  const workflowDefinition = await getWorkflowDefinition(input.params.workflow);
-  const { resources, params, priority } = await parseGenerateImageInput({
+  const workflowDefinition = await getWorkflowDefinition(inputParams.workflow);
+  const { resources, params } = await parseGenerateImageInput({
     ...input,
     workflowDefinition,
   });
@@ -39,13 +44,25 @@ export async function createComfyStep(
       (params.sampler as keyof typeof samplersToComfySamplers) ?? 'DPM++ 2M Karras'
     ];
 
-  const comfyWorkflow = await populateWorkflowDefinition(input.params.workflow, {
+  const comfyWorkflow = await populateWorkflowDefinition(inputParams.workflow, {
     ...params,
     sampler,
     scheduler,
-    seed: params.seed ?? -1,
+    seed: inputParams.seed,
   });
-  applyResources(comfyWorkflow, resources);
+
+  applyResources(
+    comfyWorkflow,
+    resources.map((resource) => ({
+      ...resource,
+      air: stringifyAIR({
+        baseModel: resource.baseModel,
+        type: resource.model.type,
+        modelId: resource.model.id,
+        id: resource.id,
+      }),
+    }))
+  );
 
   const imageMetadata = JSON.stringify({
     prompt: params.prompt,
@@ -65,6 +82,7 @@ export async function createComfyStep(
 
   return {
     $type: 'comfy',
+    priority,
     input: {
       quantity: params.quantity,
       comfyWorkflow,
@@ -73,10 +91,14 @@ export async function createComfyStep(
     timeout: timeSpan.toString(['hours', 'minutes', 'seconds']),
     metadata: {
       resources: input.resources,
-      params: input.params,
+      params: removeEmpty(input.params),
       remixOfId: input.remixOfId,
+      maxNsfwLevel: resources.some(
+        (r) => r.availability === Availability.Private || !!r.epochDetails
+      )
+        ? 'pG13'
+        : undefined,
     },
-    priority,
   } as ComfyStepTemplate;
 }
 
@@ -97,8 +119,7 @@ export async function createComfy(
       tags: [WORKFLOW_TAGS.GENERATION, WORKFLOW_TAGS.IMAGE, params.workflow, ...args.tags],
       steps: [step],
       tips,
-      // @ts-ignore: ignoring until we update the civitai-client package
-      experimental: false,
+      experimental: env.ORCHESTRATOR_EXPERIMENTAL,
       callbacks: [
         {
           url: `${env.SIGNALS_ENDPOINT}/users/${user.id}/signals/${SignalMessages.TextToImageUpdate}`,

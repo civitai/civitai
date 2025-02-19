@@ -38,9 +38,7 @@ export function ImageProcess({ imageId }: { imageId: number }) {
                 <Badge
                   key={id}
                   size="lg"
-                  className={`rounded-full border border-blue-8 border-opacity-30 ${
-                    notes ? 'pr-2' : ''
-                  }`}
+                  className={`rounded-full border border-blue-8/30 ${notes ? 'pr-2' : ''}`}
                   color={color}
                   classNames={{ inner: 'flex gap-1 h-full' }}
                 >
@@ -53,7 +51,7 @@ export function ImageProcess({ imageId }: { imageId: number }) {
                   </Link>
                   {notes && (
                     <>
-                      <div className="h-full border-l border-blue-8 border-opacity-30"></div>
+                      <div className="h-full border-l border-blue-8/30 "></div>
                       <Popover width={300} withinPortal>
                         <Popover.Target>
                           <UnstyledButton>

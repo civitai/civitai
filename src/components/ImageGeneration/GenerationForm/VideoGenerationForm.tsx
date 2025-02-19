@@ -35,10 +35,13 @@ import {
   generationFormWorkflowConfigurations,
 } from '~/shared/constants/generation.constants';
 import { showErrorNotification } from '~/utils/notifications';
-import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
+import {
+  AccordionGeneratorImageInput,
+  GeneratorImageInput,
+} from '~/components/Generate/Input/GeneratorImageInput';
 import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { hashify } from '~/utils/string-helpers';
+import { getDisplayName, hashify } from '~/utils/string-helpers';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
@@ -52,6 +55,14 @@ import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/Gene
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import { viduDuration } from '~/server/orchestrator/vidu/vidu.schema';
+import { uniqBy } from 'lodash-es';
+import {
+  lightricksAspectRatios,
+  lightricksDuration,
+} from '~/server/orchestrator/lightricks/lightricks.schema';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
+import { SourceImageUploadAccordion } from '~/components/Generation/Input/SourceImageUpload';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -64,17 +75,13 @@ function useWorkflowContext() {
 }
 
 export function VideoGenerationForm() {
-  const { data: workflows, isLoading } = useVideoGenerationWorkflows();
+  const { data: workflows, availableEngines, isLoading } = useVideoGenerationWorkflows();
   const workflow = useSelectedVideoWorkflow();
   const sourceImage = useGenerationFormStore((state) => state.sourceImage);
 
-  const availableEngines = Object.keys(engineDefinitions)
-    .filter((key) =>
-      workflows
-        ?.filter((x) => (sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid'))
-        .some((x) => x.engine === key && x.disabled !== true)
-    )
-    .map((key) => ({ key, ...engineDefinitions[key] }));
+  const engineHasImg2Vid = workflows.some(
+    (x) => x.engine === workflow.engine && x.subType === 'img2vid'
+  );
 
   return (
     <div className="flex flex-1 flex-col gap-2">
@@ -103,23 +110,31 @@ export function VideoGenerationForm() {
           <Loader />
         </div>
       ) : workflow?.disabled ? (
-        <Alert color="yellow" className="mx-3" title={`${workflow?.engine} generation disabled`}>
+        <Alert
+          color="yellow"
+          className="mx-3"
+          title={<span className="capitalize">{`${workflow?.engine} generation disabled`}</span>}
+        >
           {workflow?.message && <Text className="mb-2">{workflow?.message}</Text>}
           {workflows && (
             <>
-              <Text className="mb-1">Try out another of our generation tools</Text>
+              <Text className="mb-1">Try out another video generation tool:</Text>
               <div className="flex flex-wrap gap-2">
-                {workflows
-                  .filter((x) => !x.disabled)
-                  .map(({ engine }) => (
-                    <Button
-                      key={engine}
-                      compact
-                      onClick={() => generationFormStore.setEngine(engine)}
-                    >
-                      {engine}
-                    </Button>
-                  ))}
+                {uniqBy(
+                  workflows.filter((x) => !x.disabled),
+                  'engine'
+                ).map(({ engine }) => (
+                  <Button
+                    key={engine}
+                    compact
+                    onClick={() => generationFormStore.setEngine(engine)}
+                    variant="outline"
+                    color="yellow"
+                    className="capitalize"
+                  >
+                    {getDisplayName(engine)}
+                  </Button>
+                ))}
               </div>
             </>
           )}
@@ -134,17 +149,12 @@ export function VideoGenerationForm() {
               onChange={(value) => generationFormStore.setEngine(value!)}
               data={availableEngines?.map(({ key, label }) => ({ label, value: key }))}
             />
-
-            {/* {workflow?.subType.startsWith('img') && (
-              <ImageUrlInput
+            {engineHasImg2Vid && (
+              <SourceImageUploadAccordion
                 value={sourceImage}
                 onChange={generationFormStore.setsourceImage}
               />
-            )} */}
-            <GeneratorImageInput
-              value={sourceImage}
-              onChange={generationFormStore.setsourceImage}
-            />
+            )}
           </div>
           <WorkflowContext.Provider value={{ workflow, engine: workflow.engine }}>
             <EngineForm />
@@ -176,6 +186,10 @@ function EngineForm() {
       return <ViduTxt2VidGenerationForm />;
     case 'vidu-img2vid':
       return <ViduImg2VidGenerationForm />;
+    case 'lightricks-txt2vid':
+      return <LightricksTxt2VidGenerationForm />;
+    case 'lightricks-img2vid':
+      return <LightricksImg2VidGenerationForm />;
     default:
       return null;
   }
@@ -243,7 +257,7 @@ function KlingTextToVideoForm() {
             </InfoPopover>
           </div>
         }
-        min={0}
+        min={0.1}
         max={1}
         step={0.1}
         precision={1}
@@ -304,7 +318,6 @@ function KlingImageToVideoForm() {
             </InfoPopover>
           </div>
         }
-        description="A value above 0.7 may cause visual errors due to conflicts between the image and the text"
         min={0}
         max={1}
         step={0.1}
@@ -405,6 +418,174 @@ function MinimaxImg2VidGenerationForm() {
   );
 }
 
+function LightricksPromptDescription() {
+  const url =
+    'https://education.civitai.com/civitais-quickstart-guide-to-lightricks-ltxv/#prompting';
+  return (
+    <span>
+      If you see poor results, please refer to the{' '}
+      <Anchor href={url} target="_blank">
+        prompt guide
+      </Anchor>
+    </span>
+  );
+}
+function LightricksTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="lightricks">
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+        description={LightricksPromptDescription()}
+      />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <InputAspectRatioColonDelimited
+        name="aspectRatio"
+        label="Aspect Ratio"
+        options={lightricksAspectRatios}
+      />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={lightricksDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={3}
+        max={3.5}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+
+      <InputNumberSlider
+        name="steps"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Steps</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              The number of iterations spent generating a video.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={20}
+        max={40}
+        reverse
+      />
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+function LightricksImg2VidGenerationForm() {
+  return (
+    <FormWrapper engine="lightricks">
+      <InputTextArea
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+        description={LightricksPromptDescription()}
+      />
+      <InputTextArea name="negativePrompt" label="Negative Prompt" autosize />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={lightricksDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={3}
+        max={3.5}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+
+      <InputNumberSlider
+        name="steps"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Steps</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              The number of iterations spent generating a video.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={20}
+        max={40}
+        reverse
+      />
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
 function ViduTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="vidu">
@@ -497,6 +678,7 @@ function FormWrapper({
     storage: localStorage,
   });
 
+  const { availableEngines } = useVideoGenerationWorkflows();
   const { mutate, isLoading, error } = useGenerate();
   const [debouncedIsLoading, setDebouncedIsLoading] = useState(false);
   const { conditionalPerformTransaction } = useBuzzTransaction({
@@ -514,6 +696,7 @@ function FormWrapper({
     }
     form.reset();
     generationFormStore.reset();
+    generationFormStore.setEngine(availableEngines[0].key);
   }
 
   function handleSubmit(data: VideoGenerationSchema) {
@@ -575,6 +758,7 @@ function FormWrapper({
         <InputText type="hidden" name="workflow" value={workflow.key} className="hidden" />
 
         {typeof children === 'function' ? children(form) : children}
+        <InputRequestPriority name="priority" label="Request Priority" modifier="multiplier" />
       </div>
       <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
         <DailyBoostRewardClaim />
@@ -617,7 +801,6 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   );
 
   const { workflow } = useWorkflowContext();
-  // console.log({ query, workflow, engine });
 
   const cost = data?.cost?.total ?? 0;
   const totalCost = cost; //variable placeholder to allow adding tips // TODO - include tips in whatif query
@@ -633,7 +816,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
       );
 
       try {
-        const result = validateInput(workflow, whatIfData);
+        const result = validateInput(workflow, { ...whatIfData, priority: formData.priority });
         setQuery(result);
         setError(null);
       } catch (e: any) {
@@ -652,15 +835,18 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   }, [data]);
 
   return (
-    <GenerateButton
-      type="submit"
-      className="flex-1"
-      disabled={!data || !query || isUploadingImage}
-      loading={isFetching || loading}
-      cost={totalCost}
-    >
-      Generate
-    </GenerateButton>
+    <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
+      <GenerateButton
+        type="submit"
+        className="flex-1"
+        disabled={!data || !query || isUploadingImage}
+        loading={isFetching || loading}
+        cost={totalCost}
+      >
+        Generate
+      </GenerateButton>
+      <GenerationCostPopover width={300} workflowCost={data?.cost ?? {}} hideCreatorTip />
+    </div>
   );
 }
 

@@ -2,7 +2,7 @@ import { Prisma } from '@prisma/client';
 import { Pool, QueryResult, QueryResultRow } from 'pg';
 import { env } from '~/env/server';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -125,18 +125,21 @@ type LaggingType =
   | 'commentModel'
   | 'resourceReview'
   | 'post'
-  | 'postImages';
+  | 'postImages'
+  | 'article';
 
 export async function getDbWithoutLag(type: LaggingType, id?: number) {
   if (env.REPLICATION_LAG_DELAY <= 0 || !id) return dbRead;
-  const value = await redis.get(`lag-helper:${type}:${id}`);
+  const value = await redis.get(`${REDIS_KEYS.LAG_HELPER}:${type}:${id}`);
   if (value) return dbWrite;
   return dbRead;
 }
 
 export async function preventReplicationLag(type: LaggingType, id?: number) {
   if (env.REPLICATION_LAG_DELAY <= 0 || !id) return;
-  await redis.set(`lag-helper:${type}:${id}`, 'true', { EX: env.REPLICATION_LAG_DELAY });
+  await redis.set(`${REDIS_KEYS.LAG_HELPER}:${type}:${id}`, 'true', {
+    EX: env.REPLICATION_LAG_DELAY,
+  });
 }
 
 export type RunContext = {

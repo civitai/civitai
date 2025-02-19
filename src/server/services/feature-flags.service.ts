@@ -10,13 +10,14 @@ import { getDisplayName } from '~/utils/string-helpers';
 // --------------------------
 const envAvailability = ['dev'] as const;
 type ServerAvailability = keyof typeof serverDomainMap;
-const serverDomainMap = {
+export const serverDomainMap = {
   green: env.NEXT_PUBLIC_SERVER_DOMAIN_GREEN,
   blue: env.NEXT_PUBLIC_SERVER_DOMAIN_BLUE,
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 } as const;
 const serverAvailability = Object.keys(serverDomainMap) as ServerAvailability[];
-const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted'] as const;
+export const userTiers = ['free', 'founder', 'bronze', 'silver', 'gold'] as const;
+const roleAvailablity = ['public', 'user', 'mod', 'member', 'granted', ...userTiers] as const;
 type RoleAvailability = (typeof roleAvailablity)[number];
 const featureAvailability = [
   ...envAvailability,
@@ -32,20 +33,13 @@ const featureFlags = createFeatureFlags({
   articles: ['blue', 'red', 'public'],
   articleCreate: ['public'],
   adminTags: ['mod', 'granted'],
-  civitaiLink: isDev ? ['granted'] : ['mod', 'member'],
+  civitaiLink: ['mod', 'member'],
   stripe: ['mod'],
   imageTraining: ['user'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
   imageGeneration: ['public'],
-  // imageGeneration: {
-  //   toggleable: true,
-  //   default: true,
-  //   displayName: 'Image Generation',
-  //   description: `Generate images with any supported AI resource.`,
-  //   availability: ['public'],
-  // },
   largerGenerationImages: {
     toggleable: true,
     default: false,
@@ -66,7 +60,6 @@ const featureFlags = createFeatureFlags({
   profileCollections: ['public'],
   imageSearch: ['public'],
   buzz: ['public'],
-  signal: isDev ? ['granted', 'user'] : ['user'],
   recommenders: isDev ? ['granted', 'dev', 'mod'] : ['dev', 'mod'],
   assistant: {
     toggleable: true,
@@ -115,6 +108,9 @@ const featureFlags = createFeatureFlags({
   announcements: ['granted'],
   blocklists: ['granted'],
   toolSearch: ['public'],
+  generationOnlyModels: ['mod', 'granted', 'gold'],
+  appTour: ['mod', 'granted'],
+  privateModels: ['mod', 'granted'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -169,7 +165,10 @@ const hasFeature = (
   if (!roleAccess && roles.length !== 0 && !!user) {
     if (roles.includes('user')) roleAccess = true;
     else if (roles.includes('mod') && user.isModerator) roleAccess = true;
-    else if (!!user.tier && user.tier != 'free' && roles.includes('member')) roleAccess = true; // Gives access to any tier
+    else if (!!user.tier && user.tier != 'free') {
+      if (roles.includes('member')) roleAccess = true; // Gives access to any tier
+      else if (roles.includes(user.tier as RoleAvailability)) roleAccess = true; // Gives access to specific tier
+    }
   }
 
   return envRequirement && serverMatch && (grantedAccess || roleAccess);

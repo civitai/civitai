@@ -1,12 +1,7 @@
 import { Air } from '@civitai/client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
-import {
-  BaseModel,
-  baseModelSetNames,
-  baseModelSets,
-  BaseModelSetType,
-} from '~/server/common/constants';
+import { BaseModel, baseModelSets } from '~/server/common/constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
 import allowedUrls from '~/utils/allowed-third-party-urls.json';
@@ -63,13 +58,19 @@ const nameOverrides: Record<string, string> = {
   'PixArt a': 'PixArt α',
   ProfileDecoration: 'Avatar Decoration',
   CogVideoX: 'CogVideoX',
+  minimax: 'Hailou by MiniMax',
 };
 
-export function getDisplayName(value: string, options?: { splitNumbers?: boolean }) {
+export function getDisplayName(
+  value: string,
+  options?: { splitNumbers?: boolean; overwrites?: Record<string, string> }
+) {
   const { splitNumbers = true } = options ?? {};
   if (!value) return '';
 
-  return nameOverrides[value] ?? splitUppercase(value, { splitNumbers });
+  return (
+    options?.overwrites?.[value] ?? nameOverrides[value] ?? splitUppercase(value, { splitNumbers })
+  );
 }
 
 export function getInitials(value: string) {
@@ -236,19 +237,19 @@ export function stringifyAIR({
 }: {
   baseModel: BaseModel | string;
   type: ModelType;
-  modelId: number;
-  id?: number;
+  modelId: number | string;
+  id?: number | string;
   source?: string;
 }) {
-  const ecosystem = (
-    Object.entries(baseModelSets).find(([, value]) =>
-      (value as string[]).includes(baseModel)
-    )?.[0] ?? 'multi'
-  ).toLowerCase();
+  const ecosystem =
+    Object.entries(baseModelSets).find(([, baseModelSet]) =>
+      (baseModelSet.baseModels as string[]).includes(baseModel)
+    )?.[0] ?? 'multi';
+
   const urnType = typeUrnMap[type] ?? 'unknown';
 
   return Air.stringify({
-    ecosystem,
+    ecosystem: ecosystem.toLowerCase(),
     type: urnType,
     source,
     id: String(modelId),
@@ -262,12 +263,11 @@ export function stringifyAIR({
 export function getBaseModelEcosystemName(baseModel: BaseModel | undefined) {
   if (!baseModel) return 'Stable Diffusion';
 
-  const ecosystem = Object.entries(baseModelSets).find(([, value]) =>
-    (value as string[]).includes(baseModel)
-  )?.[0] as BaseModelSetType | undefined;
-  if (!ecosystem) return 'Stable Diffusion';
-
-  return baseModelSetNames[ecosystem];
+  return (
+    Object.values(baseModelSets).find((baseModelSet) =>
+      (baseModelSet.baseModels as string[]).includes(baseModel)
+    )?.name ?? 'Stable Diffusion'
+  );
 }
 
 export function toBase64(str: string) {

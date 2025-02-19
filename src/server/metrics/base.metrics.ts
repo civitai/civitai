@@ -6,7 +6,7 @@ import { dbWrite } from '~/server/db/client';
 import { AugmentedPool } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { getJobDate, JobContext } from '~/server/jobs/job';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { addToQueue, checkoutQueue } from '~/server/redis/queues';
 
 const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
@@ -53,7 +53,7 @@ export function createMetricProcessor({
       // Check if update is needed
       const shouldUpdate = lastUpdate.getTime() + updateInterval < Date.now();
       const metricUpdateAllowed =
-        ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)) ??
+        ((await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `metric:${name.toLowerCase()}`)) ??
           'true') === 'true';
       if (!shouldUpdate || !metricUpdateAllowed) return;
 
@@ -75,8 +75,8 @@ export function createMetricProcessor({
       const refreshInterval = rank.refreshInterval ?? DEFAULT_RANK_REFRESH_INTERVAL;
       const shouldUpdateRank = lastUpdate.getTime() + refreshInterval < Date.now();
       const rankUpdateAllowed =
-        ((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, `rank:${name.toLowerCase()}`)) ?? 'true') ===
-        'true';
+        ((await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, `rank:${name.toLowerCase()}`)) ??
+          'true') === 'true';
       if (!shouldUpdateRank || !rankUpdateAllowed) return;
 
       // Run rank refresh

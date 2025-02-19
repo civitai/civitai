@@ -1,6 +1,5 @@
-import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { dbWrite } from '~/server/db/client';
-import { redis, REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   AutoCaptionInput,
@@ -10,6 +9,7 @@ import {
   trainingServiceStatusSchema,
 } from '~/server/schema/training.schema';
 import { throwBadRequestError, throwRateLimitError } from '~/server/utils/errorHandling';
+import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { deleteObject, getGetUrl, getPutUrl, parseKey } from '~/utils/s3-utils';
 import { getOrchestratorCaller } from '../http/orchestrator/orchestrator.caller';
 import { Orchestrator } from '../http/orchestrator/orchestrator.types';
@@ -123,7 +123,9 @@ export const deleteAssets = async (jobId: string, submittedAt?: Date) => {
 
 export async function getTrainingServiceStatus() {
   const result = trainingServiceStatusSchema.safeParse(
-    JSON.parse((await redis.hGet(REDIS_KEYS.SYSTEM.FEATURES, REDIS_KEYS.TRAINING.STATUS)) ?? '{}')
+    JSON.parse(
+      (await sysRedis.hGet(REDIS_SYS_KEYS.SYSTEM.FEATURES, REDIS_SYS_KEYS.TRAINING.STATUS)) ?? '{}'
+    )
   );
   if (!result.success) return trainingServiceStatusSchema.parse({});
 

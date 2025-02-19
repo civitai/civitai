@@ -1,4 +1,3 @@
-import { BlockImageReason, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
 import { v4 as uuid } from 'uuid';
 import {
@@ -13,6 +12,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
   addBlockedImage,
   bulkAddBlockedImages,
@@ -35,6 +35,7 @@ import {
 } from '~/server/utils/errorHandling';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { BlockImageReason, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import {
   GetEntitiesCoverImage,
@@ -56,7 +57,6 @@ import {
   getTagNamesForImages,
   moderateImages,
 } from './../services/image.service';
-import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 
 const reviewTypeToBlockedReason = {
   csam: BlockImageReason.CSAM,
@@ -67,7 +67,11 @@ const reviewTypeToBlockedReason = {
   tag: BlockImageReason.TOS,
   newUser: BlockImageReason.Ownership,
   appeal: BlockImageReason.TOS,
-};
+} as const;
+export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
+  string,
+  ...string[]
+];
 
 export const moderateImageHandler = async ({
   input,

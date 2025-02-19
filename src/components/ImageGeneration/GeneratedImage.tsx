@@ -1,5 +1,5 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
-import { ActionIcon, Checkbox, createStyles, Group, Menu, Modal } from '@mantine/core';
+import { ActionIcon, Checkbox, createStyles, Menu, Modal } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -40,7 +40,11 @@ import {
   NormalizedGeneratedImageResponse,
   NormalizedGeneratedImageStep,
 } from '~/server/services/orchestrator';
-import { getIsFlux, getIsSD3 } from '~/shared/constants/generation.constants';
+import {
+  getIsFlux,
+  getIsSD3,
+  getSourceImageFromUrl,
+} from '~/shared/constants/generation.constants';
 import {
   generationStore,
   useGenerationFormStore,
@@ -49,6 +53,7 @@ import {
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import { useTourContext } from '~/providers/TourProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -76,13 +81,11 @@ export function GeneratedImage({
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
 
+  const { running, runTour, currentStep } = useTourContext();
+
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
-      {
-        workflowId: request.id,
-        stepName: step.name,
-        imageId: image.id,
-      },
+      { workflowId: request.id, stepName: step.name, imageId: image.id },
       checked
     );
   const { copied, copy } = useClipboard();
@@ -107,7 +110,7 @@ export function GeneratedImage({
     if (image) window.open(image.url, '_blank');
   };
 
-  const handleGenerate = (
+  const handleGenerate = async (
     { seed, ...rest }: Partial<TextToImageParams> = {},
     {
       type,
@@ -131,7 +134,8 @@ export function GeneratedImage({
     });
   };
 
-  const handleSelectWorkflow = (workflow: string) => handleGenerate({ workflow, image: image.url });
+  const handleSelectWorkflow = (workflow: string) =>
+    handleGenerate({ workflow, sourceImage: image.url as any }); // TODO - see if there is a good way to handle this type mismatch. We're converting a string to a sourceImage object after we pass the data to the generation store
 
   const handleDeleteImage = () => {
     openConfirmModal({
@@ -159,21 +163,22 @@ export function GeneratedImage({
     });
   };
 
-  const handleUpscale = (workflow: string) => {
+  const handleUpscale = async (workflow: string) => {
     handleCloseImageLightbox();
-    if (step.$type !== 'videoGen')
+    if (step.$type !== 'videoGen') {
       dialogStore.trigger({
         component: UpscaleImageModal,
         props: {
           resources: step.resources,
           params: {
             ...step.params,
-            image: image.url,
+            sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
             seed: image.seed,
             workflow,
           },
         },
       });
+    }
   };
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
@@ -284,9 +289,9 @@ export function GeneratedImage({
               src={image.url}
               type={image.type}
               alt=""
-              wrapperProps={{ style: { height: '100%' } }}
               className="max-h-full w-auto max-w-full"
               disableWebm
+              disablePoster
               // onDragStart={(e) => {
               //   if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
               // }}
@@ -294,12 +299,13 @@ export function GeneratedImage({
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
           {!isLightbox && (
-            <label className="absolute left-3 top-3 ">
+            <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
                 className={classes.checkbox}
                 checked={selected}
                 onChange={(e) => {
                   toggleSelect(e.target.checked);
+                  if (running && e.target.checked) runTour({ step: currentStep + 1 });
                 }}
               />
             </label>

@@ -1,19 +1,18 @@
-import { redis } from '~/server/redis/client';
+import { redis, RedisKeyStringsCache, RedisKeyStringsSys, sysRedis } from '~/server/redis/client';
 
-type GetLimiterOptions = {
-  counterKey: string;
-  limitKey: string;
-  fetchCount: (userKey: string) => Promise<number>;
-  refetchInterval?: number; // in seconds
-  fetchOnUnknown?: boolean;
-};
 export function createLimiter({
   counterKey,
   limitKey,
   fetchCount,
   refetchInterval = 60 * 60,
   fetchOnUnknown = false,
-}: GetLimiterOptions) {
+}: {
+  counterKey: RedisKeyStringsCache;
+  limitKey: RedisKeyStringsSys;
+  fetchCount: (userKey: string) => Promise<number>;
+  refetchInterval?: number; // in seconds
+  fetchOnUnknown?: boolean;
+}) {
   async function populateCount(userKey: string) {
     const fetchedCount = await fetchCount(userKey);
     await redis.set(`${counterKey}:${userKey}`, fetchedCount, {
@@ -34,13 +33,13 @@ export function createLimiter({
   }
 
   async function setLimitHitTime(userKey: string) {
-    await redis.set(`${limitKey}:${userKey}`, Date.now(), {
+    await sysRedis.set(`${limitKey}:${userKey}`, Date.now(), {
       EX: refetchInterval,
     });
   }
 
   async function getLimit(userKey: string, fallbackKey = 'default') {
-    const cachedLimit = await redis.hmGet(limitKey, [userKey, fallbackKey]);
+    const cachedLimit = await sysRedis.hmGet(limitKey, [userKey, fallbackKey]);
     return Number(cachedLimit?.[0] ?? cachedLimit?.[1] ?? 0);
   }
 
@@ -62,7 +61,7 @@ export function createLimiter({
   }
 
   async function getLimitHitTime(userKey: string) {
-    const limitHitTime = await redis.get(`${limitKey}:${userKey}`);
+    const limitHitTime = await sysRedis.get(`${limitKey}:${userKey}`);
     if (!limitHitTime) return undefined;
     return new Date(Number(limitHitTime));
   }

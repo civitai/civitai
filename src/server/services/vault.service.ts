@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { ModelStatus, VaultItemStatus } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { EntityAccessPermission, VaultSort } from '~/server/common/enums';
@@ -18,6 +17,7 @@ import { getCategoryTags } from '~/server/services/system-cache';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { ModelStatus, ModelUsageControl, VaultItemStatus } from '~/shared/utils/prisma/enums';
 import { formatKBytes } from '~/utils/number-helpers';
 import { deleteManyObjects, getGetUrlByKey } from '~/utils/s3-utils';
 import { isDefined } from '~/utils/type-guards';
@@ -197,11 +197,18 @@ export const addModelVersionToVault = async ({
     modelVersionId,
     filePreferences: user?.filePreferences as UserFilePreferences,
   });
+
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
   const category = modelVersion.model.tagsOnModels.find((tagOnModel) =>
     modelCategoriesIds.includes(tagOnModel.tag.id)
   );
+
+  if (modelVersion.usageControl !== ModelUsageControl.Download) {
+    throw throwBadRequestError(
+      'This model version cannot be stored in the vault as it cannot be downloaded by the public.'
+    );
+  }
 
   const files = modelVersionFiles.map((file) => {
     return {

@@ -1,5 +1,6 @@
 import {
   Accordion,
+  Alert,
   Anchor,
   Badge,
   Box,
@@ -18,12 +19,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import {
-  CollectionType,
-  ModelFileVisibility,
-  ModelModifier,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconBrush,
   IconClock,
@@ -42,7 +38,6 @@ import { TRPCClientErrorBase } from '@trpc/client';
 import { DefaultErrorShape } from '@trpc/server';
 import dayjs from 'dayjs';
 import { startCase } from 'lodash-es';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
 import { useCallback, useRef, useState } from 'react';
 import { AdUnitSide_2 } from '~/components/Ads/AdUnit';
@@ -56,25 +51,35 @@ import {
   DescriptionTable,
   type Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import {
+  openCollectionSelectModal,
+  openResourceReviewEditModal,
+} from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 import { FileInfo } from '~/components/FileInfo/FileInfo';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
+import { useModelShowcaseCollection } from '~/components/Model/model.utils';
+import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import {
-  useQueryModelVersionsEngagement,
   useModelVersionPermission,
+  useQueryModelVersionsEngagement,
 } from '~/components/Model/ModelVersions/model-version.utils';
+import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
+import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
 import { PoiAlert } from '~/components/PoiAlert/PoiAlert';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -85,7 +90,6 @@ import {
 import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { RunButton } from '~/components/RunStrategy/RunButton';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { IconCivitai } from '~/components/SVG/IconCivitai';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -93,6 +97,8 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   baseModelLicenses,
@@ -103,6 +109,14 @@ import {
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
+import {
+  Availability,
+  CollectionType,
+  ModelFileVisibility,
+  ModelModifier,
+  ModelStatus,
+  ModelUsageControl,
+} from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -110,15 +124,6 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
-import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { CollectionShowcase } from '~/components/Model/CollectionShowcase/CollectionShowcase';
-import { useModelShowcaseCollection } from '~/components/Model/model.utils';
-import {
-  openCollectionSelectModal,
-  openResourceReviewEditModal,
-} from '~/components/Dialog/dialog-registry';
 
 const useStyles = createStyles(() => ({
   ctaContainer: {
@@ -150,11 +155,19 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 
   const {
     isLoadingAccess,
+    isDownloadable,
+    isSelectableInGenerator,
     canDownload: hasDownloadPermissions,
     canGenerate: hasGeneratePermissions,
   } = useModelVersionPermission({
     modelVersionId: version.id,
   });
+  const mobile = useIsMobile();
+
+  // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
+  const downloadsDisabled =
+    !!version?.usageControl && version?.usageControl !== ModelUsageControl.Download;
+  const hideDownload = !isDownloadable || downloadsDisabled;
 
   const { collection, setShowcaseCollection, settingShowcase } = useModelShowcaseCollection({
     modelId: model.id,
@@ -185,13 +198,26 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();
   const earlyAccessConfig = version?.earlyAccessConfig;
   const canGenerate =
+    isSelectableInGenerator &&
     features.imageGeneration &&
     version.canGenerate &&
-    (!isEarlyAccess || !!earlyAccessConfig?.chargeForGeneration || hasGeneratePermissions);
+    (!isEarlyAccess ||
+      !!earlyAccessConfig?.chargeForGeneration ||
+      !!earlyAccessConfig?.freeGeneration ||
+      hasGeneratePermissions);
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+  const isPrivateModel = model.availability === Availability.Private;
+
+  const handlePublishPrivateModel = async () => {
+    dialogStore.trigger({
+      component: ModelAvailabilityUpdate,
+      props: { modelId: model.id },
+    });
+  };
+
   const onPurchase = (reason?: 'generation' | 'download') => {
     if (!features.earlyAccessModel) {
       showErrorNotification({
@@ -336,9 +362,11 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       label: 'Stats',
       value: (
         <Group spacing={4}>
-          <IconBadge radius="xs" icon={<IconDownload size={14} />}>
-            <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
-          </IconBadge>
+          {!downloadsDisabled && (
+            <IconBadge radius="xs" icon={<IconDownload size={14} />}>
+              <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
+            </IconBadge>
+          )}
           {version.canGenerate && (
             <GenerateButton
               modelVersionId={version.id}
@@ -509,7 +537,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       </Group>
     </Group>
   );
-  const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
+  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile);
 
   const downloadMenuItems = filesVisible.map((file) =>
     !archived ? (
@@ -581,7 +609,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     isOwnerOrMod &&
     (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
     hasFiles &&
-    hasPosts;
+    hasPosts &&
+    !isPrivateModel;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
@@ -614,7 +643,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2} ref={adContainerRef}>
         <Stack>
-          {model.mode !== ModelModifier.TakenDown && (
+          {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}
               modelVersionId={version.id}
@@ -636,7 +665,12 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           ) : showPublishButton ? (
             <Stack spacing={4}>
               {version.canGenerate && isOwnerOrMod && (
-                <GenerateButton modelVersionId={version.id} data-activity="create:model" py={8} />
+                <GenerateButton
+                  data-tour="model:create"
+                  modelVersionId={version.id}
+                  data-activity="create:model"
+                  py={8}
+                />
               )}
               <Button.Group>
                 <Button
@@ -678,6 +712,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
                   {canGenerate && (
                     <GenerateButton
+                      data-tour="model:create"
                       modelVersionId={version.id}
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
@@ -732,9 +767,10 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       }
                     </CivitaiLinkManageButton>
                   )}
-                  {displayCivitaiLink || canGenerate ? (
+                  {hideDownload ? null : displayCivitaiLink || canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
+                        data-tour="model:download"
                         canDownload={canDownload}
                         downloadPrice={
                           !hasDownloadPermissions &&
@@ -754,6 +790,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       <Menu position="bottom-end">
                         <Menu.Target>
                           <DownloadButton
+                            data-tour="model:download"
                             canDownload={canDownload}
                             downloadPrice={
                               !hasDownloadPermissions &&
@@ -772,6 +809,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     )
                   ) : (
                     <DownloadButton
+                      data-tour="model:download"
                       component="a"
                       {...getDownloadProps(primaryFile)}
                       canDownload={canDownload}
@@ -790,6 +828,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                           <>
                             Download <Text span>{`(${formatKBytes(primaryFile?.sizeKB)})`}</Text>
                           </>
+                        ) : !isDownloadable ? (
+                          'Download disabled'
                         ) : (
                           'No file'
                         )}
@@ -798,13 +838,6 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                   )}
                 </Group>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
-                  {!displayCivitaiLink && !isEarlyAccess && (
-                    <RunButton
-                      variant="light"
-                      modelVersionId={version.id}
-                      disabled={!!model.mode}
-                    />
-                  )}
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
                       <ShareButton
@@ -821,7 +854,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 
                   {onFavoriteClick && (
                     <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                      <div>
+                      <div data-tour="model:like">
                         <LoginRedirect reason="favorite-model">
                           <Button
                             onClick={() =>
@@ -837,7 +870,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       </div>
                     </Tooltip>
                   )}
-                  {hasDownloadPermissions && (
+                  {hasDownloadPermissions && !downloadsDisabled && !isPrivateModel && (
                     <ToggleVaultButton modelVersionId={version.id}>
                       {({ isLoading, isInVault, toggleVaultItem }) => (
                         <Tooltip
@@ -889,6 +922,19 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               </Text>
             </AlertWithIcon>
           )}
+          {isPrivateModel && isOwnerOrMod && (
+            <AlertWithIcon
+              color="yellow"
+              iconColor="yellow"
+              icon={<IconLock />}
+              title="Private Model"
+            >
+              <Text>
+                Want to start earning buzz?{' '}
+                <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
+              </Text>
+            </AlertWithIcon>
+          )}
           {version.status === ModelStatus.UnpublishedViolation && version.meta?.needsReview && (
             <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationMark />}>
               This version is currently being reviewed by our moderators. It will be visible to the
@@ -908,6 +954,34 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             files={version.files}
             baseModel={version.baseModel}
           />
+
+          {hideDownload && (
+            <AlertWithIcon color="blue" iconColor="blue" icon={<IconBrush size={16} />} size="sm">
+              {isDownloadable && !isLoadingAccess ? (
+                <Text>
+                  You've set this model to Generation-Only. Other users will not be able to download
+                  this model. Click{' '}
+                  <Text
+                    component={Link}
+                    variant="link"
+                    td="underline"
+                    href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
+                  >
+                    here
+                  </Text>{' '}
+                  to change this behavior.
+                </Text>
+              ) : (
+                <Text>
+                  The creator has set this model to Generation-Only.{' '}
+                  <Text variant="link" td="underline" component={Link} href="/articles/11494">
+                    Learn more
+                  </Text>
+                </Text>
+              )}
+            </AlertWithIcon>
+          )}
+
           {!model.locked && alreadyDownloaded && (
             <UserResourceReviewComposite
               modelId={model.id}
@@ -1100,42 +1174,44 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 />
               </Accordion.Panel>
             </Accordion.Item>
-            <Accordion.Item
-              value="version-files"
-              sx={(theme) => ({
-                marginTop: theme.spacing.md,
-                marginBottom: !model.locked ? theme.spacing.md : undefined,
-                borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
-              })}
-            >
-              <Accordion.Control disabled={archived}>
-                <Group position="apart">
-                  {filesVisibleCount > 0
-                    ? `${filesVisibleCount === 1 ? '1 File' : `${filesVisibleCount} Files`}`
-                    : 'Files'}
-                  {isOwnerOrMod && (
-                    <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
-                      <Text variant="link" size="sm">
-                        Manage Files
-                      </Text>
-                    </RoutedDialogLink>
-                  )}
-                </Group>
-              </Accordion.Control>
-              <Accordion.Panel>
-                <Stack spacing={2}>
-                  {hasVisibleFiles ? (
-                    downloadFileItems
-                  ) : (
-                    <Center p="xl">
-                      <Text size="md" color="dimmed">
-                        This version is missing files
-                      </Text>
-                    </Center>
-                  )}
-                </Stack>
-              </Accordion.Panel>
-            </Accordion.Item>
+            {isDownloadable && (
+              <Accordion.Item
+                value="version-files"
+                sx={(theme) => ({
+                  marginTop: theme.spacing.md,
+                  marginBottom: !model.locked ? theme.spacing.md : undefined,
+                  borderColor: !filesCount ? `${theme.colors.red[4]} !important` : undefined,
+                })}
+              >
+                <Accordion.Control disabled={archived}>
+                  <Group position="apart">
+                    {filesVisibleCount > 0
+                      ? `${filesVisibleCount === 1 ? '1 File' : `${filesVisibleCount} Files`}`
+                      : 'Files'}
+                    {isOwnerOrMod && (
+                      <RoutedDialogLink name="filesEdit" state={{ modelVersionId: version.id }}>
+                        <Text variant="link" size="sm">
+                          Manage Files
+                        </Text>
+                      </RoutedDialogLink>
+                    )}
+                  </Group>
+                </Accordion.Control>
+                <Accordion.Panel>
+                  <Stack spacing={2}>
+                    {hasVisibleFiles ? (
+                      downloadFileItems
+                    ) : (
+                      <Center p="xl">
+                        <Text size="md" color="dimmed">
+                          This version is missing files
+                        </Text>
+                      </Center>
+                    )}
+                  </Stack>
+                </Accordion.Panel>
+              </Accordion.Item>
+            )}
             {version.recommendedResources && version.recommendedResources.length > 0 && (
               <Accordion.Item value="recommended-resources">
                 <Accordion.Control>Recommended Resources</Accordion.Control>
@@ -1145,7 +1221,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       <Card
                         key={resource.id}
                         component={Link}
-                        href={`/models/${resource.modelId}?modelVersionId=${resource.id}`}
+                        href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
                         radius={0}
                         py="xs"
                         sx={(theme) => ({
@@ -1160,9 +1236,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                         <Stack spacing={4}>
                           <Group position="apart" spacing={8} noWrap>
                             <Text size="xs" weight={500} lineClamp={2}>
-                              {resource.modelName}
+                              {resource.model.name}
                             </Text>
-                            <Badge size="xs">{getDisplayName(resource.modelType)}</Badge>
+                            <Badge size="xs">{getDisplayName(resource.model.type)}</Badge>
                           </Group>
                           <Text color="dimmed" size="xs">
                             {resource.name}
@@ -1328,7 +1404,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
         })}
       >
         <Stack>
-          {model.mode !== ModelModifier.TakenDown && (
+          {model.mode !== ModelModifier.TakenDown && !mobile && (
             <ModelCarousel
               modelId={model.id}
               modelVersionId={version.id}

@@ -114,7 +114,7 @@ export function PostImages({
                       })}
                     >
                       <ImageContextMenu image={image} />
-                      {features.imageGeneration && image.hasMeta && (
+                      {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
                         <HoverActionButton
                           label="Remix"
                           size={30}

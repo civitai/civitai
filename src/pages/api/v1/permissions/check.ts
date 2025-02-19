@@ -2,6 +2,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { EntityAccessPermission } from '~/server/common/enums';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { getSessionUser } from '~/server/services/user.service';
 import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray, numericString } from '~/utils/zod-helpers';
 
@@ -31,9 +32,12 @@ export default PublicEndpoint(
       return res.status(400).json({ error: 'Invalid permission' });
     }
 
+    const sessionUser = await getSessionUser({ userId });
+
     try {
       const access = await hasEntityAccess({
         userId,
+        isModerator: sessionUser?.isModerator,
         entityType,
         entityIds,
         permissions,

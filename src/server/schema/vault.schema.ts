@@ -1,8 +1,7 @@
-import { ModelType } from '~/shared/utils/prisma/enums';
-import _ from 'lodash-es';
 import { z } from 'zod';
 import { VaultSort } from '~/server/common/enums';
 import { paginationSchema } from '~/server/schema/base.schema';
+import { ModelType } from '~/shared/utils/prisma/enums';
 
 export type GetPaginatedVaultItemsSchema = z.infer<typeof getPaginatedVaultItemsSchema>;
 export const getPaginatedVaultItemsSchema = paginationSchema.merge(

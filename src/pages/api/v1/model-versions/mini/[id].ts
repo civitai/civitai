@@ -1,19 +1,23 @@
 import { Prisma } from '@prisma/client';
 import { NextApiRequest, NextApiResponse } from 'next';
-import { z } from 'zod';
-
 import { Session } from 'next-auth';
+import { z } from 'zod';
 import { BaseModel } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
-import { getUnavailableResources } from '~/server/services/generation/generation.service';
+import {
+  getShouldChargeForResources,
+  getUnavailableResources,
+} from '~/server/services/generation/generation.service';
+import { getFeaturedModels } from '~/server/services/model.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import { Availability, ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { stringifyAIR } from '~/utils/string-helpers';
 
-const schema = z.object({ id: z.coerce.number() });
+const schema = z.object({ id: z.coerce.number(), epoch: z.number().optional() });
+
 type VersionRow = {
   id: number;
   versionName: string;
@@ -29,6 +33,7 @@ type VersionRow = {
   covered?: boolean;
   freeTrialLimit?: number;
   minor: boolean;
+  usageControl: ModelUsageControl;
 };
 type FileRow = {
   id: number;
@@ -68,11 +73,18 @@ export default MixedAuthEndpoint(async function handler(
       m.minor,
       mv."earlyAccessEndsAt",
       mv."requireAuth",
+      mv."usageControl",
       (
-        (mv."earlyAccessEndsAt" > NOW() AND mv."availability" = 'EarlyAccess')
-        OR 
+        (
+            mv."earlyAccessEndsAt" > NOW()
+            AND mv."availability" = 'EarlyAccess'
+            AND (mv."earlyAccessConfig"->>'freeGeneration' IS NULL OR mv."earlyAccessConfig"->>'freeGeneration' != 'true')
+        )
+        OR
         (mv."availability" = 'Private')
-      
+        OR 
+        (m."availability" = 'Private')
+
       ) AS "checkPermission",
       (SELECT covered FROM "GenerationCoverage" WHERE "modelVersionId" = mv.id) AS "covered",
       (
@@ -101,11 +113,49 @@ export default MixedAuthEndpoint(async function handler(
   if (!primaryFile) return res.status(404).json({ error: 'Missing model file' });
 
   const baseUrl = getBaseUrl();
-  const air = stringifyAIR(modelVersion);
-  let downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
-    versionId: modelVersion.id,
-    primary: true,
-  })}`;
+  let air: string;
+  let downloadUrl: string;
+
+  if (
+    modelVersion.availability === Availability.Private &&
+    !!primaryFile.metadata.trainingResults
+  ) {
+    const epoch =
+      primaryFile.metadata.trainingResults.epochs?.find((e) => {
+        if ('epoch_number' in e) {
+          return e.epoch_number === results.data.epoch;
+        }
+
+        return e.epochNumber === results.data.epoch;
+      }) ?? primaryFile.metadata.trainingResults.epochs?.pop();
+
+    if (!epoch) {
+      return res.status(404).json({ error: 'Missing epoch' });
+    }
+
+    downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
+    const jobFileUrl = downloadUrl.split('/jobs/')[1]; // Leaves you with: ${jobId}/assets/${fileName}
+    const jobId = jobFileUrl.split('/assets/')[0];
+    const fileName = jobFileUrl.split('/assets/')[1];
+
+    if (!jobId || !fileName) {
+      return res.status(404).json({ error: 'Could not get jobId or fileName' });
+    }
+
+    air = stringifyAIR({
+      ...modelVersion,
+      source: 'orchestrator',
+      modelId: jobId,
+      id: fileName,
+    });
+  } else {
+    air = stringifyAIR(modelVersion);
+    downloadUrl = `${baseUrl}${createModelFileDownloadUrl({
+      versionId: modelVersion.id,
+      primary: true,
+    })}`;
+  }
+
   // if req url domain contains `api.`, strip /api/ from the download url
   if (req.headers.host?.includes('api.')) {
     downloadUrl = downloadUrl.replace('/api/', '/').replace('civitai.com', 'api.civitai.com');
@@ -118,7 +168,23 @@ export default MixedAuthEndpoint(async function handler(
     const unavailableResources = await getUnavailableResources();
     const isUnavailable = unavailableResources.some((r) => r === modelVersion.id);
     if (isUnavailable) canGenerate = false;
+
+    // Only allow people with the right permission to generate with this model
+    if (modelVersion.usageControl === ModelUsageControl.InternalGeneration && !user?.isModerator) {
+      canGenerate = false;
+    }
   }
+
+  // Check if should charge
+  const shouldChargeResult = await getShouldChargeForResources([
+    {
+      modelType: modelVersion.type,
+      modelId: modelVersion.modelId,
+      fileSizeKB: primaryFile.sizeKB,
+    },
+  ]);
+
+  const isFeatured = (await getFeaturedModels()).includes(modelVersion.modelId);
 
   const data = {
     air,
@@ -126,17 +192,20 @@ export default MixedAuthEndpoint(async function handler(
     modelName: modelVersion.modelName,
     baseModel: modelVersion.baseModel,
     availability: modelVersion.availability,
-    size: primaryFile.sizeKB,
+    size: primaryFile.sizeKB, // nullable
+    // nullable - hashes
     hashes: {
-      AutoV2: primaryFile.hash,
+      AutoV2: primaryFile.hash, // nullable
     },
-    downloadUrls: [downloadUrl],
-    format,
+    downloadUrls: [downloadUrl], // nullable
+    format, // nullable
     canGenerate,
+    isFeatured,
     requireAuth: modelVersion.requireAuth,
     checkPermission: modelVersion.checkPermission,
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
+    additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
     minor: modelVersion.minor,
   };
   res.status(200).json(data);

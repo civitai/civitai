@@ -96,7 +96,7 @@ function ProfileOverview() {
                   pages.
                 </Text>
               ) : (
-                'Whoops! Looks like this user doesn&rsquo;t have any content yet or has chosen not to display anything. Check back later!'
+                "This user hasn't posted any content, or has chosen not to display anything at the moment. Check back later to see if they've shared something new!"
               )}
             </Text>
           </Stack>

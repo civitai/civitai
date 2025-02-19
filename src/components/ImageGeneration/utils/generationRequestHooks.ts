@@ -50,6 +50,13 @@ function imageFilter({ step, tags }: { step: NormalizedGeneratedImageStep; tags?
   });
 }
 
+export function useInvalidateWhatIf() {
+  const queryUtils = trpc.useUtils();
+  return function () {
+    queryUtils.orchestrator.getImageWhatIf.invalidate();
+  };
+}
+
 export function useGetTextToImageRequests(
   input?: z.input<typeof workflowQuerySchema>,
   options?: { enabled?: boolean; includeTags?: boolean }
@@ -145,7 +152,7 @@ function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => vo
 
 export function useSubmitCreateImage() {
   return trpc.orchestrator.generateImage.useMutation({
-    onSuccess: (data) => {
+    onSuccess: (data, input) => {
       updateTextToImageRequests((old) => {
         old.pages[0].items.unshift(data);
       });

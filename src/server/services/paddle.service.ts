@@ -5,7 +5,6 @@ import type {
   PriceNotification,
   ProductNotification,
   SubscriptionNotification,
-  Transaction,
   TransactionNotification,
 } from '@paddle/paddle-node-sdk';
 import { ApiError } from '@paddle/paddle-node-sdk';
@@ -394,7 +393,14 @@ export const upsertSubscription = async (
   if (subscriptionNotification.status === 'canceled') {
     // immediate cancel:
     log('upsertSubscription :: Subscription canceled immediately');
-    await dbWrite.customerSubscription.delete({ where: { userId: user.id } });
+    await dbWrite.customerSubscription.update({
+      where: { userId: user.id },
+      data: {
+        status: 'canceled',
+        canceledAt: new Date(),
+        cancelAtPeriodEnd: false,
+      },
+    });
     await getMultipliersForUser(user.id, true);
     await invalidateSession(user.id);
     await dbWrite.vault.update({

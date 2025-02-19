@@ -11,7 +11,7 @@ import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
 
 export function GenericImageCard({
-  image: image,
+  image,
   entityType,
   entityId,
   disabled,

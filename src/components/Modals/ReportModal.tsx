@@ -135,7 +135,7 @@ export default function ReportModal({
     () =>
       reports.find((x) => x.reason === reason && x.availableFor.includes(entityType))?.Element ??
       null,
-    [reason]
+    [entityType, reason]
   );
   const title = useMemo(
     () =>
@@ -145,7 +145,7 @@ export default function ReportModal({
   );
   const handleVote = useVoteForTags({ entityType: entityType as 'image' | 'model', entityId });
 
-  const queryUtils = trpc.useContext();
+  const queryUtils = trpc.useUtils();
   const { data, isInitialLoading } = trpc.model.getModelReportDetails.useQuery(
     { id: entityId },
     { enabled: entityType === ReportEntity.Model }
@@ -237,7 +237,7 @@ export default function ReportModal({
   });
 
   const handleSubmit = (data: Record<string, unknown>) => {
-    const details: any = Object.fromEntries(Object.entries(data).filter(([_, v]) => v != null));
+    const details: any = Object.fromEntries(Object.entries(data).filter(([, v]) => v != null));
     if (!reason) return;
     mutate({
       type: entityType,

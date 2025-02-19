@@ -1,8 +1,8 @@
+import { dbWrite } from '~/server/db/client';
+import { discord } from '~/server/integrations/discord';
+import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { initStripePrices, initStripeProducts } from '~/server/services/stripe.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { dbWrite } from '~/server/db/client';
-import { redis } from '~/server/redis/client';
-import { discord } from '~/server/integrations/discord';
 
 async function populateRedisCache() {
   const toInvalidate = await dbWrite.sessionInvalidation.groupBy({
@@ -18,7 +18,7 @@ async function populateRedisCache() {
     const expireDate = new Date();
     expireDate.setDate(invalidatedAt.getDate() + 30);
 
-    redis.set(`session:${userId}`, invalidatedAt.toISOString(), {
+    redis.set(`${REDIS_KEYS.SESSION.BASE}:${userId}`, invalidatedAt.toISOString(), {
       EXAT: Math.floor(expireDate.getTime() / 1000),
       NX: true,
     });

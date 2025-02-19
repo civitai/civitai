@@ -22,6 +22,7 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
   description: true,
   vaeId: true,
   uploadType: true,
+  usageControl: true,
   metrics: {
     where: { timeframe: 'AllTime' },
     select: {

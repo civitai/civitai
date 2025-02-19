@@ -23,19 +23,22 @@ import {
   IconAlertTriangle,
   IconArrowAutofitDown,
   IconCheck,
-  IconInfoCircle,
   IconPlus,
+  IconRestore,
   IconX,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
 import { clone } from 'lodash-es';
-import React, { useEffect, useMemo, useState } from 'react';
-import { create } from 'zustand';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   useGenerationStatus,
   useUnstableResources,
@@ -51,8 +54,12 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
-import { useSubmitCreateImage } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  useInvalidateWhatIf,
+  useSubmitCreateImage,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -72,11 +79,13 @@ import {
 import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useTourContext } from '~/providers/TourProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
   fluxModelId,
   fluxModeOptions,
+  fluxStandardAir,
   fluxUltraAir,
   fluxUltraAspectRatios,
   getBaseModelResourceTypes,
@@ -88,17 +97,22 @@ import {
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
+import { contentGenerationTour, remixContentGenerationTour } from '~/utils/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
-import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
+import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 
-const useCostStore = create<{ cost?: number }>(() => ({}));
+let total = 0;
+const tips = {
+  creators: 0,
+  civitai: 0,
+};
 
 // #region [form component]
 export function GenerationFormContent() {
@@ -110,11 +124,20 @@ export function GenerationFormContent() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
+  const { runTour, running, currentStep, setSteps, activeTour } = useTourContext();
+  const loadingGeneratorData = useGenerationStore((state) => state.loading);
+  const remixOfId = useRemixStore((state) => state.remixOfId);
+  const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
+    state.requestsLoading,
+    state.hasGeneratedImages,
+  ]);
 
   const form = useGenerationForm();
+  const invalidateWhatIf = useInvalidateWhatIf();
 
   const { unstableResources: allUnstableResources } = useUnstableResources();
   const [opened, setOpened] = useState(false);
+  const [runsOnFalAI, setRunsOnFalAI] = useState(false);
   const [promptWarning, setPromptWarning] = useState<string | null>(null);
   const [reviewed, setReviewed] = useLocalStorage({
     key: 'review-generation-terms',
@@ -122,10 +145,10 @@ export function GenerationFormContent() {
   });
   const { subscription, meta: subscriptionMeta } = useActiveSubscription();
 
-  const { data: workflowDefinitions, isLoading: loadingWorkflows } =
+  const { data: workflowDefinitions = [], isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
 
-  const [workflow, image] = form.watch(['workflow', 'image']) ?? 'txt2img';
+  const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -145,6 +168,12 @@ export function GenerationFormContent() {
 
   function handleReset() {
     form.reset();
+    useRemixStore.setState({
+      remixOf: undefined,
+      params: undefined,
+      resources: undefined,
+      remixOfId: undefined,
+    });
     clearWarning();
   }
 
@@ -182,14 +211,11 @@ export function GenerationFormContent() {
 
   function handleSubmit(data: GenerationFormOutput) {
     if (isLoading) return;
-    const { cost = 0 } = useCostStore.getState();
-    const tips = useTipStore.getState();
-    let creatorTip = tips.creatorTip;
-    const civitaiTip = tips.civitaiTip;
+    // const { cost = 0 } = useCostStore.getState();
 
     const {
       model,
-      resources: additionalResources,
+      resources: additionalResources = [],
       vae,
       remixOfId,
       remixSimilarity,
@@ -201,19 +227,8 @@ export function GenerationFormContent() {
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
 
-    // const {
-    //   sourceImage,
-    //   width = params.width,
-    //   height = params.height,
-    // } = useGenerationFormStore.getState();
-
-    // const imageDetails = data.workflow.includes('img2img')
-    //   ? { image: sourceImage, width, height }
-    //   : { width, height };
-
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
-      if (additionalResources.length === 0) creatorTip = 0;
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
@@ -227,30 +242,31 @@ export function GenerationFormContent() {
         if (keys.includes(key)) delete params[key as keyof typeof params];
       }
     }
-    const isSD3 = getIsSD3(params.baseModel);
-    if (isSD3) {
-      if (additionalResources.length === 0) creatorTip = 0;
-    }
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.available !== false);
+      .filter((x) => x.canGenerate !== false)
+      .map((r) => ({
+        ...r,
+        epochNumber: r.epochDetails?.epochNumber,
+      }));
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
+        const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
         await mutateAsync({
           resources,
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-            // ...imageDetails,
           },
-          tips: featureFlags.creatorComp
-            ? { creators: creatorTip, civitai: civitaiTip }
-            : undefined,
+          tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
         });
+        if (hasEarlyAccess) {
+          invalidateWhatIf();
+        }
       } catch (e) {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
@@ -261,8 +277,7 @@ export function GenerationFormContent() {
     }
 
     setPromptWarning(null);
-    const totalCost = cost + creatorTip * cost + civitaiTip * cost;
-    conditionalPerformTransaction(totalCost, performTransaction);
+    conditionalPerformTransaction(total, performTransaction);
 
     if (filters.marker) {
       setFilters({ marker: undefined });
@@ -272,7 +287,7 @@ export function GenerationFormContent() {
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
   const handleError = async (e: unknown) => {
     const promptError = (e as any)?.prompt as any;
-    if (promptError?.type === 'custom') {
+    if (promptError?.type === 'custom' && promptError.message.startsWith('Blocked for')) {
       const status = blockedRequest.status();
       setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
@@ -290,18 +305,57 @@ export function GenerationFormContent() {
   useEffect(() => {
     const subscription = form.watch(({ model, resources = [], vae, fluxMode }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
-        setHasMinorResources([model, ...resources, vae].filter((x) => x?.minor).length > 0);
+        setHasMinorResources([model, ...resources, vae].filter((x) => x?.model?.minor).length > 0);
       }
+
+      setRunsOnFalAI(model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir);
     });
     return () => {
       subscription.unsubscribe();
     };
   }, []);
 
-  const workflowOptions =
-    workflowDefinitions
-      ?.filter((x) => x.selectable !== false && x.key !== undefined)
-      .map(({ key, label }) => ({ label, value: key })) ?? [];
+  const workflowOptions = workflowDefinitions
+    .filter((x) => x.selectable !== false)
+    .map(({ key, label }) => ({ label, value: key }));
+
+  useEffect(() => {
+    if (!status.available || status.isLoading || loadingGeneratorData) return;
+    if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
+  }, [
+    status.isLoading,
+    status.available,
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    loadingGeneratorData,
+  ]); // These are the dependencies that make it work, please only update if you know what you're doing
+
+  useEffect(() => {
+    if (!running || currentStep > 0 || loadingGeneratorData) return;
+    const isRemix = remixOfId && activeTour === 'remix-content-generation';
+    let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
+
+    // Remove last two steps if user has not generated any images
+    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = genSteps.slice(0, -2);
+    // Only show first few steps if user is not logged in
+    if (!currentUser) genSteps = isRemix ? genSteps.slice(0, 4) : genSteps.slice(0, 6);
+
+    const alreadyReviewedTerms =
+      window?.localStorage?.getItem('review-generation-terms') === 'true';
+    if (alreadyReviewedTerms)
+      genSteps = genSteps.filter((x) => x.target !== '[data-tour="gen:terms"]');
+
+    setSteps(genSteps);
+  }, [
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    currentUser,
+    running,
+    activeTour,
+    loadingGeneratorData,
+  ]); // These are the dependencies that make it work, please only update if you know what you're doing
 
   return (
     <Form
@@ -310,8 +364,9 @@ export function GenerationFormContent() {
       onError={handleError}
       className="relative flex flex-1 flex-col justify-between gap-2"
     >
-      <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model']}>
-        {({ baseModel, fluxMode, draft, model }) => {
+      <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow']}>
+        {({ baseModel, fluxMode, draft, model, workflow }) => {
+          const isTxt2Img = workflow.startsWith('txt');
           const isSDXL = getIsSdxl(baseModel);
           const isFlux = getIsFlux(baseModel);
           const isSD3 = getIsSD3(baseModel);
@@ -335,7 +390,7 @@ export function GenerationFormContent() {
             cfgScaleMin = isDraft ? 1 : 2;
             cfgScaleMax = isDraft ? 1 : 20;
           }
-          const isFluxUltra = getIsFluxUltra({ modelId: model?.modelId, fluxMode });
+          const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
           if (!resourceTypes) return <></>;
@@ -346,26 +401,6 @@ export function GenerationFormContent() {
                 {!isFlux && !isSD3 && (
                   <>
                     <div className="flex items-start justify-start gap-3">
-                      {features.image && image && (
-                        <div className="relative mt-3">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={image}
-                            alt="image to refine"
-                            className="max-w-16 rounded-md shadow-sm shadow-black"
-                          />
-                          <ActionIcon
-                            variant="light"
-                            size="sm"
-                            color="red"
-                            radius="xl"
-                            className="absolute -right-2 -top-2"
-                            onClick={() => form.setValue('image', undefined)}
-                          >
-                            <IconX size={16} strokeWidth={2.5} />
-                          </ActionIcon>
-                        </div>
-                      )}
                       <div className="flex-1">
                         <InputSelect
                           label={
@@ -381,17 +416,11 @@ export function GenerationFormContent() {
                               </Badge>
                             </div>
                           }
-                          // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
                           className="flex-1"
                           name="workflow"
                           data={[
-                            // ...workflowOptions.filter((x) => x.value.startsWith('txt')),
-                            // ...workflowOptions.filter((x) => x.value.startsWith('img')),
-                            ...(workflowDefinitions
-                              ?.filter(
-                                (x) => x.type === workflowDefinition?.type && x.selectable !== false
-                              )
-                              .map(({ key, label }) => ({ label, value: key })) ?? []),
+                            ...workflowOptions.filter((x) => x.value.startsWith('txt')),
+                            ...workflowOptions.filter((x) => x.value.startsWith('img')),
                           ]}
                           loading={loadingWorkflows}
                         />
@@ -402,7 +431,7 @@ export function GenerationFormContent() {
                         )}
                       </div>
                     </div>
-                    {/* {features.image && <GenerationImage />} */}
+                    {features.image && <InputSourceImageUpload name="sourceImage" />}
                   </>
                 )}
 
@@ -422,15 +451,11 @@ export function GenerationFormContent() {
                 <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
                   {({ model, resources = [], vae, fluxMode }) => {
                     const selectedResources = [...resources, vae, model].filter(isDefined);
-                    const minorFlaggedResources = selectedResources.filter((x) => x.minor);
+                    const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
                     const unstableResources = selectedResources.filter((x) =>
                       allUnstableResources.includes(x.id)
                     );
                     const atLimit = resources.length >= status.limits.resources;
-
-                    const disableAdditionalResources =
-                      model.modelId === fluxModelId &&
-                      fluxMode !== 'urn:air:flux1:checkpoint:civitai:618692@691639';
 
                     return (
                       <Card
@@ -462,7 +487,7 @@ export function GenerationFormContent() {
                               : undefined
                           }
                         />
-                        {!disableAdditionalResources && (
+                        {!runsOnFalAI && (
                           <Card.Section
                             className={cx(
                               { [classes.formError]: form.formState.errors.resources },
@@ -568,7 +593,7 @@ export function GenerationFormContent() {
                               <List size="xs">
                                 {unstableResources.map((resource) => (
                                   <List.Item key={resource.id}>
-                                    {resource.modelName} - {resource.name}
+                                    {resource.model.name} - {resource.name}
                                   </List.Item>
                                 ))}
                               </List>
@@ -590,7 +615,7 @@ export function GenerationFormContent() {
                               <List size="xs">
                                 {minorFlaggedResources.map((resource) => (
                                   <List.Item key={resource.id}>
-                                    {resource.modelName} - {resource.name}
+                                    {resource.model.name} - {resource.name}
                                   </List.Item>
                                 ))}
                               </List>
@@ -631,6 +656,89 @@ export function GenerationFormContent() {
                 )}
 
                 <div className="flex flex-col">
+                  <Watch {...form} fields={['remixSimilarity', 'remixOfId', 'remixPrompt']}>
+                    {({ remixSimilarity, remixOfId, remixPrompt }) => {
+                      if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
+
+                      return (
+                        <div className="my-2 flex flex-col gap-2 overflow-hidden rounded-md">
+                          <div
+                            className={clsx('flex rounded-md', {
+                              'border-2 border-red-500': remixSimilarity < 0.75,
+                            })}
+                          >
+                            <div className=" flex-none">
+                              <ImageById
+                                imageId={remixOfId}
+                                className="h-28 rounded-none rounded-l-md"
+                                explain={false}
+                              />
+                            </div>
+                            <div className="h-28 flex-1">
+                              <Alert
+                                style={{
+                                  background:
+                                    theme.colorScheme === 'dark' ? theme.colors.dark[6] : undefined,
+                                  borderTopLeftRadius: 0,
+                                  borderBottomLeftRadius: 0,
+                                }}
+                                h="100%"
+                                py={0}
+                              >
+                                <Stack spacing={0} h="100%">
+                                  <Text weight="bold" size="sm" mt={2}>
+                                    Remixing
+                                  </Text>
+                                  {remixSimilarity >= 0.75 && (
+                                    <Text size="xs" lineClamp={3}>
+                                      {remixPrompt}
+                                    </Text>
+                                  )}
+                                  {remixSimilarity < 0.75 && (
+                                    <>
+                                      <Text size="xs" lh={1.2} mb={6}>
+                                        Your prompt has deviated sufficiently from the original that
+                                        this generation will be treated as a new image rather than a
+                                        remix
+                                      </Text>
+                                      <Group spacing="xs" grow noWrap>
+                                        <Button
+                                          variant="default"
+                                          onClick={() => form.setValue('prompt', remixPrompt)}
+                                          size="xs"
+                                          color="default"
+                                          fullWidth
+                                          h={30}
+                                          leftIcon={<IconRestore size={14} />}
+                                        >
+                                          Restore Prompt
+                                        </Button>
+                                        <Button
+                                          variant="light"
+                                          color="red"
+                                          size="xs"
+                                          onClick={() => {
+                                            form.setValue('remixOfId', undefined);
+                                            form.setValue('remixSimilarity', undefined);
+                                            form.setValue('remixPrompt', undefined);
+                                          }}
+                                          fullWidth
+                                          h={30}
+                                          leftIcon={<IconX size={14} />}
+                                        >
+                                          Stop Remixing
+                                        </Button>
+                                      </Group>
+                                    </>
+                                  )}
+                                </Stack>
+                              </Alert>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    }}
+                  </Watch>
                   <Input.Wrapper
                     label={
                       <div className="mb-1 flex items-center gap-1">
@@ -671,6 +779,7 @@ export function GenerationFormContent() {
                           >
                             <InputPrompt
                               name="prompt"
+                              data-tour="gen:prompt"
                               placeholder="Your prompt goes here..."
                               autosize
                               unstyled
@@ -763,7 +872,7 @@ export function GenerationFormContent() {
                   />
                 )}
 
-                {!isFluxUltra && (
+                {!isFluxUltra && isTxt2Img && (
                   <div className="flex flex-col gap-0.5">
                     <Input.Label>Aspect Ratio</Input.Label>
                     <InputSegmentedControl
@@ -998,7 +1107,7 @@ export function GenerationFormContent() {
                               name="denoise"
                               label="Denoise"
                               min={0}
-                              max={0.75}
+                              max={isTxt2Img ? 0.75 : 1}
                               step={0.05}
                             />
                           )}
@@ -1034,8 +1143,9 @@ export function GenerationFormContent() {
                     </Accordion.Item>
                   </PersistentAccordion>
                 )}
+                {!runsOnFalAI && <InputRequestPriority name="priority" label="Request Priority" />}
               </div>
-              <div className="shadow-topper sticky bottom-0 z-10 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
+              <div className="shadow-topper sticky bottom-0 z-10 mt-5 flex flex-col gap-2 rounded-xl bg-gray-0 p-2 dark:bg-dark-7">
                 <DailyBoostRewardClaim />
                 {subscriptionMismatch && (
                   <DismissibleAlert
@@ -1090,7 +1200,7 @@ export function GenerationFormContent() {
                 ) : (
                   <>
                     {!reviewed && (
-                      <Alert color="yellow" title="Image Generation Terms">
+                      <Alert color="yellow" title="Image Generation Terms" data-tour="gen:terms">
                         <Text size="xs">
                           By using the image generator you confirm that you have read and agree to
                           our{' '}
@@ -1098,7 +1208,7 @@ export function GenerationFormContent() {
                             Terms of Service
                           </Text>{' '}
                           presented during onboarding. Failure to abide by{' '}
-                          <Text component={Link} href="/content/tos" td="underline">
+                          <Text component={Link} href="/safety#content-policies" td="underline">
                             our content policies
                           </Text>{' '}
                           will result in the loss of your access to the image generator.
@@ -1106,7 +1216,10 @@ export function GenerationFormContent() {
                         <Button
                           color="yellow"
                           variant="light"
-                          onClick={() => setReviewed(true)}
+                          onClick={() => {
+                            setReviewed(true);
+                            if (running) runTour({ step: currentStep + 1 });
+                          }}
                           style={{ marginTop: 10 }}
                           leftIcon={<IconCheck />}
                           fullWidth
@@ -1118,6 +1231,7 @@ export function GenerationFormContent() {
                     {reviewed && (
                       <>
                         <QueueSnackbar />
+                        <WhatIfAlert />
                         <div className="flex gap-2">
                           <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
                             <Text className="pr-6 text-center text-xs font-semibold" color="dimmed">
@@ -1184,61 +1298,68 @@ function ReadySection() {
 
 // #endregion
 
+function WhatIfAlert() {
+  const { error } = useTextToImageWhatIfContext();
+  if (!error) return null;
+
+  return (
+    <Alert color="yellow">
+      {(error as any).message ?? 'Error calculating cost. Please try updating your values'}
+    </Alert>
+  );
+}
+
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { civitaiTip, creatorTip } = useTipStore();
-  const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
+  const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const [baseModel, resources] = form.watch(['baseModel', 'resources']);
+  const { running, runTour, currentStep } = useTourContext();
+  const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
-  const hasCreatorTip = (!isFlux && !isSD3) || resources?.length > 0;
+  const hasCreatorTip =
+    (!isFlux && !isSD3) ||
+    [...resources, vae].map((x) => (x ? x.id : undefined)).filter(isDefined).length > 0;
 
-  useEffect(() => {
-    if (data) {
-      useCostStore.setState({ cost: data.cost?.base ?? 0 });
-    }
-  }, [data?.cost]); // eslint-disable-line
+  const { creatorTip, civitaiTip } = useTipStore();
+  if (!features.creatorComp) {
+    tips.creators = 0;
+    tips.civitai = 0;
+  } else {
+    tips.creators = hasCreatorTip ? creatorTip : 0;
+    tips.civitai = civitaiTip;
+  }
 
-  const cost = data?.cost?.base ?? 0;
-  const totalTip =
-    Math.ceil(cost * (hasCreatorTip ? creatorTip : 0)) + Math.ceil(cost * civitaiTip);
-  const totalCost = features.creatorComp ? cost + totalTip : cost;
+  const base = data?.cost?.base ?? 0;
+  const totalTip = Math.ceil(base * tips.creators) + Math.ceil(base * tips.civitai);
+  total = (data?.cost?.total ?? 0) + totalTip;
 
   const generateButton = (
     <GenerateButton
       type="submit"
+      data-tour="gen:submit"
       className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
-      cost={totalCost}
-      error={
-        !isInitialLoading && isError
-          ? error
-            ? (error as any).message
-            : 'Error calculating cost. Please try updating your values'
-          : undefined
-      }
+      cost={total}
+      disabled={isError}
+      onClick={() => {
+        if (running) runTour({ step: currentStep + 1 });
+      }}
     />
   );
 
   if (!features.creatorComp) return generateButton;
 
   return (
-    <Paper className="flex flex-1" bg="dark.5" radius="sm" p={4} pr={6}>
-      <Group className="flex-1" spacing={6} noWrap>
-        {generateButton}
-        <GenerationCostPopover
-          width={300}
-          workflowCost={data?.cost ?? {}}
-          hideCreatorTip={!hasCreatorTip}
-        >
-          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={!totalCost}>
-            <IconInfoCircle stroke={2.5} />
-          </ActionIcon>
-        </GenerationCostPopover>
-      </Group>
-    </Paper>
+    <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">
+      {generateButton}
+      <GenerationCostPopover
+        width={300}
+        workflowCost={data?.cost ?? {}}
+        hideCreatorTip={!hasCreatorTip}
+      />
+    </div>
   );
 }
 
@@ -1346,8 +1467,3 @@ const clipSkipMarks = Array(10)
   .fill(0)
   .map((_, index) => ({ value: index + 1 }));
 // #endregion
-
-function GenerationImage() {
-  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-  return <GeneratorImageInput value={sourceImage} onChange={generationFormStore.setsourceImage} />;
-}

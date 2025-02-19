@@ -1,30 +1,5 @@
-import { HubConnectionState } from '@microsoft/signalr';
-
 type SignalWorkerReady = {
   type: 'worker:ready';
-};
-
-type SignalConnectionStarted = {
-  type: 'connection:ready';
-};
-
-type SignalConnectionClosed = {
-  type: 'connection:closed';
-  message?: string;
-};
-
-type SignalWorkerError = {
-  type: 'connection:error';
-  message?: string;
-};
-
-type SignalWorkerReconnected = {
-  type: 'connection:reconnected';
-};
-
-type SignalWorkerReconnecting = {
-  type: 'connection:reconnecting';
-  message?: string;
 };
 
 type SignalWorkerPong = { type: 'pong' };
@@ -35,22 +10,20 @@ type SignalEventReceived<T = unknown> = {
   payload: T;
 };
 
-type SignalStatus = {
-  type: 'connection:state';
-  state?: HubConnectionState;
+export type SignalStatus = 'connected' | 'closed' | 'reconnecting';
+export type SignalConnectionState = {
+  state: SignalStatus | null;
   message?: string;
 };
+type SignalWorkerState = {
+  type: 'connection:state';
+} & SignalConnectionState;
 
 export type WorkerOutgoingMessage =
   | SignalWorkerReady
-  | SignalConnectionStarted
-  | SignalConnectionClosed
-  | SignalWorkerError
-  | SignalWorkerReconnected
-  | SignalWorkerReconnecting
   | SignalEventReceived
   | SignalWorkerPong
-  | SignalStatus;
+  | SignalWorkerState;
 
 export type WorkerIncomingMessage =
   | { type: 'connection:init'; token: string; userId: number }

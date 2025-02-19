@@ -23,6 +23,7 @@ import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
+import { useInvalidateWhatIf } from '~/components/ImageGeneration/utils/generationRequestHooks';
 
 export const ModelVersionEarlyAccessPurchase = ({
   modelVersionId,
@@ -47,6 +48,8 @@ export const ModelVersionEarlyAccessPurchase = ({
   const { modelVersionEarlyAccessPurchase, purchasingModelVersionEarlyAccess } =
     useMutateModelVersion();
 
+  const invalidateWhatIf = useInvalidateWhatIf();
+
   const handlePurchase = async (type: 'download' | 'generation' = 'download') => {
     try {
       await modelVersionEarlyAccessPurchase({
@@ -59,6 +62,8 @@ export const ModelVersionEarlyAccessPurchase = ({
           type === 'download' ? 'download & generate with' : 'generate with'
         } this model version`,
       });
+
+      if (type === 'generation') invalidateWhatIf();
 
       handleClose();
     } catch (e) {
@@ -150,7 +155,10 @@ export const ModelVersionEarlyAccessPurchase = ({
                   >
                     <Anchor>here</Anchor>
                   </GenerateButton>
-                  . By purchasing generation access, you will not be able to download this resource,
+                  .
+                </Text>
+                <Text size="xs" color="dimmed">
+                  By purchasing generation access, you will not be able to download this resource,
                   but you can make unlimited generations with it
                 </Text>
               </Stack>

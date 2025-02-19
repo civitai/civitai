@@ -13,7 +13,7 @@ export async function imageUpload({ sourceImage, token }: { sourceImage: string;
   });
 
   if (!data) {
-    const messages = (error as any).error?.messages;
+    const messages = (error as any).errors?.messages?.join('\n');
     switch (error.status) {
       case 400:
         throw throwBadRequestError(messages ?? error.detail);

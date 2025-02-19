@@ -11,11 +11,13 @@ import {
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React from 'react';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import {
   DescriptionTable,
   Props as DescriptionTableProps,
 } from '~/components/DescriptionTable/DescriptionTable';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { useTipStore } from '~/store/tip.store';
 
 const getEmojiByValue = (value: number) => {
@@ -45,13 +47,44 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function GenerationCostPopover({
-  children,
   workflowCost,
   readOnly,
-  disabled,
   hideCreatorTip,
+  variant = 'info-circle',
   ...popoverProps
-}: Props) {
+}: Omit<PopoverProps, 'children'> & Props) {
+  const totalCost = workflowCost.total ?? 0;
+  const disabled = totalCost > 0 ? popoverProps.disabled : true;
+
+  return (
+    <Popover shadow="md" {...popoverProps} withinPortal>
+      <Popover.Target>
+        {variant === 'info-circle' ? (
+          <ActionIcon variant="subtle" size="xs" color="yellow.7" radius="xl" disabled={disabled}>
+            <IconInfoCircle stroke={2.5} />
+          </ActionIcon>
+        ) : (
+          <CurrencyBadge
+            unitAmount={totalCost}
+            currency={Currency.BUZZ}
+            size="xs"
+            className="cursor-pointer"
+          />
+        )}
+      </Popover.Target>
+      <Popover.Dropdown p={0}>
+        <GenerationCostPopoverDetail
+          workflowCost={workflowCost}
+          readOnly={readOnly}
+          disabled={disabled}
+          hideCreatorTip={hideCreatorTip}
+        />
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCreatorTip }: Props) {
   const { classes, cx } = useStyles();
   const { civitaiTip, creatorTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
@@ -68,6 +101,8 @@ export function GenerationCostPopover({
       children: <BreakdownExplanation />,
     });
   };
+
+  const baseCost = workflowCost.base ?? 0;
 
   const items: DescriptionTableProps['items'] = [
     {
@@ -102,11 +137,33 @@ export function GenerationCostPopover({
       label: <div className="font-bold">Base Cost</div>,
       value: (
         <Group spacing={4} position="right" className="font-bold" noWrap>
-          {workflowCost.base ?? '0'}
+          {baseCost ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
       className: cx(classes.tableCell, classes.baseCostCell),
+    },
+    {
+      label: 'Additional Resource Cost',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {workflowCost.fixed?.additionalNetworks}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !!workflowCost.fixed?.additionalNetworks,
+      className: classes.tableCell,
+    },
+    {
+      label: 'Priority Pricing',
+      value: (
+        <Group spacing={4} position="right" noWrap>
+          {workflowCost.fixed?.priority}
+          <CurrencyIcon currency="BUZZ" size={16} />
+        </Group>
+      ),
+      visible: !!workflowCost.fixed?.priority,
+      className: classes.tableCell,
     },
     {
       label: (
@@ -132,7 +189,7 @@ export function GenerationCostPopover({
       ),
       value: (
         <Group spacing={4} position="right" noWrap>
-          {Math.ceil(((workflowCost.base ?? 0) * creatorTip) / 100)}
+          {`${Math.ceil((baseCost * creatorTip) / 100)}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -143,7 +200,7 @@ export function GenerationCostPopover({
       label: 'Creator Tip',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {workflowCost.tips?.creators ?? '0'}
+          {`${workflowCost.tips?.creators}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -175,7 +232,7 @@ export function GenerationCostPopover({
       ),
       value: (
         <Group spacing={4} position="right" noWrap>
-          {Math.ceil(((workflowCost.base ?? 0) * civitaiTip) / 100)}
+          {`${Math.ceil((baseCost * civitaiTip) / 100)}`}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -186,7 +243,7 @@ export function GenerationCostPopover({
       label: 'Civitai Tip',
       value: (
         <Group spacing={4} position="right" noWrap>
-          {workflowCost.base ?? '0'}
+          {baseCost ?? '0'}
           <CurrencyIcon currency="BUZZ" size={16} />
         </Group>
       ),
@@ -195,28 +252,19 @@ export function GenerationCostPopover({
     },
   ];
 
-  if (disabled) return <>{children}</>;
-
   return (
-    <Popover shadow="md" {...popoverProps}>
-      <Popover.Target>{children}</Popover.Target>
-      <Popover.Dropdown p={0}>
-        <DescriptionTable
-          title={
-            <div
-              className={cx(classes.baseCostCell, 'flex items-center justify-between gap-4 p-2')}
-            >
-              <div className="font-semibold">Generation Cost Breakdown</div>
-              <ActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
-                <IconInfoCircle size={18} />
-              </ActionIcon>
-            </div>
-          }
-          items={items}
-          withBorder={false}
-        />
-      </Popover.Dropdown>
-    </Popover>
+    <DescriptionTable
+      title={
+        <div className={cx(classes.baseCostCell, 'flex items-center justify-between gap-4 p-2')}>
+          <div className="font-semibold">Generation Cost Breakdown</div>
+          <ActionIcon variant="subtle" radius="xl" onClick={handleShowExplanationClick}>
+            <IconInfoCircle size={18} />
+          </ActionIcon>
+        </div>
+      }
+      items={items}
+      withBorder={false}
+    />
   );
 }
 
@@ -242,10 +290,10 @@ function BreakdownExplanation() {
         <span className="font-semibold">Sampler Multiplier:</span> Some samplers cause generation to
         take more time and because of that increase the total cost of generating.
       </li>
-      <li className="mb-2">
+      {/* <li className="mb-2">
         <span className="font-semibold">Workflow Cost:</span> Some workflows cost extra because they
         take extra time to run on our hardware.
-      </li>
+      </li> */}
       <li className="mb-2">
         <span className="font-semibold">Creator Tip:</span> Show appreciation to the creator of the
         resources that you&apos;re using by including a tip. All tips go directly to the creators of
@@ -260,10 +308,10 @@ function BreakdownExplanation() {
   );
 }
 
-type Props = Omit<PopoverProps, 'children'> & {
-  children: React.ReactNode;
+type Props = {
   workflowCost: WorkflowCost;
   readOnly?: boolean;
   disabled?: boolean;
   hideCreatorTip?: boolean;
+  variant?: 'info-circle' | 'badge';
 };

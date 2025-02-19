@@ -45,8 +45,9 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
+import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogProvider';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -78,8 +79,6 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
 
 const sharedBadgeProps: Partial<Omit<BadgeProps, 'children'>> = {
   variant: 'filled',
@@ -154,7 +153,7 @@ export function ImageDetail2() {
 
   const handleSidebarToggle = () => setSidebarOpen((o) => !o);
 
-  const canCreate = image.hasMeta;
+  const canCreate = image.hasPositivePrompt ?? image.hasMeta;
   const isOwner = currentUser?.id === image.user.id;
 
   const IconChevron = !active ? IconChevronUp : IconChevronDown;
@@ -468,6 +467,8 @@ export function ImageDetail2() {
                     )}
                     <ImageProcess imageId={image.id} />
                     <ImageGenerationData imageId={image.id} />
+                    {/* <ImageRemixOfDetails imageId={image.id} />
+                    <ImageRemixesDetails imageId={image.id} /> */}
                     <Card className="flex flex-col gap-3 rounded-xl">
                       <Text className="flex items-center gap-2 text-xl font-semibold">
                         <IconBrandWechat />
@@ -476,6 +477,7 @@ export function ImageDetail2() {
                       <ImageDetailComments imageId={image.id} userId={image.user.id} />
                     </Card>
                     <ImageContestCollectionDetails
+                      key={currentUser?.id}
                       image={image}
                       isOwner={isOwner}
                       isModerator={currentUser?.isModerator}

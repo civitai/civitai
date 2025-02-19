@@ -1,8 +1,6 @@
-import { chunk } from 'lodash-es';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { redis } from '~/server/redis/client';
-import { clearCacheByPattern } from '~/server/utils/cache-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
 const schema = z.object({

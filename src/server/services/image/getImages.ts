@@ -1,11 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  Availability,
-  ImageGenerationProcess,
-  ImageIngestionStatus,
-  MediaType,
-  MetricTimeframe,
-} from '~/shared/utils/prisma/enums';
 import { SessionUser } from 'next-auth';
 import { CacheTTL } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
@@ -13,6 +6,13 @@ import { dbRead } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { getPeriods } from '~/server/utils/enum-helpers';
+import {
+  Availability,
+  ImageGenerationProcess,
+  ImageIngestionStatus,
+  MediaType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 
 // TODO do we need this file?
 
@@ -34,6 +34,7 @@ type ImageModel = {
   ingestion: ImageIngestionStatus;
   hasMeta: boolean;
   onSite: boolean;
+  remixOfId?: number | null;
 };
 
 type WithTagIds<T> = T & { tagIds?: number[] };
@@ -83,11 +84,20 @@ const imageSelect = Prisma.sql`
     ) AS "hasMeta",
     (
       CASE
+        WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"
+          AND i.meta->>'prompt' IS NOT NULL
+        THEN TRUE
+        ELSE FALSE
+      END
+    ) AS "hasPositivePrompt",
+    (
+      CASE
         WHEN i.meta->>'civitaiResources' IS NOT NULL
         THEN TRUE
         ELSE FALSE
       END
-    ) as "onSite"
+    ) as "onSite",
+      i."meta"->'extra'->'remixOfId' as "remixOfId"
   `;
 
 const imageMetricsJoin = Prisma.sql`"ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"`;

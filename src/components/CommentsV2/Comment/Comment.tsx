@@ -8,15 +8,14 @@ import {
   Button,
   Box,
   createStyles,
-  Title,
   UnstyledButton,
   Divider,
+  ThemeIcon,
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { useCommentsContext, useRootThreadContext } from '../CommentsProvider';
 import { CreateComment } from './CreateComment';
 import { CommentForm } from './CommentForm';
-import { InfiniteCommentResults } from '~/server/controllers/commentv2.controller';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import {
   IconDotsVertical,
@@ -27,6 +26,8 @@ import {
   IconEye,
   IconEyeOff,
   IconArrowsMaximize,
+  IconPinned,
+  IconPinnedOff,
 } from '@tabler/icons-react';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
@@ -43,6 +44,9 @@ import { CommentReplies } from '../CommentReplies';
 import { constants } from '../../../server/common/constants';
 import { LineClamp } from '~/components/LineClamp/LineClamp';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
+import type { Comment } from '~/server/services/commentsv2.service';
+import { trpc } from '~/utils/trpc';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type Store = {
   id?: number;
@@ -54,7 +58,7 @@ const useStore = create<Store>((set) => ({
 }));
 
 type CommentProps = Omit<GroupProps, 'children'> & {
-  comment: InfiniteCommentResults['comments'][0];
+  comment: Comment;
   viewOnly?: boolean;
   highlight?: boolean;
   resourceOwnerId?: number;
@@ -76,16 +80,22 @@ export function CommentContent({
   borderless,
   ...groupProps
 }: CommentProps) {
+  const currentUser = useCurrentUser();
   const { expanded, toggleExpanded, setRootThread } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, badge, canReport } = useCommentV2Context();
+
+  const { data: replyCount = 0 } = trpc.commentv2.getCount.useQuery({
+    entityId: comment.id,
+    entityType: 'comment',
+  });
 
   const { classes, cx } = useCommentStyles();
 
   const id = useStore((state) => state.id);
   const setId = useStore((state) => state.setId);
 
-  const { toggleHide } = useMutateComment();
+  const { toggleHide, togglePinned } = useMutateComment();
 
   const editing = id === comment.id;
   const [replying, setReplying] = useState(false);
@@ -98,13 +108,9 @@ export function CommentContent({
     if (elem) elem.scrollIntoView({ behavior: 'auto', block: 'center', inline: 'center' });
   }, [isHighlighted, comment.id]);
 
-  const replyCount = comment?.childThread?._count?.comments ?? 0;
   const isExpanded = !viewOnly && expanded.includes(comment.id);
   const onToggleReplies = () => {
-    const maxDepth =
-      `${entityType}MaxDepth` in constants.comments
-        ? constants.comments[`${entityType}MaxDepth` as keyof typeof constants.comments]
-        : constants.comments.maxDepth;
+    const maxDepth = constants.comments.getMaxDepth({ entityType });
 
     if ((level ?? 0) >= maxDepth && !isExpanded) {
       setRootThread('comment', comment.id);
@@ -132,11 +138,11 @@ export function CommentContent({
       })}
     >
       <Group spacing="xs">
-        {replyCount > 0 && !viewOnly && !isExpanded && (
+        {/* {replyCount > 0 && !viewOnly && !isExpanded && (
           <UnstyledButton onClick={onToggleReplies}>
             <IconArrowsMaximize size={16} />
           </UnstyledButton>
-        )}
+        )} */}
         <UserAvatar user={comment.user} size="sm" linkToProfile />
       </Group>
 
@@ -155,6 +161,11 @@ export function CommentContent({
             <Text color="dimmed" size="xs" mt={2}>
               <DaysFromNow date={comment.createdAt} />
             </Text>
+            {comment.pinnedAt && (
+              <ThemeIcon size="sm" color="orange">
+                <IconPinned size={16} stroke={2} />
+              </ThemeIcon>
+            )}
           </Group>
 
           {/* CONTROLS */}
@@ -200,6 +211,20 @@ export function CommentContent({
                   onClick={() => toggleHide({ id: comment.id, entityType, entityId })}
                 >
                   {comment.hidden ? 'Unhide comment' : 'Hide comment'}
+                </Menu.Item>
+              )}
+              {currentUser?.isModerator && (
+                <Menu.Item
+                  icon={
+                    comment.pinnedAt ? (
+                      <IconPinnedOff size={14} stroke={1.5} />
+                    ) : (
+                      <IconPinned size={14} stroke={1.5} />
+                    )
+                  }
+                  onClick={() => togglePinned({ id: comment.id, entityType, entityId })}
+                >
+                  {comment.pinnedAt ? 'Unpin comment' : 'Pin comment'}
                 </Menu.Item>
               )}
               {canReport && (

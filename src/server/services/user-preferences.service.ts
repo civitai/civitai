@@ -1,10 +1,9 @@
-import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { NsfwLevel } from '~/server/common/enums';
-
 import { dbWrite } from '~/server/db/client';
-import { REDIS_KEYS, redis } from '~/server/redis/client';
+import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
 import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
+import { TagEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 
 const HIDDEN_CACHE_EXPIRY = 60 * 60 * 4;
 // const log = createLogger('user-preferences', 'green');
@@ -16,7 +15,8 @@ function createUserCache<T, TArgs extends { userId?: number }>({
   key: string;
   callback: (args: TArgs) => Promise<T>;
 }) {
-  const getKey = ({ userId = -1 }: { userId?: number }) => `packed:user:${userId}:${key}`;
+  const getKey = ({ userId = -1 }: { userId?: number }) =>
+    `${REDIS_KEYS.USER.CACHE}:${userId}:${key}` as RedisKeyTemplateCache;
 
   const getCached = async ({
     userId = -1, // Default to civitai account

@@ -4,6 +4,7 @@
   opacity: 0;
   transition: opacity 200ms ease;
   display: flex;
+  height: 100%;
   // overflow: hidden;
 
   &:hover {
@@ -28,7 +29,7 @@
   height: 100%;
   min-width: 100%;
   object-fit: cover;
-  object-position: center;
+  object-position: top;
   transition: transform 400ms ease;
 
   .top {

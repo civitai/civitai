@@ -2,6 +2,7 @@ import { adUnitFactory } from '~/components/Ads/AdUnitFactory';
 import { useEffect } from 'react';
 import { useAdUnitStore } from '~/components/Ads/adUnit.store';
 import { useContainerLargerThan } from '~/components/ContainerProvider/useContainerLargerThan';
+import { CloseButton } from '@mantine/core';
 
 const AdUnit = adUnitFactory({
   adUnit: 'outstream',
@@ -38,9 +39,19 @@ function EnableAdUnitOutstream() {
   return null;
 }
 
+function AdUnitWithCloseButton() {
+  const canClose = AdUnit.useImpressionTracked();
+  return (
+    <div className="flex flex-col items-end [&_iframe]:hidden">
+      {canClose && <CloseButton />}
+      <AdUnit />
+    </div>
+  );
+}
+
 export function AdUnitOutstream() {
   const enabled = useAdUnitStore((state) => state.adUnits.outstream);
-  return enabled ? <AdUnit /> : null;
+  return enabled ? <AdUnitWithCloseButton /> : null;
 }
 
 export function RenderAdUnitOutstream({ minContainerWidth }: { minContainerWidth: number }) {

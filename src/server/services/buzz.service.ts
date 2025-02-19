@@ -1,14 +1,13 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { v4 as uuid } from 'uuid';
-import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
+import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { eventEngine } from '~/server/events';
-import { logToAxiom } from '~/server/logging/client';
 import { userMultipliersCache } from '~/server/redis/caches';
+import { REDIS_KEYS } from '~/server/redis/client';
 import {
   BuzzAccountType,
   ClaimWatchedAdRewardInput,
@@ -28,6 +27,7 @@ import {
 } from '~/server/schema/buzz.schema';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
+import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
   throwInsufficientFundsError,
@@ -46,7 +46,7 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
 
   return withRetries(
     async () => {
-      if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
+      // if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
       const response = await fetch(
         `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
       );
@@ -820,6 +820,94 @@ export async function getEarnPotential({ userId, username }: GetEarnPotentialSch
   return potential;
 }
 
+const earnedCache = createCachedObject<{ id: number; earned: number }>({
+  key: REDIS_KEYS.BUZZ.EARNED,
+  idKey: 'id',
+  lookupFn: async (ids) => {
+    if (ids.length === 0 || !clickhouse) return {};
+
+    const results = await clickhouse.$query<{ id: number; earned: number }>`
+      SELECT
+        toAccountId as id,
+        SUM(amount) as earned
+      FROM buzzTransactions
+      WHERE (
+        (type IN ('compensation', 'tip')) -- Generation
+        OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
+      )
+      AND toAccountType = 'user'
+      AND toAccountId IN (${ids})
+      AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1))
+      GROUP BY toAccountId;
+    `;
+
+    return Object.fromEntries(results.map((r) => [r.id, { id: r.id, earned: Number(r.earned) }]));
+  },
+  ttl: CacheTTL.day,
+});
+
+export async function getPoolForecast({ userId, username }: GetEarnPotentialSchema) {
+  if (!clickhouse) return;
+  if (!userId && !username) return;
+  if (!userId && username) {
+    const user = await getUserByUsername({ username, select: { id: true } });
+    if (!user) return;
+    userId = user.id;
+  }
+  if (!userId) return;
+
+  const poolSize = await fetchThroughCache(
+    REDIS_KEYS.BUZZ.POTENTIAL_POOL,
+    async () => {
+      const results = await clickhouse!.$query<{ balance: number }>`
+        SELECT
+          SUM(amount) AS balance
+        FROM buzzTransactions
+        WHERE toAccountType = 'user'
+        AND (
+          (type IN ('compensation', 'tip')) -- Generation
+          OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
+        )
+        AND toAccountId != 0
+        AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1));
+    `;
+      if (!results.length) return 135000000;
+      return results[0].balance;
+    },
+    { ttl: CacheTTL.day }
+  );
+
+  const poolValue = await fetchThroughCache(
+    REDIS_KEYS.BUZZ.POTENTIAL_POOL_VALUE,
+    async () => {
+      const results = await clickhouse!.$query<{ balance: number }>`
+        SELECT
+            SUM(amount) / 1000 AS balance
+        FROM buzzTransactions
+        WHERE toAccountType = 'user'
+        AND type = 'purchase'
+        AND fromAccountId = 0
+        AND externalTransactionId NOT LIKE 'renewalBonus:%'
+        AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(now(), 1));
+      `;
+      if (!results.length || !env.CREATOR_POOL_TAXES || !env.CREATOR_POOL_PORTION) return 35000;
+      const gross = results[0].balance;
+      const taxesAndFees = gross * (env.CREATOR_POOL_TAXES / 100);
+      const poolValue = (gross - taxesAndFees) * (env.CREATOR_POOL_PORTION / 100);
+      return poolValue;
+    },
+    { ttl: CacheTTL.day }
+  );
+
+  const results = await earnedCache.fetch(userId);
+
+  return {
+    poolSize,
+    poolValue,
+    earned: results[userId]?.earned ?? 0,
+  };
+}
+
 type Row = { modelVersionId: number; date: Date; comp: number; tip: number; total: number };
 
 export const getDailyCompensationRewardByUser = async ({
@@ -928,7 +1016,7 @@ export async function getTransactionsReport({
       ? dayjs().startOf('day').subtract(7, 'day')
       : input.window === 'week'
       ? dayjs().startOf('day').subtract(1, 'month')
-      : dayjs().startOf('year');
+      : dayjs().startOf('day').subtract(1, 'year');
   // End date is always the start of the next day
   const endDate = dayjs().add(1, 'day').startOf('day');
 

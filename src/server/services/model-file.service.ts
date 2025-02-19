@@ -1,16 +1,49 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { CacheTTL } from '~/server/common/constants';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { filesForModelVersionCache } from '~/server/redis/caches';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
   ModelFileCreateInput,
   ModelFileUpdateInput,
   RecentTrainingDataInput,
 } from '~/server/schema/model-file.schema';
+import { modelFileSelect } from '~/server/selectors/modelFile.selector';
+import { createCachedObject } from '~/server/utils/cache-helpers';
 import { throwDbError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { ModelUploadType } from '~/shared/utils/prisma/enums';
 import { prepareFile } from '~/utils/file-helpers';
+
+export const filesForModelVersionCache = createCachedObject({
+  key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
+  idKey: 'modelVersionId',
+  ttl: CacheTTL.sm,
+  async lookupFn(ids) {
+    const files = await dbRead.modelFile
+      .findMany({
+        where: { modelVersionId: { in: ids } },
+        select: modelFileSelect,
+      })
+      .then((data) =>
+        data.map(({ metadata, ...file }) => {
+          return {
+            ...file,
+            // TODO: Confirm with Briant whether this can be removed or not. -> reduceToBasicFileMetadata(metadata),
+            metadata: metadata as FileMetadata,
+          };
+        })
+      );
+
+    const records: Record<number, { modelVersionId: number; files: typeof files }> = {};
+    for (const file of files) {
+      if (!records[file.modelVersionId])
+        records[file.modelVersionId] = { modelVersionId: file.modelVersionId, files: [] };
+      records[file.modelVersionId].files.push(file);
+    }
+    return records;
+  },
+});
 
 export function reduceToBasicFileMetadata(
   metadataRaw: Prisma.JsonValue | BasicFileMetadata

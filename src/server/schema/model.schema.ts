@@ -17,6 +17,7 @@ import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   AssociationType,
+  Availability,
   CheckpointType,
   CollectionItemStatus,
   CommercialUse,
@@ -104,6 +105,7 @@ export const getAllModelsSchema = baseQuerySchema
     clubId: z.number().optional(),
     pending: z.boolean().optional(),
     collectionTagId: z.number().optional(),
+    availability: z.nativeEnum(Availability).optional(),
   });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;
@@ -138,8 +140,8 @@ export const deleteModelSchema = getByIdSchema.extend({ permanently: z.boolean()
 export type DeleteModelSchema = z.infer<typeof deleteModelSchema>;
 
 export const getDownloadSchema = z.object({
-  modelId: z.preprocess((val) => Number(val), z.number()),
-  modelVersionId: z.preprocess((val) => Number(val), z.number()).optional(),
+  modelId: z.coerce.number(),
+  modelVersionId: z.coerce.number().optional(),
   type: z.enum(constants.modelFileTypes).optional(),
   format: z.enum(constants.modelFileFormats).optional(),
 });
@@ -191,6 +193,7 @@ export const modelUpsertSchema = licensingSchema.extend({
     .passthrough()
     .transform((val) => val as ModelMeta | null)
     .nullish(),
+  availability: z.nativeEnum(Availability).optional(),
 });
 
 export type UpdateGallerySettingsInput = z.infer<typeof updateGallerySettingsSchema>;
@@ -360,4 +363,16 @@ export const ingestModelSchema = z.object({
 export type LimitOnly = z.input<typeof limitOnly>;
 export const limitOnly = z.object({
   take: z.number().optional(),
+});
+
+export type PrivateModelFromTrainingInput = z.infer<typeof privateModelFromTrainingSchema>;
+export const privateModelFromTrainingSchema = modelUpsertSchema.extend({
+  id: z.number(), // Model should already be created before hand.
+  modelVersionIds: z.array(z.number()).optional(),
+});
+
+export type PublishPrivateModelInput = z.infer<typeof publishPrivateModelSchema>;
+export const publishPrivateModelSchema = z.object({
+  modelId: z.number(),
+  publishVersions: z.boolean(),
 });
