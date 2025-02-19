@@ -2924,6 +2924,7 @@ export const publishPrivateModel = async ({
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
+        publishedAt: publishVersions ? now : null,
       },
     }),
   ]);
