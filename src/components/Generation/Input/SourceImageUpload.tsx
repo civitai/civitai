@@ -170,7 +170,7 @@ const upscaleMultipliers = [1.5, 2, 2.5, 3];
 const upscaleResolutions = [
   { label: '2K', value: 2048 },
   { label: '4K', value: 3840 },
-  { label: '8K', value: 7680 },
+  // { label: '8K', value: 7680 },
 ];
 
 function UpscalePicker({

@@ -835,6 +835,10 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!pending) AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
+  if (!isModerator) {
+    AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+  }
+
   let from = 'FROM "Image" i';
   const joins: string[] = [];
   // Filter to specific model/review content

@@ -21,7 +21,7 @@ import { useState } from 'react';
 import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
 import { SortFilter } from '~/components/Filters';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 import { usePathname } from 'next/navigation';
 
