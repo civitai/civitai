@@ -192,9 +192,9 @@ export function DumbModelFiltersDropdown({
               }
             >
               {Object.values(Availability).map((availability) => (
-                <Chip key={availability} value={availability} {...chipProps}>
+                <FilterChip key={availability} value={availability}>
                   <span>{availability}</span>
-                </Chip>
+                </FilterChip>
               ))}
             </Chip.Group>
           </>
