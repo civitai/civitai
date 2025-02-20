@@ -189,7 +189,7 @@ const upscaleMultipliers = [1.5, 2, 2.5, 3];
 const upscaleResolutions = [
   { label: '2K', value: 2048 },
   { label: '4K', value: 3840 },
-  { label: '8K', value: 7680 },
+  // { label: '8K', value: 7680 },
 ];
 
 function UpscalePicker({
@@ -217,7 +217,7 @@ function UpscalePicker({
         return {
           value,
           label: multiplier,
-          disabled: value > maxUpscaleSize,
+          disabled: maxUpscaleSize < value,
         };
       }),
     [min]
@@ -233,7 +233,9 @@ function UpscalePicker({
 
   return (
     <div className="flex flex-col gap-3">
-      {maxUpscaleSize <= min && <Alert>This image cannot be upscaled any further.</Alert>}
+      {(value.width === value.upscaleWidth || value.height === value.upscaleHeight) && (
+        <Alert color="yellow">This image cannot be upscaled any further.</Alert>
+      )}
       {upscaleMultiplier && (
         <Input.Wrapper label="Upscale Multiplier">
           <RadioGroup value={_value} onChange={handleChange} className="flex gap-2">

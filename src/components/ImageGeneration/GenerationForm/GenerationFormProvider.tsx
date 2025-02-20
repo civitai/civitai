@@ -90,8 +90,6 @@ const formSchema = textToImageParamsSchema
     if (fluxUltraRaw) data.engine = 'flux-pro-raw';
     else data.engine = undefined;
 
-    if (!data.workflow.startsWith('img2img')) data.sourceImage = null;
-
     return removeEmpty({
       ...data,
       height,

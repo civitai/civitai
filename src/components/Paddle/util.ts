@@ -120,6 +120,7 @@ export const usePaddleAdjustmentsInfinite = (
 };
 
 export const usePaddleSubscriptionRefresh = () => {
+  const currentUser = useCurrentUser();
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
   const { hasPaddleSubscription, isLoading: loadingPaddleSubscriptionStatus } =
     useHasPaddleSubscription();
@@ -131,7 +132,8 @@ export const usePaddleSubscriptionRefresh = () => {
   });
 
   const isLoading =
-    refreshingSubscription || loadingPaddleSubscriptionStatus || subscriptionLoading;
+    currentUser &&
+    (refreshingSubscription || loadingPaddleSubscriptionStatus || subscriptionLoading);
 
   const handleRefresh = async () => {
     await refreshSubscription();

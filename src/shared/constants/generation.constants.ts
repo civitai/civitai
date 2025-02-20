@@ -34,7 +34,7 @@ export const generationServiceCookie = {
   maxAge: 3600,
 };
 
-export function getRoundedUpscaleSize({ width, height }: { width: number; height: number }) {
+export function getRoundedWidthHeight({ width, height }: { width: number; height: number }) {
   const maxWidth = width < maxUpscaleSize ? width : maxUpscaleSize;
   const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
   const ratio = Math.min(maxWidth / width, maxHeight / height);
@@ -49,11 +49,11 @@ export async function getSourceImageFromUrl({ url, upscale }: { url: string; ups
     let upscaleWidth: number | undefined;
     let upscaleHeight: number | undefined;
     if (upscale) {
-      const upscaled = getRoundedUpscaleSize({ width: width * 1.5, height: height * 1.5 });
+      const upscaled = getRoundedWidthHeight({ width: width * 1.5, height: height * 1.5 });
       upscaleWidth = upscaled.width;
       upscaleHeight = upscaled.height;
     }
-    return { url, width, height, upscaleWidth, upscaleHeight };
+    return { url, upscaleWidth, upscaleHeight, ...getRoundedWidthHeight({ width, height }) };
   });
 }
 

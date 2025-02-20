@@ -68,10 +68,10 @@ export const postMetrics = createMetricProcessor({
             ${metricOverrides},
             "updatedAt" = NOW()
       `;
-      await sleep(1000);
+      // await sleep(1000);
       log('update metrics', i + 1, 'of', updateTasks.length, 'done');
     });
-    await limitConcurrency(updateTasks, 3);
+    await limitConcurrency(updateTasks, 10);
 
     // Update the age groups
     //---------------------------------------

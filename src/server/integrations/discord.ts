@@ -6,10 +6,14 @@ import { createLogger } from '~/utils/logging';
 
 const log = createLogger('discord', 'magenta');
 
+let discordClient: REST | null = null;
+
 function getDiscordClient() {
-  if (!env.DISCORD_BOT_TOKEN) throw new Error('No discord bot token found');
-  const rest = new REST({ version: '10' }).setToken(env.DISCORD_BOT_TOKEN);
-  return rest;
+  if (!discordClient) {
+    if (!env.DISCORD_BOT_TOKEN) throw new Error('No discord bot token found');
+    discordClient = new REST({ version: '10' }).setToken(env.DISCORD_BOT_TOKEN);
+  }
+  return discordClient;
 }
 
 const getUserToken = async ({ user_id, access_token, refresh_token, expires_at }: TokenRequest) => {
