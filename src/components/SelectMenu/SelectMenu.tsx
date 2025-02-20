@@ -71,7 +71,7 @@ export function SelectMenuV2<T extends string | number>({
 }: SelectMenu<T>) {
   const theme = useMantineTheme();
   const [opened, setOpened] = useState(false);
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ type: 'media' });
 
   const target = (
     <FilterButton
