@@ -761,12 +761,12 @@ const CreatorProgramCapsInfo = () => {
                       'no cap'
                     ) : cap.percentOfPeakEarning ? (
                       <span>
-                        a <CurrencyIcon currency={Currency.BUZZ} className="inline" /> $
+                        a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
                         {abbreviateNumber(cap.limit)} cap
                       </span>
                     ) : (
                       <span>
-                        <CurrencyIcon currency={Currency.BUZZ} className="inline" /> $
+                        <CurrencyIcon currency={Currency.BUZZ} className="inline" />
                         {abbreviateNumber(cap.limit)}
                       </span>
                     )}
