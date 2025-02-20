@@ -439,12 +439,13 @@ const CompensationPoolCard = () => {
 
 const BankBuzzCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
+  const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
   const buzzAccount = useBuzz(undefined, 'user');
   const { bankBuzz, bankingBuzz } = useCreatorProgramMutate();
 
   const [toBank, setToBank] = React.useState<number>(10000);
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
-  const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading;
+  const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading || isLoadingBanked;
   const [_, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]');
 
@@ -461,6 +462,10 @@ const BankBuzzCard = () => {
       // no-op. The mutation should handle it.
     }
   };
+
+  const maxBankable = banked?.cap?.cap
+    ? Math.min(banked.cap.cap - banked.total, buzzAccount.balance)
+    : buzzAccount.balance;
 
   if (isLoading) {
     return (
@@ -483,7 +488,7 @@ const BankBuzzCard = () => {
             icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
             value={toBank ? toBank : undefined}
             min={10000}
-            max={buzzAccount.balance}
+            max={maxBankable}
             onChange={(value) => {
               setToBank(value ?? 10000);
             }}
@@ -533,8 +538,8 @@ const BankBuzzCard = () => {
           compact
           size="xs"
           variant="outline"
-          disabled={toBank === buzzAccount.balance}
-          onClick={() => setToBank(buzzAccount.balance)}
+          disabled={toBank === maxBankable}
+          onClick={() => setToBank(maxBankable)}
         >
           Max
         </Button>
