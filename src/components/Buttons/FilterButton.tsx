@@ -14,6 +14,7 @@ export type FilterButtonProps = ButtonProps & {
   onClick?: MouseEventHandler<HTMLButtonElement>;
 };
 
+// This is a temporary component. Since this is only used for dropdown filters, I plan on making a more reusable dropdown/popover component later. - Briant
 export const FilterButton = forwardRef<HTMLButtonElement, FilterButtonProps>(
   ({ icon: Icon, children, className, active, size = 'sm', variant, ...props }, ref) => {
     return (
