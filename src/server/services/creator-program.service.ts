@@ -30,6 +30,7 @@ import {
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 type UserCapCacheItem = {
   id: number;
@@ -165,6 +166,16 @@ export async function getCreatorRequirements(userId: number) {
 }
 
 export async function joinCreatorsProgram(userId: number) {
+  const requirements = await getCreatorRequirements(userId);
+
+  if (requirements.membership === false) {
+    throw throwBadRequestError('User is not a civitai member');
+  }
+
+  if (requirements.score.current < requirements.score.min) {
+    throw throwBadRequestError('User does not meet the minimum creator score');
+  }
+
   await dbWrite.$executeRaw`
     UPDATE "User" SET onboarding = onboarding | ${OnboardingSteps.CreatorProgram}
     WHERE id = ${userId};

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { trpc } from '~/utils/trpc';
+import { handleTRPCError, trpc } from '~/utils/trpc';
 
 export const useCreatorProgramRequirements = () => {
   const currentUser = useCurrentUser();
@@ -10,6 +10,17 @@ export const useCreatorProgramRequirements = () => {
 
   return {
     requirements: data,
+    isLoading,
+  };
+};
+export const useCompensationPool = () => {
+  const currentUser = useCurrentUser();
+  const { data, isLoading } = trpc.creatorProgram.getCompensationPool.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
+  return {
+    compensationPool: data,
     isLoading,
   };
 };
@@ -57,5 +68,22 @@ export const useCreatorProgramForecast = ({
     isLoading,
     setBankPortion,
     setCreatorBankPortion,
+  };
+};
+
+export const useCreatorProgramMutate = () => {
+  const joinCreatorsProgramMutation = trpc.creatorProgram.joinCreatorsProgram.useMutation({
+    onError(error) {
+      handleTRPCError(error, 'Failed to join creators program.');
+    },
+  });
+
+  const handleJoinCreatorsProgram = async () => {
+    return joinCreatorsProgramMutation.mutateAsync();
+  };
+
+  return {
+    joinCreatorsProgram: handleJoinCreatorsProgram,
+    joiningCreatorsProgram: joinCreatorsProgramMutation.isLoading,
   };
 };
