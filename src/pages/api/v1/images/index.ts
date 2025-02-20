@@ -108,6 +108,7 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
       headers: { src: '/api/v1/images' },
       browsingLevel: _browsingLevel,
       withMeta,
+      user: session?.user,
     });
 
     const metadata: Metadata = {

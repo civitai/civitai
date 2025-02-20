@@ -64,7 +64,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
 import { UpscaleEnhancementModal } from '~/components/Orchestrator/components/UpscaleEnhancementModal';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
