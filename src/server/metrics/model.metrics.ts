@@ -260,7 +260,7 @@ async function getImageTasks(ctx: ModelMetricContext) {
 async function getVersionRatingTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
     -- get recent version reviews
-    SELECT "modelVersionId" as id
+    SELECT DISTINCT "modelVersionId" as id
     FROM "ResourceReview"
     WHERE "createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}'
   `;
@@ -298,7 +298,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
 async function getVersionBuzzTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
     -- get recent version donations. These are the only way to "tip" a model version
-    SELECT "modelVersionId" as id
+    SELECT DISTINCT "modelVersionId" as id
     FROM "Donation" d
     JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
     WHERE dg."modelVersionId" IS NOT NULL AND d."createdAt" > '${ctx.lastUpdate}'
@@ -333,7 +333,7 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
 async function getModelRatingTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'Model')`
     -- Get recent model reviews
-    SELECT "modelId" as id
+    SELECT DISTINCT "modelId" as id
     FROM "ResourceReview"
     WHERE "createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}'
   `;
@@ -405,7 +405,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
 async function getCollectionTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'Model')`
     -- Get recent model collects
-    SELECT "modelId" as id
+    SELECT DISTINCT "modelId" as id
     FROM "CollectionItem"
     WHERE "modelId" IS NOT NULL AND "createdAt" > '${ctx.lastUpdate}'
   `;
@@ -437,14 +437,14 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
 async function getBuzzTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'Model')`
     -- Get recent model tips
-    SELECT "entityId" as id
+    SELECT DISTINCT "entityId" as id
     FROM "BuzzTip"
     WHERE "entityId" IS NOT NULL AND "entityType" = 'Model'
       AND ("createdAt" > '${ctx.lastUpdate}' OR "updatedAt" > '${ctx.lastUpdate}')
 
     UNION
 
-    SELECT mv."modelId" as id
+    SELECT DISTINCT mv."modelId" as id
     FROM "ModelVersionMetric" mvm
     JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
     WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
@@ -496,9 +496,9 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
 
 async function getVersionAggregationTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'Model')`
-    SELECT mv."modelId" as id
+    SELECT DISTINCT mv."modelId" as id
     FROM "ModelVersionMetric" mvm
-           JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
+    JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
     WHERE mvm."updatedAt" > '${ctx.lastUpdate}'
   `;
 
