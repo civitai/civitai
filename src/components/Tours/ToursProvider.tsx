@@ -6,7 +6,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TourSettingsSchema } from '~/server/schema/user.schema';
 import { generationPanel } from '~/store/generation.store';
 import { StepData, StepWithData } from '~/types/tour';
-import { TourKey, tourSteps } from '~/utils/tours';
+import { TourKey, tourSteps } from '~/components/Tours/tours';
 import { trpc } from '~/utils/trpc';
 import dynamic from 'next/dynamic';
 

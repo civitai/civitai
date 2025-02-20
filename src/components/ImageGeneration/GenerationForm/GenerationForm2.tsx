@@ -103,7 +103,7 @@ import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
-import { contentGenerationTour, remixContentGenerationTour } from '~/utils/tours/content-gen.tour';
+import { contentGenerationTour, remixContentGenerationTour } from '~/components/Tours/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
