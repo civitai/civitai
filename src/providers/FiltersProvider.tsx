@@ -24,6 +24,7 @@ import { periodModeSchema } from '~/server/schema/base.schema';
 import { getInfiniteBountySchema } from '~/server/schema/bounty.schema';
 import { getInfiniteClubSchema } from '~/server/schema/club.schema';
 import {
+  Availability,
   CheckpointType,
   ImageGenerationProcess,
   MediaType,
@@ -51,6 +52,7 @@ const modelFilterSchema = z.object({
   hidden: z.boolean().optional(),
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
   pending: z.boolean().optional(),
+  availability: z.nativeEnum(Availability).optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
