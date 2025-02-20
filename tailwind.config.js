@@ -9,6 +9,18 @@ const breakpoints = {
   xl: '1400px',
 }
 
+const fontFamilies = [
+  '"-apple-system"',
+  '"BlinkMacSystemFont"',
+  '"Segoe UI"',
+  '"Roboto"',
+  '"Helvetica"',
+  '"Arial"',
+  '"sans-serif"',
+  '"Apple Color Emoji"',
+  '"Segoe UI Emoji"',
+]
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: ['./src/**/*.{ts,tsx}',],
@@ -18,6 +30,9 @@ module.exports = {
     optimizeUniversalDefaults: true,
   },
   theme: {
+    fontFamily: {
+      body: fontFamilies
+    },
     screens: breakpoints,
     extend: {
       textShadow: {

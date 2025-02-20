@@ -23,13 +23,7 @@ export function ImageFeedFilters({
           buttonProps={{ className: classes.subnavDropdown }}
         />
       )}
-      <SortFilter
-        type="images"
-        variant="button"
-        buttonProps={{
-          className: classes.subnavDropdown,
-        }}
-      />
+      <SortFilter type="images" className={classes.subnavDropdown} />
       <MediaFiltersDropdown
         size="sm"
         w="100%"

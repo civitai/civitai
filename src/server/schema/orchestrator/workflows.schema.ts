@@ -12,6 +12,7 @@ export const workflowQuerySchema = z.object({
   take: z.number().default(10),
   cursor: z.string().optional(),
   tags: z.string().array().optional(),
+  ascending: z.boolean().optional(),
 });
 
 export const workflowResourceSchema = z.object({

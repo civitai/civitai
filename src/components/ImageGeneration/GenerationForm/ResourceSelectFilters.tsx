@@ -276,11 +276,6 @@ export function ResourceSelectSort() {
       value={currentRefinement}
       onClick={refine}
       options={options}
-      drawerStyles={{
-        root: {
-          zIndex: 400,
-        },
-      }}
     />
   );
 }

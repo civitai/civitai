@@ -164,9 +164,8 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
               <Group position="right" spacing={4}>
                 <SortFilter
                   type="models"
-                  variant="button"
                   value={sort}
-                  buttonProps={{ compact: false }}
+                  compact={false}
                   onChange={(x) => set({ sort: x as ModelSort })}
                 />
                 <ModelFiltersDropdown
@@ -296,9 +295,8 @@ const ImageCollection = ({
               <Group position="right" spacing={4}>
                 <SortFilter
                   type="images"
-                  variant="button"
                   value={sort}
-                  buttonProps={{ compact: false }}
+                  compact={false}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />
                 <MediaFiltersDropdown
@@ -398,9 +396,8 @@ const PostCollection = ({ collection }: { collection: NonNullable<CollectionById
             <Group position="right" spacing={4}>
               <SortFilter
                 type="posts"
-                variant="button"
                 value={sort}
-                buttonProps={{ compact: false }}
+                compact={false}
                 onChange={(sort) => replace({ sort: sort as PostSort })}
               />
               <PostFiltersDropdown query={filters} onChange={(value) => replace(value)} />
@@ -452,9 +449,8 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
             <Group position="right" spacing={4}>
               <SortFilter
                 type="articles"
-                variant="button"
                 value={sort}
-                buttonProps={{ compact: false }}
+                compact={false}
                 onChange={(x) => replace({ sort: x as ArticleSort })}
               />
               <ArticleFiltersDropdown query={filters} onChange={(value) => replace(value)} />

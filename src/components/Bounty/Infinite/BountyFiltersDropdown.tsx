@@ -10,8 +10,9 @@ import {
   createStyles,
   Drawer,
   ButtonProps,
+  useMantineTheme,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter } from '@tabler/icons-react';
+import { IconFilter } from '@tabler/icons-react';
 import { BountyType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -21,6 +22,8 @@ import { activeBaseModels, BaseModel } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { PeriodFilter } from '~/components/Filters';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { FilterButton } from '~/components/Buttons/FilterButton';
+import { FilterChip } from '~/components/Filters/FilterChip';
 
 const supportsBaseModel = [
   BountyType.ModelCreation,
@@ -35,7 +38,7 @@ const checkSupportsBaseModel = (types: BountyType[]) => {
 };
 
 export function BountyFiltersDropdown({ ...buttonProps }: Props) {
-  const { classes, theme, cx } = useStyles();
+  const theme = useMantineTheme();
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
@@ -64,13 +67,6 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
     [setFilters]
   );
 
-  const chipProps: Partial<ChipProps> = {
-    size: 'sm',
-    radius: 'xl',
-    variant: 'filled',
-    classNames: classes,
-  };
-
   const showBaseModelFilter = checkSupportsBaseModel(filters.types ?? []);
 
   const target = (
@@ -81,24 +77,11 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
       zIndex={10}
       showZero={false}
       dot={false}
-      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
-      <Button
-        className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        {...buttonProps}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
-        onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
-      >
-        <Group spacing={4} noWrap>
-          <IconFilter size={16} />
-          Filters
-        </Group>
-      </Button>
+      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+        Filters
+      </FilterButton>
     </Indicator>
   );
 
@@ -123,9 +106,9 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
           multiple
         >
           {Object.values(BountyType).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
+            <FilterChip key={index} value={type}>
               <span>{getDisplayName(type)}</span>
-            </Chip>
+            </FilterChip>
           ))}
         </Chip.Group>
       </Stack>
@@ -139,9 +122,9 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
             multiple
           >
             {activeBaseModels.map((baseModel, index) => (
-              <Chip key={index} value={baseModel} {...chipProps}>
+              <FilterChip key={index} value={baseModel}>
                 <span>{baseModel}</span>
-              </Chip>
+              </FilterChip>
             ))}
           </Chip.Group>
         </Stack>
@@ -166,14 +149,13 @@ export function BountyFiltersDropdown({ ...buttonProps }: Props) {
         <Divider label="Bounty status" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Group spacing={8}>
           {Object.values(BountyStatus).map((status, index) => (
-            <Chip
-              {...chipProps}
+            <FilterChip
               key={index}
               checked={filters.status === status}
               onChange={(checked) => setFilters({ status: checked ? status : undefined })}
             >
               <span>{getDisplayName(status)}</span>
-            </Chip>
+            </FilterChip>
           ))}
         </Group>
       </Stack>

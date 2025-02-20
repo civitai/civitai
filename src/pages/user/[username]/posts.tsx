@@ -76,7 +76,6 @@ function UserPostsPage() {
               <Group spacing={8} ml="auto" noWrap>
                 <SortFilter
                   type="posts"
-                  variant="button"
                   value={sort}
                   onChange={(x) => replace({ sort: x as PostSort })}
                 />

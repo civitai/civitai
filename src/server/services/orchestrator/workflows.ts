@@ -34,7 +34,7 @@ export async function queryWorkflows({
 }: z.output<typeof workflowQuerySchema> & { token: string }) {
   const client = createOrchestratorClient(token);
 
-  const { data, error } = await clientQueryWorkflows({
+  const { data, error, request } = await clientQueryWorkflows({
     client,
     query: { ...query, tags: ['civitai', ...(query.tags ?? [])] },
   }).catch((error) => {

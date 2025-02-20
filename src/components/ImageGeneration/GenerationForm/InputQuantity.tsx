@@ -1,9 +1,5 @@
 import { NumberInput, NumberInputProps } from '@mantine/core';
 import { useDidUpdate } from '@mantine/hooks';
-import { useEffect } from 'react';
-import { useWatch } from 'react-hook-form';
-import { useGenerationForm } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { withController } from '~/libs/form/hoc/withController';
 
 type Props = Omit<NumberInputProps, 'limit' | 'max' | 'min' | 'step'> & {

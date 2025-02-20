@@ -10,17 +10,17 @@ export const useFeedFiltersStyles = createStyles((theme) => ({
     },
   },
   subnavDropdown: {
-    background: 'transparent',
-    color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[8],
-    height: 32,
-    [`&:hover`]: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[3],
-    },
-    [`&[data-expanded="true"]`]: {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
-      [`&:hover`]: {
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
-      },
-    },
+    // background: 'transparent',
+    // color: theme.colorScheme === 'dark' ? theme.white : theme.colors.gray[8],
+    // height: 32,
+    // [`&:hover`]: {
+    //   background: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[3],
+    // },
+    // [`&[data-expanded="true"]`]: {
+    //   background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
+    //   [`&:hover`]: {
+    //     background: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4],
+    //   },
+    // },
   },
 }));

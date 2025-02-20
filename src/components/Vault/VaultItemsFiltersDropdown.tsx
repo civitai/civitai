@@ -5,30 +5,30 @@ import {
   Stack,
   Divider,
   Chip,
-  ChipProps,
   Button,
-  createStyles,
   Drawer,
   ButtonProps,
   Text,
+  useMantineTheme,
 } from '@mantine/core';
-import { IconChevronDown, IconFilter } from '@tabler/icons-react';
+import { IconFilter } from '@tabler/icons-react';
 import { getDisplayName } from '~/utils/string-helpers';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { PurchasableRewardModeratorViewMode, TagSort } from '~/server/common/enums';
+import { TagSort } from '~/server/common/enums';
 import { GetPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { DatePicker } from '@mantine/dates';
 import { trpc } from '~/utils/trpc';
 import { constants } from '~/server/common/constants';
+import { FilterButton } from '~/components/Buttons/FilterButton';
+import { FilterChip } from '~/components/Filters/FilterChip';
 
 type Filters = Omit<GetPaginatedVaultItemsSchema, 'limit'>;
 
 export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps }: Props) {
-  const { classes, theme, cx } = useStyles();
   const mobile = useIsMobile();
+  const theme = useMantineTheme();
   const { data: { items: categories } = { items: [] } } = trpc.tag.getAll.useQuery({
     entityType: ['Model'],
     sort: TagSort.MostModels,
@@ -60,13 +60,6 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
     [setFilters]
   );
 
-  const chipProps: Partial<ChipProps> = {
-    size: 'xs',
-    radius: 'xl',
-    variant: 'filled',
-    classNames: classes,
-  };
-
   const target = (
     <Indicator
       offset={4}
@@ -75,28 +68,17 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
       zIndex={10}
       showZero={false}
       dot={false}
-      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
-      {/*
-        NOTE:
-        - Add pending to models tab.
-      */}
-      <Button
-        className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        {...buttonProps}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
+      <FilterButton
+        icon={IconFilter}
+        size="md"
+        variant="default"
+        active={opened}
         onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
       >
-        <Group spacing={4} noWrap>
-          <IconFilter size={16} />
-          Filters
-        </Group>
-      </Button>
+        Filters
+      </FilterButton>
     </Indicator>
   );
 
@@ -115,9 +97,9 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           multiple
         >
           {Object.values(ModelType).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
+            <FilterChip key={index} value={type}>
               <span>{getDisplayName(type)}</span>
-            </Chip>
+            </FilterChip>
           ))}
         </Chip.Group>
         <Divider label="Category" labelProps={{ weight: 'bold', size: 'sm' }} />
@@ -132,11 +114,11 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           multiple
         >
           {categories.map((category) => (
-            <Chip key={category.id} value={category.name} {...chipProps}>
+            <FilterChip key={category.id} value={category.name}>
               <Text component="span" transform="capitalize">
                 {getDisplayName(category.name)}
               </Text>
-            </Chip>
+            </FilterChip>
           ))}
         </Chip.Group>
         <Divider label="Base Model" labelProps={{ weight: 'bold', size: 'sm' }} />
@@ -151,11 +133,11 @@ export function VaultItemsFiltersDropdown({ filters, setFilters, ...buttonProps 
           multiple
         >
           {constants.baseModels.map((baseModel) => (
-            <Chip key={baseModel} value={baseModel} {...chipProps}>
+            <FilterChip key={baseModel} value={baseModel}>
               <Text component="span" transform="capitalize">
                 {baseModel}
               </Text>
-            </Chip>
+            </FilterChip>
           ))}
         </Chip.Group>
         <Divider label="Created at" labelProps={{ weight: 'bold', size: 'sm' }} />
@@ -269,33 +251,33 @@ type Props = {
   filters: Filters;
 } & Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'>;
 
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
+// const useStyles = createStyles((theme) => ({
+//   label: {
+//     fontSize: 12,
+//     fontWeight: 600,
 
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
+//     '&[data-checked]': {
+//       '&, &:hover': {
+//         color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+//         border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
+//       },
 
-      '&[data-variant="filled"]': {
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
+//       '&[data-variant="filled"]': {
+//         backgroundColor: 'transparent',
+//       },
+//     },
+//   },
+//   opened: {
+//     transform: 'rotate(180deg)',
+//     transition: 'transform 200ms ease',
+//   },
 
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
+//   actionButton: {
+//     [containerQuery.smallerThan('sm')]: {
+//       width: '100%',
+//     },
+//   },
 
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));
+//   indicatorRoot: { lineHeight: 1 },
+//   indicatorIndicator: { lineHeight: 1.6 },
+// }));

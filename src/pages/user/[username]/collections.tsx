@@ -68,7 +68,6 @@ function UserCollectionsPage() {
             <Group spacing={8} position="right">
               <SortFilter
                 type="collections"
-                variant="button"
                 value={sort}
                 onChange={(x) => set({ sort: x as CollectionSort })}
               />

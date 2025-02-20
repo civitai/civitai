@@ -62,7 +62,6 @@ export function ArticleDetailComments({ articleId, userId }: ArticleDetailCommen
                   )}
                 </Group>
                 <SortFilter
-                  variant="button"
                   type="threads"
                   value={sort}
                   onChange={(v) => setSort(v as ThreadSort)}

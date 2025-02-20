@@ -280,9 +280,9 @@ export default function ModeratorBuzzWithdrawalRequests() {
         <Group className="ml-auto">
           <SortFilter
             type="buzzWithdrawalRequests"
-            variant="button"
             value={filters.sort}
-            buttonProps={{ compact: false, disabled: selectionEnabled }}
+            compact={false}
+            disabled={selectionEnabled}
             onChange={(x) => setFilters({ ...filters, sort: x as BuzzWithdrawalRequestSort })}
           />
           <BuzzWithdrawalRequestFilterDropdown

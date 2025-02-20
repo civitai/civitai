@@ -18,13 +18,7 @@ export function VideoFeedFilters({ ...groupProps }: GroupProps) {
           buttonProps={{ className: classes.subnavDropdown }}
         />
       )}
-      <SortFilter
-        type="videos"
-        variant="button"
-        buttonProps={{
-          className: classes.subnavDropdown,
-        }}
-      />
+      <SortFilter type="videos" className={classes.subnavDropdown} />
       <MediaFiltersDropdown
         size="sm"
         w="100%"

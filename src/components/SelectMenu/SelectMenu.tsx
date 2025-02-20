@@ -1,17 +1,8 @@
-import {
-  Button,
-  ButtonProps,
-  CSSObject,
-  Drawer,
-  DrawerStylesNames,
-  Menu,
-  Text,
-  UnstyledButton,
-  useMantineTheme,
-} from '@mantine/core';
+import { Drawer, Menu, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
+import { FilterButton, FilterButtonProps } from '~/components/Buttons/FilterButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type SelectMenu<T extends string | number> = {
@@ -21,8 +12,7 @@ type SelectMenu<T extends string | number> = {
   value?: T;
   disabled?: boolean;
   children?: React.ReactNode;
-  buttonProps?: ButtonProps;
-};
+} & Omit<FilterButtonProps, 'onClick'>;
 
 export function SelectMenu<T extends string | number>({
   label,
@@ -75,39 +65,23 @@ export function SelectMenuV2<T extends string | number>({
   value,
   disabled,
   children,
-  buttonProps,
   icon,
-  drawerStyles,
-}: SelectMenu<T> & {
-  icon?: React.ReactNode;
-  drawerStyles?: { [p in DrawerStylesNames]?: CSSObject };
-}) {
+  className,
+  ...buttonProps
+}: SelectMenu<T>) {
   const theme = useMantineTheme();
   const [opened, setOpened] = useState(false);
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ type: 'media' });
 
   const target = (
-    <Button
-      color="gray"
-      radius="xl"
-      variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+    <FilterButton
       disabled={disabled}
-      rightIcon={
-        <IconChevronDown
-          className={clsx({ ['rotate-180 transition-transform']: opened })}
-          size={16}
-        />
-      }
-      size="sm"
-      compact
-      {...buttonProps}
+      icon={IconSortDescending}
       onClick={() => setOpened((o) => !o)}
+      {...buttonProps}
     >
-      <div className="flex items-center gap-1" suppressHydrationWarning>
-        {icon ?? <IconSortDescending size={16} />}
-        {label}
-      </div>
-    </Button>
+      {label}
+    </FilterButton>
   );
 
   if (mobile)
@@ -119,7 +93,7 @@ export function SelectMenuV2<T extends string | number>({
           opened={opened}
           onClose={() => setOpened(false)}
           styles={{
-            ...drawerStyles,
+            root: { zIndex: 400 },
             body: { padding: 16, paddingTop: 0, overflow: 'auto' },
             drawer: { height: 'auto' },
             header: { padding: '4px 8px' },

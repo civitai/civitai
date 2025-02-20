@@ -8,8 +8,7 @@ import { z } from 'zod';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { MarkerType, SignalMessages } from '~/server/common/enums';
+import { GenerationReactType, SignalMessages } from '~/server/common/enums';
 import {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
@@ -31,6 +30,8 @@ import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import { GenerationSort } from '~/server/common/enums';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
@@ -63,17 +64,17 @@ export function useGetTextToImageRequests(
 ) {
   const currentUser = useCurrentUser();
 
-  const filters = useFiltersContext((state) => state.markers);
+  const filters = useFiltersContext((state) => state.generation);
 
   const tags = useMemo(() => {
     switch (filters.marker) {
-      case MarkerType.Favorited:
+      case GenerationReactType.Favorited:
         return [WORKFLOW_TAGS.FAVORITE];
 
-      case MarkerType.Liked:
+      case GenerationReactType.Liked:
         return [WORKFLOW_TAGS.FEEDBACK.LIKED];
 
-      case MarkerType.Disliked:
+      case GenerationReactType.Disliked:
         return [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
       default:
         return [];
@@ -83,6 +84,7 @@ export function useGetTextToImageRequests(
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
     {
       ...input,
+      ascending: filters.sort === GenerationSort.Oldest,
       tags: [
         WORKFLOW_TAGS.GENERATION,
         ...(options?.includeTags === false ? [] : [...tags, ...(filters.tags ?? [])]),
@@ -141,20 +143,27 @@ export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQ
 
 function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => void) {
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  // const test = queryClient.getQueriesData({ queryKey, exact: false })
-  queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
-    produce(state, (old?: InfiniteTextToImageRequests) => {
+  queryClient.setQueriesData({ queryKey, exact: false }, (state) => {
+    return produce(state, (old?: InfiniteTextToImageRequests) => {
       if (!old) return;
       cb(old);
-    })
-  );
+    });
+  });
 }
 
 export function useSubmitCreateImage() {
+  const sort = useFiltersContext((state) => state.generation.sort);
   return trpc.orchestrator.generateImage.useMutation({
     onSuccess: (data, input) => {
       updateTextToImageRequests((old) => {
-        old.pages[0].items.unshift(data);
+        if (sort === GenerationSort.Newest) {
+          old.pages[0].items.unshift(data);
+        } else {
+          const index = old.pages.length - 1;
+          if (!old.pages[index].nextCursor) {
+            old.pages[index].items.push(data);
+          }
+        }
       });
       updateFromEvents();
     },
@@ -169,20 +178,21 @@ export function useSubmitCreateImage() {
 }
 
 export function useGenerate() {
+  const sort = useFiltersContext((state) => state.generation.sort);
   return trpc.orchestrator.generate.useMutation({
     onSuccess: (data) => {
       updateTextToImageRequests((old) => {
-        old.pages[0].items.unshift(data);
+        if (sort === GenerationSort.Newest) {
+          old.pages[0].items.unshift(data);
+        } else {
+          const index = old.pages.length - 1;
+          if (!old.pages[index].nextCursor) {
+            old.pages[index].items.push(data);
+          }
+        }
       });
       updateFromEvents();
     },
-    // onError: (error) => {
-    //   showErrorNotification({
-    //     title: 'Failed to generate',
-    //     error: new Error(error.message),
-    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-    //   });
-    // },
   });
 }
 

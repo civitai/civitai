@@ -25,9 +25,12 @@ export function GenerateButton({
   const { size = 'lg' } = buttonProps;
 
   return !status.charge || !currentUser ? (
-    <LoginRedirect reason="image-gen" beforeRedirect={() => {
-      if (isMobile) close();
-    }}>
+    <LoginRedirect
+      reason="image-gen"
+      beforeRedirect={() => {
+        if (isMobile) close();
+      }}
+    >
       <Button
         {...buttonProps}
         size={size}

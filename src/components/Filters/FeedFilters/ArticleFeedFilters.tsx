@@ -18,13 +18,7 @@ export function ArticleFeedFilters({ ...groupProps }: GroupProps) {
           buttonProps={{ className: classes.subnavDropdown }}
         />
       )}
-      <SortFilter
-        type="articles"
-        variant="button"
-        buttonProps={{
-          className: classes.subnavDropdown,
-        }}
-      />
+      <SortFilter type="articles" className={classes.subnavDropdown} />
       <ArticleFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} />
     </Group>
   );

@@ -647,9 +647,10 @@ export default function CivitaiVault() {
                     label={getDisplayName(filters.sort)}
                     options={Object.values(VaultSort).map((v) => ({ label: v, value: v }))}
                     value={filters.sort}
+                    size="md"
+                    variant="default"
                     // Resets page:
                     onClick={(x) => setFilters((c) => ({ ...c, sort: x as VaultSort, page: 1 }))}
-                    buttonProps={{ size: undefined, compact: false }}
                   />
                 </Group>
 

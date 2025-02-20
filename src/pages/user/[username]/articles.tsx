@@ -84,7 +84,6 @@ function UserArticlesPage() {
                 <Group spacing={8} ml="auto" noWrap>
                   <SortFilter
                     type="articles"
-                    variant="button"
                     value={sort}
                     onChange={(x) => replace({ sort: x as ArticleSort })}
                   />
