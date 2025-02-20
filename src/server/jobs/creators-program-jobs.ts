@@ -185,3 +185,9 @@ export const creatorsProgramSettleCash = createJob(
     // TODO creator program stretch: send signal to update user cash balance
   }
 );
+
+export const creatorProgramJobs = [
+  creatorsProgramDistribute,
+  creatorsProgramRollover,
+  creatorsProgramSettleCash,
+];
