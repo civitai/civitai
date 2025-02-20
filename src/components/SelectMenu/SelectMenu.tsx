@@ -1,16 +1,8 @@
-import {
-  Button,
-  ButtonProps,
-  Drawer,
-  Menu,
-  Text,
-  UnstyledButton,
-  useMantineTheme,
-} from '@mantine/core';
+import { Drawer, Menu, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
-import { FilterButton } from '~/components/Buttons/FilterButton';
+import { FilterButton, FilterButtonProps } from '~/components/Buttons/FilterButton';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type SelectMenu<T extends string | number> = {
@@ -20,7 +12,7 @@ type SelectMenu<T extends string | number> = {
   value?: T;
   disabled?: boolean;
   children?: React.ReactNode;
-} & ButtonProps;
+} & Omit<FilterButtonProps, 'onClick'>;
 
 export function SelectMenu<T extends string | number>({
   label,
@@ -76,43 +68,17 @@ export function SelectMenuV2<T extends string | number>({
   icon,
   className,
   ...buttonProps
-}: SelectMenu<T> & {
-  icon?: React.ReactNode;
-}) {
+}: SelectMenu<T>) {
   const theme = useMantineTheme();
   const [opened, setOpened] = useState(false);
   const mobile = useIsMobile();
-
-  const targetOld = (
-    <Button
-      disabled={disabled}
-      rightIcon={
-        <IconChevronDown
-          className="transition-transform group-data-[expanded=true]:rotate-180"
-          size={16}
-        />
-      }
-      className={clsx(
-        'group h-8 rounded-3xl bg-transparent px-2',
-        'text-gray-8 hover:bg-gray-2 data-[expanded=true]:bg-gray-3',
-        'dark:text-white dark:hover:bg-dark-5 dark:data-[expanded=true]:bg-dark-4',
-        className
-      )}
-      {...buttonProps}
-      onClick={() => setOpened((o) => !o)}
-    >
-      <div className="flex items-center gap-1" suppressHydrationWarning>
-        {icon ?? <IconSortDescending size={16} />}
-        {label}
-      </div>
-    </Button>
-  );
 
   const target = (
     <FilterButton
       disabled={disabled}
       icon={IconSortDescending}
       onClick={() => setOpened((o) => !o)}
+      {...buttonProps}
     >
       {label}
     </FilterButton>

@@ -2,8 +2,6 @@ import {
   Button,
   ButtonProps,
   Chip,
-  ChipProps,
-  createStyles,
   Divider,
   Drawer,
   Group,
@@ -12,6 +10,7 @@ import {
   PopoverProps,
   ScrollArea,
   Stack,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   CheckpointType,
@@ -19,7 +18,7 @@ import {
   ModelStatus,
   ModelType,
 } from '~/shared/utils/prisma/enums';
-import { IconChevronDown, IconFilter } from '@tabler/icons-react';
+import { IconFilter } from '@tabler/icons-react';
 import { CSSProperties, useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -29,8 +28,9 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { activeBaseModels, BaseModel, constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
+import { FilterButton } from '~/components/Buttons/FilterButton';
+import { FilterChip } from '~/components/Filters/FilterChip';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)
@@ -67,7 +67,7 @@ export function DumbModelFiltersDropdown({
   setFilters: (filters: Partial<ModelFilterSchema>) => void;
 }) {
   const currentUser = useCurrentUser();
-  const { classes, cx, theme } = useStyles();
+  const theme = useMantineTheme();
   const flags = useFeatureFlags();
   const mobile = useIsMobile();
   const {
@@ -133,14 +133,6 @@ export function DumbModelFiltersDropdown({
     else setQueryFilters(value);
   };
 
-  const chipProps: Partial<ChipProps> = {
-    size: 'sm',
-    radius: 'xl',
-    variant: 'filled',
-    classNames: classes,
-    tt: 'capitalize',
-  };
-
   const target = (
     <Indicator
       offset={4}
@@ -149,24 +141,11 @@ export function DumbModelFiltersDropdown({
       zIndex={10}
       showZero={false}
       dot={false}
-      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
-      <Button
-        className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        {...buttonProps}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
-        onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
-      >
-        <Group spacing={4} noWrap>
-          <IconFilter size={16} />
-          Filters
-        </Group>
-      </Button>
+      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+        Filters
+      </FilterButton>
     </Indicator>
   );
 
@@ -201,36 +180,33 @@ export function DumbModelFiltersDropdown({
             multiple
           >
             {availableStatus.map((status) => (
-              <Chip key={status} value={status} {...chipProps}>
+              <FilterChip key={status} value={status}>
                 <span>{status}</span>
-              </Chip>
+              </FilterChip>
             ))}
           </Chip.Group>
         )}
         <Group spacing={8} mb={4}>
-          <Chip
+          <FilterChip
             checked={mergedFilters.earlyAccess}
             onChange={(checked) => handleChange({ earlyAccess: checked })}
-            {...chipProps}
           >
             <span>Early Access</span>
-          </Chip>
+          </FilterChip>
           {flags.imageGeneration && (
-            <Chip
+            <FilterChip
               checked={mergedFilters.supportsGeneration}
               onChange={(checked) => handleChange({ supportsGeneration: checked })}
-              {...chipProps}
             >
               <span>On-site Generation</span>
-            </Chip>
+            </FilterChip>
           )}
-          <Chip
+          <FilterChip
             checked={mergedFilters.fromPlatform}
             onChange={(checked) => handleChange({ fromPlatform: checked })}
-            {...chipProps}
           >
             <span>Made On-site</span>
-          </Chip>
+          </FilterChip>
         </Group>
       </Stack>
       <Stack spacing={0}>
@@ -243,9 +219,9 @@ export function DumbModelFiltersDropdown({
           my={4}
         >
           {Object.values(ModelType).map((type, index) => (
-            <Chip key={index} value={type} {...chipProps}>
+            <FilterChip key={index} value={type}>
               <span>{getDisplayName(type)}</span>
-            </Chip>
+            </FilterChip>
           ))}
         </Chip.Group>
       </Stack>
@@ -262,9 +238,9 @@ export function DumbModelFiltersDropdown({
               }
             >
               {ckptTypeOptions.map((option, index) => (
-                <Chip key={index} value={option.value} {...chipProps}>
+                <FilterChip key={index} value={option.value}>
                   <span>{option.label}</span>
-                </Chip>
+                </FilterChip>
               ))}
             </Chip.Group>
           </Stack>
@@ -278,9 +254,9 @@ export function DumbModelFiltersDropdown({
               my={4}
             >
               {availableFileFormats.map((format, index) => (
-                <Chip key={index} value={format} {...chipProps}>
+                <FilterChip key={index} value={format}>
                   <span>{format}</span>
-                </Chip>
+                </FilterChip>
               ))}
             </Chip.Group>
           </Stack>
@@ -296,9 +272,9 @@ export function DumbModelFiltersDropdown({
           my={4}
         >
           {activeBaseModels.map((baseModel, index) => (
-            <Chip key={index} value={baseModel} {...chipProps}>
+            <FilterChip key={index} value={baseModel}>
               <span>{getDisplayName(baseModel, { splitNumbers: false })}</span>
-            </Chip>
+            </FilterChip>
           ))}
         </Chip.Group>
       </Stack>
@@ -308,13 +284,12 @@ export function DumbModelFiltersDropdown({
         <Group spacing={8}>
           {currentUser && isFeed && (
             <>
-              <Chip
+              <FilterChip
                 checked={mergedFilters.hidden}
                 onChange={(checked) => handleChange({ hidden: checked })}
-                {...chipProps}
               >
                 <span>Hidden</span>
-              </Chip>
+              </FilterChip>
             </>
           )}
         </Group>
@@ -387,38 +362,3 @@ type Props = Omit<ButtonProps, 'onClick' | 'children' | 'rightIcon'> & {
   isFeed?: boolean;
   maxPopoverHeight?: CSSProperties['maxHeight'];
 };
-
-const useStyles = createStyles((theme, _params, getRef) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-
-  iconWrapper: {
-    ref: getRef('iconWrapper'),
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));

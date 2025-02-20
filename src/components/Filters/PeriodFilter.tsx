@@ -1,6 +1,7 @@
-import { Chip, createStyles } from '@mantine/core';
+import { Chip } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useCallback } from 'react';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { PeriodModeToggle } from '~/components/Filters/PeriodModeToggle';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { SelectMenu } from '~/components/SelectMenu/SelectMenu';
@@ -23,24 +24,6 @@ export function PeriodFilter(props: PeriodFilterProps) {
   return <StatefulPeriodFilter {...props} type={props.type} />;
 }
 
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-}));
-
 type DumbProps = {
   type: FilterSubTypes;
   value: MetricTimeframe;
@@ -57,7 +40,6 @@ function DumbPeriodFilter({
   hideMode,
   variant = 'menu',
 }: DumbProps) {
-  const { classes } = useStyles();
   const showPeriodMode = !hideMode && hasPeriodMode(type);
   const options = periodOptions.map((x) => ({ label: getDisplayName(x), value: x }));
 
@@ -77,17 +59,9 @@ function DumbPeriodFilter({
       {variant === 'chips' && (
         <Chip.Group spacing={8} value={value} onChange={onChange}>
           {options.map((x, index) => (
-            <Chip
-              key={index}
-              value={x.value}
-              classNames={classes}
-              size="sm"
-              radius="xl"
-              variant="filled"
-              tt="capitalize"
-            >
+            <FilterChip key={index} value={x.value}>
               <span>{x.label}</span>
-            </Chip>
+            </FilterChip>
           ))}
         </Chip.Group>
       )}

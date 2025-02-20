@@ -31,6 +31,7 @@ import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import { GenerationSort } from '~/server/common/enums';
 
 type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
@@ -83,6 +84,7 @@ export function useGetTextToImageRequests(
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
     {
       ...input,
+      ascending: filters.sort === GenerationSort.Oldest,
       tags: [
         WORKFLOW_TAGS.GENERATION,
         ...(options?.includeTags === false ? [] : [...tags, ...(filters.tags ?? [])]),
