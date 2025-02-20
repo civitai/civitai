@@ -9,6 +9,7 @@ export const bankBuzzSchema = z.object({
   amount: z.number().min(MIN_BANK_AMOUNT),
 });
 
+export type WithdrawCashInput = z.infer<typeof withdrawCashSchema>;
 export const withdrawCashSchema = z.object({
   amount: z.number().min(MIN_WITHDRAWAL_AMOUNT),
 });

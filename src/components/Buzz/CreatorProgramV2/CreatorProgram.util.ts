@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { BankBuzzInput } from '~/server/schema/creator-program.schema';
+import { BankBuzzInput, WithdrawCashInput } from '~/server/schema/creator-program.schema';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
 export const useCreatorProgramRequirements = () => {
@@ -34,6 +34,30 @@ export const useBankedBuzz = () => {
 
   return {
     banked: data,
+    isLoading,
+  };
+};
+
+export const useUserCash = () => {
+  const currentUser = useCurrentUser();
+  const { data, isLoading } = trpc.creatorProgram.getCash.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
+  return {
+    userCash: data,
+    isLoading,
+  };
+};
+
+export const useWithdrawalHistory = () => {
+  const currentUser = useCurrentUser();
+  const { data, isLoading } = trpc.creatorProgram.getWithdrawalHistory.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
+  return {
+    withdrawalHistory: data,
     isLoading,
   };
 };
@@ -114,6 +138,16 @@ export const useCreatorProgramMutate = () => {
       handleTRPCError(error, 'Failed to bank your buzz.');
     },
   });
+  const withdrawCashMutation = trpc.creatorProgram.withdrawCash.useMutation({
+    onError(error) {
+      handleTRPCError(error, 'Failed to withdraw your cash.');
+    },
+  });
+  const extractBuzzMutation = trpc.creatorProgram.extractBuzz.useMutation({
+    onError(error) {
+      handleTRPCError(error, 'Failed to extract your buzz.');
+    },
+  });
 
   const handleJoinCreatorsProgram = async () => {
     return joinCreatorsProgramMutation.mutateAsync();
@@ -123,10 +157,22 @@ export const useCreatorProgramMutate = () => {
     return bankBuzzMutation.mutateAsync(input);
   };
 
+  const handleWithdrawCash = async (input: WithdrawCashInput) => {
+    return withdrawCashMutation.mutateAsync(input);
+  };
+
+  const handleExtractBuzz = async () => {
+    return extractBuzzMutation.mutateAsync();
+  };
+
   return {
     joinCreatorsProgram: handleJoinCreatorsProgram,
     joiningCreatorsProgram: joinCreatorsProgramMutation.isLoading,
     bankBuzz: handleBankBuzz,
     bankingBuzz: bankBuzzMutation.isLoading,
+    withdrawCash: handleWithdrawCash,
+    withdrawingCash: withdrawCashMutation.isLoading,
+    extractBuzz: handleExtractBuzz,
+    extractingBuzz: extractBuzzMutation,
   };
 };

@@ -394,8 +394,8 @@ const userCashCache = createCachedObject<UserCashCacheItem>({
     const balances = await clickhouse.$query<{ userId: number; pending: number; ready: number }>`
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cash:pending', if(type = 'withdrawal', -1, 1) * amount, 0) as pending,
-        SUM(if(toAccountType = 'cash:settled', if(type = 'withdrawal', -1, 1) * amount, 0) as ready
+        SUM(if(toAccountType = 'cash:pending', if(type = 'withdrawal', -1, 1) * amount, 0)) as pending,
+        SUM(if(toAccountType = 'cash:settled', if(type = 'withdrawal', -1, 1) * amount, 0)) as ready
       FROM buzzTransactions
       WHERE toAccountType IN ('cash:pending', 'cash:settled')
       AND (toAccountId IN (${ids}) OR fromAccountId IN (${ids}))
@@ -445,11 +445,13 @@ export async function getWithdrawalHistory(userId: number) {
     where: { userId },
     orderBy: { createdAt: 'desc' },
     select: {
+      id: true,
       createdAt: true,
       method: true,
       amount: true,
       status: true,
       note: true,
+      fee: true,
     },
   });
 
