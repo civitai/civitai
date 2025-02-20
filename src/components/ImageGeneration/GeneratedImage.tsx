@@ -8,6 +8,9 @@ import {
   Modal,
   Text,
   Stack,
+  MenuItemProps,
+  ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
@@ -25,6 +28,7 @@ import {
   IconTrash,
   IconWand,
   IconHeart,
+  IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
@@ -65,6 +69,8 @@ import { MediaType } from '~/shared/utils/prisma/enums';
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
 import { UpscaleEnhancementModal } from '~/components/Orchestrator/components/UpscaleEnhancementModal';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { WorkflowDefinitionKey } from '~/server/services/orchestrator/comfy/comfy.types';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -92,7 +98,6 @@ export function GeneratedImage({
   const [nsfwLevelError, setNsfwLevelError] = useState(false);
 
   const { updateImages } = useUpdateImageStepMetadata();
-  const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
 
   const { running, runTour, currentStep } = useTourContext();
 
@@ -101,7 +106,6 @@ export function GeneratedImage({
       { workflowId: request.id, stepName: step.name, imageId: image.id },
       checked
     );
-  const { copied, copy } = useClipboard();
 
   const isLightbox = useDialogStore((state) =>
     state.dialogs.some((x) => x.id === 'generated-image')
@@ -114,104 +118,6 @@ export function GeneratedImage({
       component: GeneratedImageLightbox,
       props: { image, request },
     });
-  };
-  function handleCloseImageLightbox() {
-    dialogStore.closeById('generated-image');
-  }
-
-  const handleAuxClick = () => {
-    if (image) window.open(image.url, '_blank');
-  };
-
-  const handleGenerate = async (
-    { seed, ...rest }: Partial<TextToImageParams> = {},
-    {
-      type,
-      workflow: workflow,
-      sourceImage,
-      engine,
-    }: { type: MediaType; workflow?: string; sourceImage?: string; engine?: string } = {
-      type: image.type,
-      workflow: step.params.workflow,
-    }
-  ) => {
-    handleCloseImageLightbox();
-    generationStore.setData({
-      resources: step.resources,
-      params: { ...(step.params as any), seed, ...rest },
-      remixOfId: step.metadata?.remixOfId,
-      type,
-      workflow: workflow ?? step.params.workflow,
-      sourceImage: sourceImage ?? (step.params as any).sourceImage,
-      engine: engine ?? (step.params as any).engine,
-    });
-  };
-
-  const handleSelectWorkflow = (workflow: string) =>
-    handleGenerate({ workflow, sourceImage: image.url as any }); // TODO - see if there is a good way to handle this type mismatch. We're converting a string to a sourceImage object after we pass the data to the generation store
-
-  const handleDeleteImage = () => {
-    openConfirmModal({
-      title: 'Delete image',
-      children:
-        'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
-      labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
-      confirmProps: { color: 'red' },
-      onConfirm: () => {
-        updateImages([
-          {
-            workflowId: request.id,
-            stepName: step.name,
-            images: {
-              [image.id]: {
-                hidden: true,
-              },
-            },
-          },
-        ]);
-        handleCloseImageLightbox();
-      },
-      zIndex: constants.imageGeneration.drawerZIndex + 2,
-      centered: true,
-    });
-  };
-
-  const handleRemoveBackground = async () => {
-    dialogStore.trigger({
-      component: BackgroundRemovalModal,
-      props: {
-        workflow: 'img2img-background-removal',
-        sourceImage: await getSourceImageFromUrl({ url: image.url }),
-      },
-    });
-  };
-
-  const handleUpscaleEnhance = async () => {
-    dialogStore.trigger({
-      component: UpscaleEnhancementModal,
-      props: {
-        workflow: 'img2img-upscale-enhancement-realism',
-        sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
-      },
-    });
-  };
-
-  const handleUpscale = async (workflow: string) => {
-    handleCloseImageLightbox();
-    if (step.$type !== 'videoGen') {
-      dialogStore.trigger({
-        component: UpscaleImageModal,
-        props: {
-          resources: step.resources,
-          params: {
-            ...step.params,
-            sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
-            seed: image.seed,
-            workflow,
-          },
-        },
-      });
-    }
   };
 
   const feedback = step.metadata?.images?.[image.id]?.feedback;
@@ -284,22 +190,7 @@ export function GeneratedImage({
     );
   }
 
-  const { data: availableEngineConfigurations } = useVideoGenerationWorkflows();
-
   if (!available) return <></>;
-
-  const isUpscale = step.params.workflow === 'img2img-upscale';
-  const isVideo = step.$type === 'videoGen';
-  const isFlux = !isVideo && getIsFlux(step.params.baseModel);
-  const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
-  const canRemix = !isUpscale;
-  const canImg2Img = !isFlux && !isUpscale && !isSD3 && !isVideo;
-  const img2imgWorkflows = !isVideo ? workflowDefinitions?.filter((x) => x.type === 'img2img') : [];
-  const img2vidConfigs = availableEngineConfigurations?.filter(
-    (x) => !x.disabled && x.subType === 'img2vid'
-  );
-  // const canRemix = true;
-  // const canImg2Img = true;
 
   return (
     <TwCard
@@ -315,7 +206,7 @@ export function GeneratedImage({
             })}
             onClick={handleImageClick}
             onMouseDown={(e) => {
-              if (e.button === 1) return handleAuxClick();
+              if (e.button === 1) return handleAuxClick(image.url);
             }}
           >
             {nsfwLevelError && (
@@ -372,117 +263,7 @@ export function GeneratedImage({
               </div>
             </Menu.Target>
             <Menu.Dropdown>
-              {canRemix && (
-                <>
-                  <Menu.Item
-                    onClick={() => handleGenerate()}
-                    icon={<IconArrowsShuffle size={14} stroke={1.5} />}
-                  >
-                    Remix
-                  </Menu.Item>
-                  <Menu.Item
-                    onClick={() => handleGenerate({ seed: image.seed })}
-                    icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
-                  >
-                    Remix (with seed)
-                  </Menu.Item>
-                </>
-              )}
-              <Menu.Item
-                color="red"
-                onClick={handleDeleteImage}
-                icon={<IconTrash size={14} stroke={1.5} />}
-              >
-                Delete
-              </Menu.Item>
-              {!!img2imgWorkflows?.length && (
-                <>
-                  <Menu.Divider />
-                  <Menu.Label>Image-to-image workflows</Menu.Label>
-                  {!isVideo &&
-                    img2imgWorkflows
-                      ?.filter((x) => x.key === 'img2img-upscale')
-                      .map((workflow) => (
-                        <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
-                          {workflow.name}
-                        </Menu.Item>
-                      ))}
-                  {/* {!isVideo &&
-                    img2imgWorkflows
-                      ?.filter((x) => x.key === 'img2img-background-removal')
-                      .map((workflow) => (
-                        <Menu.Item
-                          key={workflow.key}
-                          onClick={() => handleRemoveBackground()}
-                        >
-                          {workflow.name}
-                        </Menu.Item>
-                      ))} */}
-
-                  {!isVideo &&
-                    img2imgWorkflows?.some((x) => x.key === 'img2img-background-removal') && (
-                      <Menu.Item onClick={() => handleRemoveBackground()}>
-                        Background Removal
-                      </Menu.Item>
-                    )}
-                  {!isVideo &&
-                    img2imgWorkflows?.some(
-                      (x) => x.key === 'img2img-upscale-enhancement-realism'
-                    ) && (
-                      <Menu.Item onClick={() => handleUpscaleEnhance()}>Upscale Enhance</Menu.Item>
-                    )}
-                  {canImg2Img &&
-                    img2imgWorkflows
-                      ?.filter((x) => x.key !== 'img2img-upscale')
-                      .map((workflow) => (
-                        <Menu.Item
-                          key={workflow.key}
-                          onClick={() => handleSelectWorkflow(workflow.key)}
-                        >
-                          {workflow.name}
-                        </Menu.Item>
-                      ))}
-                </>
-              )}
-              {!isVideo && !!img2vidConfigs?.length && (
-                <>
-                  <Menu.Divider />
-                  <Menu.Item
-                    onClick={() =>
-                      handleGenerate(
-                        {},
-                        {
-                          type: 'video',
-                          sourceImage: image.url,
-                          engine: useGenerationFormStore.getState().engine,
-                        }
-                      )
-                    }
-                  >
-                    Image To Video
-                  </Menu.Item>
-                </>
-              )}
-              <Menu.Divider />
-              <Menu.Label>System</Menu.Label>
-              <Menu.Item
-                icon={
-                  copied ? (
-                    <IconCheck size={14} stroke={1.5} />
-                  ) : (
-                    <IconInfoHexagon size={14} stroke={1.5} />
-                  )
-                }
-                onClick={() => copy(image.jobId)}
-              >
-                Copy Job ID
-              </Menu.Item>
-              <Menu.Item
-                icon={<IconExternalLink size={14} stroke={1.5} />}
-                onClick={handleAuxClick}
-              >
-                Open in New Tab
-              </Menu.Item>
+              <GeneratedImageWorkflowMenuItems step={step} image={image} workflowId={request.id} />
             </Menu.Dropdown>
           </Menu>
 
@@ -502,75 +283,31 @@ export function GeneratedImage({
               >
                 <IconHeart size={16} />
               </ActionIcon>
-              {!!img2imgWorkflows?.length && (
-                <Menu
-                  zIndex={400}
-                  trigger="hover"
-                  openDelay={100}
-                  closeDelay={100}
-                  transition="fade"
-                  transitionDuration={150}
-                  withinPortal
-                  position="top"
-                >
-                  <Menu.Target>
-                    <ActionIcon size="md">
-                      <IconWand size={16} />
-                    </ActionIcon>
-                  </Menu.Target>
-                  <Menu.Dropdown className={classes.improveMenu}>
-                    {!isVideo &&
-                      img2imgWorkflows
-                        ?.filter((x) => x.key === 'img2img-upscale')
-                        .map((workflow) => (
-                          <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
-                            {workflow.name}
-                          </Menu.Item>
-                        ))}
-                    {!isVideo &&
-                      img2imgWorkflows?.some((x) => x.key === 'img2img-background-removal') && (
-                        <Menu.Item onClick={() => handleRemoveBackground()}>
-                          Background Removal
-                        </Menu.Item>
-                      )}
-                    {!isVideo &&
-                      img2imgWorkflows?.some(
-                        (x) => x.key === 'img2img-upscale-enhancement-realism'
-                      ) && (
-                        <Menu.Item onClick={() => handleUpscaleEnhance()}>
-                          Upscale Enhance
-                        </Menu.Item>
-                      )}
-                    {canImg2Img &&
-                      img2imgWorkflows
-                        ?.filter((x) => x.key !== 'img2img-upscale')
-                        .map((workflow) => (
-                          <Menu.Item
-                            key={workflow.key}
-                            onClick={() => handleSelectWorkflow(workflow.key)}
-                          >
-                            {workflow.name}
-                          </Menu.Item>
-                        ))}
-                    {!isVideo && !!img2vidConfigs?.length && (
-                      <Menu.Item
-                        onClick={() =>
-                          handleGenerate(
-                            {},
-                            {
-                              type: 'video',
-                              sourceImage: image.url,
-                              engine: useGenerationFormStore.getState().engine,
-                            }
-                          )
-                        }
-                      >
-                        Image To Video
-                      </Menu.Item>
-                    )}
-                  </Menu.Dropdown>
-                </Menu>
-              )}
+
+              <Menu
+                zIndex={400}
+                trigger="hover"
+                openDelay={100}
+                closeDelay={100}
+                transition="fade"
+                transitionDuration={150}
+                withinPortal
+                position="top"
+              >
+                <Menu.Target>
+                  <ActionIcon size="md">
+                    <IconWand size={16} />
+                  </ActionIcon>
+                </Menu.Target>
+                <Menu.Dropdown className={classes.improveMenu}>
+                  <GeneratedImageWorkflowMenuItems
+                    step={step}
+                    image={image}
+                    workflowId={request.id}
+                    workflowsOnly
+                  />
+                </Menu.Dropdown>
+              </Menu>
 
               <ActionIcon
                 size="md"
@@ -651,18 +388,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
         width: 68,
         opacity: 1,
       },
-
-      // ['button']: {
-      //   opacity: 0,
-
-      //   [`&.${favoriteButtonRef}`]: {
-      //     opacity: 1,
-      //   },
-
-      //   [`@container (max-width: 420px)`]: {
-      //     opacity: 1,
-      //   },
-      // },
     },
     favoriteButton: {
       ref: favoriteButtonRef,
@@ -778,4 +503,248 @@ export function GeneratedImageLightbox({
       </div>
     </Modal>
   );
+}
+
+function GeneratedImageWorkflowMenuItems({
+  image,
+  step,
+  workflowsOnly,
+  workflowId,
+}: {
+  image: NormalizedGeneratedImage;
+  step: NormalizedGeneratedImageStep;
+  workflowId: string;
+  workflowsOnly?: boolean;
+}) {
+  const { updateImages } = useUpdateImageStepMetadata();
+  const { data: workflowDefinitions = [] } = trpc.generation.getWorkflowDefinitions.useQuery();
+  const { data: availableEngineConfigurations } = useVideoGenerationWorkflows();
+
+  const { copied, copy } = useClipboard();
+
+  const isVideo = step.$type === 'videoGen';
+  const isFlux = !isVideo && getIsFlux(step.params.baseModel);
+  const isSD3 = !isVideo && getIsSD3(step.params.baseModel);
+  const canImg2Img = !isFlux && !isSD3 && !isVideo;
+  const img2imgWorkflows = !isVideo
+    ? workflowDefinitions.filter(
+        (x) => x.type === 'img2img' && (!canImg2Img ? x.selectable === false : true)
+      )
+    : [];
+  const img2vidConfigs = !isVideo
+    ? availableEngineConfigurations.filter((x) => !x.disabled && x.subType === 'img2vid')
+    : [];
+
+  const notSelectableMap: Partial<Record<WorkflowDefinitionKey, VoidFunction>> = {
+    'img2img-upscale': handleUpscale,
+    'img2img-background-removal': handleRemoveBackground,
+    'img2img-upscale-enhancement-realism': handleUpscaleEnhance,
+  };
+
+  const canRemix = !!step.params.workflow && !(step.params.workflow in notSelectableMap);
+
+  async function handleGenerate(
+    { seed, ...rest }: Partial<TextToImageParams> = {},
+    {
+      type,
+      workflow: workflow,
+      sourceImage,
+      engine,
+    }: { type: MediaType; workflow?: string; sourceImage?: string; engine?: string } = {
+      type: image.type,
+      workflow: step.params.workflow,
+    }
+  ) {
+    handleCloseImageLightbox();
+    generationStore.setData({
+      resources: step.resources,
+      params: { ...(step.params as any), seed, ...rest },
+      remixOfId: step.metadata?.remixOfId,
+      type,
+      workflow: workflow ?? step.params.workflow,
+      sourceImage: sourceImage ?? (step.params as any).sourceImage,
+      engine: engine ?? (step.params as any).engine,
+    });
+  }
+
+  async function handleSelectWorkflow(workflow: string) {
+    handleGenerate({ workflow, sourceImage: image.url as any }); // TODO - see if there is a good way to handle this type mismatch. We're converting a string to a sourceImage object after we pass the data to the generation store
+  }
+
+  async function handleRemoveBackground() {
+    dialogStore.trigger({
+      component: BackgroundRemovalModal,
+      props: {
+        workflow: 'img2img-background-removal',
+        sourceImage: await getSourceImageFromUrl({ url: image.url }),
+      },
+    });
+  }
+
+  async function handleUpscaleEnhance() {
+    dialogStore.trigger({
+      component: UpscaleEnhancementModal,
+      props: {
+        workflow: 'img2img-upscale-enhancement-realism',
+        sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
+      },
+    });
+  }
+
+  async function handleUpscale() {
+    if (step.$type !== 'videoGen') {
+      dialogStore.trigger({
+        component: UpscaleImageModal,
+        props: {
+          resources: step.resources,
+          params: {
+            ...step.params,
+            sourceImage: await getSourceImageFromUrl({ url: image.url, upscale: true }),
+            seed: image.seed,
+            workflow: 'img2img-upscale',
+          },
+        },
+      });
+    }
+  }
+
+  function handleDeleteImage() {
+    openConfirmModal({
+      title: 'Delete image',
+      children:
+        'Are you sure that you want to delete this image? This is a destructive action and cannot be undone.',
+      labels: { cancel: 'Cancel', confirm: 'Yes, delete it' },
+      confirmProps: { color: 'red' },
+      onConfirm: () => {
+        updateImages([
+          {
+            workflowId,
+            stepName: step.name,
+            images: {
+              [image.id]: {
+                hidden: true,
+              },
+            },
+          },
+        ]);
+        handleCloseImageLightbox();
+      },
+      zIndex: constants.imageGeneration.drawerZIndex + 2,
+      centered: true,
+    });
+  }
+
+  return (
+    <>
+      {canRemix && !workflowsOnly && (
+        <>
+          <Menu.Item
+            onClick={() => handleGenerate()}
+            icon={<IconArrowsShuffle size={14} stroke={1.5} />}
+          >
+            Remix
+          </Menu.Item>
+          <Menu.Item
+            onClick={() => handleGenerate({ seed: image.seed })}
+            icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+          >
+            Remix (with seed)
+          </Menu.Item>
+        </>
+      )}
+      {!workflowsOnly && (
+        <Menu.Item
+          color="red"
+          onClick={handleDeleteImage}
+          icon={<IconTrash size={14} stroke={1.5} />}
+        >
+          Delete
+        </Menu.Item>
+      )}
+      {!workflowsOnly && <Menu.Divider />}
+      {img2imgWorkflows.map((workflow) => {
+        const handleMappedClick = notSelectableMap[workflow.key];
+        const handleDefault = () => handleSelectWorkflow(workflow.key);
+        const onClick = handleMappedClick ?? handleDefault;
+        return (
+          <WithMemberMenuItem key={workflow.key} onClick={onClick} memberOnly={workflow.memberOnly}>
+            {workflow.name}
+          </WithMemberMenuItem>
+        );
+      })}
+      {!!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
+      {!!img2vidConfigs.length && (
+        <>
+          <Menu.Item
+            onClick={() =>
+              handleGenerate(
+                {},
+                {
+                  type: 'video',
+                  sourceImage: image.url,
+                  engine: useGenerationFormStore.getState().engine,
+                }
+              )
+            }
+          >
+            Image To Video
+          </Menu.Item>
+        </>
+      )}
+      {!workflowsOnly && (
+        <>
+          <Menu.Divider />
+          <Menu.Label>System</Menu.Label>
+          <Menu.Item
+            icon={
+              copied ? (
+                <IconCheck size={14} stroke={1.5} />
+              ) : (
+                <IconInfoHexagon size={14} stroke={1.5} />
+              )
+            }
+            onClick={() => copy(image.jobId)}
+          >
+            Copy Job ID
+          </Menu.Item>
+          <Menu.Item
+            icon={<IconExternalLink size={14} stroke={1.5} />}
+            onClick={() => handleAuxClick(image.url)}
+          >
+            Open in New Tab
+          </Menu.Item>
+        </>
+      )}
+    </>
+  );
+}
+
+function WithMemberMenuItem({
+  children,
+  memberOnly,
+  ...props
+}: MenuItemProps & { memberOnly?: boolean; onClick?: VoidFunction }) {
+  const currentUser = useCurrentUser();
+  return memberOnly && currentUser?.isPaidMember ? (
+    <Menu.Item {...props} className="relative pr-10">
+      <span>{children}</span>
+      <div className="absolute inset-y-0 right-1 flex items-center">
+        <Tooltip label="Member only">
+          <ThemeIcon color="blue" size="md">
+            <IconDiamond stroke={1.5} />
+          </ThemeIcon>
+        </Tooltip>
+      </div>
+    </Menu.Item>
+  ) : (
+    <Menu.Item {...props}>{children}</Menu.Item>
+  );
+}
+
+function handleCloseImageLightbox() {
+  dialogStore.closeById('generated-image');
+}
+
+function handleAuxClick(url: string) {
+  window.open(url, '_blank');
 }
