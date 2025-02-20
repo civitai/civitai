@@ -307,7 +307,7 @@ export async function extractBuzz(userId: number) {
   if (banked.total <= 0) return;
 
   // Calculate extraction fee
-  const fee = await getExtractionFee(banked.total);
+  const fee = getExtractionFee(banked.total);
 
   // Charge fee and extract banked amount
   let chargedFee = false;

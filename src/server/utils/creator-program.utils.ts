@@ -22,7 +22,7 @@ export function getCurrentValue(
   return (toBank / pool.value) * pool.value;
 }
 
-export async function getExtractionFee(toExtract: number): Promise<number> {
+export function getExtractionFee(toExtract: number): number {
   let fee = 0;
   let remaining = toExtract;
 

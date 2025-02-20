@@ -18,6 +18,7 @@ import {
   IconHistory,
   IconInfoCircle,
   IconLock,
+  IconLogout,
   IconPigMoney,
   IconUxCircle,
 } from '@tabler/icons-react';
@@ -47,7 +48,11 @@ import { useUserPaymentConfiguration } from '~/components/UserPaymentConfigurati
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
-import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
+import {
+  getCurrentValue,
+  getExtractionFee,
+  getForecastedValue,
+} from '~/server/utils/creator-program.utils';
 import {
   CAP_DEFINITIONS,
   MIN_WITHDRAWAL_AMOUNT,
@@ -213,8 +218,9 @@ export const CreatorsProgramV2 = () => {
         <div className="flex gap-4">
           <CompensationPoolCard />
           <EstimatedEarningsCard />
-          {phase === 'bank' && <BankBuzzCard />}
-          {<WithdrawCashCard />}
+          {/* {phase === 'bank' && <BankBuzzCard />} */}
+          {phase === 'bank' && <ExtractBuzzCard />}
+          {/* {<WithdrawCashCard />} */}
         </div>
       )}
     </div>
@@ -1078,5 +1084,115 @@ const WithdrawalHistoryModal = () => {
         )}
       </div>
     </Modal>
+  );
+};
+
+const ExtractBuzzCard = () => {
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
+  const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
+  const { extractBuzz, extractingBuzz } = useCreatorProgramMutate();
+
+  const isLoading = isLoadingBanked || isLoadingCompensationPool;
+  const extractionFee = getExtractionFee(banked?.total ?? 0);
+
+  const [_, end] = compensationPool?.phases.extraction ?? [new Date(), new Date()];
+  const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]');
+
+  const handleExtractBuzz = async () => {
+    try {
+      await extractBuzz();
+      showSuccessNotification({
+        title: 'Success!',
+        message: 'You have successfully extracted your Buzz.',
+      });
+    } catch (error) {
+      // no-op. The mutation should handle it.
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className={clsx(cardProps.className, 'basis-1/4')}>
+        <Loader className="m-auto" />
+      </div>
+    );
+  }
+
+  return (
+    <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
+      <div className="flex h-full flex-col gap-2">
+        <h3 className="text-xl font-bold">Extract Buzz</h3>
+        <p className="text-sm ">
+          Not happy with your earnings? <br /> Extract Buzz to save it for next time!
+        </p>
+
+        <div className="mt-4 flex flex-col gap-2">
+          <Tooltip label="Extract Buzz" position="top">
+            <Button
+              variant="light"
+              color="yellow.7"
+              styles={{ label: { width: '100%' } }}
+              disabled={(banked?.total ?? 0) === 0}
+              onClick={() => {
+                dialogStore.trigger({
+                  component: ConfirmDialog,
+                  props: {
+                    title: 'Extract your Buzz',
+                    message: (
+                      <div className="flex flex-col gap-2">
+                        <p>
+                          You are about to extract{' '}
+                          <CurrencyBadge unitAmount={banked?.total ?? 0} currency={Currency.BUZZ} />{' '}
+                          from the pool. This action is not reversible.{' '}
+                        </p>
+                        <p> Are you sure?</p>
+                      </div>
+                    ),
+                    labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+                    onConfirm: handleExtractBuzz,
+                  },
+                });
+              }}
+            >
+              <div className="flex w-full items-center  justify-between gap-2">
+                <div className="flex gap-2">
+                  <CurrencyIcon currency={Currency.BUZZ} size={18} />
+                  <p className="text-sm">{numberWithCommas(banked?.total ?? 0)}</p>
+                </div>
+
+                <IconLogout />
+              </div>
+            </Button>
+          </Tooltip>
+          <div className="flex items-center gap-2">
+            <p>
+              <span className="font-bold">Extraction Fee:</span>{' '}
+              <CurrencyIcon currency={Currency.BUZZ} size={14} className="inline" />
+              {numberWithCommas(extractionFee)}
+            </p>
+            <ActionIcon
+              onClick={() => {
+                console.log('TODO');
+              }}
+            >
+              <IconInfoCircle size={14} />
+            </ActionIcon>
+          </div>
+        </div>
+
+        <Alert color="yellow" className="mt-auto px-2">
+          <div className="flex items-center gap-2">
+            <IconCalendar size={24} className="shrink-0" />
+            <div className="flex flex-1 flex-col">
+              <p className="font-bold">Extraction Phase Ends</p>
+              <p className="text-nowrap text-xs">{endDate}</p>
+            </div>
+            <ActionIcon onClick={openPhasesModal}>
+              <IconInfoCircle size={18} />
+            </ActionIcon>
+          </div>
+        </Alert>
+      </div>
+    </div>
   );
 };
