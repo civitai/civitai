@@ -421,8 +421,8 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
       INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
       SELECT
         c."modelId",
-          tf.timeframe,
-          COUNT(DISTINCT c."addedById") AS "collectedCount"
+        tf.timeframe,
+        COUNT(DISTINCT c."addedById") AS "collectedCount"
       FROM "CollectionItem" c
       JOIN Timeframes tf ON 
         (tf.timeframe = 'AllTime')
