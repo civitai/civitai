@@ -415,16 +415,24 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
     log('getCollectionTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
       -- update model collect metrics
+      WITH Timeframes AS (
+        SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+      )
       INSERT INTO "ModelMetric" ("modelId", timeframe, "collectedCount")
       SELECT
-        "modelId",
-        timeframe,
-        ${snippets.timeframeCount('c."createdAt"', 'c."addedById"')} "collectedCount"
+        c."modelId",
+          tf.timeframe,
+          COUNT(DISTINCT c."addedById") AS "collectedCount"
       FROM "CollectionItem" c
-      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+      JOIN Timeframes tf ON 
+        (tf.timeframe = 'AllTime')
+        OR (tf.timeframe = 'Year' AND c."createdAt" > NOW() - INTERVAL '365 days')
+        OR (tf.timeframe = 'Month' AND c."createdAt" > NOW() - INTERVAL '30 days')
+        OR (tf.timeframe = 'Week' AND c."createdAt" > NOW() - INTERVAL '7 days')
+        OR (tf.timeframe = 'Day' AND c."createdAt" > NOW() - INTERVAL '1 day')
       JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
-      WHERE c."modelId" IN (${ids})
-      GROUP BY "modelId", timeframe
+      WHERE c."modelId" = ANY (ARRAY[${ids}])
+      GROUP BY c."modelId", tf.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
         SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
     `;
