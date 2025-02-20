@@ -187,6 +187,7 @@ const openWithdrawalFreeModal = () => {
   });
 };
 
+// TODO: Can probably separate this file into multiple smaller ones. It's getting a bit long.
 export const CreatorsProgramV2 = () => {
   const currentUser = useCurrentUser();
   const { phase, isLoading } = useCreatorProgramPhase();
