@@ -30,6 +30,7 @@ import {
   PEAK_EARNING_WINDOW,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 
 type UserCapCacheItem = {
   id: number;
@@ -147,7 +148,7 @@ export async function getCreatorRequirements(userId: number) {
       JOIN "Product" p ON p.id = cs."productId"
       WHERE status IN ('incomplete', 'active') AND cs."userId" = u.id
     ) as membership
-    FROM "User"
+    FROM "User" u
     WHERE id = ${userId};
   `;
 
@@ -161,6 +162,16 @@ export async function getCreatorRequirements(userId: number) {
 }
 
 export async function joinCreatorsProgram(userId: number) {
+  const requirements = await getCreatorRequirements(userId);
+
+  if (requirements.membership === false) {
+    throw throwBadRequestError('User is not a civitai member');
+  }
+
+  if (requirements.score.current < requirements.score.min) {
+    throw throwBadRequestError('User does not meet the minimum creator score');
+  }
+
   await dbWrite.$executeRaw`
     UPDATE "User" SET onboarding = onboarding | ${OnboardingSteps.CreatorProgram}
     WHERE id = ${userId};
@@ -307,7 +318,7 @@ export async function extractBuzz(userId: number) {
   if (banked.total <= 0) return;
 
   // Calculate extraction fee
-  const fee = await getExtractionFee(banked.total);
+  const fee = getExtractionFee(banked.total);
 
   // Charge fee and extract banked amount
   // Give full amount back to user, to then take fee...
@@ -375,8 +386,8 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
     const balances = await clickhouse.$query<{ userId: number; pending: number; ready: number }>`
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cash:pending', if(type = 'withdrawal', -1, 1) * amount, 0) as pending,
-        SUM(if(toAccountType = 'cash:settled', if(type = 'withdrawal', -1, 1) * amount, 0) as ready
+        SUM(if(toAccountType = 'cash:pending', if(type = 'withdrawal', -1, 1) * amount, 0)) as pending,
+        SUM(if(toAccountType = 'cash:settled', if(type = 'withdrawal', -1, 1) * amount, 0)) as ready
       FROM buzzTransactions
       WHERE toAccountType IN ('cash:pending', 'cash:settled')
       AND (toAccountId IN (${ids}) OR fromAccountId IN (${ids}))
@@ -426,11 +437,13 @@ export async function getWithdrawalHistory(userId: number) {
     where: { userId },
     orderBy: { createdAt: 'desc' },
     select: {
+      id: true,
       createdAt: true,
       method: true,
       amount: true,
       status: true,
       note: true,
+      fee: true,
     },
   });
 

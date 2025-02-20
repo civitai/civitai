@@ -113,7 +113,9 @@ export const useGenerationStore = create<GenerationState>()(
         });
       },
       setData: async ({ type, remixOf, workflow, sourceImage, engine, ...data }) => {
-        useGenerationFormStore.setState({ type, workflow, sourceImage });
+        // TODO.Briant - cleanup at a later point in time
+        useGenerationFormStore.setState({ type, workflow });
+        if (sourceImage) generationFormStore.setsourceImage(sourceImage);
         if (engine) useGenerationFormStore.setState({ engine });
         const params = await transformParams(data.params);
         set((state) => {
@@ -209,7 +211,7 @@ export const useGenerationFormStore = create<{
   sourceImage?: SourceImageProps | null;
   width?: number;
   height?: number;
-}>()(persist((set) => ({ type: 'image' }), { name: 'generation-form', version: 1 }));
+}>()(persist((set) => ({ type: 'image' }), { name: 'generation-form', version: 1.2 }));
 
 export const generationFormStore = {
   setType: (type: MediaType) => useGenerationFormStore.setState({ type }),
@@ -227,8 +229,14 @@ export const generationFormStore = {
     useGenerationFormStore.setState({ workflow: updatedWorkflow, engine });
   },
   setEngine: (engine: string) => useGenerationFormStore.setState({ engine }),
-  setsourceImage: (sourceImage?: SourceImageProps | null) =>
-    useGenerationFormStore.setState({ sourceImage }),
+  setsourceImage: async (sourceImage?: SourceImageProps | string | null) => {
+    useGenerationFormStore.setState({
+      sourceImage:
+        typeof sourceImage === 'string'
+          ? await getSourceImageFromUrl({ url: sourceImage })
+          : sourceImage,
+    });
+  },
   reset: () => useGenerationFormStore.setState((state) => ({ type: state.type }), true),
 };
 
