@@ -419,8 +419,18 @@ export function GeneratedImage({
                         </Menu.Item>
                       ))} */}
 
-                  <Menu.Item onClick={() => handleRemoveBackground()}>Background Removal</Menu.Item>
-                  <Menu.Item onClick={() => handleUpscaleEnhance()}>Upscale Enhance</Menu.Item>
+                  {!isVideo &&
+                    img2imgWorkflows?.some((x) => x.key === 'img2img-background-removal') && (
+                      <Menu.Item onClick={() => handleRemoveBackground()}>
+                        Background Removal
+                      </Menu.Item>
+                    )}
+                  {!isVideo &&
+                    img2imgWorkflows?.some(
+                      (x) => x.key === 'img2img-upscale-enhancement-realism'
+                    ) && (
+                      <Menu.Item onClick={() => handleUpscaleEnhance()}>Upscale Enhance</Menu.Item>
+                    )}
                   {canImg2Img &&
                     img2imgWorkflows
                       ?.filter((x) => x.key !== 'img2img-upscale')
@@ -517,6 +527,20 @@ export function GeneratedImage({
                             {workflow.name}
                           </Menu.Item>
                         ))}
+                    {!isVideo &&
+                      img2imgWorkflows?.some((x) => x.key === 'img2img-background-removal') && (
+                        <Menu.Item onClick={() => handleRemoveBackground()}>
+                          Background Removal
+                        </Menu.Item>
+                      )}
+                    {!isVideo &&
+                      img2imgWorkflows?.some(
+                        (x) => x.key === 'img2img-upscale-enhancement-realism'
+                      ) && (
+                        <Menu.Item onClick={() => handleUpscaleEnhance()}>
+                          Upscale Enhance
+                        </Menu.Item>
+                      )}
                     {canImg2Img &&
                       img2imgWorkflows
                         ?.filter((x) => x.key !== 'img2img-upscale')
