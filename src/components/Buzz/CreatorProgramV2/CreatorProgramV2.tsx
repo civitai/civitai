@@ -414,7 +414,7 @@ const CompensationPoolCard = () => {
                 type: 'info',
                 children: ({ handleClose }) => (
                   <div className="flex flex-col justify-center gap-4">
-                    <p className="text-center">
+                    <p>
                       The Creator Program Compensation Pool is 10% of the revenue Civitai brought in
                       last month. That means the pool grows as we do! The more active creators there
                       are attracting people that spend Buzz, the bigger the pool will be the next
