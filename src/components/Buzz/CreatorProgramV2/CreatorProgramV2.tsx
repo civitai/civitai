@@ -191,7 +191,7 @@ export const CreatorsProgramV2 = () => {
   const currentUser = useCurrentUser();
   const { phase, isLoading } = useCreatorProgramPhase();
 
-  if (!currentUser) {
+  if (!currentUser || isLoading) {
     return null;
   }
 
@@ -218,9 +218,9 @@ export const CreatorsProgramV2 = () => {
         <div className="flex gap-4">
           <CompensationPoolCard />
           <EstimatedEarningsCard />
-          {/* {phase === 'bank' && <BankBuzzCard />} */}
-          {phase === 'bank' && <ExtractBuzzCard />}
-          {/* {<WithdrawCashCard />} */}
+          {phase === 'bank' && <BankBuzzCard />}
+          {phase === 'extraction' && <ExtractBuzzCard />}
+          {<WithdrawCashCard />}
         </div>
       )}
     </div>
@@ -859,10 +859,9 @@ const WithdrawCashCard = () => {
     );
   }
 
-  // TODO: Uncomment :shrug:
-  // if (!userCash) {
-  //   return null; // Failed to load.
-  // }
+  if (!userCash) {
+    return null; // Failed to load.
+  }
 
   const canWithdraw =
     (userCash?.ready ?? 0) > MIN_WITHDRAWAL_AMOUNT || (userCash?.withdrawn ?? 0) > 0;
