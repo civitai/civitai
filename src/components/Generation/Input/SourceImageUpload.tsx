@@ -194,7 +194,7 @@ function UpscalePicker({
         return {
           value,
           label: multiplier,
-          disabled: value > maxUpscaleSize,
+          disabled: maxUpscaleSize < value,
         };
       }),
     [min]
@@ -210,7 +210,9 @@ function UpscalePicker({
 
   return (
     <div className="flex flex-col gap-3">
-      {maxUpscaleSize <= min && <Alert>This image cannot be upscaled any further.</Alert>}
+      {(value.width === value.upscaleWidth || value.height === value.upscaleHeight) && (
+        <Alert color="yellow">This image cannot be upscaled any further.</Alert>
+      )}
       <Input.Wrapper label="Upscale Multiplier">
         <RadioGroup value={_value} onChange={handleChange} className="flex gap-2">
           {multiplierOptions.map(({ label, value, disabled }) => (

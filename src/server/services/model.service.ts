@@ -484,7 +484,7 @@ export const getModelsRaw = async ({
     }
 
     AND.push(Prisma.sql`m."availability" = ${availability}::"Availability"`);
-  } else {
+  } else if (!isModerator) {
     // Makes it so that our feeds never contain private stuff by default.
     AND.push(Prisma.sql`m."availability" != 'Private'::"Availability"`);
   }
@@ -2924,6 +2924,7 @@ export const publishPrivateModel = async ({
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
+        publishedAt: publishVersions ? now : null,
       },
     }),
   ]);

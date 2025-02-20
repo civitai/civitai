@@ -1,5 +1,14 @@
 import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
-import { ActionIcon, Checkbox, createStyles, Menu, Modal } from '@mantine/core';
+import {
+  ActionIcon,
+  Center,
+  Checkbox,
+  createStyles,
+  Menu,
+  Modal,
+  Text,
+  Stack,
+} from '@mantine/core';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { useClipboard, useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -78,6 +87,8 @@ export function GeneratedImage({
     imageId: image.id,
   });
 
+  const [nsfwLevelError, setNsfwLevelError] = useState(false);
+
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
 
@@ -94,7 +105,7 @@ export function GeneratedImage({
     state.dialogs.some((x) => x.id === 'generated-image')
   );
   const handleImageClick = () => {
-    if (!image || !available || isLightbox) return;
+    if (!image || !available || isLightbox || nsfwLevelError) return;
 
     dialogStore.trigger({
       id: 'generated-image',
@@ -285,6 +296,19 @@ export function GeneratedImage({
               if (e.button === 1) return handleAuxClick();
             }}
           >
+            {nsfwLevelError && (
+              <Center px="md">
+                <Stack spacing="xs">
+                  <Text color="red" weight="bold" align="center" size="sm">
+                    Blocked for Adult Content
+                  </Text>
+                  <Text align="center" size="sm">
+                    Private Generation is limited to PG, PG-13 only. Please adjust your prompt and
+                    try again.
+                  </Text>
+                </Stack>
+              </Center>
+            )}
             <EdgeMedia2
               src={image.url}
               type={image.type}
@@ -292,13 +316,16 @@ export function GeneratedImage({
               className="max-h-full w-auto max-w-full"
               disableWebm
               disablePoster
-              // onDragStart={(e) => {
-              //   if (image.url) e.dataTransfer.setData('text/uri-list', image.url);
-              // }}
+              onError={(e) => {
+                // TODO: We might need a better solution there.
+                if (image.url.includes('nsfwLevel')) {
+                  setNsfwLevelError(true);
+                }
+              }}
             />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
-          {!isLightbox && (
+          {!isLightbox && !nsfwLevelError && (
             <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
                 className={classes.checkbox}
@@ -413,95 +440,97 @@ export function GeneratedImage({
             </Menu.Dropdown>
           </Menu>
 
-          <div
-            className={clsx(
-              classes.actionsWrapper,
-              'absolute bottom-1 left-1 flex flex-wrap items-center gap-1 p-1'
-            )}
-          >
-            <ActionIcon
-              size="md"
-              className={buttonState.favorite ? classes.favoriteButton : undefined}
-              variant={buttonState.favorite ? 'light' : undefined}
-              color={buttonState.favorite ? 'red' : undefined}
-              onClick={() => handleToggleFavorite(!buttonState.favorite)}
+          {!nsfwLevelError && (
+            <div
+              className={clsx(
+                classes.actionsWrapper,
+                'absolute bottom-1 left-1 flex flex-wrap items-center gap-1 p-1'
+              )}
             >
-              <IconHeart size={16} />
-            </ActionIcon>
-            {!!img2imgWorkflows?.length && (
-              <Menu
-                zIndex={400}
-                trigger="hover"
-                openDelay={100}
-                closeDelay={100}
-                transition="fade"
-                transitionDuration={150}
-                withinPortal
-                position="top"
+              <ActionIcon
+                size="md"
+                className={buttonState.favorite ? classes.favoriteButton : undefined}
+                variant={buttonState.favorite ? 'light' : undefined}
+                color={buttonState.favorite ? 'red' : undefined}
+                onClick={() => handleToggleFavorite(!buttonState.favorite)}
               >
-                <Menu.Target>
-                  <ActionIcon size="md">
-                    <IconWand size={16} />
-                  </ActionIcon>
-                </Menu.Target>
-                <Menu.Dropdown className={classes.improveMenu}>
-                  {!isVideo &&
-                    img2imgWorkflows
-                      ?.filter((x) => x.key === 'img2img-upscale')
-                      .map((workflow) => (
-                        <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
-                          {workflow.name}
-                        </Menu.Item>
-                      ))}
-                  {canImg2Img &&
-                    img2imgWorkflows
-                      ?.filter((x) => x.key !== 'img2img-upscale')
-                      .map((workflow) => (
-                        <Menu.Item
-                          key={workflow.key}
-                          onClick={() => handleSelectWorkflow(workflow.key)}
-                        >
-                          {workflow.name}
-                        </Menu.Item>
-                      ))}
-                  {!isVideo && !!img2vidConfigs?.length && (
-                    <Menu.Item
-                      onClick={() =>
-                        handleGenerate(
-                          {},
-                          {
-                            type: 'video',
-                            sourceImage: image.url,
-                            engine: useGenerationFormStore.getState().engine,
-                          }
-                        )
-                      }
-                    >
-                      Image To Video
-                    </Menu.Item>
-                  )}
-                </Menu.Dropdown>
-              </Menu>
-            )}
+                <IconHeart size={16} />
+              </ActionIcon>
+              {!!img2imgWorkflows?.length && (
+                <Menu
+                  zIndex={400}
+                  trigger="hover"
+                  openDelay={100}
+                  closeDelay={100}
+                  transition="fade"
+                  transitionDuration={150}
+                  withinPortal
+                  position="top"
+                >
+                  <Menu.Target>
+                    <ActionIcon size="md">
+                      <IconWand size={16} />
+                    </ActionIcon>
+                  </Menu.Target>
+                  <Menu.Dropdown className={classes.improveMenu}>
+                    {!isVideo &&
+                      img2imgWorkflows
+                        ?.filter((x) => x.key === 'img2img-upscale')
+                        .map((workflow) => (
+                          <Menu.Item key={workflow.key} onClick={() => handleUpscale(workflow.key)}>
+                            {workflow.name}
+                          </Menu.Item>
+                        ))}
+                    {canImg2Img &&
+                      img2imgWorkflows
+                        ?.filter((x) => x.key !== 'img2img-upscale')
+                        .map((workflow) => (
+                          <Menu.Item
+                            key={workflow.key}
+                            onClick={() => handleSelectWorkflow(workflow.key)}
+                          >
+                            {workflow.name}
+                          </Menu.Item>
+                        ))}
+                    {!isVideo && !!img2vidConfigs?.length && (
+                      <Menu.Item
+                        onClick={() =>
+                          handleGenerate(
+                            {},
+                            {
+                              type: 'video',
+                              sourceImage: image.url,
+                              engine: useGenerationFormStore.getState().engine,
+                            }
+                          )
+                        }
+                      >
+                        Image To Video
+                      </Menu.Item>
+                    )}
+                  </Menu.Dropdown>
+                </Menu>
+              )}
 
-            <ActionIcon
-              size="md"
-              variant={buttonState.feedback === 'liked' ? 'light' : undefined}
-              color={buttonState.feedback === 'liked' ? 'green' : undefined}
-              onClick={() => handleToggleFeedback('liked')}
-            >
-              <IconThumbUp size={16} />
-            </ActionIcon>
+              <ActionIcon
+                size="md"
+                variant={buttonState.feedback === 'liked' ? 'light' : undefined}
+                color={buttonState.feedback === 'liked' ? 'green' : undefined}
+                onClick={() => handleToggleFeedback('liked')}
+              >
+                <IconThumbUp size={16} />
+              </ActionIcon>
 
-            <ActionIcon
-              size="md"
-              variant={buttonState.feedback === 'disliked' ? 'light' : undefined}
-              color={buttonState.feedback === 'disliked' ? 'red' : undefined}
-              onClick={() => handleToggleFeedback('disliked')}
-            >
-              <IconThumbDown size={16} />
-            </ActionIcon>
-          </div>
+              <ActionIcon
+                size="md"
+                variant={buttonState.feedback === 'disliked' ? 'light' : undefined}
+                color={buttonState.feedback === 'disliked' ? 'red' : undefined}
+                onClick={() => handleToggleFeedback('disliked')}
+              >
+                <IconThumbDown size={16} />
+              </ActionIcon>
+            </div>
+          )}
           {!isLightbox && (
             <div className="absolute bottom-2 right-2">
               <ImageMetaPopover
