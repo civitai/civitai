@@ -1,4 +1,15 @@
-import { ActionIcon, Alert, Anchor, Badge, Button, Divider, Loader, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  Alert,
+  Anchor,
+  Badge,
+  Button,
+  Divider,
+  Loader,
+  Modal,
+  Table,
+  Tooltip,
+} from '@mantine/core';
 import {
   IconCalendar,
   IconCircleCheck,
@@ -8,6 +19,7 @@ import {
   IconUxCircle,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { capitalize } from 'lodash-es';
 import React, { HTMLProps } from 'react';
 import {
   useBankedBuzz,
@@ -22,6 +34,7 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
@@ -29,6 +42,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
 import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
+import { CAP_DEFINITIONS } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -522,7 +536,9 @@ const EstimatedEarningsCard = () => {
                 {cap && (
                   <Anchor
                     onClick={() => {
-                      console.log('TODO');
+                      dialogStore.trigger({
+                        component: CreatorProgramCapsInfo,
+                      });
                     }}
                     className="pr-2 text-sm "
                   >
@@ -615,5 +631,107 @@ export const CreatorProgramPhase = () => {
     <Badge leftSection={<Icon size={18} />} color={color} className="capitalize">
       {phase === 'bank' ? 'Banking' : 'Extraction'} Phase
     </Badge>
+  );
+};
+
+const CreatorProgramCapsInfo = () => {
+  const { banked, isLoading } = useBankedBuzz();
+  const dialog = useDialogContext();
+
+  if (isLoading || !banked) {
+    return null;
+  }
+
+  console.log(banked);
+
+  const nextCap = CAP_DEFINITIONS.find(
+    (c) =>
+      !c.limit ||
+      (banked.cap.cap < banked.cap.peakEarning.earned * (c.percentOfPeakEarning ?? 1) &&
+        c.tier !== banked.cap.definition.tier)
+  );
+
+  const potentialEarnings =
+    nextCap && banked.cap.peakEarning.earned * (nextCap.percentOfPeakEarning ?? 1);
+
+  return (
+    <Modal {...dialog} size="lg" radius="md">
+      <div className="flex flex-col gap-4">
+        <p className="text-center font-bold">Creator Banking Caps</p>
+        <p>
+          Every creator in the program has a Cap to the amount of Buzz they can Bank in a month.
+          Caps align with membership tiers as outlined below.
+        </p>
+
+        <Table className="table-auto">
+          <thead>
+            <tr>
+              <th>Tier</th>
+              <th>Cap</th>
+            </tr>
+          </thead>
+          <tbody>
+            {CAP_DEFINITIONS.map((cap) => (
+              <tr key={cap.tier}>
+                <td className="font-bold">{capitalize(cap.tier)} Member</td>
+                <td>
+                  <p>
+                    {cap.percentOfPeakEarning
+                      ? `${cap.percentOfPeakEarning * 100}% of your Peak Earning Month with `
+                      : ''}
+
+                    {!cap.limit ? (
+                      'no cap'
+                    ) : cap.percentOfPeakEarning ? (
+                      <span>
+                        a <CurrencyIcon currency={Currency.BUZZ} className="inline" /> $
+                        {abbreviateNumber(cap.limit)} cap
+                      </span>
+                    ) : (
+                      <span>
+                        <CurrencyIcon currency={Currency.BUZZ} className="inline" /> $
+                        {abbreviateNumber(cap.limit)}
+                      </span>
+                    )}
+                  </p>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+
+        <div className="flex flex-col gap-1">
+          <p>
+            <span className="font-bold">Your Cap:</span> {capitalize(banked.cap.definition.tier)}{' '}
+            Member
+          </p>
+          <p>
+            <span className="font-bold">Peak Earning Month:</span>{' '}
+            <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+            {abbreviateNumber(banked.cap.peakEarning.earned)}{' '}
+            <span className="opacity-50">
+              ({formatDate(banked.cap.peakEarning.month, 'MMM YYYY')})
+            </span>
+          </p>
+          <p>
+            <span className="font-bold">Tier Cap:</span>{' '}
+            <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+            {banked.cap.definition.limit ? numberWithCommas(banked.cap.definition.limit) : 'No Cap'}
+          </p>
+        </div>
+
+        {nextCap && (
+          <p>
+            You could increase your cap to{' '}
+            <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+            {numberWithCommas(potentialEarnings)} by upgrading to a {capitalize(nextCap.tier)}{' '}
+            Membership.{' '}
+            <Anchor className="text-nowrap" href="/pricing" onClick={dialog.onClose}>
+              Upgrade Now
+            </Anchor>
+          </p>
+        )}
+      </div>
+    </Modal>
   );
 };
