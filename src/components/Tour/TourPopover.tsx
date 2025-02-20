@@ -2,7 +2,7 @@ import { Button, CloseButton, Group, Paper, Text } from '@mantine/core';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { clsx } from 'clsx';
 import React from 'react';
-import { TooltipRenderProps } from 'react-joyride';
+import type { TooltipRenderProps } from 'react-joyride';
 
 export function TourPopover(props: TooltipRenderProps) {
   const {

@@ -62,7 +62,7 @@ import {
 import { trpc } from '~/utils/trpc';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;

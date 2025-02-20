@@ -35,7 +35,7 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { useImageStore } from '~/store/image.store';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();

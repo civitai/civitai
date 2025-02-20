@@ -1,4 +1,4 @@
-import { Step } from 'react-joyride';
+import type { Step } from 'react-joyride';
 
 export interface StepData {
   onNext?: () => Promise<void>;

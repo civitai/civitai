@@ -2,7 +2,7 @@ import { useRouter } from 'next/router';
 import React, { MouseEventHandler, MouseEvent } from 'react';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
 
 export type HookProps = {
