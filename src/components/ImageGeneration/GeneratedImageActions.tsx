@@ -197,7 +197,7 @@ export function GeneratedImageActions({
   const hasSelected = !!selectedCount;
 
   return (
-    <div className="flex items-center justify-between gap-6">
+    <div className="flex items-center justify-end gap-6">
       <SortFilter type="generation" />
       {!selectedCount && <MarkerFiltersDropdown />}
       {hasSelected && (
