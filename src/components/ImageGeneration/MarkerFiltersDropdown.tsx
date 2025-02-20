@@ -1,6 +1,5 @@
 import {
   ButtonProps,
-  Chip,
   ChipProps,
   Divider,
   Indicator,
@@ -12,11 +11,11 @@ import {
 import { IconFilter } from '@tabler/icons-react';
 import { ReactNode, useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
-import { FiltersDropdown2 } from '~/components/Filters/FiltersDropdown2';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { GenerationFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { GenerationReactType } from '~/server/common/enums';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
+import { FilterChip } from '~/components/Filters/FilterChip';
 
 export function MarkerFiltersDropdown(props: Props) {
   const { filters, setFilters } = useFiltersContext((state) => ({
@@ -52,13 +51,6 @@ export function DumbMarkerFiltersDropdown({
   if (filters.marker) filterLength += 1;
   if (filters.tags) filterLength += filters.tags.length;
 
-  const chipProps: Partial<ChipProps> = {
-    size: 'sm',
-    radius: 'xl',
-    variant: 'filled',
-    tt: 'capitalize',
-  };
-
   return (
     <IsClient>
       <Popover
@@ -90,27 +82,24 @@ export function DumbMarkerFiltersDropdown({
                 <>
                   <Divider label="Generation Type" labelProps={{ weight: 'bold', size: 'sm' }} />
                   <div className="flex gap-2">
-                    <Chip
+                    <FilterChip
                       checked={!filters.tags?.length}
                       onChange={() => setFilters({ tags: [] })}
-                      {...chipProps}
                     >
                       All
-                    </Chip>
-                    <Chip
+                    </FilterChip>
+                    <FilterChip
                       checked={filters.tags?.includes(WORKFLOW_TAGS.IMAGE) ?? false}
                       onChange={() => setFilters({ tags: [WORKFLOW_TAGS.IMAGE] })}
-                      {...chipProps}
                     >
                       Images
-                    </Chip>
-                    <Chip
+                    </FilterChip>
+                    <FilterChip
                       checked={filters.tags?.includes(WORKFLOW_TAGS.VIDEO) ?? false}
                       onChange={() => setFilters({ tags: [WORKFLOW_TAGS.VIDEO] })}
-                      {...chipProps}
                     >
                       Videos
-                    </Chip>
+                    </FilterChip>
                   </div>
                 </>
               )}
@@ -118,18 +107,16 @@ export function DumbMarkerFiltersDropdown({
               <div className="flex gap-2">
                 {Object.values(GenerationReactType).map((marker) => {
                   return (
-                    <Chip
+                    <FilterChip
                       key={marker}
                       checked={marker === filters.marker}
                       onChange={(checked) => {
                         setMarker(checked ? marker : undefined);
                         setFilters({ marker: checked ? marker : undefined });
                       }}
-                      className=""
-                      {...chipProps}
                     >
                       <span>{marker}</span>
-                    </Chip>
+                    </FilterChip>
                   );
                 })}
               </div>
