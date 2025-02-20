@@ -1,21 +1,33 @@
-import { ActionIcon, Anchor, Button, Divider, Loader } from '@mantine/core';
-import { IconCircleCheck, IconCircleX, IconInfoCircle, IconUxCircle } from '@tabler/icons-react';
+import { ActionIcon, Alert, Anchor, Badge, Button, Divider, Loader, Tooltip } from '@mantine/core';
+import {
+  IconCalendar,
+  IconCircleCheck,
+  IconCircleX,
+  IconInfoCircle,
+  IconPigMoney,
+  IconUxCircle,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import React, { HTMLProps } from 'react';
 import {
   useCompensationPool,
   useCreatorProgramForecast,
   useCreatorProgramMutate,
+  useCreatorProgramPhase,
   useCreatorProgramRequirements,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
+import { getForecastedValue } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -27,8 +39,70 @@ const cardProps: HTMLProps<HTMLDivElement> = {
   className: 'light:bg-gray-0 align-center flex flex-col rounded-lg p-4 dark:bg-dark-5',
 };
 
+const openPhasesModal = () => {
+  dialogStore.trigger({
+    component: AlertDialog,
+    props: {
+      title: 'Creator Program Phases',
+      type: 'info',
+      size: 'lg',
+      children: ({ handleClose }) => (
+        <div className="flex flex-col gap-4">
+          <p>Every month the Creator Program has two phases.</p>
+
+          <div className="flex flex-col gap-2">
+            <h3 className="text-xl font-bold">Banking Phase</h3>
+            <p>
+              During this phase creators can Bank any Yellow Buzz they&rsquo;ve earned. This phase
+              continues until 3 days before the end of the month (UTC). As the month continues the
+              value of the Buzz you&rsquo;ve Banked will <span className="font-bold">decrease</span>{' '}
+              in value as the total Buzz in the Bank increases.
+            </p>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <h3 className="text-xl font-bold">Extraction Phase</h3>
+            <p>
+              During this phase creators Bank Buzz is disabled, instead creators can review the
+              value of the piece of the Compensation Pool and determine if they want to keep their
+              Buzz in the Bank or Extract it to get it back for a future month or to use on Civitai.
+              This phase starts the last 3 days of the month and ends 1 hour before the end of the
+              month (UTC). As this phase continues the value of the Buzz you&rsquo;ve Banked will{' '}
+              <span className="font-bold">increase</span> in value as creators Extract Buzz from the
+              Bank, making your share of the pool bigger!
+            </p>
+          </div>
+          <Button onClick={handleClose}>Close</Button>
+        </div>
+      ),
+    },
+  });
+};
+const openEarningEstimateModal = () => {
+  dialogStore.trigger({
+    component: AlertDialog,
+    props: {
+      title: 'How does this work?',
+      type: 'info',
+      children: ({ handleClose }) => (
+        <div className="flex flex-col gap-4">
+          <p>
+            This is a forecasted value determined by estimating that a portion of all active
+            creators will bank their earnings for the month. The dollar value you receive will vary
+            depending on the amount of Buzz Banked by all creators at the end of the month. If
+            you&rsquo;re unsatisfied with the money you&rsquo;ll receive, you can get it back during
+            the 3 day Extraction Phase at the end of the month.{' '}
+          </p>
+          <Button onClick={handleClose}>Close</Button>
+        </div>
+      ),
+    },
+  });
+};
+
 export const CreatorsProgramV2 = () => {
   const currentUser = useCurrentUser();
+  const { phase, isLoading } = useCreatorProgramPhase();
 
   if (!currentUser) {
     return null;
@@ -42,7 +116,10 @@ export const CreatorsProgramV2 = () => {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">
-        <h2 className="text-2xl font-bold">Get Paid</h2>
+        <div className="flex items-center gap-2">
+          <h2 className="text-2xl font-bold">Get Paid</h2>
+          <CreatorProgramPhase />
+        </div>
         <div className="flex gap-2">
           <p>Generating a lot of Buzz? Bank it to earn cash!</p>
           <Anchor href="/creators-program">Learn more</Anchor>
@@ -54,7 +131,7 @@ export const CreatorsProgramV2 = () => {
         <div className="flex gap-4">
           <CompensationPoolCard />
           <EstimatedEarningsCard />
-          <BankBuzzCard />
+          {phase === 'bank' && <BankBuzzCard />}
         </div>
       )}
     </div>
@@ -114,30 +191,7 @@ const JoinCreatorProgramCard = () => {
             </span>
             !
           </p>
-          <ActionIcon
-            onClick={() => {
-              dialogStore.trigger({
-                component: AlertDialog,
-                props: {
-                  title: 'How does this work?',
-                  type: 'info',
-                  children: ({ handleClose }) => (
-                    <div className="flex flex-col gap-4">
-                      <p className="text-justify">
-                        This is a forecasted value determined by estimating that a portion of all
-                        active creators will bank their earnings for the month. The dollar value you
-                        receive will vary depending on the amount of Buzz Banked by all creators at
-                        the end of the month. If you&rsquo;re unsatisfied with the money
-                        you&rsquo;ll receive, you can get it back during the 3 day Extraction Phase
-                        at the end of the month.{' '}
-                      </p>
-                      <Button onClick={handleClose}>Close</Button>
-                    </div>
-                  ),
-                },
-              });
-            }}
-          >
+          <ActionIcon onClick={openEarningEstimateModal}>
             <IconInfoCircle size={14} />
           </ActionIcon>
         </div>
@@ -249,8 +303,6 @@ const CompensationPoolCard = () => {
     );
   }
 
-  console.log(compensationPool);
-
   return (
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
       <div className="flex flex-col justify-center gap-12">
@@ -295,8 +347,29 @@ const CompensationPoolCard = () => {
 };
 
 const BankBuzzCard = () => {
-  const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast();
-  const isLoading = isLoadingForecast;
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
+  const buzzAccount = useBuzz(undefined, 'user');
+  const { bankBuzz, bankingBuzz } = useCreatorProgramMutate();
+
+  const [toBank, setToBank] = React.useState<number>(10000);
+  const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
+  const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading;
+  const [_, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
+  const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]');
+
+  const handleBankBuzz = async () => {
+    try {
+      await bankBuzz({ amount: toBank });
+      showSuccessNotification({
+        title: 'Success!',
+        message: 'You have successfully banked your Buzz.',
+      });
+
+      setToBank(10000);
+    } catch (error) {
+      // no-op. The mutation should handle it.
+    }
+  };
 
   if (isLoading) {
     return (
@@ -310,6 +383,93 @@ const BankBuzzCard = () => {
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
       <div className="flex flex-col gap-2">
         <h3 className="text-xl font-bold">Bank Buzz Card</h3>
+        <p className="text-sm">Claim your piece of the pool by banking your Buzz!</p>
+
+        <div className="flex">
+          <NumberInputWrapper
+            label="Buzz"
+            labelProps={{ className: 'hidden' }}
+            icon={<CurrencyIcon currency={Currency.BUZZ} size={18} />}
+            value={toBank ? toBank : undefined}
+            min={10000}
+            max={buzzAccount.balance}
+            onChange={(value) => {
+              setToBank(value ?? 10000);
+            }}
+            styles={{
+              input: {
+                borderTopRightRadius: 0,
+                borderBottomRightRadius: 0,
+                border: 0,
+              },
+            }}
+            step={1000}
+          />
+          <Tooltip label="Bank now!" position="top">
+            <ActionIcon
+              miw={40}
+              variant="filled"
+              color="lime.7"
+              className="rounded-l-none"
+              h="100%"
+              loading={bankingBuzz}
+              onClick={() => {
+                dialogStore.trigger({
+                  component: ConfirmDialog,
+                  props: {
+                    title: 'Bank your Buzz',
+                    message: (
+                      <div className="flex flex-col gap-2">
+                        <p>
+                          You are about to add{' '}
+                          <CurrencyBadge unitAmount={toBank} currency={Currency.BUZZ} /> to the
+                          bank.{' '}
+                        </p>
+                        <p> Are you sure?</p>
+                      </div>
+                    ),
+                    labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
+                    onConfirm: handleBankBuzz,
+                  },
+                });
+              }}
+            >
+              <IconPigMoney size={24} />
+            </ActionIcon>
+          </Tooltip>
+        </div>
+        <Button
+          compact
+          size="xs"
+          variant="outline"
+          disabled={toBank === buzzAccount.balance}
+          onClick={() => setToBank(buzzAccount.balance)}
+        >
+          Max
+        </Button>
+
+        <div className="flex items-center gap-2">
+          <p className="text-sm">
+            <span className="font-bold">Estimated Value:</span> $
+            {numberWithCommas(formatToLeastDecimals(forecasted ?? 0))}
+          </p>
+          <ActionIcon onClick={openEarningEstimateModal}>
+            <IconInfoCircle size={14} />
+          </ActionIcon>
+        </div>
+
+        <Alert color="yellow" className="mt-2 px-2">
+          <div className="flex items-center gap-2">
+            <IconCalendar size={24} className="shrink-0" />
+            <div className="flex flex-1 flex-col">
+              <p className="font-bold">Banking Phase Ends</p>
+              <p className="text-nowrap text-xs">{endDate}</p>
+            </div>
+            <ActionIcon onClick={openPhasesModal}>
+              <IconInfoCircle size={18} />
+            </ActionIcon>
+          </div>
+        </Alert>
       </div>
     </div>
   );
@@ -333,5 +493,22 @@ const EstimatedEarningsCard = () => {
         <h3 className="text-xl font-bold">Estimated Earnings</h3>
       </div>
     </div>
+  );
+};
+
+export const CreatorProgramPhase = () => {
+  const { phase, isLoading } = useCreatorProgramPhase();
+
+  if (isLoading || !phase) {
+    return null;
+  }
+
+  const Icon = phase === 'bank' ? IconPigMoney : IconUxCircle;
+  const color = phase === 'bank' ? 'green' : 'yellow';
+
+  return (
+    <Badge leftSection={<Icon size={18} />} color={color} className="capitalize">
+      {phase === 'bank' ? 'Banking' : 'Extraction'} Phase
+    </Badge>
   );
 };

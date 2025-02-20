@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { BankBuzzInput } from '~/server/schema/creator-program.schema';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
 export const useCreatorProgramRequirements = () => {
@@ -21,6 +22,25 @@ export const useCompensationPool = () => {
 
   return {
     compensationPool: data,
+    isLoading,
+  };
+};
+
+export const useCreatorProgramPhase = () => {
+  const { compensationPool, isLoading } = useCompensationPool();
+  const now = new Date();
+
+  const phase = compensationPool?.phases
+    ? (Object.keys(compensationPool?.phases).find((phase) => {
+        const [start, end] =
+          compensationPool?.phases[phase as keyof (typeof compensationPool)['phases']];
+
+        return start <= now && now <= end;
+      }) as keyof (typeof compensationPool)['phases'])
+    : undefined;
+
+  return {
+    phase,
     isLoading,
   };
 };
@@ -77,13 +97,24 @@ export const useCreatorProgramMutate = () => {
       handleTRPCError(error, 'Failed to join creators program.');
     },
   });
+  const bankBuzzMutation = trpc.creatorProgram.bankBuzz.useMutation({
+    onError(error) {
+      handleTRPCError(error, 'Failed to bank your buzz.');
+    },
+  });
 
   const handleJoinCreatorsProgram = async () => {
     return joinCreatorsProgramMutation.mutateAsync();
   };
 
+  const handleBankBuzz = async (input: BankBuzzInput) => {
+    return bankBuzzMutation.mutateAsync(input);
+  };
+
   return {
     joinCreatorsProgram: handleJoinCreatorsProgram,
     joiningCreatorsProgram: joinCreatorsProgramMutation.isLoading,
+    bankBuzz: handleBankBuzz,
+    bankingBuzz: bankBuzzMutation.isLoading,
   };
 };

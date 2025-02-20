@@ -4,6 +4,7 @@ import {
   MIN_WITHDRAWAL_AMOUNT,
 } from '~/shared/constants/creator-program.constants';
 
+export type BankBuzzInput = z.infer<typeof bankBuzzSchema>;
 export const bankBuzzSchema = z.object({
   amount: z.number().min(MIN_BANK_AMOUNT),
 });
