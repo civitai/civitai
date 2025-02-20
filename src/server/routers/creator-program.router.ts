@@ -2,6 +2,7 @@ import { bankBuzzSchema, withdrawCashSchema } from '~/server/schema/creator-prog
 import {
   bankBuzz,
   extractBuzz,
+  getBanked,
   getCash,
   getCompensationPool,
   getCreatorRequirements,
@@ -20,6 +21,7 @@ export const creatorProgramRouter = router({
   }),
   getCompensationPool: protectedProcedure.query(getCompensationPool),
   getCash: protectedProcedure.query(({ ctx }) => getCash(ctx.user.id)),
+  getBanked: protectedProcedure.query(({ ctx }) => getBanked(ctx.user.id)),
   getWithdrawalHistory: protectedProcedure.query(({ ctx }) => getWithdrawalHistory(ctx.user.id)),
 
   bankBuzz: protectedProcedure.input(bankBuzzSchema).mutation(({ ctx, input }) => {

@@ -26,6 +26,18 @@ export const useCompensationPool = () => {
   };
 };
 
+export const useBankedBuzz = () => {
+  const currentUser = useCurrentUser();
+  const { data, isLoading } = trpc.creatorProgram.getBanked.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
+
+  return {
+    banked: data,
+    isLoading,
+  };
+};
+
 export const useCreatorProgramPhase = () => {
   const { compensationPool, isLoading } = useCompensationPool();
   const now = new Date();

@@ -13,6 +13,15 @@ export function getForecastedValue(
   return (toBank / pool.size.forecasted) * pool.value;
 }
 
+export function getCurrentValue(
+  toBank: number,
+  pool: { size: { forecasted: number }; value: number }
+) {
+  if (pool.value === 0) return 0;
+
+  return (toBank / pool.value) * pool.value;
+}
+
 export async function getExtractionFee(toExtract: number): Promise<number> {
   let fee = 0;
   let remaining = toExtract;

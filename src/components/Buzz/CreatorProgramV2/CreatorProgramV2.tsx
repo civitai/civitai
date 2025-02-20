@@ -10,6 +10,7 @@ import {
 import clsx from 'clsx';
 import React, { HTMLProps } from 'react';
 import {
+  useBankedBuzz,
   useCompensationPool,
   useCreatorProgramForecast,
   useCreatorProgramMutate,
@@ -27,7 +28,7 @@ import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
-import { getForecastedValue } from '~/server/utils/creator-program.utils';
+import { getCurrentValue, getForecastedValue } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -148,7 +149,8 @@ const JoinCreatorProgramCard = () => {
   const isLoading = buzzAccount.balanceLoading || isLoadingRequirements || isLoadingForecast;
 
   const membership = requirements?.membership;
-  const hasEnoughCreatorScore = requirements?.score.current >= requirements?.score.min;
+  const hasEnoughCreatorScore =
+    (requirements?.score.current ?? 0) >= (requirements?.score.min ?? 0);
   const { refreshSession, refreshing } = useRefreshSession(false);
 
   const handleJoinCreatorsProgram = async () => {
@@ -381,7 +383,7 @@ const BankBuzzCard = () => {
 
   return (
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
-      <div className="flex flex-col gap-2">
+      <div className="flex h-full flex-col gap-2">
         <h3 className="text-xl font-bold">Bank Buzz Card</h3>
         <p className="text-sm">Claim your piece of the pool by banking your Buzz!</p>
 
@@ -448,7 +450,7 @@ const BankBuzzCard = () => {
           Max
         </Button>
 
-        <div className="flex items-center gap-2">
+        <div className="mb-2 flex items-center gap-2">
           <p className="text-sm">
             <span className="font-bold">Estimated Value:</span> $
             {numberWithCommas(formatToLeastDecimals(forecasted ?? 0))}
@@ -458,7 +460,7 @@ const BankBuzzCard = () => {
           </ActionIcon>
         </div>
 
-        <Alert color="yellow" className="mt-2 px-2">
+        <Alert color="yellow" className="mt-auto px-2">
           <div className="flex items-center gap-2">
             <IconCalendar size={24} className="shrink-0" />
             <div className="flex flex-1 flex-col">
@@ -476,10 +478,15 @@ const BankBuzzCard = () => {
 };
 
 const EstimatedEarningsCard = () => {
-  const { forecast, isLoading: isLoadingForecast } = useCreatorProgramForecast();
-  const isLoading = isLoadingForecast;
+  const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
+  const { phase } = useCreatorProgramPhase();
+  const { banked, isLoading: isLoadingBanked } = useBankedBuzz();
+  const isLoading = isLoadingCompensationPool || isLoadingBanked;
+  const cap = banked?.cap.cap;
+  const currentBanked = banked?.total ?? 0;
+  const isCapped = cap && cap <= currentBanked;
 
-  if (isLoading) {
+  if (isLoading || !compensationPool || !banked) {
     return (
       <div className={clsx(cardProps.className, 'basis-2/4')}>
         <Loader className="m-auto" />
@@ -491,6 +498,104 @@ const EstimatedEarningsCard = () => {
     <div className={clsx(cardProps.className, 'basis-2/4 gap-6')}>
       <div className="flex flex-col gap-2">
         <h3 className="text-xl font-bold">Estimated Earnings</h3>
+
+        <table className="table-auto">
+          <tbody>
+            <tr>
+              <td>Compensation Pool</td>
+              <td>&nbsp;</td>
+              <td className="border-l-4 py-1 pl-2">${numberWithCommas(compensationPool?.value)}</td>
+            </tr>
+            <tr>
+              <td>Total Banked Buzz</td>
+              <td>&nbsp;</td>
+              <td className="border-l-4 py-1 pl-2">
+                <div className="flex items-center gap-2">
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <span>{numberWithCommas(compensationPool?.size.current)}</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td>Your Banked Buzz</td>
+              <td className="text-right">
+                {cap && (
+                  <Anchor
+                    onClick={() => {
+                      console.log('TODO');
+                    }}
+                    className="pr-2 text-sm "
+                  >
+                    {abbreviateNumber(cap)} Cap
+                  </Anchor>
+                )}
+              </td>
+              <td className="border-l-4 py-1 pl-2">
+                <div className="flex items-center gap-2">
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <span>{numberWithCommas(banked.total)}</span>
+                  {isCapped && (
+                    <Badge color="yellow" size="sm">
+                      Capped
+                    </Badge>
+                  )}
+                </div>{' '}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+        <Divider my="sm" />
+
+        <div className="mb-4 flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <p className="text-lg">
+              <span className="font-bold">Current Value:</span> $
+              {compensationPool
+                ? numberWithCommas(getCurrentValue(banked.total ?? 0, compensationPool))
+                : 'N/A'}
+            </p>
+            <ActionIcon onClick={openEarningEstimateModal}>
+              <IconInfoCircle size={14} />
+            </ActionIcon>
+          </div>
+          {phase === 'bank' && (
+            <p className="text-xs">
+              This value will <span className="font-bold">decrease</span> as other creators Extract
+              Buzz. <span className="font-bold">Forecasted value: </span> $
+              {numberWithCommas(getForecastedValue(banked.total ?? 0, compensationPool))}
+            </p>
+          )}
+          {phase === 'extraction' && (
+            <p className="text-xs">
+              This value will <span className="font-bold">increase</span> as other creators Extract
+              Buzz.
+            </p>
+          )}
+        </div>
+
+        {phase === 'bank' && (
+          <div className="flex flex-col gap-0">
+            <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
+            <p className="text-sm">
+              You can Extract Buzz during the{' '}
+              <Anchor onClick={openPhasesModal}>Extraction Phase</Anchor>:
+            </p>
+            <p className="text-sm">
+              {formatDate(compensationPool.phases.extraction[0], 'MMM D, YYYY @ hA [UTC]')} &ndash;{' '}
+              {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]')}
+            </p>
+          </div>
+        )}
+        {phase === 'extraction' && (
+          <div className="flex flex-col gap-0">
+            <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
+            <p className="text-sm">
+              You can Extract Buzz your Buzz until{' '}
+              {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]')}
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );
