@@ -3,6 +3,7 @@ import { dbWrite } from '~/server/db/client';
 import { discord, DiscordRole } from '~/server/integrations/discord';
 import { env } from '~/env/server';
 import dayjs from 'dayjs';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const ENTHUSIAST_ROLE_CUTOFF = 7; // days
 const CREATOR_ROLE_CUTOFF = 14; // days
@@ -229,19 +230,21 @@ const getAccountsInRole = async (role: DiscordRole) => {
       await dbWrite.$queryRawUnsafe<{ providerAccountId: string }[]>(`
         SELECT "providerAccountId"
         FROM "Account"
-        WHERE provider = 'discord' AND metadata->'roles' @> '["${role.name}"]'`)
+        WHERE provider = 'discord' AND jsonb_path_exists(metadata, '$.roles[*] ? (@ == "${role.name}")')`)
     )?.map((x) => x.providerAccountId) ?? [];
   return accounts;
 };
 
 const addRoleToAccounts = async (role: DiscordRole, providerAccountIds: string[]) => {
   // Update discord
-  for (const providerAccountId of providerAccountIds)
+  const tasks = providerAccountIds.map((providerAccountId) => async () => {
     try {
       await discord.addRoleToUser(providerAccountId, role.id);
     } catch (e) {
       console.error(e);
     }
+  });
+  await limitConcurrency(tasks, 10);
 
   // Update the accounts in the database
   const roleValue = JSON.stringify([role.name]);
@@ -260,12 +263,14 @@ const addRoleToAccounts = async (role: DiscordRole, providerAccountIds: string[]
 
 const removeRoleFromAccounts = async (role: DiscordRole, providerAccountIds: string[]) => {
   // Update discord
-  for (const providerAccountId of providerAccountIds)
+  const tasks = providerAccountIds.map((providerAccountId) => async () => {
     try {
       await discord.removeRoleFromUser(providerAccountId, role.id);
     } catch (e) {
       console.error(e);
     }
+  });
+  await limitConcurrency(tasks, 10);
 
   // Update the accounts in the database
   const ids = providerAccountIds.map((id) => `'${id}'`).join(',');

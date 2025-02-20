@@ -1,5 +1,6 @@
 import { Priority } from '@civitai/client';
 import z from 'zod';
+import { maxUpscaleSize } from '~/server/common/constants';
 import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 
 export const promptSchema = z
@@ -15,10 +16,10 @@ export const negativePromptSchema = z
 export type SourceImageProps = z.input<typeof sourceImageSchema>;
 export const sourceImageSchema = z.object({
   url: z.string().startsWith('https://orchestration').includes('.civitai.com'),
-  width: z.number(),
-  height: z.number(),
-  upscaleWidth: z.number().optional(),
-  upscaleHeight: z.number().optional(),
+  width: z.number().max(maxUpscaleSize),
+  height: z.number().max(maxUpscaleSize),
+  upscaleWidth: z.number().max(maxUpscaleSize).optional(),
+  upscaleHeight: z.number().max(maxUpscaleSize).optional(),
 });
 
 export const seedSchema = z.number().optional();

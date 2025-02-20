@@ -68,7 +68,7 @@ export const ModelAvailabilityUpdate = ({ modelId }: { modelId: number }) => {
           <Radio
             value="no"
             label="Set to Draft"
-            description="This model, and any associated model versions, will be sent to your Drafts, allowing further configuration prior to publishing. Use this method if you wish to apply features such as Early Access, or Usage Controls, prior to publishing."
+            description="This model, and any associated model versions, will be sent to your Drafts, allowing further configuration. Use this method if you wish to apply features such as Early Access, or Usage Controls, prior to publishing."
           />
         </Radio.Group>
         <Group ml="auto">

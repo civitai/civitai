@@ -1667,6 +1667,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
 
+  if (!isModerator) {
+    filters.push(
+      // Avoids exposing private resources to the public
+      `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
+    );
+  }
+
   if (postId) {
     postIds = [...(postIds ?? []), postId];
   }
@@ -2188,7 +2195,7 @@ export const getImage = async ({
   withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
   const AND = [Prisma.sql`i.id = ${id}`];
-  if (!isModerator)
+  if (!isModerator) {
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
@@ -2207,6 +2214,11 @@ export const getImage = async ({
         ' OR '
       )})`
     );
+
+    if (!withoutPost) {
+      AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
+    }
+  }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`

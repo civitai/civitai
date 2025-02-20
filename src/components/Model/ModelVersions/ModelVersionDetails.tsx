@@ -209,6 +209,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+  const isPrivateModel = model.availability === Availability.Private;
 
   const handlePublishPrivateModel = async () => {
     dialogStore.trigger({
@@ -609,7 +610,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
     hasFiles &&
     hasPosts &&
-    model.availability !== Availability.Private;
+    !isPrivateModel;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
@@ -869,7 +870,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       </div>
                     </Tooltip>
                   )}
-                  {hasDownloadPermissions && !downloadsDisabled && (
+                  {hasDownloadPermissions && !downloadsDisabled && !isPrivateModel && (
                     <ToggleVaultButton modelVersionId={version.id}>
                       {({ isLoading, isInVault, toggleVaultItem }) => (
                         <Tooltip
@@ -921,7 +922,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               </Text>
             </AlertWithIcon>
           )}
-          {model.availability === Availability.Private && isOwnerOrMod && (
+          {isPrivateModel && isOwnerOrMod && (
             <AlertWithIcon
               color="yellow"
               iconColor="yellow"

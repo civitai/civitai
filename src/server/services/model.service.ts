@@ -484,7 +484,7 @@ export const getModelsRaw = async ({
     }
 
     AND.push(Prisma.sql`m."availability" = ${availability}::"Availability"`);
-  } else {
+  } else if (!isModerator) {
     // Makes it so that our feeds never contain private stuff by default.
     AND.push(Prisma.sql`m."availability" != 'Private'::"Availability"`);
   }
@@ -2906,6 +2906,7 @@ export const publishPrivateModel = async ({
       },
       data: {
         publishedAt: publishVersions ? now : null,
+        availability: Availability.Public,
       },
     }),
     dbWrite.modelVersion.updateMany({
@@ -2923,9 +2924,24 @@ export const publishPrivateModel = async ({
       data: {
         availability: Availability.Public,
         status: publishVersions ? ModelStatus.Published : ModelStatus.Unpublished,
+        publishedAt: publishVersions ? now : null,
       },
     }),
   ]);
+
+  const updatedImageIds = await dbRead.image.findMany({
+    where: {
+      post: {
+        modelVersionId: { in: versionIds },
+      },
+    },
+  });
+
+  if (updatedImageIds.length > 0) {
+    await imagesMetricsSearchIndex.queueUpdate(
+      updatedImageIds.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Update }))
+    );
+  }
 
   return { versionIds };
 };

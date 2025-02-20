@@ -105,6 +105,7 @@ export const getDefaultModelVersion = async ({
           status: true,
           model: { select: { id: true, userId: true, availability: true } },
           availability: true,
+          trainingStatus: true,
         },
       },
     },
@@ -629,7 +630,7 @@ export const publishModelVersionById = async ({
       id: true,
       name: true,
       earlyAccessConfig: true,
-      model: { select: { userId: true, name: true, availability: true } },
+      model: { select: { userId: true, name: true, availability: true, publishedAt: true } },
     },
   });
 
@@ -682,6 +683,14 @@ export const publishModelVersionById = async ({
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
       `;
+
+      if (!currentVersion.model.publishedAt) {
+        // Safeguard to ensure the model is marked as published if it wasn't already.
+        await tx.model.update({
+          where: { id: updatedVersion.model.id },
+          data: { publishedAt },
+        });
+      }
 
       return updatedVersion;
     },

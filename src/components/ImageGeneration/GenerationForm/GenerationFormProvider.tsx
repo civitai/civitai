@@ -90,8 +90,6 @@ const formSchema = textToImageParamsSchema
     if (fluxUltraRaw) data.engine = 'flux-pro-raw';
     else data.engine = undefined;
 
-    if (!data.workflow.startsWith('img2img')) data.sourceImage = undefined;
-
     return removeEmpty({
       ...data,
       height,
@@ -239,7 +237,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const type = useGenerationFormStore((state) => state.type);
 
   const getValues = useCallback(
-    (storageValues: DeepPartialFormData) => {
+    (storageValues: any): any => {
       // Ensure we always get similarity accordingly.
       if (storageValues.remixOfId && storageValues.prompt) {
         checkSimilarity(storageValues.remixOfId, storageValues.prompt);

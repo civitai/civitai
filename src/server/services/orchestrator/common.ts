@@ -51,7 +51,7 @@ import {
   getInjectablResources,
   getIsFlux,
   getIsSD3,
-  getRoundedUpscaleSize,
+  getRoundedWidthHeight,
   getSizeFromAspectRatio,
   InjectableResource,
   samplersToSchedulers,
@@ -117,6 +117,7 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
 }) {
+  if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
   if (originalParams.sourceImage) {
@@ -324,7 +325,7 @@ export async function parseGenerateImageInput({
 
   const upscale =
     upscaleHeight && upscaleWidth
-      ? getRoundedUpscaleSize({ width: upscaleWidth, height: upscaleHeight })
+      ? getRoundedWidthHeight({ width: upscaleWidth, height: upscaleHeight })
       : undefined;
 
   const { sourceImage, width, height } = params;
@@ -736,11 +737,11 @@ export function formatComfyStep({
   const { output, jobs, metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
 
-  if (params?.aspectRatio) {
-    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
-    params.width = size.width;
-    params.height = size.height;
-  }
+  // if (params?.aspectRatio) {
+  //   const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
+  //   params.width = size.width;
+  //   params.height = size.height;
+  // }
 
   const { width = 512, height = 512 } = params?.sourceImage ?? params ?? {};
 
