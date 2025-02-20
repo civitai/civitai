@@ -5,17 +5,18 @@ import { CacheTTL } from '~/server/common/constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
-import { UserTier } from '~/server/schema/user.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
+import { UserTier } from '~/server/schema/user.schema';
+import { createBuzzTransaction } from '~/server/services/buzz.service';
 import {
   bustFetchThroughCache,
+  clearCacheByPattern,
   createCachedObject,
   fetchThroughCache,
 } from '~/server/utils/cache-helpers';
 import {
   getExtractionFee,
-  getPhases as getPhases,
+  getPhases,
   getWithdrawalFee,
 } from '~/server/utils/creator-program.utils';
 import { invalidateSession } from '~/server/utils/session-helpers';
@@ -29,7 +30,6 @@ import {
   PEAK_EARNING_WINDOW,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
-import { numberWithCommas } from '~/utils/number-helpers';
 
 type UserCapCacheItem = {
   id: number;
@@ -37,9 +37,8 @@ type UserCapCacheItem = {
   peakEarning: { month: Date; earned: number };
   cap: number;
 };
-// TODO creator program: Flush this userCapCache on month roll-over
 // TODO creator program: bust this cache when a user's subscription changes
-const userCapCache = createCachedObject<UserCapCacheItem>({
+export const userCapCache = createCachedObject<UserCapCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CAPS,
   idKey: 'id',
   lookupFn: async (ids) => {
@@ -108,8 +107,6 @@ function getMonthAccount(month?: Date) {
   return Number(dayjs(month).format('YYYYMM'));
 }
 
-// TODO Creator Program: Bust this cache when a user banks buzz
-// TODO Creator Program: Flush this cache on month roll-over
 export async function getBanked(userId: number) {
   const monthAccount = getMonthAccount();
   const total = await fetchThroughCache(
@@ -136,9 +133,8 @@ export async function getBanked(userId: number) {
     cap: (await getBankCap(userId))[userId],
   };
 }
-
-export async function bustBankedCache(userId: number) {
-  bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+export async function flushBankedCache() {
+  await clearCacheByPattern(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:*`);
 }
 
 export async function getCreatorRequirements(userId: number) {
@@ -224,22 +220,31 @@ async function getPoolForecast(month?: Date) {
   return result.balance * (env.CREATOR_POOL_FORECAST_PORTION / 100);
 }
 
-export async function getCompensationPool() {
-  // TODO creator program: Bust this cache at month roll-over
+export async function getCompensationPool(month?: Date) {
+  if (month) {
+    // Skip catching if fetching specific month
+    return {
+      value: await getPoolValue(month),
+      size: {
+        current: await getPoolSize(month),
+        forecasted: await getPoolForecast(month),
+      },
+      phases: getPhases(month),
+    };
+  }
+
   const value = await fetchThroughCache(
     REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE,
     async () => await getPoolValue(),
     { ttl: CacheTTL.month }
   );
 
-  // TODO creator program: Bust this cache when a user banks or extracts buzz
   const current = await fetchThroughCache(
     REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE,
     async () => await getPoolSize(),
     { ttl: CacheTTL.month }
   );
 
-  // TODO creator program: Bust this cache at month roll-over
   const forecasted = await fetchThroughCache(
     REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
     async () => await getPoolForecast(),
@@ -254,6 +259,12 @@ export async function getCompensationPool() {
     },
     phases: getPhases(),
   };
+}
+
+export async function bustCompensationPoolCache() {
+  await clearCacheByPattern(REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE);
+  await clearCacheByPattern(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
+  await clearCacheByPattern(REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST);
 }
 
 export async function bankBuzz(userId: number, amount: number) {
@@ -299,47 +310,31 @@ export async function extractBuzz(userId: number) {
   const fee = await getExtractionFee(banked.total);
 
   // Charge fee and extract banked amount
-  let chargedFee = false;
+  // Give full amount back to user, to then take fee...
   const monthAccount = getMonthAccount();
-  try {
+  await createBuzzTransaction({
+    amount: banked.total,
+    fromAccountId: monthAccount,
+    fromAccountType: 'creator-program:bank',
+    toAccountId: userId,
+    toAccountType: 'user',
+    type: TransactionType.Extract,
+    externalTransactionId: `extraction-${monthAccount}-${userId}`,
+    description: `Extracted from Bank`,
+  });
+
+  if (fee > 0) {
     // Burn fee
-    // TODO creator program: Check that charging the fee and refunding on failure works with Koen
     await createBuzzTransaction({
       amount: fee,
-      fromAccountId: monthAccount,
-      fromAccountType: 'creator-program:bank',
+      fromAccountId: userId,
+      fromAccountType: 'user',
       toAccountId: 0,
-      toAccountType: 'creator-program:bank',
+      toAccountType: 'user',
       type: TransactionType.Fee,
+      externalTransactionId: `extraction-fee-${monthAccount}-${userId}`,
       description: 'Extraction fee',
     });
-    chargedFee = true;
-
-    // Transfer banked amount
-    await createBuzzTransaction({
-      amount: banked.total - fee,
-      fromAccountId: monthAccount,
-      fromAccountType: 'creator-program:bank',
-      toAccountId: userId,
-      toAccountType: 'user',
-      type: TransactionType.Extract,
-      externalTransactionId: `extraction-${monthAccount}-${userId}`,
-      description: `Extracted from Bank (⚡${numberWithCommas(fee)} fee)`,
-    });
-  } catch (e) {
-    if (chargedFee) {
-      // Refund fee
-      await createBuzzTransaction({
-        amount: fee,
-        fromAccountId: 0,
-        fromAccountType: 'creator-program:bank',
-        toAccountId: monthAccount,
-        toAccountType: 'creator-program:bank',
-        type: TransactionType.Refund,
-        description: 'Extraction fee refund',
-      });
-    }
-    throw e;
   }
 
   // Bust affected caches
@@ -359,11 +354,8 @@ type UserCashCacheItem = {
     amount: number; // Fixed amount or percent
   };
 };
-// TODO creator program: Flush this userCashCache on distribution
-// TODO creator program: Flush this userCashCache on cash settlement
-// TODO creator program: Bust this cache when a user withdraws cash
-// TODO creator program: Bust this cache when a user's withdrawal fails
-const userCashCache = createCachedObject<UserCashCacheItem>({
+// TODO creator program luis: Bust this cache when a user's withdrawal fails userCashCache.bust(userId);
+export const userCashCache = createCachedObject<UserCashCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CASH,
   idKey: 'id',
   lookupFn: async (ids) => {
@@ -400,7 +392,7 @@ const userCashCache = createCachedObject<UserCashCacheItem>({
         AND status != 'Failed'
     `);
 
-    // TODO creators program: we need a way to determine the payment method for each user
+    // TODO creators program luis: we need a way to determine the payment method for each user
     const paymentMethods = ids.map((id) => ({ userId: id, method: 'ach' }));
 
     return Object.fromEntries(
@@ -494,4 +486,29 @@ export async function withdrawCash(userId: number, amount: number) {
 
   // Bust affected caches
   userCashCache.bust(userId);
+}
+
+export async function getPoolParticipants(month?: Date) {
+  month ??= new Date();
+  const monthAccount = getMonthAccount(month);
+  const participants = await clickhouse!.$query<{ userId: number; amount: number }>`
+    SELECT
+      if(toAccountType = 'creator-program:bank', fromAccountId, toAccountId) as userId,
+      SUM(if(toAccountType = 'creator-program:bank', amount, -amount)) as amount
+    FROM buzzTransactions
+    WHERE (
+      -- Banks
+      toAccountType = 'creator-program:bank'
+      AND toAccountId = ${monthAccount}
+      AND fromAccountType = 'user'
+    ) OR (
+      -- Extracts
+      fromAccountType = 'creator-program:bank'
+      AND fromAccountId = ${monthAccount}
+      AND toAccountType = 'user'
+    )
+    GROUP BY userId
+    HAVING amount > 0;
+  `;
+  return participants;
 }

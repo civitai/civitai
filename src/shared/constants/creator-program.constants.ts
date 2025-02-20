@@ -59,3 +59,6 @@ export const WITHDRAWAL_FEES: Record<PayoutMethods, WithdrawalFee> = {
   paypal: { type: 'percent', amount: 0.05 },
   check: { type: 'fixed', amount: 400 },
 };
+
+export const FIRST_CREATOR_PROGRAM_MONTH = new Date('2025-03-01');
+export const CAPPED_BUZZ_VALUE = (1 / 1000) * 100; // $0.001 per Buzz (*100 to convert to cents)
