@@ -84,7 +84,7 @@ function SourceImageUpload({
       <Input.Wrapper
         {...inputWrapperProps}
         error={error ?? inputWrapperProps.error}
-        className="min-h-40"
+        className="min-h-36"
       >
         {!value ? (
           <ImageDropzone
