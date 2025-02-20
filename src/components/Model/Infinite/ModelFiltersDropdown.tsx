@@ -14,6 +14,7 @@ import {
   Stack,
 } from '@mantine/core';
 import {
+  Availability,
   CheckpointType,
   MetricTimeframe,
   ModelStatus,
@@ -105,6 +106,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
+    (!!mergedFilters.availability ? 1 : 0) +
     (mergedFilters.period && mergedFilters.period !== MetricTimeframe.AllTime ? 1 : 0);
 
   const clearFilters = useCallback(() => {
@@ -120,6 +122,7 @@ export function DumbModelFiltersDropdown({
       fileFormats: undefined,
       fromPlatform: false,
       period: MetricTimeframe.AllTime,
+      availability: undefined,
     };
 
     if (!localMode)
@@ -202,6 +205,32 @@ export function DumbModelFiltersDropdown({
         )}
       </Stack>
       <Stack spacing={0}>
+        {currentUser?.isModerator && (
+          <>
+            <Divider
+              label="Model Availability"
+              labelProps={{ weight: 'bold', size: 'sm' }}
+              mb={4}
+            />
+
+            <Chip.Group
+              spacing={8}
+              value={mergedFilters.availability}
+              mb={8}
+              onChange={(availability: Availability) =>
+                handleChange({
+                  availability,
+                })
+              }
+            >
+              {Object.values(Availability).map((availability) => (
+                <Chip key={availability} value={availability} {...chipProps}>
+                  <span>{availability}</span>
+                </Chip>
+              ))}
+            </Chip.Group>
+          </>
+        )}
         <Divider label="Model status" labelProps={{ weight: 'bold', size: 'sm' }} mb={4} />
         {currentUser?.isModerator && (
           <Chip.Group
@@ -218,6 +247,7 @@ export function DumbModelFiltersDropdown({
             ))}
           </Chip.Group>
         )}
+
         <Group spacing={8} mb={4}>
           <Chip
             checked={mergedFilters.earlyAccess}

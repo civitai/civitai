@@ -8,7 +8,7 @@ import { PostEditSidebar } from '~/components/Post/EditV2/PostEditSidebar';
 import { PostImageCards } from '~/components/Post/EditV2/PostImageCards/PostImageCards';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
 import { PostReorderImages } from '~/components/Post/EditV2/PostReorderImages';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { isDefined } from '~/utils/type-guards';
 
