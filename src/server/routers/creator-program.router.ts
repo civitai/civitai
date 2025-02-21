@@ -1,4 +1,8 @@
-import { bankBuzzSchema, withdrawCashSchema } from '~/server/schema/creator-program.schema';
+import {
+  bankBuzzSchema,
+  compensationPoolInputSchema,
+  withdrawCashSchema,
+} from '~/server/schema/creator-program.schema';
 import {
   bankBuzz,
   extractBuzz,
@@ -19,7 +23,9 @@ export const creatorProgramRouter = router({
   joinCreatorsProgram: protectedProcedure.mutation(({ ctx }) => {
     joinCreatorsProgram(ctx.user.id);
   }),
-  getCompensationPool: protectedProcedure.query(getCompensationPool),
+  getCompensationPool: protectedProcedure
+    .input(compensationPoolInputSchema)
+    .query(({ input }) => getCompensationPool(input)),
   getCash: protectedProcedure.query(({ ctx }) => getCash(ctx.user.id)),
   getBanked: protectedProcedure.query(({ ctx }) => getBanked(ctx.user.id)),
   getWithdrawalHistory: protectedProcedure.query(({ ctx }) => getWithdrawalHistory(ctx.user.id)),

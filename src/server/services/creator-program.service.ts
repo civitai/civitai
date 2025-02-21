@@ -37,6 +37,7 @@ import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import {
   CashWithdrawalMetadataSchema,
+  CompensationPoolInput,
   UpdateCashWithdrawalSchema,
 } from '~/server/schema/creator-program.schema';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
@@ -238,7 +239,7 @@ async function getPoolForecast(month?: Date) {
   return result.balance * (env.CREATOR_POOL_FORECAST_PORTION / 100);
 }
 
-export async function getCompensationPool(month?: Date) {
+export async function getCompensationPool({ month }: CompensationPoolInput) {
   if (month) {
     // Skip catching if fetching specific month
     return {

@@ -16,9 +16,12 @@ export const useCreatorProgramRequirements = () => {
 };
 export const useCompensationPool = () => {
   const currentUser = useCurrentUser();
-  const { data, isLoading } = trpc.creatorProgram.getCompensationPool.useQuery(undefined, {
-    enabled: !!currentUser,
-  });
+  const { data, isLoading } = trpc.creatorProgram.getCompensationPool.useQuery(
+    {},
+    {
+      enabled: !!currentUser,
+    }
+  );
 
   return {
     compensationPool: data,

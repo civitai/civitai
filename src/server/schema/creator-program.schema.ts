@@ -32,3 +32,8 @@ export const updateCashWithdrawalSchema = z.object({
   metadata: cashWithdrawalMetadataSchema.optional(),
   fees: z.number().optional(),
 });
+
+export type CompensationPoolInput = z.infer<typeof compensationPoolInputSchema>;
+export const compensationPoolInputSchema = z.object({
+  month: z.date().optional(),
+});

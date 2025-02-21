@@ -45,7 +45,7 @@ export const creatorsProgramDistribute = createJob(
     month = dayjs(month).startOf('month').toDate();
 
     // Get pool data
-    const pool = await getCompensationPool(month);
+    const pool = await getCompensationPool({ month });
 
     // Get totals for all participants in bank
     const participants = await getPoolParticipants(month);

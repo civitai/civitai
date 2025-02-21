@@ -61,12 +61,12 @@ export const WITHDRAWAL_FEES: Record<CashWithdrawalMethod, WithdrawalFee | undef
   Check: { type: 'fixed', amount: 400 },
   Card: { type: 'fixed', amount: 200 },
   Custom: { type: 'fixed', amount: 200 },
-  ECheck: { type: 'fixed', amount: 200 },
+  eCheck: { type: 'fixed', amount: 200 },
   Intercash: { type: 'fixed', amount: 200 },
   Payoneer: { type: 'fixed', amount: 200 },
   WireTransfer: { type: 'fixed', amount: 200 },
-  HoldPayments: undefined,
-  NotProvided: undefined,
+  HoldMyPayments: undefined,
+  NoPM: undefined,
   TipaltiInternalValue: undefined,
 };
 
