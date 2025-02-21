@@ -13,8 +13,8 @@ export function LoginPopover({
     e.preventDefault();
     e.nativeEvent.stopImmediatePropagation();
     requireLogin({
-      message: message ?? 'You must be logged in to perform this action',
-      cb: children.props.onClick?.(e),
+      message,
+      cb: () => children.props.onClick?.(e),
     });
   };
 

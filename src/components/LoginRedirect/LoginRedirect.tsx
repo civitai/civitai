@@ -1,55 +1,33 @@
 import { useRouter } from 'next/router';
-import React, { MouseEventHandler, MouseEvent } from 'react';
+import React, { cloneElement } from 'react';
 import { env } from '~/env/client';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
-import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
+import { LoginRedirectReason } from '~/utils/login-helpers';
+import { requireLogin } from '~/components/Login/requireLogin';
 
-export type HookProps = {
+export type Props = {
   reason: LoginRedirectReason;
   returnUrl?: string;
+  children: React.ReactElement;
 };
-export function useLoginRedirect({ reason, returnUrl }: HookProps) {
+export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
-  const user = useCurrentUser();
-
-  const requireLogin = (fn?: () => void, overrides?: HookProps) => {
-    if (!user) {
-      router.push(
-        getLoginLink({
-          returnUrl: overrides?.returnUrl ?? returnUrl ?? router.asPath,
-          reason: overrides?.reason ?? reason,
-        })
-      );
-    } else {
-      fn?.();
-    }
-  };
-
-  return { requireLogin };
-}
-
-export type Props = HookProps & {
-  children: React.ReactElement<{ onClick?: MouseEventHandler<HTMLElement> }>;
-  beforeRedirect?: () => void;
-};
-export function LoginRedirect({ children, reason, returnUrl, beforeRedirect }: Props) {
-  const router = useRouter();
-  const user = useCurrentUser();
   const { running, closeTour, activeTour } = useTourContext();
 
   const url = new URL(returnUrl ?? router.asPath, env.NEXT_PUBLIC_BASE_URL);
   if (running && activeTour) url.searchParams.set('tour', activeTour);
 
-  return !user
-    ? React.cloneElement(children, {
-        ...children.props,
-        onClick: (e: MouseEvent<HTMLElement>) => {
-          e.preventDefault();
-          beforeRedirect?.();
-          router.push(getLoginLink({ returnUrl: url.toString(), reason }));
-          if (running) closeTour();
-        },
-      })
-    : children;
+  function handleClick(e: React.MouseEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    e.nativeEvent.stopImmediatePropagation();
+    if (running) closeTour();
+    requireLogin({
+      reason,
+      cb: () => children.props.onClick?.(e),
+      returnUrl: url.toString(),
+    });
+  }
+
+  return cloneElement(children, { onClick: handleClick });
 }

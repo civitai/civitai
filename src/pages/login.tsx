@@ -1,27 +1,8 @@
-import {
-  Alert,
-  Code,
-  Container,
-  Divider,
-  Group,
-  Paper,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { IconExclamationMark } from '@tabler/icons-react';
-import { BuiltInProviderType } from 'next-auth/providers';
-import { getCsrfToken, getProviders, signIn } from 'next-auth/react';
+import { getProviders } from 'next-auth/react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
-import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
 import { Meta } from '~/components/Meta/Meta';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
-import { SignInError } from '~/components/SignInError/SignInError';
-import { SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
@@ -77,11 +58,11 @@ export default function Login() {
         title="Sign in to Civitai"
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/login`, rel: 'canonical' }]}
       />
-      <Container size="xs">
+      <div className="container max-w-xs">
         <TwCard className="mt-6 border p-3 shadow">
-          <LoginContent message={reason} />
+          <LoginContent message={redirectReason} />
         </TwCard>
-      </Container>
+      </div>
     </>
   );
 }
