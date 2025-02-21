@@ -1,14 +1,23 @@
 import { usePathname, useSearchParams } from 'next/navigation';
-import { createContext, useCallback, useContext, useEffect, useState, useMemo } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useState,
+  useMemo,
+  useRef,
+} from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useStorage } from '~/hooks/useStorage';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TourSettingsSchema } from '~/server/schema/user.schema';
 import { generationPanel } from '~/store/generation.store';
-import { StepData, StepWithData } from '~/types/tour';
+import { StepWithData } from '~/types/tour';
 import { TourKey, tourSteps } from '~/components/Tours/tours';
 import { trpc } from '~/utils/trpc';
 import dynamic from 'next/dynamic';
+import { StoreHelpers } from 'react-joyride';
 
 const LazyTours = dynamic(() => import('~/components/Tours/LazyTours'));
 
@@ -27,6 +36,7 @@ type TourContextState = TourState & {
   setSteps: (steps: StepWithData[]) => void;
   completed?: boolean;
   run?: boolean;
+  helpers?: StoreHelpers | null;
 };
 
 const TourContext = createContext<TourContextState>({
@@ -68,6 +78,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     currentStep: 0,
     steps: tourKey ? tourSteps[tourKey] ?? [] : [],
   }));
+  const helpers = useRef<StoreHelpers | null>(null);
 
   const { data: userSettings, isInitialLoading } = trpc.user.getSettings.useQuery(undefined, {
     enabled: !!currentUser,
@@ -96,13 +107,13 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
       const forceRun = opts?.forceRun ?? state.forceRun;
       const currentTourData = getCurrentTourData(activeTour);
       const alreadyCompleted = currentTourData?.completed ?? false;
-      console.log({ currentTourData });
+
       if (alreadyCompleted && !forceRun) return;
 
       setState((old) => ({
         ...old,
         running: true,
-        activeTour: opts?.key ?? old.activeTour,
+        activeTour,
         steps: opts?.key ? tourSteps[opts.key] ?? [] : old.steps,
         forceRun: opts?.forceRun ?? old.forceRun,
         currentStep: opts?.step ?? old.currentStep,
@@ -171,13 +182,16 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   }, [isInitialLoading, tourKey]);
 
   const completed = currentTourData?.completed;
-
   const run = (state.running && !completed && !isInitialLoading) || state.forceRun;
 
   return (
-    <TourContext.Provider value={{ ...state, completed, run, runTour, closeTour, setSteps }}>
+    <TourContext.Provider
+      value={{ ...state, completed, run, runTour, closeTour, setSteps, helpers: helpers.current }}
+    >
       {children}
-      {features.appTour && state.activeTour && <LazyTours />}
+      {features.appTour && state.activeTour && (
+        <LazyTours getHelpers={(storeHelpers) => (helpers.current = storeHelpers)} />
+      )}
     </TourContext.Provider>
   );
 }

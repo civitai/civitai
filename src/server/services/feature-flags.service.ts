@@ -109,7 +109,7 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   generationOnlyModels: ['mod', 'granted', 'gold'],
-  appTour: ['mod', 'granted'],
+  appTour: ['public', 'granted'],
   privateModels: ['mod', 'granted'],
 });
 
