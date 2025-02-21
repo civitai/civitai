@@ -665,7 +665,7 @@ const EstimatedEarningsCard = () => {
           </div>
           {phase === 'bank' && (
             <p className="text-xs">
-              This value will <span className="font-bold">decrease</span> as other creators Extract
+              This value will <span className="font-bold">decrease</span> as other creators Bank
               Buzz. <span className="font-bold">Forecasted value: </span> $
               {numberWithCommas(formatToLeastDecimals(getForecastedValue(banked.total ?? 0, compensationPool)))}
             </p>
@@ -914,7 +914,7 @@ const WithdrawCashCard = () => {
                 </div>
               </td>
             </tr>
-            {userCash?.withdrawn && (
+            {userCash?.withdrawn > 0 && (
               <tr>
                 <td>
                   <div className="flex items-center gap-2">
