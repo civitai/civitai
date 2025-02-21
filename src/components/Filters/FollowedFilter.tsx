@@ -1,7 +1,7 @@
 import { ButtonProps } from '@mantine/core';
 import { IconUsersGroup, IconWorld } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { SelectMenu, SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
+import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { useFiltersContext, useSetFilters } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -9,10 +9,7 @@ type FollowFilterButtonProps = {
   variant: 'button';
   buttonProps?: ButtonProps;
 };
-type FollowFilterMenuProps = {
-  variant?: 'menu';
-};
-type FollowFilterComponentProps = FollowFilterButtonProps | FollowFilterMenuProps;
+type FollowFilterComponentProps = FollowFilterButtonProps;
 
 type FollowFilterProps = StatefulProps | DumbProps;
 type FollowFilterableTypes = 'images' | 'models' | 'posts' | 'articles' | 'videos';
@@ -38,20 +35,11 @@ function DumbFollowFilter({ type, value, onChange, ...props }: DumbProps) {
     onClick: onChange,
     value,
   };
-  props.variant ??= 'menu';
   const followed = value === 'true';
+  const { variant, ...buttonProps } = props.buttonProps ?? {};
 
   return (
-    <>
-      {props.variant === 'menu' && <SelectMenu {...sharedProps} />}
-      {props.variant === 'button' && (
-        <SelectMenuV2
-          {...sharedProps}
-          buttonProps={props.buttonProps}
-          icon={followed ? <IconUsersGroup size={16} /> : <IconWorld size={16} />}
-        />
-      )}
-    </>
+    <SelectMenuV2 {...sharedProps} icon={followed ? IconUsersGroup : IconWorld} {...buttonProps} />
   );
 }
 

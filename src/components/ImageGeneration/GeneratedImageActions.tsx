@@ -20,6 +20,7 @@ import { uniqBy } from 'lodash-es';
 import { useState } from 'react';
 import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
+import { SortFilter } from '~/components/Filters';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -198,7 +199,8 @@ export function GeneratedImageActions({
   const hasSelected = !!selectedCount;
 
   return (
-    <div className="flex items-center justify-between gap-6">
+    <div className="flex items-center justify-end gap-6">
+      <SortFilter type="generation" />
       {!selectedCount && <MarkerFiltersDropdown />}
       {hasSelected && (
         <div className="flex gap-2">

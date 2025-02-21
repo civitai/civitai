@@ -3,55 +3,22 @@ import {
   ButtonProps,
   Divider,
   Drawer,
-  Group,
   Indicator,
   Popover,
   Stack,
-  createStyles,
+  useMantineTheme,
 } from '@mantine/core';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { IconChevronDown, IconFilter } from '@tabler/icons-react';
+import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { PeriodFilter } from '~/components/Filters';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { PostsQueryInput } from '~/server/schema/post.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        // color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));
+import { FilterButton } from '~/components/Buttons/FilterButton';
 
 export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) {
-  const { classes, theme, cx } = useStyles();
+  const theme = useMantineTheme();
   const mobile = useIsMobile();
 
   const [opened, setOpened] = useState(false);
@@ -84,24 +51,11 @@ export function PostFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
       zIndex={10}
       showZero={false}
       dot={false}
-      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
-      <Button
-        className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        {...buttonProps}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
-        onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
-      >
-        <Group spacing={4} noWrap>
-          <IconFilter size={16} />
-          Filters
-        </Group>
-      </Button>
+      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+        Filters
+      </FilterButton>
     </Indicator>
   );
 
