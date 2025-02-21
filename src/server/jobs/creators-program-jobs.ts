@@ -89,6 +89,7 @@ export const creatorsProgramDistribute = createJob(
 
     // Send tipalti invite to users with $50+ in cash without a tipalti account
     // TODO creators program: Ask Koen if this data will be settled in clickhouse yet? (I assume not)
+    // TODO creators program: Need to revise Koen's API to support multiple users. Otherwise we make 1 request per user.
     const usersOverThreshold = await clickhouse!.$query<{ userId: number; balance: number }>`
       WITH affected AS (
         SELECT DISTINCT toAccountId as id

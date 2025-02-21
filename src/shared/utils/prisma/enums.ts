@@ -36,14 +36,14 @@ export const CashWithdrawalStatus = {
 export type CashWithdrawalStatus = (typeof CashWithdrawalStatus)[keyof typeof CashWithdrawalStatus];
 
 export const CashWithdrawalMethod = {
-  NotProvided: 'NotProvided',
+  NoPM: 'NoPM',
   WireTransfer: 'WireTransfer',
   Payoneer: 'Payoneer',
   PayPal: 'PayPal',
   ACH: 'ACH',
   Check: 'Check',
-  ECheck: 'ECheck',
-  HoldPayments: 'HoldPayments',
+  eCheck: 'eCheck',
+  HoldMyPayments: 'HoldMyPayments',
   Custom: 'Custom',
   Intercash: 'Intercash',
   Card: 'Card',

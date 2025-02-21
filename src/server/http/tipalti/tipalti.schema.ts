@@ -15,6 +15,7 @@ export namespace Tipalti {
     'PENDING_PAYER_FUNDS',
     'INTERNAL_VALUE',
   ] as const;
+
   export type PaymentStatus = (typeof paymentStatus)[number];
 
   const tipaltiWebhookEventType = [
@@ -29,6 +30,7 @@ export namespace Tipalti {
   ] as const;
 
   export type TipaltiWebhookEventType = (typeof tipaltiWebhookEventType)[number];
+
   export type CreatePayeeInput = z.infer<typeof createPayeeInput>;
   export const createPayeeInput = z.object({
     refCode: z.string(),

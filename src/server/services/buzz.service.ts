@@ -13,6 +13,8 @@ import {
   ClaimWatchedAdRewardInput,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
+  GetBuzzMovementsBetweenAccounts,
+  GetBuzzMovementsBetweenAccountsResponse,
   GetBuzzTransactionResponse,
   GetDailyBuzzCompensationInput,
   GetEarnPotentialSchema,
@@ -1048,4 +1050,49 @@ export async function getTransactionsReport({
     ...record,
     date: formatDate(record.date, 'YYYY-MM-DDTHH:mm:ss', true),
   }));
+}
+
+export async function getCounterPartyBuzzTransactions({
+  accountId,
+  accountType,
+  counterPartyAccountId,
+  counterPartyAccountType,
+}: GetBuzzMovementsBetweenAccounts) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
+  return withRetries(
+    async () => {
+      // if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
+
+      const queryString = QS.stringify({
+        accountId: counterPartyAccountId,
+        accountType: counterPartyAccountType ?? 'user',
+      });
+
+      const response = await fetch(
+        `${env.BUZZ_ENDPOINT}/account/${
+          accountType ? `${accountType}/` : ''
+        }${accountId}/counterparties?${queryString}`,
+        {}
+      );
+      if (!response.ok) {
+        switch (response.status) {
+          case 400:
+            throw throwBadRequestError();
+          case 404:
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
+          default:
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'An unexpected error ocurred, please try again later',
+            });
+        }
+      }
+
+      const data: GetBuzzMovementsBetweenAccountsResponse = await response.json();
+      return data;
+    },
+    3,
+    1500
+  );
 }

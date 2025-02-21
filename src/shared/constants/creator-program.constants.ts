@@ -54,7 +54,7 @@ type WithdrawalFee = {
   amount: number;
 };
 
-// TODO Creator program - Justin: Revise withdrawal fees here. They might make no sense.
+// TODO creators program - Justin: Revise withdrawal fees here. They might make no sense.
 export const WITHDRAWAL_FEES: Record<CashWithdrawalMethod, WithdrawalFee | undefined> = {
   ACH: { type: 'fixed', amount: 200 },
   PayPal: { type: 'percent', amount: 0.05 },

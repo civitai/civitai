@@ -7,7 +7,10 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { UserTier } from '~/server/schema/user.schema';
-import { createBuzzTransaction } from '~/server/services/buzz.service';
+import {
+  createBuzzTransaction,
+  getCounterPartyBuzzTransactions,
+} from '~/server/services/buzz.service';
 import {
   bustFetchThroughCache,
   clearCacheByPattern,
@@ -121,18 +124,14 @@ export async function getBanked(userId: number) {
   const total = await fetchThroughCache(
     `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
     async () => {
-      // TODO creator program: We probably should get this from the Buzz service since there might be a delay logging to ClickHouse... Need help from Koen
-      const [result] = await clickhouse!.$query<{ banked: number }>`
-        SELECT
-          SUM(if(fromAccountType = 'user', amount, amount * -1)) as banked
-        FROM buzzTransactions
-        WHERE (
-            (fromAccountId = ${userId} AND fromAccountType = 'user' AND toAccountType = 'creator-program:bank' AND toAccountId = ${monthAccount})
-          OR (toAccountId = ${userId} AND fromAccountType = 'creator-program:bank' AND fromAccountId = ${monthAccount})
-        )
-        AND date > toStartOfMonth(now());
-      `;
-      return result.banked;
+      const data = await getCounterPartyBuzzTransactions({
+        accountId: userId,
+        accountType: 'user',
+        counterPartyAccountId: monthAccount,
+        counterPartyAccountType: 'creator-program:bank',
+      });
+
+      return data.totalBalance;
     },
     { ttl: CacheTTL.month }
   );
@@ -381,11 +380,12 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
     if (ids.length === 0 || !clickhouse) return {};
 
     const statuses = await dbWrite.$queryRawUnsafe<
-      { userId: number; status: 'pending' | 'ready' }[]
+      { userId: number; status: 'pending' | 'ready'; withdrawalMethod?: CashWithdrawalMethod }[]
     >(`
       SELECT
         "userId",
-        IIF("tipaltiAccountStatus" = 'Active', 'ready'::text, 'pending'::text) as status
+        IIF("tipaltiAccountStatus" = 'Active', 'ready'::text, 'pending'::text) as status,
+        "tipaltiWithdrawalMethod" as withdrawalMethod
       FROM "UserPaymentConfiguration" uc
       WHERE "userId" IN (${ids.join(',')});
     `);
@@ -411,8 +411,10 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
         AND status != 'Failed'
     `);
 
-    // TODO creators program luis: we need a way to determine the payment method for each user
-    const paymentMethods = ids.map((id) => ({ userId: id, method: 'ach' }));
+    const paymentMethods = ids.map((id) => ({
+      userId: id,
+      method: statuses.find((s) => s.userId === id)?.withdrawalMethod,
+    }));
 
     return Object.fromEntries(
       ids.map((id) => {
@@ -475,14 +477,18 @@ export async function withdrawCash(userId: number, amount: number) {
     throw new Error('User is not payable');
   }
 
+  if (!userPaymentConfiguration.tipaltiWithdrawalMethod) {
+    throw new Error('User does not have a payment method');
+  }
+
   // Determine withdrawal amount
   const fee = getWithdrawalFee(amount, cash.paymentMethod);
   const toWithdraw = amount - fee;
 
   // Create withdrawal record
   const [{ id }] = await dbWrite.$queryRaw<{ id: string }[]>`
-    INSERT INTO "CashWithdrawal" ("userId", "amount", "fee", "status")
-    VALUES (${userId}, ${toWithdraw}, ${fee}, 'Started')
+    INSERT INTO "CashWithdrawal" ("userId", "amount", "fee", "status", "method")
+    VALUES (${userId}, ${toWithdraw}, ${fee}, 'Started', ${userPaymentConfiguration.tipaltiWithdrawalMethod})
     RETURNING id;
   `;
 

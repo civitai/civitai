@@ -8,7 +8,11 @@ import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-r
 import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import { parseRefCodeToWithdrawalId } from '~/server/utils/creator-program.utils';
-import { BuzzWithdrawalRequestStatus, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
+import {
+  BuzzWithdrawalRequestStatus,
+  CashWithdrawalMethod,
+  CashWithdrawalStatus,
+} from '~/shared/utils/prisma/enums';
 
 export const config = {
   api: {
@@ -81,6 +85,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             userId: Number.parseInt(event.eventData.payeeId),
             tipaltiAccountStatus: event.eventData.status,
             tipaltiPaymentsEnabled: event.eventData.isPayable,
+            tipaltiWithdrawalMethod: event.eventData.paymentMethod as CashWithdrawalMethod,
           });
           break;
         case 'paymentGroupApproved':

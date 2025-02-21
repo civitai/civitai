@@ -215,3 +215,25 @@ export const getTransactionsReportResultSchema = z.array(
     ),
   })
 );
+
+export type GetBuzzMovementsBetweenAccounts = z.infer<typeof getBuzzMovementsBetweenAccounts>;
+export const getBuzzMovementsBetweenAccounts = z.object({
+  accountId: z.number().min(0),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  counterPartyAccountId: z.number().min(0),
+  counterPartyAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+});
+
+export type GetBuzzMovementsBetweenAccountsResponse = z.infer<
+  typeof getBuzzMovementsBetweenAccountsResponse
+>;
+export const getBuzzMovementsBetweenAccountsResponse = z.object({
+  // This is the user id
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  accountId: z.number(),
+  counterPartyAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  counterPartyAccountId: z.number(),
+  inwardsBalance: z.number(),
+  outwardsBalance: z.number(),
+  totalBalance: z.number(),
+});

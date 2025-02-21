@@ -98,18 +98,19 @@ model UserReferralCode {
 }
 
 model UserPaymentConfiguration {
-  userId                 Int     @unique
-  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                  Int                   @unique
+  user                    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Tipalti
-  tipaltiAccountId       String? @unique
-  tipaltiAccountStatus   String  @default("PendingOnboarding")
-  tipaltiPaymentsEnabled Boolean @default(false)
+  tipaltiAccountId        String?               @unique
+  tipaltiAccountStatus    String                @default("PendingOnboarding")
+  tipaltiPaymentsEnabled  Boolean               @default(false)
+  tipaltiWithdrawalMethod CashWithdrawalMethod?
   // Stripe, mainly here for safekeeping or in case we ever support this again.
-  stripeAccountId        String? @unique
-  stripeAccountStatus    String  @default("PendingOnboarding")
-  stripePaymentsEnabled  Boolean @default(false)
+  stripeAccountId         String?               @unique
+  stripeAccountStatus     String                @default("PendingOnboarding")
+  stripePaymentsEnabled   Boolean               @default(false)
   //
-  meta                   Json    @default("{}")
+  meta                    Json                  @default("{}")
 }
 
 enum BuzzWithdrawalRequestStatus {
@@ -177,14 +178,14 @@ enum CashWithdrawalStatus {
 }
 
 enum CashWithdrawalMethod {
-  NotProvided
+  NoPM
   WireTransfer
   Payoneer
   PayPal
   ACH
   Check
-  ECheck
-  HoldPayments
+  eCheck
+  HoldMyPayments
   Custom
   Intercash
   Card

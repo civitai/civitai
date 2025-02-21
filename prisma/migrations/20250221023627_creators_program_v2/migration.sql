@@ -2,7 +2,7 @@
 CREATE TYPE "CashWithdrawalStatus" AS ENUM ('Paid', 'Rejected', 'Scheduled', 'Submitted', 'Deferred', 'DeferredInternal', 'Canceled', 'Cleared', 'FraudReview', 'PendingPayerFunds', 'InternalValue', 'FailedFee');
 
 -- CreateEnum
-CREATE TYPE "CashWithdrawalMethod" AS ENUM ('NotProvided', 'WireTransfer', 'Payoneer', 'PayPal', 'ACH', 'Check', 'ECheck', 'HoldPayments', 'Custom', 'Intercash', 'Card', 'TipaltiInternalValue');
+CREATE TYPE "CashWithdrawalMethod" AS ENUM ('NoPM', 'WireTransfer', 'Payoneer', 'PayPal', 'ACH', 'Check', 'eCheck', 'HoldMyPayments', 'Custom', 'Intercash', 'Card', 'TipaltiInternalValue');
 
 -- CreateTable
 CREATE TABLE "CashWithdrawal" (

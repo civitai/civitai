@@ -6,7 +6,7 @@ export type UserPaymentConfigurationProvider = "Stripe" | "Tipalti";
 
 export type CashWithdrawalStatus = "Paid" | "Rejected" | "Scheduled" | "Submitted" | "Deferred" | "DeferredInternal" | "Canceled" | "Cleared" | "FraudReview" | "PendingPayerFunds" | "InternalValue" | "FailedFee";
 
-export type CashWithdrawalMethod = "NotProvided" | "WireTransfer" | "Payoneer" | "PayPal" | "ACH" | "Check" | "ECheck" | "HoldPayments" | "Custom" | "Intercash" | "Card" | "TipaltiInternalValue";
+export type CashWithdrawalMethod = "NoPM" | "WireTransfer" | "Payoneer" | "PayPal" | "ACH" | "Check" | "eCheck" | "HoldMyPayments" | "Custom" | "Intercash" | "Card" | "TipaltiInternalValue";
 
 export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
@@ -223,6 +223,7 @@ export interface UserPaymentConfiguration {
   tipaltiAccountId: string | null;
   tipaltiAccountStatus: string;
   tipaltiPaymentsEnabled: boolean;
+  tipaltiWithdrawalMethod: CashWithdrawalMethod | null;
   stripeAccountId: string | null;
   stripeAccountStatus: string;
   stripePaymentsEnabled: boolean;
