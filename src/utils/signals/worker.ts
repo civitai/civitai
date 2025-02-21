@@ -150,7 +150,8 @@ const start = async (port: MessagePort) => {
     } else if (data.type === 'ping') {
       emitter.emit('pong', undefined);
       emitCurrentConnectionState();
-    } else if (data.type === 'send') connection?.send(data.target, data.args);
+    } else if (data.type === 'topic:register') connection?.invoke('subscribe', data.topic);
+    else if (data.type === 'send') connection?.send(data.target, data.args);
   };
 };
 

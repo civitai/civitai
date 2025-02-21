@@ -15,11 +15,11 @@ export function getForecastedValue(
 
 export function getCurrentValue(
   toBank: number,
-  pool: { size: { forecasted: number }; value: number }
+  pool: { size: { forecasted: number; current: number }; value: number }
 ) {
-  if (pool.value === 0) return 0;
+  if (pool.size.current === 0) return 0;
 
-  return (toBank / pool.value) * pool.value;
+  return (toBank / pool.size.current) * pool.value;
 }
 
 export function getExtractionFee(toExtract: number): number {

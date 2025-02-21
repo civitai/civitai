@@ -132,6 +132,9 @@ export enum SignalMessages {
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   Pong = 'pong',
+  // Creators Program:
+  CompensationPoolUpdate = 'compensation-pool:update',
+  CashUpdate = 'cash:update',
 }
 
 export enum BountySort {
@@ -331,4 +334,8 @@ export enum BuzzWithdrawalRequestSort {
   Oldest = 'Oldest',
   HighestAmount = 'Highest Amount',
   LowestAmount = 'Lowest Amount',
+}
+
+export enum SignalTopic {
+  CreatorProgram = 'creators-program',
 }

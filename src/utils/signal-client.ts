@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { env } from '~/env/client';
+import { SignalTopic } from '~/server/common/enums';
 
 class SignalClient {
   private _endpoint: string;
@@ -29,6 +30,28 @@ class SignalClient {
     });
     if (!response.ok) {
       throw new Error(`failed to send signal: ${target}`);
+    }
+  };
+
+  topicSend = async ({
+    topic,
+    target,
+    data,
+  }: {
+    topic: SignalTopic;
+    target: string;
+    data: Record<string, unknown>;
+  }) => {
+    const response = await fetch(`${this._endpoint}/topics/${topic}/signals/${target}`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (!response.ok) {
+      throw new Error(`failed to send topic signal: ${target}`);
     }
   };
 

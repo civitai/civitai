@@ -1,8 +1,9 @@
 import { MantineColor, Notification, NotificationProps } from '@mantine/core';
+import { useInterval } from '@mantine/hooks';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
-import { SignalMessages } from '~/server/common/enums';
+import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { useDebouncer } from '~/utils/debouncer';
 import { getRandomInt } from '~/utils/number-helpers';
 import { SignalStatus } from '~/utils/signals/types';
@@ -44,6 +45,31 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
     worker?.on(message, callback);
     return () => {
       worker?.off(message, callback);
+    };
+  }, [worker, message]);
+};
+
+export const useSignalTopic = (topic: SignalTopic, message: SignalMessages, cb: SignalCallback) => {
+  const { worker } = useSignalContext();
+
+  const cbRef = useRef(cb);
+  // any updates to cb will be assigned to cbRef.current
+  cbRef.current = cb;
+
+  const interval = useInterval(() => {
+    console.log('Registering topic', topic);
+    worker?.topicRegister(topic);
+    worker?.off(message, cbRef.current);
+
+    const callback = (args: any) => cbRef.current(args);
+    worker?.on(message, callback);
+  }, 30000);
+
+  useEffect(() => {
+    interval.start();
+
+    return () => {
+      interval.stop();
     };
   }, [worker, message]);
 };

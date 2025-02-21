@@ -39,6 +39,7 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
+import { isDev } from '~/env/other';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';
@@ -227,6 +228,9 @@ export async function createBuzzTransaction({
   });
 
   if (!response.ok) {
+    if (isDev) {
+      console.error('Failed to create buzz transaction', response);
+    }
     switch (response.status) {
       case 400:
         throw throwBadRequestError('Invalid transaction');

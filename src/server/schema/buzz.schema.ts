@@ -35,9 +35,9 @@ export const buzzAccountTypes = [
   'user',
   'club',
   'generation',
-  'creator-program:bank',
-  'cash:pending',
-  'cash:settled',
+  'creatorprogrambank',
+  'cashpending',
+  'cashsettled',
 ] as const;
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
 

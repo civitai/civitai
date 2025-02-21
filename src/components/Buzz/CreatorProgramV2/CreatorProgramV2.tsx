@@ -28,6 +28,7 @@ import React, { HTMLProps, useEffect } from 'react';
 import {
   useBankedBuzz,
   useCompensationPool,
+  useCompensationPoolUpdateListener,
   useCreatorProgramForecast,
   useCreatorProgramMutate,
   useCreatorProgramPhase,
@@ -43,11 +44,12 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '~/components/NextLink/NextLink';
+import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { OnboardingSteps } from '~/server/common/enums';
+import { OnboardingSteps, SignalMessages, SignalTopic } from '~/server/common/enums';
 import {
   getCurrentValue,
   getExtractionFee,
@@ -192,10 +194,11 @@ const openWithdrawalFreeModal = () => {
   });
 };
 
-// TODO: Can probably separate this file into multiple smaller ones. It's getting a bit long.
+// TODO creators program Can probably separate this file into multiple smaller ones. It's getting a bit long.
 export const CreatorsProgramV2 = () => {
   const currentUser = useCurrentUser();
   const { phase, isLoading } = useCreatorProgramPhase();
+  useCompensationPoolUpdateListener();
 
   if (!currentUser || isLoading) {
     return null;
@@ -593,6 +596,7 @@ const EstimatedEarningsCard = () => {
     );
   }
 
+ 
   return (
     <div className={clsx(cardProps.className, 'basis-2/4 gap-6')}>
       <div className="flex flex-col gap-2">
@@ -664,7 +668,7 @@ const EstimatedEarningsCard = () => {
             <p className="text-xs">
               This value will <span className="font-bold">decrease</span> as other creators Extract
               Buzz. <span className="font-bold">Forecasted value: </span> $
-              {numberWithCommas(getForecastedValue(banked.total ?? 0, compensationPool))}
+              {numberWithCommas(formatToLeastDecimals(getForecastedValue(banked.total ?? 0, compensationPool)))}
             </p>
           )}
           {phase === 'extraction' && (

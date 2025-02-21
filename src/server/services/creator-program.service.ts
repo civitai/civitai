@@ -2,7 +2,12 @@ import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
-import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
+import {
+  NotificationCategory,
+  OnboardingSteps,
+  SignalMessages,
+  SignalTopic,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -43,6 +48,7 @@ import {
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 import { createNotification } from '~/server/services/notification.service';
+import { signalClient } from '~/utils/signal-client';
 
 type UserCapCacheItem = {
   id: number;
@@ -126,10 +132,10 @@ export async function getBanked(userId: number) {
     `${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`,
     async () => {
       const data = await getCounterPartyBuzzTransactions({
-        accountId: userId,
-        accountType: 'user',
-        counterPartyAccountId: monthAccount,
-        counterPartyAccountType: 'creator-program:bank',
+        accountId: monthAccount,
+        accountType: 'creatorprogrambank',
+        counterPartyAccountId: userId,
+        counterPartyAccountType: 'user',
       });
 
       return data.totalBalance;
@@ -214,8 +220,8 @@ async function getPoolSize(month?: Date) {
       SUM(if(fromAccountType = 'user', amount, amount * -1)) as banked
     FROM buzzTransactions
     WHERE (
-        (fromAccountType = 'user' AND toAccountType = 'creator-program:bank' AND toAccountId = ${monthAccount})
-      OR (toAccountType = 'user' AND fromAccountType = 'creator-program:bank' AND fromAccountId = ${monthAccount})
+        (fromAccountType = 'user' AND toAccountType = 'creatorprogrambank' AND toAccountId = ${monthAccount})
+      OR (toAccountType = 'user' AND fromAccountType = 'creatorprogrambank' AND fromAccountId = ${monthAccount})
     )
     AND date > toStartOfMonth(${month});
   `;
@@ -303,7 +309,7 @@ export async function bankBuzz(userId: number, amount: number) {
     fromAccountId: userId,
     fromAccountType: 'user',
     toAccountId: monthAccount,
-    toAccountType: 'creator-program:bank',
+    toAccountType: 'creatorprogrambank',
     type: TransactionType.Bank,
     description: 'Banked for Creator Program',
   });
@@ -312,7 +318,13 @@ export async function bankBuzz(userId: number, amount: number) {
   bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
   bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
-  // TODO creators program stretch: Signal pool size update. Need help from Koen?
+  // TODO creators program stretch: Signal pool size update.
+  const compensationPool = await getCompensationPool({});
+  signalClient.topicSend({
+    topic: SignalTopic.CreatorProgram,
+    target: SignalMessages.CompensationPoolUpdate,
+    data: compensationPool,
+  });
 }
 
 export async function extractBuzz(userId: number) {
@@ -334,7 +346,7 @@ export async function extractBuzz(userId: number) {
   await createBuzzTransaction({
     amount: banked.total,
     fromAccountId: monthAccount,
-    fromAccountType: 'creator-program:bank',
+    fromAccountType: 'creatorprogrambank',
     toAccountId: userId,
     toAccountType: 'user',
     type: TransactionType.Extract,
@@ -395,10 +407,10 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
     const balances = await clickhouse.$query<{ userId: number; pending: number; ready: number }>`
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cash:pending', if(type = 'withdrawal', -1, 1) * amount, 0)) as pending,
-        SUM(if(toAccountType = 'cash:settled', if(type = 'withdrawal', -1, 1) * amount, 0)) as ready
+        SUM(if(toAccountType = 'cashpending', if(type = 'withdrawal', -1, 1) * amount, 0)) as pending,
+        SUM(if(toAccountType = 'cashsettled', if(type = 'withdrawal', -1, 1) * amount, 0)) as ready
       FROM buzzTransactions
-      WHERE toAccountType IN ('cash:pending', 'cash:settled')
+      WHERE toAccountType IN ('cashpending', 'cashsettled')
       AND (toAccountId IN (${ids}) OR fromAccountId IN (${ids}))
       GROUP BY userId;
     `;
@@ -409,7 +421,8 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
         SUM(amount) as amount
       FROM "CashWithdrawal" cw
       WHERE "userId" IN (${ids.join(',')})
-        AND status != 'Failed'
+        AND status NOT IN ('Rejected', 'Canceled', 'FailedFee')
+      GROUP BY "userId";
     `);
 
     const paymentMethods = ids.map((id) => ({
@@ -499,7 +512,7 @@ export async function withdrawCash(userId: number, amount: number) {
     fromAccountId: userId,
     fromAccountType: 'user',
     toAccountId: 0,
-    toAccountType: 'cash:settled',
+    toAccountType: 'cashsettled',
     type: TransactionType.Withdrawal,
     description: 'Withdrawal request',
   });
@@ -544,17 +557,17 @@ export async function getPoolParticipants(month?: Date) {
   const monthAccount = getMonthAccount(month);
   const participants = await clickhouse!.$query<{ userId: number; amount: number }>`
     SELECT
-      if(toAccountType = 'creator-program:bank', fromAccountId, toAccountId) as userId,
-      SUM(if(toAccountType = 'creator-program:bank', amount, -amount)) as amount
+      if(toAccountType = 'creatorprogrambank', fromAccountId, toAccountId) as userId,
+      SUM(if(toAccountType = 'creatorprogrambank', amount, -amount)) as amount
     FROM buzzTransactions
     WHERE (
       -- Banks
-      toAccountType = 'creator-program:bank'
+      toAccountType = 'creatorprogrambank'
       AND toAccountId = ${monthAccount}
       AND fromAccountType = 'user'
     ) OR (
       -- Extracts
-      fromAccountType = 'creator-program:bank'
+      fromAccountType = 'creatorprogrambank'
       AND fromAccountId = ${monthAccount}
       AND toAccountType = 'user'
     )
@@ -592,7 +605,7 @@ export const updateCashWithdrawal = async ({
       await withRetries(async () => {
         const transaction = await createBuzzTransaction({
           type: TransactionType.Refund,
-          toAccountType: 'cash:settled',
+          toAccountType: 'cashsettled',
           toAccountId: userId,
           fromAccountId: 0, // central bank
           amount: withdrawal.amount - (fees ?? 0),

@@ -76,7 +76,7 @@ export const creatorsProgramDistribute = createJob(
       createBuzzTransactionMany(
         allocations.map(([userId, amount]) => ({
           type: TransactionType.Compensation,
-          toAccountType: 'cash:pending',
+          toAccountType: 'cashpending',
           toAccountId: userId,
           fromAccountId: 0, // central bank
           amount,
@@ -94,14 +94,14 @@ export const creatorsProgramDistribute = createJob(
       WITH affected AS (
         SELECT DISTINCT toAccountId as id
         FROM buzzTransactions
-        WHERE toAccountType = 'cash:pending'
+        WHERE toAccountType = 'cashpending'
         AND date > ${month}
       )
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cash:pending' OR (toAccountType = 'cash:settled' AND fromAccountType != 'cash:pending'), amount, 0)) as balance
+        SUM(if(toAccountType = 'cashpending' OR (toAccountType = 'cashsettled' AND fromAccountType != 'cashpending'), amount, 0)) as balance
       FROM buzzTransactions
-      WHERE toAccountType IN ('cash:pending', 'cash:settled')
+      WHERE toAccountType IN ('cashpending', 'cashsettled')
         AND toAccountId IN (SELECT id FROM affected)
       GROUP BY toAccountId
       HAVING balance > ${MIN_WITHDRAWAL_AMOUNT};
@@ -125,7 +125,8 @@ export const creatorsProgramDistribute = createJob(
     // Bust user caches
     const affectedUsers = participants.map((p) => p.userId);
     userCashCache.bust(affectedUsers);
-    // TODO creator program stretch: send signal to update user cash balance
+    // TODO creator program stretch: send signal to update user cash balance 
+    await Promise.all(affectedUsers.map((userId) => {});
 
     // Update month
     month = dayjs(month).add(1, 'month').toDate();
@@ -151,16 +152,16 @@ export const creatorsProgramSettleCash = createJob(
     const pendingCash = await clickhouse.$query<{ userId: number; amount: number }>`
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cash:pending', amount, -amount)) as amount
+        SUM(if(toAccountType = 'cashpending', amount, -amount)) as amount
       FROM buzzTransactions
       WHERE (
         -- Settlements
-        fromAccountType = 'cash:pending'
-        AND toAccountType = 'cash:settled'
+        fromAccountType = 'cashpending'
+        AND toAccountType = 'cashsettled'
       ) OR (
         -- Deposits
         fromAccountId = 0
-        AND toAccountType = 'cash:pending'
+        AND toAccountType = 'cashpending'
       )
       GROUP BY userId
       HAVING amount > 0;
@@ -172,9 +173,9 @@ export const creatorsProgramSettleCash = createJob(
       createBuzzTransactionMany(
         pendingCash.map(({ userId, amount }) => ({
           type: TransactionType.Compensation,
-          toAccountType: 'cash:settled',
+          toAccountType: 'cashsettled',
           toAccountId: userId,
-          fromAccountType: 'cash:pending',
+          fromAccountType: 'cashpending',
           fromAccountId: userId,
           amount,
           description: `Cash settlement for ${monthStr}`,
