@@ -755,12 +755,14 @@ export default function ModelDetailsV2({
                       href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
                       tooltip="What is this?"
                     />
-                    <HelpButton
-                      size="xl"
-                      tooltip="Need help? Start the tour!"
-                      iconProps={{ size: 30, stroke: 1.5 }}
-                      onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
-                    />
+                    {features.appTour && (
+                      <HelpButton
+                        size="xl"
+                        tooltip="Need help? Start the tour!"
+                        iconProps={{ size: 30, stroke: 1.5 }}
+                        onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
+                      />
+                    )}
                     <ToggleModelNotification
                       className={classes.headerButton}
                       modelId={model.id}

@@ -1,9 +1,9 @@
 import { useRouter } from 'next/router';
 import React, { cloneElement } from 'react';
-import { env } from '~/env/client';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { LoginRedirectReason } from '~/utils/login-helpers';
 import { requireLogin } from '~/components/Login/requireLogin';
+import { QS } from '~/utils/qs';
 
 export type Props = {
   reason: LoginRedirectReason;
@@ -14,8 +14,16 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
   const { running, closeTour, activeTour } = useTourContext();
 
-  const url = new URL(returnUrl ?? router.asPath, env.NEXT_PUBLIC_BASE_URL);
-  if (running && activeTour) url.searchParams.set('tour', activeTour);
+  // TODO.tour
+  const url = returnUrl ?? router.asPath;
+  if (running && activeTour) {
+    // Add the active tour to the query string
+    const [path, params] = url.split('?');
+    const query = params ? QS.parse(params) : {};
+    const queryString = QS.stringify({ ...query, tour: activeTour });
+
+    returnUrl = `${path}?${queryString}`;
+  }
 
   function handleClick(e: React.MouseEvent) {
     e.stopPropagation();
@@ -25,7 +33,7 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
     requireLogin({
       reason,
       cb: () => children.props.onClick?.(e),
-      returnUrl: url.toString(),
+      returnUrl: url,
     });
   }
 

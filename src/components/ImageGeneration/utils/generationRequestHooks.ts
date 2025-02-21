@@ -8,8 +8,7 @@ import { z } from 'zod';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { updateQueries } from '~/hooks/trpcHelpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFiltersContext } from '~/providers/FiltersProvider';
-import { MarkerType, SignalMessages } from '~/server/common/enums';
+import { GenerationReactType, SignalMessages } from '~/server/common/enums';
 import {
   GeneratedImageStepMetadata,
   TextToImageStepImageMetadata,
@@ -31,6 +30,8 @@ import { createDebouncer } from '~/utils/debouncer';
 import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
+import { GenerationSort } from '~/server/common/enums';
+import { useFiltersContext } from '~/providers/FiltersProvider';
 
 type InfiniteTextToImageRequests = InfiniteData<
   AsyncReturnType<typeof queryGeneratedImageWorkflows>
@@ -63,17 +64,17 @@ export function useGetTextToImageRequests(
 ) {
   const currentUser = useCurrentUser();
 
-  const filters = useFiltersContext((state) => state.markers);
+  const filters = useFiltersContext((state) => state.generation);
 
   const tags = useMemo(() => {
     switch (filters.marker) {
-      case MarkerType.Favorited:
+      case GenerationReactType.Favorited:
         return [WORKFLOW_TAGS.FAVORITE];
 
-      case MarkerType.Liked:
+      case GenerationReactType.Liked:
         return [WORKFLOW_TAGS.FEEDBACK.LIKED];
 
-      case MarkerType.Disliked:
+      case GenerationReactType.Disliked:
         return [WORKFLOW_TAGS.FEEDBACK.DISLIKED];
       default:
         return [];
@@ -83,6 +84,7 @@ export function useGetTextToImageRequests(
   const { data, ...rest } = trpc.orchestrator.queryGeneratedImages.useInfiniteQuery(
     {
       ...input,
+      ascending: filters.sort === GenerationSort.Oldest,
       tags: [
         WORKFLOW_TAGS.GENERATION,
         ...(options?.includeTags === false ? [] : [...tags, ...(filters.tags ?? [])]),
@@ -139,22 +141,55 @@ export function useGetTextToImageRequestsImages(input?: z.input<typeof workflowQ
   return { requests: data, steps, ...rest };
 }
 
-function updateTextToImageRequests(cb: (data: InfiniteTextToImageRequests) => void) {
+function updateTextToImageRequests({
+  cb,
+  input,
+}: {
+  cb: (data: InfiniteTextToImageRequests) => void;
+  input?: z.input<typeof workflowQuerySchema>;
+}) {
   const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
-  // const test = queryClient.getQueriesData({ queryKey, exact: false })
-  queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
-    produce(state, (old?: InfiniteTextToImageRequests) => {
-      if (!old) return;
-      cb(old);
-    })
+  queryClient.setQueriesData(
+    {
+      queryKey,
+      exact: false,
+      predicate: (data: any) => {
+        if (input) {
+          const queryInput = data.queryKey[1]?.input ?? {};
+          for (const key in input) {
+            if (queryInput[key] !== (input as any)[key]) return false;
+          }
+        }
+        return true;
+      },
+    },
+    (state) => {
+      // console.log(state);
+      return produce(state, (old?: InfiniteTextToImageRequests) => {
+        if (!old) return;
+        cb(old);
+      });
+    }
   );
 }
 
 export function useSubmitCreateImage() {
   return trpc.orchestrator.generateImage.useMutation({
     onSuccess: (data, input) => {
-      updateTextToImageRequests((old) => {
-        old.pages[0].items.unshift(data);
+      updateTextToImageRequests({
+        input: { ascending: false },
+        cb: (old) => {
+          old.pages[0].items.unshift(data);
+        },
+      });
+      updateTextToImageRequests({
+        input: { ascending: true },
+        cb: (old) => {
+          const index = old.pages.length - 1;
+          if (!old.pages[index].nextCursor) {
+            old.pages[index].items.push(data);
+          }
+        },
       });
       updateFromEvents();
     },
@@ -171,29 +206,36 @@ export function useSubmitCreateImage() {
 export function useGenerate() {
   return trpc.orchestrator.generate.useMutation({
     onSuccess: (data) => {
-      updateTextToImageRequests((old) => {
-        old.pages[0].items.unshift(data);
+      updateTextToImageRequests({
+        input: { ascending: false },
+        cb: (old) => {
+          old.pages[0].items.unshift(data);
+        },
+      });
+      updateTextToImageRequests({
+        input: { ascending: true },
+        cb: (old) => {
+          const index = old.pages.length - 1;
+          if (!old.pages[index].nextCursor) {
+            old.pages[index].items.push(data);
+          }
+        },
       });
       updateFromEvents();
     },
-    // onError: (error) => {
-    //   showErrorNotification({
-    //     title: 'Failed to generate',
-    //     error: new Error(error.message),
-    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-    //   });
-    // },
   });
 }
 
 export function useDeleteTextToImageRequest() {
   return trpc.orchestrator.deleteWorkflow.useMutation({
     onSuccess: (_, { workflowId }) => {
-      updateTextToImageRequests((data) => {
-        for (const page of data.pages) {
-          const index = page.items.findIndex((x) => x.id === workflowId);
-          if (index > -1) page.items.splice(index, 1);
-        }
+      updateTextToImageRequests({
+        cb: (data) => {
+          for (const page of data.pages) {
+            const index = page.items.findIndex((x) => x.id === workflowId);
+            if (index > -1) page.items.splice(index, 1);
+          }
+        },
       });
     },
     onError: (error) => {
@@ -427,51 +469,53 @@ export function useTextToImageSignalUpdate() {
 function updateFromEvents() {
   if (!Object.keys(signalJobEventsDictionary).length) return;
 
-  updateTextToImageRequests((old) => {
-    for (const page of old.pages) {
-      for (const item of page.items) {
-        if (
-          !Object.keys(signalJobEventsDictionary).length &&
-          !Object.keys(signalWorkflowEventsDictionary).length
-        )
-          return;
+  updateTextToImageRequests({
+    cb: (old) => {
+      for (const page of old.pages) {
+        for (const item of page.items) {
+          if (
+            !Object.keys(signalJobEventsDictionary).length &&
+            !Object.keys(signalWorkflowEventsDictionary).length
+          )
+            return;
 
-        const workflowEvent = signalWorkflowEventsDictionary[item.id];
-        if (workflowEvent) {
-          item.status = workflowEvent.status!;
-          if (item.status === signalWorkflowEventsDictionary[item.id].status)
-            delete signalWorkflowEventsDictionary[item.id];
-        }
+          const workflowEvent = signalWorkflowEventsDictionary[item.id];
+          if (workflowEvent) {
+            item.status = workflowEvent.status!;
+            if (item.status === signalWorkflowEventsDictionary[item.id].status)
+              delete signalWorkflowEventsDictionary[item.id];
+          }
 
-        for (const step of item.steps) {
-          // get all jobIds associated with images
-          const imageJobIds = [...new Set(step.images.map((x) => x.jobId))];
-          // get any pending events associated with imageJobIds
-          const jobEventIds = Object.keys(signalJobEventsDictionary).filter((jobId) =>
-            imageJobIds.includes(jobId)
-          );
+          for (const step of item.steps) {
+            // get all jobIds associated with images
+            const imageJobIds = [...new Set(step.images.map((x) => x.jobId))];
+            // get any pending events associated with imageJobIds
+            const jobEventIds = Object.keys(signalJobEventsDictionary).filter((jobId) =>
+              imageJobIds.includes(jobId)
+            );
 
-          for (const jobId of jobEventIds) {
-            const signalEvent = signalJobEventsDictionary[jobId];
-            if (!signalEvent) continue;
-            const { status } = signalEvent;
-            const images = step.images.filter((x) => x.jobId === jobId);
-            for (const image of images) {
-              image.status = signalEvent.status!;
-              image.completed = signalEvent.completed;
-              if (image.type === 'video') {
-                image.progress = signalEvent.progress ?? 0;
-                image.reason = image.reason ?? signalEvent.reason;
+            for (const jobId of jobEventIds) {
+              const signalEvent = signalJobEventsDictionary[jobId];
+              if (!signalEvent) continue;
+              const { status } = signalEvent;
+              const images = step.images.filter((x) => x.jobId === jobId);
+              for (const image of images) {
+                image.status = signalEvent.status!;
+                image.completed = signalEvent.completed;
+                if (image.type === 'video') {
+                  image.progress = signalEvent.progress ?? 0;
+                  image.reason = image.reason ?? signalEvent.reason;
+                }
               }
-            }
 
-            if (status === signalJobEventsDictionary[jobId].status) {
-              delete signalJobEventsDictionary[jobId];
-              if (!Object.keys(signalJobEventsDictionary).length) break;
+              if (status === signalJobEventsDictionary[jobId].status) {
+                delete signalJobEventsDictionary[jobId];
+                if (!Object.keys(signalJobEventsDictionary).length) break;
+              }
             }
           }
         }
       }
-    }
+    },
   });
 }

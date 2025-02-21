@@ -42,7 +42,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
-  const { running, runTour, currentStep } = useTourContext();
+  const { running, helpers } = useTourContext();
 
   const image = useImageStore(data);
   const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
@@ -74,9 +74,9 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
       });
 
       // Go to next step in tour when clicking
-      if (running) runTour({ step: currentStep + 1 });
+      if (running) helpers?.next();
     },
-    [image.type, image.id, running, runTour, currentStep]
+    [image.type, image.id, running, helpers]
   );
 
   const twCardStyle = useMemo(() => {

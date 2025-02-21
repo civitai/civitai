@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.500",
+  "version": "5.0.501",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -56,7 +56,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.1.9-beta.21",
+    "@civitai/client": "^0.1.9-beta.22",
     "@civitai/next-axiom": "^0.17.0",
     "@clickhouse/client": "^0.2.2",
     "@cloudamqp/amqp-client": "^2.1.1",

@@ -399,6 +399,7 @@ function combineResourcesWithInputResource(
     .filter(isDefined);
 }
 
+export type WorkflowFormatted = AsyncReturnType<typeof formatGenerationResponse>[number];
 export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
