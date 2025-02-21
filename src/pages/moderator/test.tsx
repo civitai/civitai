@@ -28,7 +28,7 @@ import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import createSlots from '~/libs/slots/create-slots';
 import { getRandomInt } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-import { LoginModal } from '~/components/LoginModal/LoginModal';
+import { LoginModal } from '~/components/Login/LoginModal';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 

@@ -9,24 +9,34 @@ import { Form, InputText, useForm } from '~/libs/form';
 const schema = z.object({
   email: z.string().trim().toLowerCase().email(),
 });
-export const EmailLogin = ({ returnUrl, size }: { returnUrl: string; size?: MantineSize }) => {
+type Status = 'idle' | 'loading' | 'submitted';
+export const EmailLogin = ({
+  returnUrl,
+  size,
+  status,
+  onStatusChange,
+}: {
+  returnUrl: string;
+  size?: MantineSize;
+  status: Status;
+  onStatusChange: (value: Status) => void;
+}) => {
   const router = useRouter();
-  const [status, setStatus] = useState<'idle' | 'loading' | 'submitted'>('idle');
   const form = useForm({ schema });
   const handleEmailLogin = async ({ email }: z.infer<typeof schema>) => {
-    setStatus('loading');
+    onStatusChange('loading');
     const result = await signIn('email', { email, redirect: false, callbackUrl: returnUrl });
     if (result?.error === 'AccessDenied') {
       router.replace({ query: { error: 'NoExtraEmails' } }, undefined, { shallow: true });
-      setStatus('idle');
+      onStatusChange('idle');
       return;
     } else if (result?.error) {
       router.replace({ query: { error: 'TooManyRequests' } }, undefined, { shallow: true });
-      setStatus('idle');
+      onStatusChange('idle');
       return;
     }
 
-    setStatus('submitted');
+    onStatusChange('submitted');
   };
 
   if (status === 'submitted')
