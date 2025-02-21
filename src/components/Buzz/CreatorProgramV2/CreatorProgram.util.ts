@@ -1,6 +1,6 @@
 import { use } from 'motion/dist/react-m';
 import { useMemo, useState } from 'react';
-import { useSignalTopic } from '~/components/Signals/SignalsProvider';
+import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { BankBuzzInput, WithdrawCashInput } from '~/server/schema/creator-program.schema';
@@ -197,11 +197,15 @@ export const useCreatorProgramMutate = () => {
   };
 };
 
-export const useCompensationPoolUpdateListener = () => {
+export const useCreatorPoolListener = () => {
   const utils = trpc.useUtils();
-  useSignalTopic(SignalTopic.CreatorProgram, SignalMessages.CompensationPoolUpdate, (data: any) => {
+  useSignalTopic(SignalTopic.CreatorProgram);
+  useSignalConnection(SignalMessages.CompensationPoolUpdate, (data: any) => {
     utils.creatorProgram.getCompensationPool.setData({}, (old) => {
       return { ...(old ?? {}), ...(data as CompensationPool) };
     });
+  });
+  useSignalConnection(SignalMessages.CashInvalidator, (data: any) => {
+    utils.creatorProgram.getCash.invalidate();
   });
 };

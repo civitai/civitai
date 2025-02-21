@@ -134,7 +134,7 @@ export enum SignalMessages {
   Pong = 'pong',
   // Creators Program:
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
-  CashUpdate = 'cash:update',
+  CashInvalidator = 'creators-program:cash-invalidator',
 }
 
 export enum BountySort {

@@ -49,21 +49,13 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
   }, [worker, message]);
 };
 
-export const useSignalTopic = (topic: SignalTopic, message: SignalMessages, cb: SignalCallback) => {
+export const useSignalTopic = (topic: SignalTopic) => {
   const { worker } = useSignalContext();
-
-  const cbRef = useRef(cb);
-  // any updates to cb will be assigned to cbRef.current
-  cbRef.current = cb;
-
-  const interval = useInterval(() => {
-    const callback = (args: any) => cbRef.current(args);
-    worker?.off(message, callback);
-    console.log('Registering topic', topic);
+ 
+  const interval = useInterval(() => { 
     worker?.topicRegister(topic);
 
-    worker?.on(message, callback);
-  }, 30000);
+   }, 30000);
 
   useEffect(() => {
     interval.start();
@@ -71,7 +63,7 @@ export const useSignalTopic = (topic: SignalTopic, message: SignalMessages, cb: 
     return () => {
       interval.stop();
     };
-  }, [worker, message]);
+  }, [worker]);
 };
 
 const SIGNAL_DATA_REFRESH_DEBOUNCE = 10;

@@ -21,6 +21,8 @@ import {
   MIN_WITHDRAWAL_AMOUNT,
 } from '~/shared/constants/creator-program.constants';
 import { createJob } from './job';
+import { SignalMessages, SignalTopic } from '~/server/common/enums';
+import { signalClient } from '~/utils/signal-client';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
@@ -78,7 +80,12 @@ export const creatorsProgramDistribute = createJob(
     // Bust user caches
     const affectedUsers = participants.map((p) => p.userId);
     userCashCache.bust(affectedUsers);
-    // TODO creator program stretch: send signal to update user cash balance
+
+    await signalClient.topicSend({
+      topic: SignalTopic.CreatorProgram,
+      target: SignalMessages.CashInvalidator,
+      data: {},
+    });
 
     // Update month
     month = dayjs(month).add(1, 'month').toDate();
@@ -125,7 +132,12 @@ export const creatorsProgramInviteTipalti = createJob(
 
     // Bust user caches
     userCashCache.bust(usersWithoutTipalti);
-    // TODO creator program stretch: send signal to invalidate getCash
+
+    await signalClient.topicSend({
+      topic: SignalTopic.CreatorProgram,
+      target: SignalMessages.CashInvalidator,
+      data: {},
+    });
   }
 );
 
@@ -182,7 +194,11 @@ export const creatorsProgramSettleCash = createJob(
     // Bust user caches
     const affectedUsers = pendingCash.map((p) => p.userId);
     userCashCache.bust(affectedUsers);
-    // TODO creator program stretch: send signal to update user cash balance
+    await signalClient.topicSend({
+      topic: SignalTopic.CreatorProgram,
+      target: SignalMessages.CashInvalidator,
+      data: {},
+    });
   }
 );
 

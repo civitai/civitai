@@ -318,7 +318,6 @@ export async function bankBuzz(userId: number, amount: number) {
   bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
   bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
-  // TODO creators program stretch: Signal pool size update.
   const compensationPool = await getCompensationPool({});
   await signalClient.topicSend({
     topic: SignalTopic.CreatorProgram,

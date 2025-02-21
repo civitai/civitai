@@ -28,7 +28,7 @@ import React, { HTMLProps, useEffect } from 'react';
 import {
   useBankedBuzz,
   useCompensationPool,
-  useCompensationPoolUpdateListener,
+  useCreatorPoolListener,
   useCreatorProgramForecast,
   useCreatorProgramMutate,
   useCreatorProgramPhase,
@@ -197,7 +197,7 @@ const openWithdrawalFreeModal = () => {
 export const CreatorsProgramV2 = () => {
   const currentUser = useCurrentUser();
   const { phase, isLoading } = useCreatorProgramPhase();
-  useCompensationPoolUpdateListener();
+  useCreatorPoolListener();
 
   if (!currentUser || isLoading) {
     return null;
