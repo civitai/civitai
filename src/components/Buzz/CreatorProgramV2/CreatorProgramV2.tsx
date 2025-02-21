@@ -56,11 +56,10 @@ import {
 import {
   CAP_DEFINITIONS,
   MIN_WITHDRAWAL_AMOUNT,
-  PayoutMethods,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { CashWithdrawalMethod, Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import {
@@ -158,7 +157,7 @@ const openSettlementModal = () => {
 };
 
 const openWithdrawalFreeModal = () => {
-  const keys = Object.keys(WITHDRAWAL_FEES) as PayoutMethods[];
+  const keys = Object.keys(WITHDRAWAL_FEES) as CashWithdrawalMethod[];
   dialogStore.trigger({
     component: AlertDialog,
     props: {
@@ -167,16 +166,22 @@ const openWithdrawalFreeModal = () => {
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-1">
           <p className="mb-2">Withdrawl fees vary depending on the Payout Method you choose.</p>
-          {keys.map((key) => (
-            <div className="flex gap-4" key={key}>
-              <p className="font-bold">{capitalize(key)}</p>
-              <p>
-                {WITHDRAWAL_FEES[key].type === 'percent'
-                  ? `${WITHDRAWAL_FEES[key].amount * 100}%`
-                  : `$${formatCurrencyForDisplay(WITHDRAWAL_FEES[key].amount, Currency.USD)}`}
-              </p>
-            </div>
-          ))}
+          {keys.map((key) => {
+            if (!WITHDRAWAL_FEES[key]) {
+              return null;
+            }
+
+            return (
+              <div className="flex gap-4" key={key}>
+                <p className="font-bold">{capitalize(key)}</p>
+                <p>
+                  {WITHDRAWAL_FEES[key].type === 'percent'
+                    ? `${WITHDRAWAL_FEES[key].amount * 100}%`
+                    : `$${formatCurrencyForDisplay(WITHDRAWAL_FEES[key].amount, Currency.USD)}`}
+                </p>
+              </div>
+            );
+          })}
 
           <Button className="mt-2" onClick={handleClose}>
             Close

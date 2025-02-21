@@ -18,7 +18,7 @@ import {
   getExtractionFee,
   getPhases,
   getWithdrawalFee,
-  getWithdrawalRequestId,
+  getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import {
@@ -27,7 +27,6 @@ import {
   MIN_CAP,
   MIN_CREATOR_SCORE,
   MIN_WITHDRAWAL_AMOUNT,
-  PayoutMethods,
   PEAK_EARNING_WINDOW,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
@@ -368,7 +367,7 @@ type UserCashCacheItem = {
   pending: number;
   ready: number;
   withdrawn: number;
-  paymentMethod: PayoutMethods;
+  paymentMethod: CashWithdrawalMethod;
   withdrawalFee?: {
     type: 'fixed' | 'percent';
     amount: number; // Fixed amount or percent
@@ -424,7 +423,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
         };
         const withdrawn = withdrawals.find((w) => w.userId === id)?.amount ?? 0;
         const paymentMethod = (paymentMethods.find((m) => m.userId === id)?.method ??
-          'ach') as PayoutMethods;
+          CashWithdrawalMethod.ACH) as CashWithdrawalMethod;
         return [id, { id, status, pending, ready, withdrawn, paymentMethod }];
       })
     );
@@ -507,13 +506,13 @@ export async function withdrawCash(userId: number, amount: number) {
 
   // Create tipalti payment
   const paidAmount = toWithdraw - fee;
-  const requestId = getWithdrawalRequestId(id, userId);
+  const refCode = getWithdrawalRefCode(id, userId);
 
   const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
-    requestId,
+    requestId: refCode,
     toUserId: userId as number, // Ofcs, user should exist for one.
     amount: (toWithdraw - fee) / 100, // Tipalti doesn't use cents like 99% of other payment processors :shrug:
-    description: `Payment for withdrawal request ${requestId}`,
+    description: `Payment for withdrawal request ${refCode}`,
     byUserId: -1, // The bank
   });
 
@@ -525,7 +524,6 @@ export async function withdrawCash(userId: number, amount: number) {
         'paymentBatchId', ${paymentBatchId},
         'paymentRefCode', ${paymentRefCode}
         'paidAmount', ${paidAmount}
-        'requestId', ${requestId}
       )
     WHERE id = ${id};
   `;

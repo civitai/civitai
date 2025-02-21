@@ -2,9 +2,9 @@ import dayjs from 'dayjs';
 import {
   EXTRACTION_FEES,
   EXTRACTION_PHASE_DURATION,
-  PayoutMethods,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
+import { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
 export function getForecastedValue(
   toBank: number,
@@ -50,12 +50,15 @@ export function getPhases(month?: Date) {
   return { bank, extraction };
 }
 
-export function getWithdrawalFee(amount: number, method: PayoutMethods) {
+export function getWithdrawalFee(amount: number, method: CashWithdrawalMethod) {
+  if (!WITHDRAWAL_FEES[method]) {
+    return 0;
+  }
   const { type, amount: fee } = WITHDRAWAL_FEES[method];
   return type === 'percent' ? amount * fee : fee;
 }
 
-export function getWithdrawalRequestId(id: string, userId: number) {
+export function getWithdrawalRefCode(id: string, userId: number) {
   return `CW:${userId}:${id}`.slice(0, 16); // Tipalti only supports 16 characters.....
 }
 
@@ -63,11 +66,11 @@ export function getWithdrawalRequestId(id: string, userId: number) {
  * Parses a Tipalti withdrawal request ID to the user ID and the ID part of the cash withdrawal ID.
  * Always use these 2 to identify a cash withdrawal.
  *
- * @param requestId Tipalti withdrawal request ID
+ * @param refCode Tipalti withdrawal request ID
  * @returns  The user ID and the ID part of the cash withdrawal ID.
  */
-export function parseRequestIdToWithdrawalId(requestId: string) {
-  const [, userId, idPart] = requestId.split(':');
+export function parseRefCodeToWithdrawalId(refCode: string) {
+  const [, userId, idPart] = refCode.split(':');
   return {
     userId: Number(userId),
     idPart,

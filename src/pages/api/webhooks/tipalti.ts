@@ -7,7 +7,7 @@ import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
 import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
-import { parseRequestIdToWithdrawalId } from '~/server/utils/creator-program.utils';
+import { parseRefCodeToWithdrawalId } from '~/server/utils/creator-program.utils';
 import { BuzzWithdrawalRequestStatus, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 
 export const config = {
@@ -260,7 +260,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
     case 'paymentGroupApproved':
     case 'paymentGroupDeclined': {
       const payment = event.eventData.payments[0] as { refCode: string; paymentStatus: string };
-      const { userId, idPart } = parseRequestIdToWithdrawalId(payment.refCode);
+      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
 
       if (!userId || !idPart) {
         console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
@@ -306,7 +306,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
     case 'paymentDeferred':
     case 'paymentCanceled': {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
-      const { userId, idPart } = parseRequestIdToWithdrawalId(payment.refCode);
+      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
 
       if (!userId || !idPart) {
         console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
@@ -370,7 +370,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
     }
     case 'paymentError': {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
-      const { userId, idPart } = parseRequestIdToWithdrawalId(payment.refCode);
+      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
 
       if (!userId || !idPart) {
         console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);

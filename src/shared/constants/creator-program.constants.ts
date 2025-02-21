@@ -1,4 +1,5 @@
 import { UserTier } from '~/server/schema/user.schema';
+import { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
 export const EXTRACTION_PHASE_DURATION = 3; // days
 
@@ -48,16 +49,25 @@ export const MIN_BANK_AMOUNT = 10000;
 export const MIN_WITHDRAWAL_AMOUNT = 5000;
 export const MIN_CREATOR_SCORE = 100000;
 
-const PAYOUT_METHODS = ['ach', 'paypal', 'check'] as const;
-export type PayoutMethods = (typeof PAYOUT_METHODS)[number];
 type WithdrawalFee = {
   type: 'fixed' | 'percent';
   amount: number;
 };
-export const WITHDRAWAL_FEES: Record<PayoutMethods, WithdrawalFee> = {
-  ach: { type: 'fixed', amount: 200 },
-  paypal: { type: 'percent', amount: 0.05 },
-  check: { type: 'fixed', amount: 400 },
+
+// TODO Creator program - Justin: Revise withdrawal fees here. They might make no sense.
+export const WITHDRAWAL_FEES: Record<CashWithdrawalMethod, WithdrawalFee | undefined> = {
+  ACH: { type: 'fixed', amount: 200 },
+  PayPal: { type: 'percent', amount: 0.05 },
+  Check: { type: 'fixed', amount: 400 },
+  Card: { type: 'fixed', amount: 200 },
+  Custom: { type: 'fixed', amount: 200 },
+  ECheck: { type: 'fixed', amount: 200 },
+  Intercash: { type: 'fixed', amount: 200 },
+  Payoneer: { type: 'fixed', amount: 200 },
+  WireTransfer: { type: 'fixed', amount: 200 },
+  HoldPayments: undefined,
+  NotProvided: undefined,
+  TipaltiInternalValue: undefined,
 };
 
 export const FIRST_CREATOR_PROGRAM_MONTH = new Date('2025-03-01');
