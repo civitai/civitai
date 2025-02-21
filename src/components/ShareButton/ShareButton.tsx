@@ -91,7 +91,11 @@ export function ShareButton({
   if (collect && features.collections) {
     shareLinks.unshift({
       type: 'Save',
-      onClick: () => requireLogin({ cb: () => openContext('addToCollection', collect) }),
+      onClick: () =>
+        requireLogin({
+          reason: 'add-to-collection',
+          cb: () => openContext('addToCollection', collect),
+        }),
       render: <SocialIconCollect />,
     });
   }

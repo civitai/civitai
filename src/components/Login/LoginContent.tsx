@@ -1,7 +1,6 @@
 import { Text, Alert, ThemeIcon, Code, Paper } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
-// import { Logo } from '~/components/Logo/Logo';
 import { BuiltInProviderType } from 'next-auth/providers';
 import { SocialButton, providers } from '~/components/Social/SocialButton';
 import { signIn } from 'next-auth/react';
@@ -9,34 +8,68 @@ import { IconExclamationMark, IconMail } from '@tabler/icons-react';
 import { SignInError } from '~/components/SignInError/SignInError';
 import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
 import { trpc } from '~/utils/trpc';
-import { useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
+import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
+import { setCookie } from '~/utils/cookies-helpers';
+import dayjs from 'dayjs';
+import { useTrackEvent } from '~/components/TrackView/track.utils';
 
-export function LoginContent(args: { returnUrl?: string; message?: React.ReactNode }) {
+export function LoginContent(args: {
+  returnUrl?: string;
+  message?: React.ReactNode;
+  reason?: LoginRedirectReason;
+}) {
   const router = useRouter();
   const query = router.query as {
     error?: string;
     returnUrl?: string;
+    reason?: LoginRedirectReason;
   };
 
   const [status, setStatus] = useState<'idle' | 'loading' | 'submitted'>('idle');
-  const { code, setLoginRedirectReason } = useReferralsContext();
+  const { code } = useReferralsContext();
   const { data: referrer } = trpc.user.userByReferralCode.useQuery(
     { userReferralCode: code! },
     { enabled: !!code }
   );
 
   const returnUrl = args.returnUrl ?? query.returnUrl ?? '/';
+  const reason = args.reason ?? query.reason;
+  const message = reason ? loginRedirectReasons[reason] : args.message;
+
+  useEffect(() => {
+    if (reason) {
+      // Set the reason so that it can be stored in the DB once the user signs up.
+      setCookie('ref_login_redirect_reason', reason, dayjs().add(5, 'day').toDate());
+    }
+  }, [reason]);
+
+  const observedReason = useRef<string | null>(null);
+  const { trackAction } = useTrackEvent();
+
+  useEffect(() => {
+    if (reason && observedReason?.current !== reason && trackedReasons.includes(reason as any)) {
+      // no need to await, worse case this is a noop
+      trackAction({
+        type: 'LoginRedirect',
+        reason: reason as (typeof trackedReasons)[number],
+      }).catch(() => undefined);
+
+      // Safeguard to calling this multiple times.
+      observedReason.current = reason;
+    }
+  }, [reason]);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <div className="flex items-center justify-center">
         <Logo className="max-h-10" />
       </div>
       <h1 className="text-center text-xl font-bold">Sign Up or Log In</h1>
-      {args.message && (
+      {message && (
         <Alert
           color="yellow"
           icon={
@@ -45,7 +78,7 @@ export function LoginContent(args: { returnUrl?: string; message?: React.ReactNo
             </ThemeIcon>
           }
         >
-          {args.message}
+          {message}
         </Alert>
       )}
       {referrer && (
@@ -67,7 +100,7 @@ export function LoginContent(args: { returnUrl?: string; message?: React.ReactNo
         </Paper>
       )}
       {status !== 'submitted' ? (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-3">
           {providers.map((provider) => (
             <SocialButton
               key={provider.name}
