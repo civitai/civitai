@@ -1,21 +1,9 @@
-import { CacheTTL } from '~/server/common/constants';
-import {
-  redis,
-  REDIS_KEYS,
-  REDIS_SYS_KEYS,
-  RedisKeyTemplateCache,
-  sysRedis,
-} from '~/server/redis/client';
-import { mergeQueue } from '~/server/redis/queues';
-import { refreshBlockedModelHashes } from '~/server/services/model.service';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { createJob } from './job';
+import dayjs from 'dayjs';
+import { clickhouse } from '~/server/clickhouse/client';
+import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
-import {
-  CAPPED_BUZZ_VALUE,
-  FIRST_CREATOR_PROGRAM_MONTH,
-  MIN_WITHDRAWAL_AMOUNT,
-} from '~/shared/constants/creator-program.constants';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import {
   bustCompensationPoolCache,
   flushBankedCache,
@@ -24,15 +12,15 @@ import {
   userCapCache,
   userCashCache,
 } from '~/server/services/creator-program.service';
-import { BuzzTransactionDetails, TransactionType } from '~/server/schema/buzz.schema';
-import { withRetries } from '~/server/utils/errorHandling';
-import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import dayjs from 'dayjs';
-import { clickhouse } from '~/server/clickhouse/client';
-import { dbWrite } from '~/server/db/client';
 import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
-import { NotificationCategory } from '~/server/common/enums';
-import { createNotification } from '~/server/services/notification.service';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { withRetries } from '~/server/utils/errorHandling';
+import {
+  CAPPED_BUZZ_VALUE,
+  FIRST_CREATOR_PROGRAM_MONTH,
+  MIN_WITHDRAWAL_AMOUNT,
+} from '~/shared/constants/creator-program.constants';
+import { createJob } from './job';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
@@ -87,15 +75,28 @@ export const creatorsProgramDistribute = createJob(
       );
     });
 
+    // Bust user caches
+    const affectedUsers = participants.map((p) => p.userId);
+    userCashCache.bust(affectedUsers);
+    // TODO creator program stretch: send signal to update user cash balance
+
+    // Update month
+    month = dayjs(month).add(1, 'month').toDate();
+    await dbKV.set('compensation-pool-month', month);
+  }
+);
+
+export const creatorsProgramInviteTipalti = createJob(
+  'creators-program-invite-tipalti',
+  '50 23 L * *',
+  async () => {
     // Send tipalti invite to users with $50+ in cash without a tipalti account
-    // TODO creators program: Ask Koen if this data will be settled in clickhouse yet? (I assume not)
-    // TODO creators program: Need to revise Koen's API to support multiple users. Otherwise we make 1 request per user.
     const usersOverThreshold = await clickhouse!.$query<{ userId: number; balance: number }>`
       WITH affected AS (
         SELECT DISTINCT toAccountId as id
         FROM buzzTransactions
         WHERE toAccountType = 'cash:pending'
-        AND date > ${month}
+        AND date > subtractDays(now(), 1)
       )
       SELECT
         toAccountId as userId,
@@ -123,13 +124,8 @@ export const creatorsProgramDistribute = createJob(
     await limitConcurrency(tasks, 5);
 
     // Bust user caches
-    const affectedUsers = participants.map((p) => p.userId);
-    userCashCache.bust(affectedUsers);
-    // TODO creator program stretch: send signal to update user cash balance
-
-    // Update month
-    month = dayjs(month).add(1, 'month').toDate();
-    await dbKV.set('compensation-pool-month', month);
+    userCashCache.bust(usersWithoutTipalti);
+    // TODO creator program stretch: send signal to invalidate getCash
   }
 );
 
@@ -192,6 +188,7 @@ export const creatorsProgramSettleCash = createJob(
 
 export const creatorProgramJobs = [
   creatorsProgramDistribute,
+  creatorsProgramInviteTipalti,
   creatorsProgramRollover,
   creatorsProgramSettleCash,
 ];
