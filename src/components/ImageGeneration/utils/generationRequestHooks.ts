@@ -148,7 +148,7 @@ function updateTextToImageRequests({
   cb: (data: InfiniteTextToImageRequests) => void;
   input?: z.input<typeof workflowQuerySchema>;
 }) {
-  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages, input);
+  const queryKey = getQueryKey(trpc.orchestrator.queryGeneratedImages);
   queryClient.setQueriesData(
     {
       queryKey,
