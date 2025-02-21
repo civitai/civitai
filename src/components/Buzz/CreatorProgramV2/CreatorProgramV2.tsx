@@ -606,7 +606,7 @@ const EstimatedEarningsCard = () => {
             <tr>
               <td>Compensation Pool</td>
               <td>&nbsp;</td>
-              <td className="border-l-4 py-1 pl-2">${numberWithCommas(compensationPool?.value)}</td>
+              <td className="border-l-4 py-1 pl-2">${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}</td>
             </tr>
             <tr>
               <td>Total Banked Buzz</td>

@@ -398,6 +398,9 @@ export const REDIS_SYS_KEYS = {
   BUZZ_WITHDRAWAL_REQUEST: {
     STATUS: 'buzz-withdrawal-request:status',
   },
+  CREATOR_PROGRAM: {
+    FLIP_PHASES: 'creator-program:flip-phases',
+  },
 } as const;
 
 // Cached data

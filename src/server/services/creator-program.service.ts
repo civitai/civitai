@@ -9,7 +9,7 @@ import {
   SignalTopic,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { REDIS_KEYS } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { UserTier } from '~/server/schema/user.schema';
 import {
@@ -254,7 +254,8 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
         current: await getPoolSize(month),
         forecasted: await getPoolForecast(month),
       },
-      phases: getPhases(month),
+
+      phases: getPhases({ month, flip: (await getFlippedPhaseStatus()) === 'true' }),
     };
   }
 
@@ -282,7 +283,8 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
       current,
       forecasted,
     },
-    phases: getPhases(),
+    // TODO: Remove flip when we're ready to go live
+    phases: getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' }),
   };
 }
 
@@ -292,9 +294,14 @@ export async function bustCompensationPoolCache() {
   await clearCacheByPattern(REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST);
 }
 
+async function getFlippedPhaseStatus() {
+  return await sysRedis.get(REDIS_SYS_KEYS.CREATOR_PROGRAM.FLIP_PHASES);
+}
+
 export async function bankBuzz(userId: number, amount: number) {
   // Check that we're in the banking phase
-  const phases = getPhases();
+  // TODO: Remove flip when we're ready to go live
+  const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (new Date() > phases.bank[1]) throw new Error('Banking phase is closed');
 
   // Adjust to not exceed cap
@@ -328,7 +335,8 @@ export async function bankBuzz(userId: number, amount: number) {
 
 export async function extractBuzz(userId: number) {
   // Check that we're in the extraction phase
-  const phases = getPhases();
+  // TODO: Remove flip when we're ready to go live
+  const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (new Date() < phases.extraction[0]) throw new Error('Extraction phase has not started');
   else if (new Date() > phases.extraction[1]) throw new Error('Extraction phase is closed');
 

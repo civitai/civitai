@@ -37,7 +37,7 @@ export function getExtractionFee(toExtract: number): number {
   return fee;
 }
 
-export function getPhases(month?: Date) {
+export function getPhases({ month, flip }: { month?: Date; flip?: boolean } = {}) {
   month ??= new Date();
   const dayjsMonth = dayjs(month);
 
@@ -47,7 +47,7 @@ export function getPhases(month?: Date) {
   ];
   const extraction = [bank[1], dayjsMonth.endOf('month').subtract(1, 'hours').toDate()];
 
-  return { bank, extraction };
+  return { bank: flip ? extraction : bank, extraction: flip ? bank : extraction };
 }
 
 export function getWithdrawalFee(amount: number, method: CashWithdrawalMethod) {
