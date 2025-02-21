@@ -14,7 +14,7 @@ import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 
-export function LoginContent(args: { returnUrl?: string; message?: string }) {
+export function LoginContent(args: { returnUrl?: string; message?: React.ReactNode }) {
   const router = useRouter();
   const query = router.query as {
     error?: string;

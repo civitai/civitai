@@ -1,10 +1,9 @@
 import { CloseButton, Modal } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-
 import { LoginContent } from '~/components/Login/LoginContent';
 
-export function LoginModal({ message }: { message?: string }) {
+export default function LoginModal({ message }: { message?: React.ReactNode }) {
   const dialog = useDialogContext();
   const router = useRouter();
 
