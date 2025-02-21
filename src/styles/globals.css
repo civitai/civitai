@@ -325,6 +325,20 @@ iframe {
   }
 }
 
+@keyframes shadowGlow {
+  0% {
+    box-shadow: 0 0 10px 0 #fff3bf;
+  }
+
+  50% {
+    box-shadow: 0 0 10px 5px #fff3bf;
+  }
+
+  100% {
+    box-shadow: 0 0 10px 0 #fff3bf;
+  }
+}
+
 /* Google Recapcha Hiding */
 .grecaptcha-badge {
   visibility: hidden;

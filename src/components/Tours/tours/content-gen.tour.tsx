@@ -27,6 +27,11 @@ export const contentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     hideCloseButton: true,
     hideFooter: true,
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+      },
+    },
   },
   {
     target: '[data-tour="gen:prompt"]',
@@ -80,12 +85,18 @@ export const contentGenerationTour: StepWithData[] = [
         await waitForElement({ selector: '[data-tour="gen:submit"]' }).catch(() => null);
       },
     },
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+      },
+    },
   },
   {
     target: '[data-tour="gen:submit"]',
     title: 'Create Your Image',
     content: `Once your prompt is ready to go, hit the generate button and AI will start doing it's magic!`,
     placement: 'top',
+    hideFooter: true,
     disableOverlayClose: true,
     disableBeacon: true,
     spotlightClicks: true,
@@ -93,6 +104,11 @@ export const contentGenerationTour: StepWithData[] = [
       onPrev: async () => {
         if (window.innerWidth < 768) generationPanel.close();
         await waitForElement({ selector: '[data-tour="gen:remix"]' }).catch(() => null);
+      },
+    },
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
       },
     },
   },
@@ -149,12 +165,14 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     spotlightPadding: 16,
     data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
-      },
       onBeforeStart: async () => {
         generationPanel.setView('feed');
         generationPanel.open();
+      },
+    },
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
       },
     },
   },
@@ -162,19 +180,19 @@ export const contentGenerationTour: StepWithData[] = [
     target: '[data-tour="gen:post"]',
     title: 'Posting Content',
     content: 'Click this button to post your selected content to the site.',
-    disableCloseOnEsc: true,
+    hideFooter: true,
     disableOverlayClose: true,
     disableBeacon: true,
     spotlightClicks: true,
     data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 }).catch(
-          () => null
-        );
-      },
       onBeforeStart: async () => {
         generationPanel.setView('feed');
         generationPanel.open();
+      },
+    },
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
       },
     },
   },
@@ -204,6 +222,11 @@ export const remixContentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     hideCloseButton: true,
     hideFooter: true,
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+      },
+    },
   },
   {
     target: '[data-tour="gen:prompt"]',
@@ -220,8 +243,14 @@ export const remixContentGenerationTour: StepWithData[] = [
     content: 'You can submit your prompt by clicking this button and see the magic happen!',
     placement: 'top',
     disableOverlayClose: true,
+    hideFooter: true,
     disableBeacon: true,
     spotlightClicks: true,
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+      },
+    },
   },
   {
     target: '[data-tour="gen:buzz"]',
@@ -276,12 +305,14 @@ export const remixContentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     spotlightPadding: 16,
     data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:post"]' }).catch(() => null);
-      },
       onBeforeStart: async () => {
         generationPanel.setView('feed');
         generationPanel.open();
+      },
+    },
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
       },
     },
   },
@@ -289,19 +320,19 @@ export const remixContentGenerationTour: StepWithData[] = [
     target: '[data-tour="gen:post"]',
     title: 'Posting Content',
     content: 'Click this button to post your selected content to the site.',
-    disableCloseOnEsc: true,
+    hideFooter: true,
     disableOverlayClose: true,
     disableBeacon: true,
     spotlightClicks: true,
     data: {
-      onNext: async () => {
-        await waitForElement({ selector: '[data-tour="post:title"]', timeout: 30000 }).catch(
-          () => null
-        );
-      },
       onBeforeStart: async () => {
         generationPanel.setView('feed');
         generationPanel.open();
+      },
+    },
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
       },
     },
   },

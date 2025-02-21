@@ -1,6 +1,5 @@
 import {
   Accordion,
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -35,7 +34,6 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { ImageById } from '~/components/Image/ById/ImageById';
@@ -103,7 +101,10 @@ import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
-import { contentGenerationTour, remixContentGenerationTour } from '~/components/Tours/tours/content-gen.tour';
+import {
+  contentGenerationTour,
+  remixContentGenerationTour,
+} from '~/components/Tours/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
@@ -124,7 +125,7 @@ export function GenerationFormContent() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
-  const { runTour, running, currentStep, setSteps, activeTour } = useTourContext();
+  const { runTour, running, currentStep, helpers, setSteps, activeTour } = useTourContext();
   const loadingGeneratorData = useGenerationStore((state) => state.loading);
   const remixOfId = useRemixStore((state) => state.remixOfId);
   const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
@@ -1218,7 +1219,7 @@ export function GenerationFormContent() {
                           variant="light"
                           onClick={() => {
                             setReviewed(true);
-                            if (running) runTour({ step: currentStep + 1 });
+                            if (running) helpers?.next();
                           }}
                           style={{ marginTop: 10 }}
                           leftIcon={<IconCheck />}
@@ -1314,7 +1315,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
-  const { running, runTour, currentStep } = useTourContext();
+  const { running, helpers } = useTourContext();
   const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
@@ -1344,7 +1345,7 @@ function SubmitButton(props: { isLoading?: boolean }) {
       cost={total}
       disabled={isError}
       onClick={() => {
-        if (running) runTour({ step: currentStep + 1 });
+        if (running) helpers?.next();
       }}
     />
   );

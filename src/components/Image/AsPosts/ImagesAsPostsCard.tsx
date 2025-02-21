@@ -373,9 +373,6 @@ export function ImagesAsPostsCard({
                                   color="white"
                                   variant="filled"
                                   data-activity="remix:model-gallery"
-                                  data-tour={
-                                    image.type === MediaType.image ? 'gen:remix' : undefined
-                                  }
                                   onClick={handleRemixClick(image)}
                                 >
                                   <IconBrush stroke={2.5} size={16} />
@@ -493,11 +490,6 @@ export function ImagesAsPostsCard({
                                             color="white"
                                             variant="filled"
                                             data-activity="remix:model-gallery"
-                                            data-tour={
-                                              image.type === MediaType.image
-                                                ? 'gen:remix'
-                                                : undefined
-                                            }
                                             onClick={handleRemixClick(image)}
                                           >
                                             <IconBrush stroke={2.5} size={16} />

@@ -92,7 +92,7 @@ export function GeneratedImage({
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
 
-  const { running, runTour, currentStep } = useTourContext();
+  const { running, helpers } = useTourContext();
 
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
@@ -290,6 +290,7 @@ export function GeneratedImage({
           <div
             className={clsx('relative flex flex-1 flex-col items-center justify-center', {
               ['cursor-pointer']: !isLightbox,
+              ['pointer-events-none']: running,
             })}
             onClick={handleImageClick}
             onMouseDown={(e) => {
@@ -332,7 +333,7 @@ export function GeneratedImage({
                 checked={selected}
                 onChange={(e) => {
                   toggleSelect(e.target.checked);
-                  if (running && e.target.checked) runTour({ step: currentStep + 1 });
+                  if (running && e.target.checked) helpers?.next();
                 }}
               />
             </label>
