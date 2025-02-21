@@ -30,6 +30,9 @@ import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import dayjs from 'dayjs';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbWrite } from '~/server/db/client';
+import { createTipaltiPayee } from '~/server/services/user-payment-configuration.service';
+import { NotificationCategory } from '~/server/common/enums';
+import { createNotification } from '~/server/services/notification.service';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
@@ -107,14 +110,14 @@ export const creatorsProgramDistribute = createJob(
       SELECT
         "userId"
       FROM "UserPaymentConfiguration" uc
-      WHERE "tipaltiPaymentsEnabled"
+      WHERE "tipaltiAccountId" IS NOT NULL
       AND "userId" IN (${userIdsOverThreshold});
     `;
     const usersWithoutTipalti = userIdsOverThreshold.filter(
       (userId) => !usersWithTipalti.some((u) => u.userId === userId)
     );
     const tasks = usersWithoutTipalti.map((userId) => async () => {
-      // TODO creators program luis: send tipalti invite
+      await createTipaltiPayee({ userId });
     });
     await limitConcurrency(tasks, 5);
 

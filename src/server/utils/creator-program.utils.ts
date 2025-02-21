@@ -54,3 +54,22 @@ export function getWithdrawalFee(amount: number, method: PayoutMethods) {
   const { type, amount: fee } = WITHDRAWAL_FEES[method];
   return type === 'percent' ? amount * fee : fee;
 }
+
+export function getWithdrawalRequestId(id: string, userId: number) {
+  return `CW:${userId}:${id}`.slice(0, 16); // Tipalti only supports 16 characters.....
+}
+
+/**
+ * Parses a Tipalti withdrawal request ID to the user ID and the ID part of the cash withdrawal ID.
+ * Always use these 2 to identify a cash withdrawal.
+ *
+ * @param requestId Tipalti withdrawal request ID
+ * @returns  The user ID and the ID part of the cash withdrawal ID.
+ */
+export function parseRequestIdToWithdrawalId(requestId: string) {
+  const [, userId, idPart] = requestId.split(':');
+  return {
+    userId: Number(userId),
+    idPart,
+  };
+}

@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
-import { OnboardingSteps } from '~/server/common/enums';
+import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -18,6 +18,7 @@ import {
   getExtractionFee,
   getPhases,
   getWithdrawalFee,
+  getWithdrawalRequestId,
 } from '~/server/utils/creator-program.utils';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import {
@@ -31,6 +32,14 @@ import {
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
+import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
+import {
+  CashWithdrawalMetadataSchema,
+  UpdateCashWithdrawalSchema,
+} from '~/server/schema/creator-program.schema';
+import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
+import { withRetries } from '~/utils/errorHandling';
+import { createNotification } from '~/server/services/notification.service';
 
 type UserCapCacheItem = {
   id: number;
@@ -38,7 +47,7 @@ type UserCapCacheItem = {
   peakEarning: { month: Date; earned: number };
   cap: number;
 };
-// TODO creator program: bust this cache when a user's subscription changes
+
 export const userCapCache = createCachedObject<UserCapCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CAPS,
   idKey: 'id',
@@ -365,7 +374,7 @@ type UserCashCacheItem = {
     amount: number; // Fixed amount or percent
   };
 };
-// TODO creator program luis: Bust this cache when a user's withdrawal fails userCashCache.bust(userId);
+
 export const userCashCache = createCachedObject<UserCashCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CASH,
   idKey: 'id',
@@ -458,12 +467,21 @@ export async function withdrawCash(userId: number, amount: number) {
   // Check that amount is valid
   if (amount < MIN_WITHDRAWAL_AMOUNT) throw new Error('Amount is below minimum');
 
+  // Ensure they're payable:
+  const userPaymentConfiguration = await dbWrite.userPaymentConfiguration.findUnique({
+    where: { userId },
+  });
+
+  if (!userPaymentConfiguration?.tipaltiPaymentsEnabled) {
+    throw new Error('User is not payable');
+  }
+
   // Determine withdrawal amount
   const fee = getWithdrawalFee(amount, cash.paymentMethod);
   const toWithdraw = amount - fee;
 
   // Create withdrawal record
-  const [{ id }] = await dbWrite.$queryRaw<{ id: number }[]>`
+  const [{ id }] = await dbWrite.$queryRaw<{ id: string }[]>`
     INSERT INTO "CashWithdrawal" ("userId", "amount", "fee", "status")
     VALUES (${userId}, ${toWithdraw}, ${fee}, 'Started')
     RETURNING id;
@@ -483,17 +501,32 @@ export async function withdrawCash(userId: number, amount: number) {
   // Update withdrawal record
   await dbWrite.$executeRaw`
     UPDATE "CashWithdrawal"
-    SET "transactionId" = ${transactionId}, status = 'Burned'
+    SET "transactionId" = ${transactionId}, status = 'Scheduled'
     WHERE id = ${id};
   `;
 
   // Create tipalti payment
-  // TODO creator program: Luis implement request to tipalti
+  const paidAmount = toWithdraw - fee;
+  const requestId = getWithdrawalRequestId(id, userId);
+
+  const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
+    requestId,
+    toUserId: userId as number, // Ofcs, user should exist for one.
+    amount: (toWithdraw - fee) / 100, // Tipalti doesn't use cents like 99% of other payment processors :shrug:
+    description: `Payment for withdrawal request ${requestId}`,
+    byUserId: -1, // The bank
+  });
 
   // Update withdrawal record
   await dbWrite.$executeRaw`
     UPDATE "CashWithdrawal"
-    SET status = 'Submitted'
+    SET status = 'Submitted', 
+      metadata = jsonb_build_object(
+        'paymentBatchId', ${paymentBatchId},
+        'paymentRefCode', ${paymentRefCode}
+        'paidAmount', ${paidAmount}
+        'requestId', ${requestId}
+      )
     WHERE id = ${id};
   `;
 
@@ -525,3 +558,109 @@ export async function getPoolParticipants(month?: Date) {
   `;
   return participants;
 }
+
+export const updateCashWithdrawal = async ({
+  withdrawalId,
+  status,
+  note,
+  metadata: updatedMetadata,
+  fees,
+}: UpdateCashWithdrawalSchema) => {
+  // Check if the user has  a pending withdrawal request:
+  const withdrawal = await dbRead.cashWithdrawal.findUniqueOrThrow({
+    where: { id: withdrawalId },
+  });
+
+  const userId = withdrawal.userId;
+
+  // We'll be deducting funds before the transaction mainly to avoid the tx taking too long. In the case of a tx failure, we'll  refund the user.
+  let metadata: CashWithdrawalMetadataSchema = (withdrawal.metadata ??
+    {}) as CashWithdrawalMetadataSchema;
+
+  metadata = {
+    ...metadata,
+    ...(updatedMetadata ?? {}),
+  };
+
+  if (status === CashWithdrawalStatus.Rejected || status === CashWithdrawalStatus.Canceled) {
+    if (withdrawal.transactionId) {
+      await withRetries(async () => {
+        const transaction = await createBuzzTransaction({
+          type: TransactionType.Refund,
+          toAccountType: 'cash:settled',
+          toAccountId: userId,
+          fromAccountId: 0, // central bank
+          amount: withdrawal.amount - (fees ?? 0),
+          description: `Refund for failed withdrawal. Fees: ${fees ?? 0}`,
+          externalTransactionId: withdrawal.transactionId as string,
+        });
+
+        metadata.refundTransactionId = transaction.transactionId;
+
+        if (fees) {
+          await dbWrite.cashWithdrawal.create({
+            data: {
+              userId,
+              transactionId: transaction.transactionId,
+              amount: fees,
+              status: CashWithdrawalStatus.FailedFee,
+              metadata: metadata as any,
+              fee: 0,
+              method: CashWithdrawalMethod.Custom,
+            },
+          });
+        }
+      });
+    }
+  }
+
+  try {
+    // Ensure we update the main request details:
+    await dbWrite.cashWithdrawal.update({
+      where: { id: withdrawalId },
+      data: {
+        status,
+        note,
+        metadata: metadata as any,
+      },
+    });
+
+    switch (status) {
+      case CashWithdrawalStatus.Scheduled:
+        await createNotification({
+          userId: userId as number,
+          type: 'creators-program-withdrawal-approved',
+          category: NotificationCategory.System,
+          key: `creators-program-withdrawal-approved:${withdrawalId}`,
+          details: {},
+        }).catch();
+        break;
+      case CashWithdrawalStatus.Rejected:
+        await createNotification({
+          userId: userId as number,
+          type: 'creators-program-withdrawal-rejected',
+          category: NotificationCategory.System,
+          key: `creators-program-withdrawal-rejected:${withdrawalId}`,
+          details: {},
+        }).catch();
+        break;
+      case CashWithdrawalStatus.Submitted:
+        await createNotification({
+          userId: userId as number,
+          type: 'creators-program-withdrawal-transferred',
+          category: NotificationCategory.System,
+          key: `creators-program-withdrawal-transferred:${withdrawalId}`,
+          details: {},
+        }).catch();
+        break;
+    }
+
+    const updated = await dbWrite.cashWithdrawal.findUniqueOrThrow({
+      where: { id: withdrawalId },
+    });
+
+    return updated;
+  } catch (e) {
+    throw e;
+  }
+};
