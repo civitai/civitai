@@ -160,21 +160,37 @@ model BuzzWithdrawalRequest {
 }
 
 enum CashWithdrawalStatus {
-  Started
-  Burned
-  Submitted
-  Failed
-  FailedFee
+  // Tipalti
   Paid
+  Rejected
+  Scheduled
+  Submitted
+  Deferred
+  DeferredInternal
+  Canceled
+  Cleared
+  FraudReview
+  PendingPayerFunds
+  InternalValue
+  // Civitai Custom State 
+  FailedFee
 }
 
 enum CashWithdrawalMethod {
+  NotProvided
+  WireTransfer
+  Payoneer
+  PayPal
   ACH
   Check
-  PayPal
+  ECheck
+  HoldPayments
+  Custom
+  Intercash
+  Card
+  TipaltiInternalValue
 }
 
-// TODO creators program: create a migration for this addition after confirming that it's ok for Tipalti.
 model CashWithdrawal {
   id            String               @id @default(cuid())
   transactionId String?              @unique

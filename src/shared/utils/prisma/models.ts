@@ -4,9 +4,9 @@ export type BuzzWithdrawalRequestStatus = "Requested" | "Canceled" | "Rejected" 
 
 export type UserPaymentConfigurationProvider = "Stripe" | "Tipalti";
 
-export type CashWithdrawalStatus = "Started" | "Burned" | "Submitted" | "Failed" | "FailedFee" | "Paid";
+export type CashWithdrawalStatus = "Paid" | "Rejected" | "Scheduled" | "Submitted" | "Deferred" | "DeferredInternal" | "Canceled" | "Cleared" | "FraudReview" | "PendingPayerFunds" | "InternalValue" | "FailedFee";
 
-export type CashWithdrawalMethod = "ACH" | "Check" | "PayPal";
+export type CashWithdrawalMethod = "NotProvided" | "WireTransfer" | "Payoneer" | "PayPal" | "ACH" | "Check" | "ECheck" | "HoldPayments" | "Custom" | "Intercash" | "Card" | "TipaltiInternalValue";
 
 export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
