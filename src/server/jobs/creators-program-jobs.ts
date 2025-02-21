@@ -125,8 +125,7 @@ export const creatorsProgramDistribute = createJob(
     // Bust user caches
     const affectedUsers = participants.map((p) => p.userId);
     userCashCache.bust(affectedUsers);
-    // TODO creator program stretch: send signal to update user cash balance 
-    await Promise.all(affectedUsers.map((userId) => {});
+    // TODO creator program stretch: send signal to update user cash balance
 
     // Update month
     month = dayjs(month).add(1, 'month').toDate();

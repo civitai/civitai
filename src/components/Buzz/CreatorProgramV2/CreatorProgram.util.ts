@@ -1,8 +1,10 @@
-import { useState } from 'react';
+import { use } from 'motion/dist/react-m';
+import { useMemo, useState } from 'react';
 import { useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { BankBuzzInput, WithdrawCashInput } from '~/server/schema/creator-program.schema';
+import { CompensationPool } from '~/types/router';
 import { handleTRPCError, trpc } from '~/utils/trpc';
 
 export const useCreatorProgramRequirements = () => {
@@ -69,16 +71,22 @@ export const useWithdrawalHistory = () => {
 
 export const useCreatorProgramPhase = () => {
   const { compensationPool, isLoading } = useCompensationPool();
-  const now = new Date();
 
-  const phase = compensationPool?.phases
-    ? (Object.keys(compensationPool?.phases).find((phase) => {
-        const [start, end] =
-          compensationPool?.phases[phase as keyof (typeof compensationPool)['phases']];
+  const phase = useMemo(() => {
+    const now = new Date();
+    if (!compensationPool) {
+      return undefined;
+    }
 
-        return start <= now && now <= end;
-      }) as keyof (typeof compensationPool)['phases'])
-    : undefined;
+    const phase = Object.keys(compensationPool.phases ?? []).find((phase) => {
+      const [start, end] =
+        compensationPool?.phases[phase as keyof (typeof compensationPool)['phases']];
+
+      return new Date(start) <= now && now <= new Date(end);
+    }) as keyof (typeof compensationPool)['phases'];
+
+    return phase; //
+  }, [compensationPool, isLoading]);
 
   return {
     phase,
@@ -133,12 +141,19 @@ export const useCreatorProgramForecast = ({
 };
 
 export const useCreatorProgramMutate = () => {
+  const utils = trpc.useUtils();
   const joinCreatorsProgramMutation = trpc.creatorProgram.joinCreatorsProgram.useMutation({
     onError(error) {
       handleTRPCError(error, 'Failed to join creators program.');
     },
   });
   const bankBuzzMutation = trpc.creatorProgram.bankBuzz.useMutation({
+    onSuccess(_, { amount }) {
+      utils.creatorProgram.getBanked.setData(undefined, (old) => {
+        if (!old) return old;
+        return { ...old, total: old.total + amount };
+      });
+    },
     onError(error) {
       handleTRPCError(error, 'Failed to bank your buzz.');
     },
@@ -184,10 +199,9 @@ export const useCreatorProgramMutate = () => {
 
 export const useCompensationPoolUpdateListener = () => {
   const utils = trpc.useUtils();
-  useSignalTopic(SignalTopic.CreatorProgram, SignalMessages.CompensationPoolUpdate, (data) => {
+  useSignalTopic(SignalTopic.CreatorProgram, SignalMessages.CompensationPoolUpdate, (data: any) => {
     utils.creatorProgram.getCompensationPool.setData({}, (old) => {
-      if (!old) return old;
-      return { ...old, ...data };
+      return { ...(old ?? {}), ...(data as CompensationPool) };
     });
   });
 };

@@ -44,12 +44,11 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { useSignalTopic } from '~/components/Signals/SignalsProvider';
-import { useRefreshSession } from '~/components/Stripe/memberships.util';
+ import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { OnboardingSteps, SignalMessages, SignalTopic } from '~/server/common/enums';
+import { OnboardingSteps } from '~/server/common/enums';
 import {
   getCurrentValue,
   getExtractionFee,

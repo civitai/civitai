@@ -28,6 +28,7 @@ class SignalClient {
         'Content-Type': 'application/json',
       },
     });
+
     if (!response.ok) {
       throw new Error(`failed to send signal: ${target}`);
     }
@@ -49,6 +50,8 @@ class SignalClient {
         'Content-Type': 'application/json',
       },
     });
+
+    console.log(response.status);
 
     if (!response.ok) {
       throw new Error(`failed to send topic signal: ${target}`);

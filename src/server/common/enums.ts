@@ -133,7 +133,7 @@ export enum SignalMessages {
   NotificationNew = 'notification:new',
   Pong = 'pong',
   // Creators Program:
-  CompensationPoolUpdate = 'compensation-pool:update',
+  CompensationPoolUpdate = 'creators-program:compensation-pool-update',
   CashUpdate = 'cash:update',
 }
 

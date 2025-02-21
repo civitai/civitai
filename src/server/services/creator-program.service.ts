@@ -320,7 +320,7 @@ export async function bankBuzz(userId: number, amount: number) {
 
   // TODO creators program stretch: Signal pool size update.
   const compensationPool = await getCompensationPool({});
-  signalClient.topicSend({
+  await signalClient.topicSend({
     topic: SignalTopic.CreatorProgram,
     target: SignalMessages.CompensationPoolUpdate,
     data: compensationPool,

@@ -57,11 +57,11 @@ export const useSignalTopic = (topic: SignalTopic, message: SignalMessages, cb: 
   cbRef.current = cb;
 
   const interval = useInterval(() => {
+    const callback = (args: any) => cbRef.current(args);
+    worker?.off(message, callback);
     console.log('Registering topic', topic);
     worker?.topicRegister(topic);
-    worker?.off(message, cbRef.current);
 
-    const callback = (args: any) => cbRef.current(args);
     worker?.on(message, callback);
   }, 30000);
 
