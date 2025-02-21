@@ -162,11 +162,11 @@ export const orchestratorRouter = router({
     .mutation(async ({ ctx, input }) => {
       try {
         const args = { ...input, user: ctx.user, token: ctx.token };
-        if ('sourceImage' in args.params && args.params.sourceImage) {
-          const blobId = args.params.sourceImage.url.split('/').reverse()[0];
-          const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
-          args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
-        }
+        // if ('sourceImage' in args.params && args.params.sourceImage) {
+        //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
+        //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
+        //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
+        // }
         if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
         else return await createComfy({ ...args });
       } catch (e) {
