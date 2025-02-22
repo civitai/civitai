@@ -34,7 +34,18 @@ export const openHiddenTagsModal = () =>
   dialogStore.trigger({ component: HiddenTagsModal, target: '#browsing-mode' });
 
 export function openResourceSelectModal(props: ResourceSelectModalProps) {
-  dialogStore.trigger({ component: ResourceSelectModal, props });
+  const resources = props.options?.resources?.map(
+    ({ type, baseModels = [], partialSupport = [] }) => ({
+      type,
+      baseModels,
+      partialSupport,
+      allSupportedBaseModels: [...baseModels, ...partialSupport],
+    })
+  );
+  dialogStore.trigger({
+    component: ResourceSelectModal,
+    props: { ...props, options: { ...props.options, resources } },
+  });
 }
 
 export function openCollectionSelectModal(props: CollectionSelectModalProps) {

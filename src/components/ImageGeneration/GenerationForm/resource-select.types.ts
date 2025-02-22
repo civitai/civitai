@@ -5,7 +5,12 @@ import { ModelType, TrainingStatus } from '~/shared/utils/prisma/enums';
 
 export type ResourceSelectOptions = {
   canGenerate?: boolean;
-  resources?: { type: string; baseModels?: string[] }[];
+  resources?: {
+    type: string;
+    baseModels?: string[];
+    partialSupport?: string[];
+    allSupportedBaseModels?: string[];
+  }[];
   excludeIds?: number[];
 };
 

@@ -184,7 +184,7 @@ export default function ResourceSelectModal({
 
   // TODO handle fetching errors from above
 
-  const { resources = [], excludeIds = [], canGenerate } = options;
+  const { excludeIds = [], canGenerate, resources = [] } = options;
   const allowedTabs = tabs.filter((t) => {
     return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
@@ -196,11 +196,13 @@ export default function ResourceSelectModal({
 
   const or: string[] = [];
   if (canGenerate !== undefined) filters.push(`canGenerate = ${canGenerate}`);
-  for (const { type, baseModels } of resources) {
-    if (!baseModels?.length) or.push(`type = ${type}`);
+  for (const { type, allSupportedBaseModels } of resources) {
+    if (!allSupportedBaseModels?.length) or.push(`type = ${type}`);
     else
       or.push(
-        `(type = ${type} AND versions.baseModel IN [${baseModels.map((x) => `"${x}"`).join(',')}])`
+        `(type = ${type} AND versions.baseModel IN [${allSupportedBaseModels
+          .map((x) => `"${x}"`)
+          .join(',')}])`
       );
   }
   if (or.length) filters.push(`(${or.join(' OR ')})`);
@@ -414,16 +416,22 @@ function ResourceHitList({
       .map((model) => {
         const resourceType = resources.find((x) => x.type === model.type);
         if (!resourceType) return null;
+        const { allSupportedBaseModels = [], partialSupport = [] } = resourceType;
 
-        const versions = model.versions.filter((version) => {
-          return (
-            (canGenerate ? canGenerate === version.canGenerate : true) &&
-            (!!resourceType.baseModels?.length
-              ? resourceType.baseModels.includes(version.baseModel)
-              : true) &&
-            !excludeIds.includes(version.id)
-          );
-        });
+        const versions = model.versions
+          .filter((version) => {
+            return (
+              (canGenerate ? canGenerate === version.canGenerate : true) &&
+              (!!allSupportedBaseModels.length
+                ? allSupportedBaseModels.includes(version.baseModel)
+                : true) &&
+              !excludeIds.includes(version.id)
+            );
+          })
+          .map((version) => ({
+            ...version,
+            partialSupport: partialSupport.includes(version.baseModel),
+          }));
         if (!versions.length) return null;
         return { ...model, versions };
       })
@@ -445,7 +453,6 @@ function ResourceHitList({
       </div>
     );
 
- 
   if (!filtered.length)
     return (
       <div className="p-3 py-5">
@@ -659,6 +666,9 @@ function ResourceSelectCard({
   const versions = data.versions;
   const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
   const [flipped, setFlipped] = useState(false);
+  const selectedVersion = versions.find((x) => x.id === selected)!;
+  const partialSupport =
+    'partialSupport' in selectedVersion && selectedVersion.partialSupport === true;
 
   const handleSelect = async () => {
     const version = versions.find((x) => x.id === selected);
@@ -696,7 +706,6 @@ function ResourceSelectCard({
     });
   };
 
-  const selectedVersion = versions.find((x) => x.id === selected)!;
   const isSDXL = getIsSdxl(selectedVersion?.baseModel);
   const isPony = selectedVersion?.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
@@ -831,6 +840,18 @@ function ResourceSelectCard({
       visible: !!data.permissions,
     },
   ];
+
+  // return (
+  //   <AspectRatioImageCard
+  //     href={`/models/${data.id}?modelVersionId=${selected}`}
+  //     target="_blank"
+  //     contentType="model"
+  //     contentId={data.model.id}
+  //     image={image}
+  //     header={}
+  //     footer={}
+  //   />
+  // );
 
   return (
     // Visually hide card if there are no versions
@@ -993,6 +1014,7 @@ function ResourceSelectCard({
                 e.stopPropagation();
                 handleSelect();
               }}
+              color={partialSupport ? 'orange' : undefined}
             >
               Select
             </Button>

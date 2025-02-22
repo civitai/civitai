@@ -418,25 +418,23 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony.baseModels] },
     {
       type: ModelType.TextualInversion,
-      baseModels: [
-        ...baseModelSets.Pony.baseModels,
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
-        'SD 1.5',
-      ],
+      baseModels: [...baseModelSets.Pony.baseModels],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Pony.baseModels],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
@@ -447,25 +445,23 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious.baseModels] },
     {
       type: ModelType.TextualInversion,
-      baseModels: [
-        ...baseModelSets.Illustrious.baseModels,
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
-        'SD 1.5',
-      ],
+      baseModels: [...baseModelSets.Illustrious.baseModels],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.Illustrious.baseModels],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
@@ -488,7 +484,6 @@ export const baseModelResourceTypes = {
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
     return baseModelResourceTypes[baseModel as SupportedBaseModel];
-  // throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
 }
 
 export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
