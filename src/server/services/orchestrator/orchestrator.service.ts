@@ -57,6 +57,7 @@ async function createBackgroundRemovalStep(args: any) {
   return {
     $type: 'comfy',
     input: {
+      useSpineComfy: true, // temp
       quantity: 1,
       comfyWorkflow,
       imageMetadata,
@@ -90,6 +91,7 @@ async function createUpscaleEnhancementStep(args: any) {
   return {
     $type: 'comfy',
     input: {
+      useSpineComfy: true, // temp
       quantity: 1,
       comfyWorkflow,
       imageMetadata,
