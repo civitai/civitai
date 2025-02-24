@@ -74,7 +74,10 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
             zIndex: 100000,
             arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
           },
-          spotlight: { border: `2px solid ${theme.colors.cyan[4]}` },
+          spotlight: {
+            border: `2px solid ${theme.colors.cyan[4]}`,
+            backgroundColor: 'rgba(255, 255, 255, 0.3)',
+          },
         }}
         locale={{
           nextLabelWithProgress: 'Next',

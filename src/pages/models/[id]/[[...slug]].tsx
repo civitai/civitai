@@ -187,7 +187,7 @@ export const getServerSideProps = createServerSideProps({
       }
 
       const [access] = await hasEntityAccess({
-        entityIds: [version?.id],
+        entityIds: [version.id],
         entityType: 'ModelVersion',
         userId: session.user.id,
         isModerator: session.user.isModerator,
