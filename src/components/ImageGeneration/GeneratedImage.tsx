@@ -72,6 +72,7 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { WorkflowDefinitionKey } from '~/server/services/orchestrator/comfy/comfy.types';
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
+import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -727,17 +728,19 @@ function WithMemberMenuItem({
   ...props
 }: MenuItemProps & { memberOnly?: boolean; onClick?: VoidFunction }) {
   const currentUser = useCurrentUser();
-  return memberOnly && currentUser?.isPaidMember ? (
-    <Menu.Item {...props} className="relative pr-10">
-      <span>{children}</span>
-      <div className="absolute inset-y-0 right-1 flex items-center">
-        <Tooltip label="Member only">
-          <ThemeIcon color="blue" size="md">
-            <IconDiamond stroke={1.5} />
-          </ThemeIcon>
-        </Tooltip>
-      </div>
-    </Menu.Item>
+  return memberOnly && !currentUser?.isPaidMember ? (
+    <Tooltip label="Member only">
+      <RequireMembership>
+        <Menu.Item {...props} className="relative pr-10">
+          <span>{children}</span>
+          <div className="absolute inset-y-0 right-1 flex items-center">
+            <ThemeIcon variant="filled" color="blue" size="md">
+              <IconDiamond stroke={2} />
+            </ThemeIcon>
+          </div>
+        </Menu.Item>
+      </RequireMembership>
+    </Tooltip>
   ) : (
     <Menu.Item {...props}>{children}</Menu.Item>
   );
