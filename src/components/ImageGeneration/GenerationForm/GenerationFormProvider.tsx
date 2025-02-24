@@ -45,7 +45,7 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
-const formSchema = textToImageParamsSchema
+const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
@@ -79,7 +79,9 @@ const formSchema = textToImageParamsSchema
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
     fluxUltraRaw: z.boolean().optional(),
-  })
+  });
+const partialSchema = baseSchema.partial();
+const formSchema = baseSchema
   .transform(({ fluxUltraRaw, ...data }) => {
     const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
@@ -253,6 +255,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
+    partialSchema,
     version: 1.3,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
