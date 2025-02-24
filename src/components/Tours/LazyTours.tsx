@@ -1,6 +1,13 @@
 import { useMantineTheme } from '@mantine/core';
 import { useCallback } from 'react';
-import Joyride, { ACTIONS, Callback, EVENTS, LIFECYCLE, STATUS } from 'react-joyride';
+import Joyride, {
+  ACTIONS,
+  Callback,
+  EVENTS,
+  LIFECYCLE,
+  type Props as JoyrideProps,
+  STATUS,
+} from 'react-joyride';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { TourPopover } from '~/components/Tour/TourPopover';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -9,7 +16,7 @@ import { StepData } from '~/types/tour';
 const completeStatus: string[] = [STATUS.SKIPPED, STATUS.FINISHED];
 const nextEvents: string[] = [EVENTS.STEP_AFTER, EVENTS.TARGET_NOT_FOUND];
 
-export default function LazyTours() {
+export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers'>) {
   const theme = useMantineTheme();
   const { closeTour, runTour, activeTour, steps, currentStep, run } = useTourContext();
 
@@ -60,28 +67,23 @@ export default function LazyTours() {
         key={activeTour}
         steps={steps}
         stepIndex={currentStep}
+        getHelpers={getHelpers}
         callback={handleJoyrideCallback}
         styles={{
           options: {
             zIndex: 100000,
             arrowColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
           },
-          spotlight: { border: `2px solid ${theme.colors.cyan[4]}` },
+          spotlight: {
+            border: `2px solid ${theme.colors.cyan[4]}`,
+            backgroundColor: 'rgba(255, 255, 255, 0.3)',
+          },
         }}
         locale={{
           nextLabelWithProgress: 'Next',
         }}
-        floaterProps={{
-          styles: {
-            floater: {
-              position: 'absolute',
-              top: 0,
-            },
-          },
-        }}
         run={run}
         tooltipComponent={TourPopover}
-        disableScrollParentFix
         scrollToFirstStep
         disableScrolling
         showSkipButton

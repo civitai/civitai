@@ -62,6 +62,11 @@ export const modelPageTour: StepWithData[] = [
     spotlightClicks: true,
     disableOverlayClose: true,
     spotlightPadding: 16,
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+      },
+    },
   },
 ];
 
@@ -91,5 +96,10 @@ export const welcomeTour: StepWithData[] = [
     spotlightPadding: 16,
     spotlightClicks: true,
     disableOverlayClose: true,
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+      },
+    },
   },
 ];

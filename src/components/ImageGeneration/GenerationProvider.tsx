@@ -24,16 +24,16 @@ type GenerationState = {
     processing: number;
     quantity: number;
     status: WorkflowStatus;
-  }[];
-  latestImage?: NormalizedGeneratedImage;
-  queueStatus?: WorkflowStatus;
-  requestLimit: number;
-  requestsRemaining: number;
-  requestsLoading: boolean;
-  hasGeneratedImages: boolean;
-  canGenerate: boolean;
-  userLimits?: GenerationLimits;
-  userTier: UserTier;
+  }[]; // Snackbar
+  latestImage?: NormalizedGeneratedImage; // Snackbar
+  queueStatus?: WorkflowStatus; // Snackbar
+  requestLimit: number; // Snackbar
+  requestsRemaining: number; // Snackbar
+  requestsLoading: boolean; // GenerationForm
+  hasGeneratedImages: boolean; // GenerationForm
+  canGenerate: boolean; // GenerateButton
+  userLimits?: GenerationLimits; // NA
+  userTier: UserTier; // Snackbar
 };
 
 type GenerationStore = ReturnType<typeof createGenerationStore>;

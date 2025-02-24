@@ -14,12 +14,17 @@ html,
 body {
   padding: 0;
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell,
-    Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  /* font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell,
+    Fira Sans, Droid Sans, Helvetica Neue, sans-serif; */
   block-size: 100%;
   inline-size: 100%;
   overflow: hidden;
 }
+
+button, input, optgroup, select, textarea {
+  font-family: inherit !important;
+}
+
 
 #uniconsent-config {
   display: none;
@@ -317,6 +322,20 @@ iframe {
 
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes shadowGlow {
+  0% {
+    box-shadow: 0 0 10px 0 #fff3bf;
+  }
+
+  50% {
+    box-shadow: 0 0 10px 5px #fff3bf;
+  }
+
+  100% {
+    box-shadow: 0 0 10px 0 #fff3bf;
   }
 }
 

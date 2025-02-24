@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useQueryCurrentChallenge } from '~/components/Challenges/challenge.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { NextLink } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 import { generationPanel } from '~/store/generation.store';
@@ -112,7 +113,16 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
               </Text>
             </div>
 
-            <div className="flex md:justify-end">
+            <div className="flex flex-col gap-2 md:flex-row md:justify-end">
+              <Button
+                component={NextLink}
+                variant="light"
+                className="w-full md:w-auto"
+                href={`/posts/create?collectionId=${challenge.collectionId}`}
+                onClick={handleClose}
+              >
+                Submit your Entry
+              </Button>
               <Button className="w-full md:w-auto" onClick={handleAccept}>
                 Accept Challenge
               </Button>

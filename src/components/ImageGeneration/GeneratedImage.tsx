@@ -71,6 +71,7 @@ import { UpscaleEnhancementModal } from '~/components/Orchestrator/components/Up
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { WorkflowDefinitionKey } from '~/server/services/orchestrator/comfy/comfy.types';
+import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -99,7 +100,7 @@ export function GeneratedImage({
 
   const { updateImages } = useUpdateImageStepMetadata();
 
-  const { running, runTour, currentStep } = useTourContext();
+  const { running, helpers } = useTourContext();
 
   const toggleSelect = (checked?: boolean) =>
     orchestratorImageSelect.toggle(
@@ -124,22 +125,21 @@ export function GeneratedImage({
   const isFavorite = step.metadata?.images?.[image.id]?.favorite === true;
   const available = image.status === 'succeeded';
 
-  const [buttonState, setButtonState] = useState({
-    favorite: isFavorite,
-    feedback,
+  const [state, setState] = useGeneratedItemStore({
+    id: `${request.id}_${step.name}_${image.id}`,
+    favorite: step.metadata?.images?.[image.id]?.favorite === true,
+    feedback: step.metadata?.images?.[image.id]?.feedback,
   });
 
   function handleToggleFeedback(newFeedback: 'liked' | 'disliked') {
-    setButtonState({
-      ...buttonState,
-      feedback: feedback === newFeedback ? undefined : newFeedback,
-    });
+    const previousState = state;
+    setState((state) => ({
+      feedback: state.feedback === newFeedback ? undefined : newFeedback,
+    }));
 
-    function onError() {
-      setButtonState({ ...buttonState, feedback });
-    }
+    const onError = () => setState(previousState);
 
-    if (feedback !== 'disliked' && newFeedback === 'disliked') {
+    if (state.feedback !== 'disliked' && newFeedback === 'disliked') {
       dialogStore.trigger({
         component: TextToImageQualityFeedbackModal,
         props: {
@@ -168,11 +168,12 @@ export function GeneratedImage({
   }
 
   function handleToggleFavorite(newValue: true | false) {
-    setButtonState({ ...buttonState, favorite: newValue });
+    const previousState = state;
+    setState({
+      favorite: newValue,
+    });
 
-    function onError() {
-      setButtonState({ ...buttonState, favorite: isFavorite });
-    }
+    const onError = () => setState(previousState);
 
     updateImages(
       [
@@ -203,6 +204,7 @@ export function GeneratedImage({
           <div
             className={clsx('relative flex flex-1 flex-col items-center justify-center', {
               ['cursor-pointer']: !isLightbox,
+              // ['pointer-events-none']: running,
             })}
             onClick={handleImageClick}
             onMouseDown={(e) => {
@@ -245,7 +247,7 @@ export function GeneratedImage({
                 checked={selected}
                 onChange={(e) => {
                   toggleSelect(e.target.checked);
-                  if (running && e.target.checked) runTour({ step: currentStep + 1 });
+                  if (running && e.target.checked) helpers?.next();
                 }}
               />
             </label>
@@ -276,10 +278,10 @@ export function GeneratedImage({
             >
               <ActionIcon
                 size="md"
-                className={buttonState.favorite ? classes.favoriteButton : undefined}
-                variant={buttonState.favorite ? 'light' : undefined}
-                color={buttonState.favorite ? 'red' : undefined}
-                onClick={() => handleToggleFavorite(!buttonState.favorite)}
+                className={state.favorite ? classes.favoriteButton : undefined}
+                variant={state.favorite ? 'light' : undefined}
+                color={state.favorite ? 'red' : undefined}
+                onClick={() => handleToggleFavorite(!state.favorite)}
               >
                 <IconHeart size={16} />
               </ActionIcon>
@@ -311,8 +313,8 @@ export function GeneratedImage({
 
               <ActionIcon
                 size="md"
-                variant={buttonState.feedback === 'liked' ? 'light' : undefined}
-                color={buttonState.feedback === 'liked' ? 'green' : undefined}
+                variant={state.feedback === 'liked' ? 'light' : undefined}
+                color={state.feedback === 'liked' ? 'green' : undefined}
                 onClick={() => handleToggleFeedback('liked')}
               >
                 <IconThumbUp size={16} />
@@ -320,8 +322,8 @@ export function GeneratedImage({
 
               <ActionIcon
                 size="md"
-                variant={buttonState.feedback === 'disliked' ? 'light' : undefined}
-                color={buttonState.feedback === 'disliked' ? 'red' : undefined}
+                variant={state.feedback === 'disliked' ? 'light' : undefined}
+                color={state.feedback === 'disliked' ? 'red' : undefined}
                 onClick={() => handleToggleFeedback('disliked')}
               >
                 <IconThumbDown size={16} />

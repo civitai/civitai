@@ -23,6 +23,7 @@ import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.sche
 import { useLocalStorage } from '@mantine/hooks';
 import { Radio, RadioGroup } from '@headlessui/react';
 import clsx from 'clsx';
+import { resizeImage } from '~/utils/image-utils';
 
 function SourceImageUpload({
   value,
@@ -40,13 +41,16 @@ function SourceImageUpload({
 } & Omit<InputWrapperProps, 'children' | 'value' | 'onChange'>) {
   const upscale = upscaleMultiplier || upscaleResolution;
   const [loaded, setLoaded] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
     onError: (error) => {
       setError(error.message);
+      setLoading(false);
     },
     onSuccess: ({ blob }) => {
       if (blob.url) handleUrlChange(blob.url);
+      setLoading(false);
     },
   });
 
@@ -63,13 +67,23 @@ function SourceImageUpload({
     else mutate({ sourceImage: value });
   }
 
+  async function handleResizeToBase64(src: File | Blob | string) {
+    setLoading(true);
+    const resized = await resizeImage(src, {
+      maxHeight: maxUpscaleSize,
+      maxWidth: maxUpscaleSize,
+    });
+    return await getBase64(resized);
+  }
+
   async function handleDrop(files: File[]) {
-    const base64 = await getBase64(files[0]);
+    const base64 = await handleResizeToBase64(files[0]);
     handleChange(base64);
   }
 
   async function handleDropCapture(url: string) {
-    handleChange(url);
+    const base64 = await handleResizeToBase64(url);
+    handleChange(base64);
   }
 
   function handleResolutionChange(upscaleValues: { upscaleWidth: number; upscaleHeight: number }) {
@@ -98,7 +112,7 @@ function SourceImageUpload({
             maxSize={maxOrchestratorImageFileSize}
             label="Drag image here or click to select a file"
             onDropCapture={handleDropCapture}
-            loading={isLoading && !isError}
+            loading={(loading || isLoading) && !isError}
           />
         ) : (
           <div className="flex max-h-96 justify-center overflow-hidden rounded-md bg-gray-2 dark:bg-dark-6">

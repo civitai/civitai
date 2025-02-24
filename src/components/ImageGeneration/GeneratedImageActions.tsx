@@ -20,9 +20,9 @@ import { uniqBy } from 'lodash-es';
 import { useState } from 'react';
 import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
+import { SortFilter } from '~/components/Filters';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { removeEmpty } from '~/utils/object-helpers';
-import { usePathname } from 'next/navigation';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -33,9 +33,8 @@ export function GeneratedImageActions({
   iconSize?: number;
 }) {
   const router = useRouter();
-  const path = usePathname();
   const { images, data } = useGetTextToImageRequests();
-  const { running, runTour, currentStep, returnUrl } = useTourContext();
+  const { running, helpers, returnUrl } = useTourContext();
   const selectableImages = images.filter((x) => x.status === 'succeeded');
   const selectableImageIds = selectableImages.map((x) => x.id);
   const imageIds = images.map((x) => x.id);
@@ -111,10 +110,14 @@ export function GeneratedImageActions({
       orchestratorMediaTransmitter.setUrls(key, imageData);
       const post = await createPostMutation.mutateAsync({});
       // updateImages({}) // tODO - show that this image has been posted?
-      if (running) runTour({ step: currentStep + 1 });
+      if (running) helpers?.next();
       await router.push({
         pathname: '/posts/[postId]/edit',
-        query: removeEmpty({ postId: post.id, src: key, returnUrl: returnUrl || path }),
+        query: removeEmpty({
+          postId: post.id,
+          src: key,
+          returnUrl: returnUrl && running ? `${returnUrl}?tour=model-page` : undefined,
+        }),
       });
       generationPanel.close();
       deselect();
@@ -196,7 +199,8 @@ export function GeneratedImageActions({
   const hasSelected = !!selectedCount;
 
   return (
-    <div className="flex items-center justify-between gap-6">
+    <div className="flex items-center justify-end gap-6">
+      <SortFilter type="generation" />
       {!selectedCount && <MarkerFiltersDropdown />}
       {hasSelected && (
         <div className="flex gap-2">

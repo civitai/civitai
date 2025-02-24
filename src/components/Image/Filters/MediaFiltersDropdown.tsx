@@ -3,20 +3,20 @@ import {
   Button,
   ButtonProps,
   Chip,
-  ChipProps,
-  createStyles,
   Divider,
   Drawer,
-  Group,
   Indicator,
   Popover,
   ScrollArea,
   Stack,
+  useMantineTheme,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
+import { FilterButton } from '~/components/Buttons/FilterButton';
 import { PeriodFilter } from '~/components/Filters';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { TechniqueMultiSelect } from '~/components/Technique/TechniqueMultiSelect';
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -26,45 +26,12 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
   (value) => value === 'image' || value === 'video'
 );
-
-const useStyles = createStyles((theme) => ({
-  label: {
-    fontSize: 12,
-    fontWeight: 600,
-
-    '&[data-checked]': {
-      '&, &:hover': {
-        color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        border: `1px solid ${theme.colors[theme.primaryColor][theme.fn.primaryShade()]}`,
-      },
-
-      '&[data-variant="filled"]': {
-        // color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-        backgroundColor: 'transparent',
-      },
-    },
-  },
-  opened: {
-    transform: 'rotate(180deg)',
-    transition: 'transform 200ms ease',
-  },
-
-  actionButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-    },
-  },
-
-  indicatorRoot: { lineHeight: 1 },
-  indicatorIndicator: { lineHeight: 1.6 },
-}));
 
 const baseModelLimit = 3;
 
@@ -78,7 +45,7 @@ export function MediaFiltersDropdown({
   hideTools = false,
   ...buttonProps
 }: Props) {
-  const { classes, theme, cx } = useStyles();
+  const theme = useMantineTheme();
   const mobile = useIsMobile();
   const isClient = useIsClient();
   const currentUser = useCurrentUser();
@@ -147,14 +114,6 @@ export function MediaFiltersDropdown({
     else setFilters(reset);
   }, [onChange, setFilters]);
 
-  const chipProps: Partial<ChipProps> = {
-    size: 'sm',
-    radius: 'xl',
-    variant: 'filled',
-    classNames: classes,
-    tt: 'capitalize',
-  };
-
   const handleChange: Props['onChange'] = (value) => {
     onChange ? onChange(value) : setFilters(value);
   };
@@ -167,24 +126,11 @@ export function MediaFiltersDropdown({
       zIndex={10}
       showZero={false}
       dot={false}
-      classNames={{ root: classes.indicatorRoot, indicator: classes.indicatorIndicator }}
       inline
     >
-      <Button
-        className={classes.actionButton}
-        color="gray"
-        radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        rightIcon={<IconChevronDown className={cx({ [classes.opened]: opened })} size={16} />}
-        {...buttonProps}
-        onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
-      >
-        <Group spacing={4} noWrap>
-          <IconFilter size={16} />
-          Filters
-        </Group>
-      </Button>
+      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+        Filters
+      </FilterButton>
     </Indicator>
   );
 
@@ -214,9 +160,9 @@ export function MediaFiltersDropdown({
             my={4}
           >
             {displayedBaseModels.map((baseModel, index) => (
-              <Chip key={index} value={baseModel} {...chipProps}>
+              <FilterChip key={index} value={baseModel}>
                 <span>{baseModel}</span>
-              </Chip>
+              </FilterChip>
             ))}
             {activeBaseModels.length > baseModelLimit && (
               <ActionIcon
@@ -246,78 +192,71 @@ export function MediaFiltersDropdown({
               multiple
             >
               {availableMediaTypes.map((type, index) => (
-                <Chip {...chipProps} key={index} value={type}>
+                <FilterChip key={index} value={type}>
                   <span>{getDisplayName(type)}</span>
-                </Chip>
+                </FilterChip>
               ))}
             </Chip.Group>
           </>
         )}
         <Divider label="Modifiers" labelProps={{ weight: 'bold', size: 'sm' }} />
         <div className="flex flex-wrap gap-2">
-          <Chip
-            {...chipProps}
+          <FilterChip
             checked={mergedFilters.withMeta}
             onChange={(checked) => handleChange({ withMeta: checked })}
           >
             <span>Metadata only</span>
-          </Chip>
+          </FilterChip>
           {isFeed && currentUser && (
             <>
-              <Chip
-                {...chipProps}
+              <FilterChip
                 checked={mergedFilters.hidden}
                 onChange={(checked) => handleChange({ hidden: checked })}
               >
                 <span>Hidden</span>
-              </Chip>
+              </FilterChip>
             </>
           )}
-          <Chip
-            {...chipProps}
+          <FilterChip
             checked={mergedFilters.fromPlatform}
             onChange={(checked) => handleChange({ fromPlatform: checked })}
           >
             <span>Made On-site</span>
-          </Chip>
-          <Chip
-            {...chipProps}
+          </FilterChip>
+          <FilterChip
             checked={mergedFilters.nonRemixesOnly}
             onChange={(checked) => {
               handleChange({ nonRemixesOnly: checked, remixesOnly: checked ? false : undefined });
             }}
           >
             <span>Originals Only</span>
-          </Chip>
-          <Chip
-            {...chipProps}
+          </FilterChip>
+          <FilterChip
             checked={mergedFilters.remixesOnly}
             onChange={(checked) =>
               handleChange({ remixesOnly: checked, nonRemixesOnly: checked ? false : undefined })
             }
           >
             <span>Remixes Only</span>
-          </Chip>
+          </FilterChip>
         </div>
 
         {filterType === 'modelImages' && (
           <>
             <Divider label="Resources" labelProps={{ weight: 'bold', size: 'sm' }} />
             <div className="flex gap-2">
-              <Chip
-                {...chipProps}
+              <FilterChip
                 checked={mergedFilters.hideManualResources}
                 onChange={(checked) => handleChange({ hideManualResources: checked })}
               >
                 <span>Hide manually-added</span>
-              </Chip>
-              <Chip
-                {...chipProps}
+              </FilterChip>
+              <FilterChip
                 checked={mergedFilters.hideAutoResources}
                 onChange={(checked) => handleChange({ hideAutoResources: checked })}
               >
                 <span>Hide auto-detected</span>
-              </Chip>
+              </FilterChip>
             </div>
           </>
         )}
@@ -326,20 +265,18 @@ export function MediaFiltersDropdown({
           <>
             <Divider label="Moderator" labelProps={{ weight: 'bold', size: 'sm' }} />
             <div className="flex gap-2">
-              <Chip
-                {...chipProps}
+              <FilterChip
                 checked={mergedFilters.notPublished}
                 onChange={(checked) => handleChange({ notPublished: checked })}
               >
                 <span>Not Published</span>
-              </Chip>
-              <Chip
-                {...chipProps}
+              </FilterChip>
+              <FilterChip
                 checked={mergedFilters.scheduled}
                 onChange={(checked) => handleChange({ scheduled: checked })}
               >
                 <span>Scheduled</span>
-              </Chip>
+              </FilterChip>
             </div>
           </>
         )}

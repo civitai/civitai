@@ -10,7 +10,7 @@ import { isDefined } from '~/utils/type-guards';
 export function Feed() {
   const { classes } = useStyles();
 
-  const filters = useFiltersContext((state) => state.markers);
+  const filters = useFiltersContext((state) => state.generation);
 
   const { requests, steps, isLoading, fetchNextPage, hasNextPage, isRefetching, isError } =
     useGetTextToImageRequestsImages();
