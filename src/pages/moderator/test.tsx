@@ -28,6 +28,7 @@ import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
 import createSlots from '~/libs/slots/create-slots';
 import { getRandomInt } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import LoginModal from '~/components/Login/LoginModal';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
@@ -98,6 +99,12 @@ export default function Test() {
 
   const theme = useMantineTheme();
 
+  // useEffect(() => {
+  //   dialogStore.trigger({
+  //     component: LoginModal,
+  //   });
+  // }, []);
+
   return (
     <IsClient>
       {/* <div className="container flex items-center gap-2 pb-2">
@@ -114,6 +121,27 @@ export default function Test() {
         <Content />
       </ComponentWithSlots> */}
       <div className="container flex max-w-sm flex-col gap-3">
+        <Button
+          onClick={() =>
+            dialogStore.trigger({
+              component: LoginModal,
+            })
+          }
+        >
+          Log in
+        </Button>
+        <Button
+          onClick={() =>
+            dialogStore.trigger({
+              component: LoginModal,
+              props: {
+                message: 'You must be logged in to perform this action',
+              },
+            })
+          }
+        >
+          Log in with alert
+        </Button>
         <Example />
         <ExampleSelect />
 
