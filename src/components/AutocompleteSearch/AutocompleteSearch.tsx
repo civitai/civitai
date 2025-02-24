@@ -54,9 +54,11 @@ import {
   searchIndexMap,
 } from '~/components/Search/search.types';
 import { paired } from '~/utils/type-guards';
-import { BrowsingLevelFilter } from '../Search/CustomSearchComponents';
+import { ApplyCustomFilter, BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
+import { Availability } from '~/shared/utils/prisma/enums';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -191,6 +193,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   const handleTargetChange = (value: SearchIndexKey) => {
     setTargetIndex(value);
   };
+  const currentUser = useCurrentUser();
 
   const indexSupportsNsfwLevel = useMemo(
     () =>
@@ -205,12 +208,19 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
     [targetIndex]
   );
 
+  const isModels = targetIndex === 'models';
+
   return (
     <InstantSearch
       searchClient={searchClient}
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
+      {isModels && !currentUser?.isModerator && (
+        <ApplyCustomFilter
+          filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}
+        />
+      )}
       {indexSupportsNsfwLevel && (
         <BrowsingLevelFilter attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''} />
       )}
