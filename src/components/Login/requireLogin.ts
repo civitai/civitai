@@ -15,7 +15,6 @@ export function requireLogin({
   returnUrl?: string;
   cb: () => void;
 }) {
-  console.log({ isAuthed: window.isAuthed });
   if (typeof window !== 'undefined' && !window.isAuthed) {
     uiEvent.preventDefault();
     uiEvent.stopPropagation();
