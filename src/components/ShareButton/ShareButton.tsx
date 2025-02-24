@@ -83,7 +83,8 @@ export function ShareButton({
   if (features.chat) {
     shareLinks.unshift({
       type: 'Send Chat',
-      onClick: () => requireLogin({ cb: () => openContext('chatShareModal', { message: url }) }),
+      onClick: (e: React.MouseEvent) =>
+        requireLogin({ uiEvent: e, cb: () => openContext('chatShareModal', { message: url }) }),
       render: <SocialIconChat />,
     });
   }
@@ -91,8 +92,9 @@ export function ShareButton({
   if (collect && features.collections) {
     shareLinks.unshift({
       type: 'Save',
-      onClick: () =>
+      onClick: (e: React.MouseEvent) =>
         requireLogin({
+          uiEvent: e,
           reason: 'add-to-collection',
           cb: () => openContext('addToCollection', collect),
         }),

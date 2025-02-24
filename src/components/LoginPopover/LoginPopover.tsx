@@ -9,10 +9,8 @@ export function LoginPopover({
   message?: React.ReactNode;
 }) {
   const handleClick = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    e.preventDefault();
-    e.nativeEvent.stopImmediatePropagation();
     requireLogin({
+      uiEvent: e,
       message,
       cb: () => children.props.onClick?.(e),
     });

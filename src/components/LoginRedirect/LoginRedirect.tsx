@@ -25,11 +25,9 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
   }
 
   function handleClick(e: React.MouseEvent) {
-    e.stopPropagation();
-    e.preventDefault();
-    e.nativeEvent.stopImmediatePropagation();
     if (running) closeTour();
     requireLogin({
+      uiEvent: e,
       reason,
       cb: () => children.props.onClick?.(e),
       returnUrl: url,
