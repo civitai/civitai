@@ -6,7 +6,6 @@ import { getBaseUrl } from '~/server/utils/url-helpers';
 import { slugit } from '~/utils/string-helpers';
 
 export const getServerSideProps: GetServerSideProps = async (ctx) => {
-  // TODO.tools: get tools
   const data = await getAllTools({
     sort: ToolSort.Newest,
     limit: 1000,

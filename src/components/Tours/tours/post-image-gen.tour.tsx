@@ -45,6 +45,11 @@ export const postGenerationTour: StepWithData[] = [
     disableBeacon: true,
     content:
       'Rate the resource you used to generate this content. This helps the creator improve the quality of their model.',
+    // Hack to prevent solid gray box from appearing
+    styles: {
+      overlay: { backgroundColor: 'rgba(0, 0, 0, 0.4)' },
+      spotlight: { backgroundColor: 'rgba(255, 255, 255, 0.2)' },
+    },
   },
   {
     target: '[data-tour="post:publish"]',

@@ -14,7 +14,6 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
   const { running, closeTour, activeTour } = useTourContext();
 
-  // TODO.tour
   let url = returnUrl ?? router.asPath;
   if (running && activeTour) {
     // Add the active tour to the query string
