@@ -140,6 +140,7 @@ import {
   ingestImageSchema,
 } from './../schema/image.schema';
 import { uniqBy } from 'lodash-es';
+import { withRetries } from '~/utils/errorHandling';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -224,11 +225,15 @@ export const deleteImageById = async ({
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
         // TODO Remove after fallback bucket is deprecated
         if (env.S3_IMAGE_UPLOAD_BUCKET_OLD)
-          await baseS3Client.deleteObject({
-            bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD,
-            key: image.url,
-          });
-        await imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+          await withRetries(() =>
+            baseS3Client.deleteObject({
+              bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD as string,
+              key: image.url,
+            })
+          );
+        await withRetries(() =>
+          imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url })
+        );
         await purgeResizeCache({ url: image.url });
       }
     } catch {
