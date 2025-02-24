@@ -31,6 +31,7 @@ import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
 import { PlanCard, getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { env } from '~/env/client';
+import { isDev } from '~/env/other';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
@@ -329,6 +330,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async ({ ssg, features }) => {
     await ssg?.subscriptions.getPlans.prefetch({});
     await ssg?.subscriptions.getUserSubscription.prefetch();
+    if (isDev) return {};
     if (!features?.isGreen || !features?.canBuyBuzz)
       return {
         redirect: {
