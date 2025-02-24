@@ -6,6 +6,7 @@ import { createLogger } from '~/utils/logging';
 import { PostMetric } from '~/shared/utils/prisma/models';
 import dayjs from 'dayjs';
 import { templateHandler } from '~/server/db/db-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 const log = createLogger('metrics:post');
 
@@ -106,8 +107,11 @@ export const postMetrics = createMetricProcessor({
               ELSE 'AllTime'::"MetricTimeframe"
           END
           FROM "Post" p
-          WHERE pm."postId" = p.id AND pm."postId" IN (${ids});
+          WHERE pm."postId" = p.id
+            AND pm."postId" IN (${ids})
+            AND pm."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         `;
+        // await sleep(2000);
         log('update ageGroups', i + 1, 'of', ageGroupTasks.length, 'done');
       });
       await limitConcurrency(ageGroupTasks, 10);
@@ -131,7 +135,8 @@ async function getReactionTasks(ctx: MetricContext) {
       SELECT DISTINCT entityId as imageId
       FROM entityMetricEvents
       WHERE entityType = 'Image'
-      AND createdAt > ${ctx.lastUpdate};
+        AND entityId IS NOT NULL
+        AND createdAt > ${ctx.lastUpdate};
   `;
 
   const affected = new Set<number>();
@@ -149,7 +154,7 @@ async function getReactionTasks(ctx: MetricContext) {
       FROM "Image" i
       WHERE i.id IN (${ids})
     `;
-    postIds.forEach((x) => affected.add(x));
+    postIds.filter(isDefined).forEach((x) => affected.add(x));
     log('getReactionPosts', i + 1, 'of', postFetchTasks.length, 'done');
   });
   await limitConcurrency(postFetchTasks, 3);
@@ -199,6 +204,7 @@ async function getCommentTasks(ctx: MetricContext) {
       JOIN "CommentV2" c ON c."threadId" = t.id
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE t."postId" IN (${ids})
+        AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]} 
       GROUP BY t."postId", tf.timeframe
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
@@ -228,6 +234,7 @@ async function getCollectionTasks(ctx: MetricContext) {
       FROM "CollectionItem" ci
       CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
       WHERE ci."postId" IN (${ids})
+        AND ci."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY ci."postId", tf.timeframe
     `;
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');
