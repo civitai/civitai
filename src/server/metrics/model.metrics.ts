@@ -360,7 +360,6 @@ async function getModelRatingTasks(ctx: ModelMetricContext) {
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
         AND r."modelId" IN (${ids})
-        AND r."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY r."modelId", tf.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
         SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
