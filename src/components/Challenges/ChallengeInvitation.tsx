@@ -114,7 +114,13 @@ export function ChallengeInvitation({ onClose }: { onClose?: VoidFunction }) {
             </div>
 
             <div className="flex flex-col gap-2 md:flex-row md:justify-end">
-              <Button component={NextLink} variant="light" className="w-full md:w-auto" href={`/posts/create?collectionId=${challenge.collectionId}`} onClick={handleClose}>
+              <Button
+                component={NextLink}
+                variant="light"
+                className="w-full md:w-auto"
+                href={`/posts/create?collectionId=${challenge.collectionId}`}
+                onClick={handleClose}
+              >
                 Submit your Entry
               </Button>
               <Button className="w-full md:w-auto" onClick={handleAccept}>
