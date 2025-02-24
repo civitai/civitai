@@ -321,7 +321,7 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE dg."modelVersionId" IN (${ids})
-        AND db."modelVersionId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+        AND dg."modelVersionId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY dg."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
         SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = now();
