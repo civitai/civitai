@@ -50,7 +50,12 @@ export function UpscaleEnhancementModal({
     <Modal {...dialog} title="Upscale Enhancement">
       <GenerationProvider>
         <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
-          <InputSourceImageUpload name="sourceImage" removable={false} upscaleMultiplier />
+          <InputSourceImageUpload
+            name="sourceImage"
+            removable={false}
+            upscaleMultiplier
+            upscaleResolution
+          />
           <InputNumberSlider name="steps" label="Enhancement Steps" min={0} max={3} step={1} />
           <WhatIfAlert error={whatIf.error} />
           <GenerateButton
