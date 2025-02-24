@@ -38,7 +38,11 @@ export function ShareButton({
       : `${location.protocol}//${location.host}${initialUrl}`;
 
   // https://web.dev/web-share/
-  const shareLinks = [
+  const shareLinks: {
+    type: string;
+    onClick: (e: React.MouseEvent) => void;
+    render: React.ReactNode;
+  }[] = [
     {
       type: clipboard.copied ? 'Copied' : 'Copy Url',
       onClick: () => {
