@@ -15,14 +15,14 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const { running, closeTour, activeTour } = useTourContext();
 
   // TODO.tour
-  const url = returnUrl ?? router.asPath;
+  let url = returnUrl ?? router.asPath;
   if (running && activeTour) {
     // Add the active tour to the query string
     const [path, params] = url.split('?');
     const query = params ? QS.parse(params) : {};
     const queryString = QS.stringify({ ...query, tour: activeTour });
 
-    returnUrl = `${path}?${queryString}`;
+    url = `${path}?${queryString}`;
   }
 
   function handleClick(e: React.MouseEvent) {
