@@ -81,17 +81,17 @@ export function Logo() {
             <div className={styles.deer}>
               <img src="/images/holiday/deer.png" alt="deer" id="deer" />
               <img
-              src="/images/holiday/deer-nose.png"
-              alt="deer nose"
-              id="nose"
-              className={styles.nose}
-            />
+                src="/images/holiday/deer-nose.png"
+                alt="deer nose"
+                id="nose"
+                className={styles.nose}
+              />
               <img
-              src="/images/holiday/deer-glow.png"
-              alt="deer glow"
-              id="glow"
-              className={styles.glow}
-            />
+                src="/images/holiday/deer-glow.png"
+                alt="deer glow"
+                id="glow"
+                className={styles.glow}
+              />
             </div>
           </>
         )}
