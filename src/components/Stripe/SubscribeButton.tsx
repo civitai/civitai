@@ -70,7 +70,7 @@ function PaddleSubscribeButton({ children, priceId, onSuccess, disabled }: Props
   const mutateCount = useIsMutating();
   const { subscription, subscriptionLoading } = useActiveSubscription();
   const { paddle, emitter } = usePaddle();
-  const { hasPaddleSubscription, isLoading: loadingPaddleSubscriptionStatus } =
+  const { hasPaddleSubscription, isInitialLoading: loadingPaddleSubscriptionStatus } =
     useHasPaddleSubscription();
 
   const {

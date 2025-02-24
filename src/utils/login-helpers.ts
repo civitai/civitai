@@ -21,7 +21,7 @@ export const loginRedirectReasons = {
   'discord-link': 'Login with Discord to link your account',
   'create-article': 'You need to be logged in to create an article',
   'favorite-article': 'You need to be logged in to like an article',
-  'post-images': 'You need to be logged in to post',
+  'post-images': 'You need to be logged in to create a post',
   'add-to-collection': 'You must be logged in to add this resource to a collection',
   'create-bounty': 'You need to be logged in to create a new bounty',
   'perform-action': 'You need to be logged in to perform this action',
