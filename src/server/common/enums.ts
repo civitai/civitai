@@ -132,7 +132,7 @@ export enum SignalMessages {
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   Pong = 'pong',
-  // Creators Program:
+  // Creator Program:
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
   CashInvalidator = 'creators-program:cash-invalidator',
 }

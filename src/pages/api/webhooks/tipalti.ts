@@ -98,7 +98,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           const payment = event.eventData as { refCode: string; paymentStatus: string };
 
           if (payment.refCode.startsWith('CW')) {
-            // Creators Program V2:
+            // Creator Program V2:
             await processCashWithdrawalEvent(event);
           } else {
             await processBuzzWithdrawalRequest(event);

@@ -44,7 +44,7 @@ import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '~/components/NextLink/NextLink';
- import { useRefreshSession } from '~/components/Stripe/memberships.util';
+import { useRefreshSession } from '~/components/Stripe/memberships.util';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -254,7 +254,7 @@ const JoinCreatorProgramCard = () => {
       await joinCreatorsProgram();
       showSuccessNotification({
         title: 'Success!',
-        message: 'You have successfully joined the Creators Program.',
+        message: 'You have successfully joined the Creator Program.',
       });
       refreshSession();
     } catch (error) {
@@ -273,7 +273,7 @@ const JoinCreatorProgramCard = () => {
   return (
     <div className={clsx(cardProps.className, 'basis-full gap-6')}>
       <div className="flex flex-col gap-2">
-        <h3 className="text-xl font-bold">Join the Creators Program</h3>
+        <h3 className="text-xl font-bold">Join the Creator Program</h3>
 
         <div className="flex gap-1">
           <p>
@@ -358,7 +358,7 @@ const JoinCreatorProgramCard = () => {
         }}
         loading={joiningCreatorsProgram || refreshing}
       >
-        Join the Creators Program
+        Join the Creator Program
       </Button>
     </div>
   );
@@ -595,7 +595,6 @@ const EstimatedEarningsCard = () => {
     );
   }
 
- 
   return (
     <div className={clsx(cardProps.className, 'basis-2/4 gap-6')}>
       <div className="flex flex-col gap-2">
@@ -606,7 +605,9 @@ const EstimatedEarningsCard = () => {
             <tr>
               <td>Compensation Pool</td>
               <td>&nbsp;</td>
-              <td className="border-l-4 py-1 pl-2">${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}</td>
+              <td className="border-l-4 py-1 pl-2">
+                ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
+              </td>
             </tr>
             <tr>
               <td>Total Banked Buzz</td>
@@ -667,7 +668,9 @@ const EstimatedEarningsCard = () => {
             <p className="text-xs">
               This value will <span className="font-bold">decrease</span> as other creators Bank
               Buzz. <span className="font-bold">Forecasted value: </span> $
-              {numberWithCommas(formatToLeastDecimals(getForecastedValue(banked.total ?? 0, compensationPool)))}
+              {numberWithCommas(
+                formatToLeastDecimals(getForecastedValue(banked.total ?? 0, compensationPool))
+              )}
             </p>
           )}
           {phase === 'extraction' && (
