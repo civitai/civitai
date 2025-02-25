@@ -51,28 +51,7 @@ const baseSchema = textToImageParamsSchema
     model: generationResourceSchema,
     resources: generationResourceSchema.array().min(0).default([]),
     vae: generationResourceSchema.optional(),
-    prompt: z
-      .string()
-      .superRefine((val, ctx) => {
-        const { blockedFor, success } = auditPrompt(val);
-        if (!success) {
-          let message = `Blocked for: ${blockedFor.join(', ')}`;
-          const count = blockedRequest.increment();
-          const status = blockedRequest.status();
-          if (status === 'warned') {
-            message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-          } else if (status === 'notified') {
-            message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
-          }
-
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message,
-            params: { count },
-          });
-        }
-      })
-      .default(''),
+    prompt: z.string().default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     remixPrompt: z.string().optional(),
@@ -106,14 +85,38 @@ const formSchema = baseSchema
           message: 'Prompt cannot be empty',
           path: ['prompt'],
         });
-      } else if (prompt.length > 1500) {
+      }
+    }
+
+    if (data.prompt.length > 1500) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt cannot be longer than 1500 characters',
+        path: ['prompt'],
+      });
+    }
+
+    if (data.prompt.length > 0) {
+      const { blockedFor, success } = auditPrompt(data.prompt);
+      if (!success) {
+        let message = `Blocked for: ${blockedFor.join(', ')}`;
+        const count = blockedRequest.increment();
+        const status = blockedRequest.status();
+        if (status === 'warned') {
+          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+        } else if (status === 'notified') {
+          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+        }
+
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Prompt cannot be longer than 1500 characters',
+          message,
+          params: { count },
           path: ['prompt'],
         });
       }
     }
+
     if (data.workflow.startsWith('img2img') && !data.sourceImage) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
