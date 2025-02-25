@@ -9,6 +9,7 @@ import {
   Loader,
   Menu,
   Modal,
+  Popover,
   SegmentedControl,
   Select,
   Stack,
@@ -26,6 +27,7 @@ import {
   IconHorse,
   IconInfoCircle,
   IconLock,
+  IconSettings,
   IconTagOff,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -323,13 +325,24 @@ export default function ResourceSelectModal({
                   className="shrink-0 @sm:w-full"
                 />
                 <CategoryTagFilters />
-                <div className="flex shrink-0 flex-row gap-3">
+                <div className="flex shrink-0 flex-row items-center justify-end gap-3">
                   <ResourceSelectSort />
+                  {/* <Checkbox label="Advanced" /> */}
                   <ResourceSelectFiltersDropdown
                     options={options}
                     selectFilters={selectFilters}
                     setSelectFilters={setSelectFilters}
                   />
+                  <Popover withArrow>
+                    <Popover.Target>
+                      <ActionIcon>
+                        <IconSettings />
+                      </ActionIcon>
+                    </Popover.Target>
+                    <Popover.Dropdown>
+                      This was a triumph. Making a note here, huge success
+                    </Popover.Dropdown>
+                  </Popover>
                 </div>
               </div>
 
