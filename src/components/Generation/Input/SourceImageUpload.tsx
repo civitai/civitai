@@ -41,6 +41,9 @@ function SourceImageUpload({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const { mutate, isLoading, isError } = trpc.orchestrator.imageUpload.useMutation({
+    onSettled: () => {
+      setLoading(false);
+    },
     onError: (error) => {
       setError(error.message);
       setLoading(false);
