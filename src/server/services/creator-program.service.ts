@@ -171,14 +171,20 @@ export async function getCreatorRequirements(userId: number) {
       min: MIN_CREATOR_SCORE,
       current: status.score,
     },
-    membership: status.membership !== 'free' ? status.membership : false,
+    membership: status.membership !== 'free' ? status.membership : undefined,
+    validMembership:
+      // We will not support founder tier.
+      status.membership !== 'free' && status.membership !== 'founder' ? status.membership : false,
   };
 }
 
 export async function joinCreatorsProgram(userId: number) {
   const requirements = await getCreatorRequirements(userId);
 
-  if (requirements.membership === false) {
+  if (requirements.validMembership === false) {
+    if (requirements.membership) {
+      throw throwBadRequestError('Your current membership does not apply for the Creator Program');
+    }
     throw throwBadRequestError('User is not a civitai member');
   }
 

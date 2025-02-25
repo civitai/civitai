@@ -272,6 +272,7 @@ export enum NotificationCategory {
   Milestone = 'Milestone',
   Bounty = 'Bounty',
   Buzz = 'Buzz',
+  Creator = 'Creator',
   System = 'System',
   Other = 'Other',
 }

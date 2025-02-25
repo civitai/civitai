@@ -135,11 +135,10 @@ const openEarningEstimateModal = () => {
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-4">
           <p>
-            This is an estimated value based on the assumption that some active creators will bank
-            their earnings for the month. The amount you receive depends on the total Buzz Banked by
-            all creators at the end of the month. If you&rsquo;re not happy with your estimated
-            payout, you can withdraw your Buzz during the 3-day Extraction Phase at the end of the
-            month
+            This is an estimated value based on the assumption that a portion of all Buzz earned by
+            creators will be Banked. The amount you receive depends on the total Buzz Banked by all
+            creators at the end of the month. If you&rsquo;re not happy with your estimated payout,
+            you can withdraw your Buzz during the 3-day Extraction Phase at the end of the month.
           </p>
           <Button onClick={handleClose}>Close</Button>
         </div>
@@ -255,6 +254,7 @@ const JoinCreatorProgramCard = () => {
   const { joinCreatorsProgram, joiningCreatorsProgram } = useCreatorProgramMutate();
   const isLoading = buzzAccount.balanceLoading || isLoadingRequirements || isLoadingForecast;
 
+  const hasValidMembership = requirements?.validMembership;
   const membership = requirements?.membership;
   const hasEnoughCreatorScore =
     (requirements?.score.current ?? 0) >= (requirements?.score.min ?? 0);
@@ -350,10 +350,20 @@ const JoinCreatorProgramCard = () => {
             isMet={!!membership}
             title="Be a Civitai Member"
             content={
-              membership ? (
+              hasValidMembership ? (
                 <p>
                   You are a {capitalize(getDisplayName(membership as string))} Member! Thank you for
                   supporting Civitai.
+                </p>
+              ) : membership ? (
+                <p>
+                  You are a {capitalize(getDisplayName(membership as string))} Member. Your current
+                  membership does not apply to join the Creator Program. Consider upgrading to one
+                  our supported memberships.
+                  <br />
+                  <NextLink href="/pricing">
+                    <Anchor>Upgrade Membership</Anchor>
+                  </NextLink>
                 </p>
               ) : (
                 <NextLink href="/pricing">
@@ -430,15 +440,15 @@ const CompensationPoolCard = () => {
             dialogStore.trigger({
               component: AlertDialog,
               props: {
-                title: 'Compensation pool',
+                title: 'Compensation Pool',
                 type: 'info',
                 children: ({ handleClose }) => (
                   <div className="flex flex-col justify-center gap-4">
                     <p>
-                      The Creator Program Compensation Pool is made up of 10% of Civitai&rsquo;s
-                      revenue from the previous month. As Civitai grows, so does the pool! The more
-                      active Creators there are attracting users who spend Buzz, the larger the pool
-                      will be the next month
+                      The Creator Program Compensation Pool is made up of a portion of
+                      Civitai&rsquo;s revenue from the previous month. As Civitai grows, so does the
+                      pool! The more active Creators there are attracting users who spend Buzz, the
+                      larger the pool will be the next month
                     </p>
                     <Button onClick={handleClose}>Close</Button>
                   </div>
@@ -618,14 +628,14 @@ const EstimatedEarningsCard = () => {
             <tr>
               <td>Compensation Pool</td>
               <td>&nbsp;</td>
-              <td className="border-l-4 py-1 pl-2">
+              <td className="border-l-2 py-1 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
               </td>
             </tr>
             <tr>
               <td>Total Banked Buzz</td>
               <td>&nbsp;</td>
-              <td className="border-l-4 py-1 pl-2">
+              <td className="border-l-2 py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
@@ -648,7 +658,7 @@ const EstimatedEarningsCard = () => {
                   </Anchor>
                 )}
               </td>
-              <td className="border-l-4 py-1 pl-2">
+              <td className="border-l-2 py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(banked.total)}</span>
@@ -918,7 +928,7 @@ const WithdrawCashCard = () => {
                   </ActionIcon>
                 </div>
               </td>
-              <td className="border-l-4 py-1 pl-2">
+              <td className="border-l-2 py-1 pl-2">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.pending ?? 0, Currency.USD)}</span>
                 </div>
@@ -930,7 +940,7 @@ const WithdrawCashCard = () => {
                   <span>Ready to Withdraw </span>
                 </div>
               </td>
-              <td className="border-l-4 py-1 pl-2">
+              <td className="border-l-2 py-1 pl-2">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.ready ?? 0, Currency.USD)}</span>
                 </div>
@@ -952,7 +962,7 @@ const WithdrawCashCard = () => {
                     </ActionIcon>
                   </div>
                 </td>
-                <td className="border-l-4 py-1 pl-2">
+                <td className="border-l-2 py-1 pl-2">
                   <div className="flex items-center gap-2">
                     $<span>{formatCurrencyForDisplay(userCash?.withdrawn ?? 0, Currency.USD)}</span>
                   </div>

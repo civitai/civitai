@@ -70,7 +70,7 @@ export const creatorsProgramDistribute = createJob(
           toAccountId: userId,
           fromAccountId: 0, // central bank
           amount,
-          description: `Compensation pool for ${monthStr}`,
+          description: `Compensation Pool for ${monthStr}`,
           details: { month },
           externalTransactionId: `comp-pool-${monthStr}-${userId}`,
         }))

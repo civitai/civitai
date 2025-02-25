@@ -74,4 +74,33 @@ export const creatorsProgramNotifications = createNotificationProcessor({
       url: `/user/buzz-dashboard#buzz-withdrawals`,
     }),
   },
+
+  // Creator Program V2:
+  'creator-program-banking-phase-ending': {
+    displayName: 'Baking phase ending',
+    category: NotificationCategory.Creator,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `This is the last day to Bank Buzz before the Extraction Phase begins.`,
+      url: `/user/buzz-dashboard#get-paid`,
+    }),
+  },
+  'creator-program-extraction-phase-started': {
+    displayName: 'Extraction phase started',
+    category: NotificationCategory.Creator,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `The Extraction Phase has begun. Check the value of your Banked Buzz and decide what to do.`,
+      url: `/user/buzz-dashboard#get-paid`,
+    }),
+  },
+  'creator-program-extraction-phase-ending': {
+    displayName: 'Extraction phase ending',
+    category: NotificationCategory.Creator,
+    toggleable: false,
+    prepareMessage: () => ({
+      message: `This is the last day to Extract Buzz before the Creator Compensation Pool is distributed. Check the value of your Banked Buzz and decide what to do.`,
+      url: `/user/buzz-dashboard#get-paid`,
+    }),
+  },
 });

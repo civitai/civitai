@@ -110,9 +110,6 @@ export default function UserBuzzDashboard() {
 
           <BuzzDashboardOverview accountId={currentUser?.id as number} />
 
-          <UserPaymentConfigurationCard />
-          <OwnedBuzzWithdrawalRequestsPaged />
-
           <EarningBuzz withCTA />
 
           <Paper withBorder className={classes.tileCard} h="100%">
@@ -226,12 +223,9 @@ export default function UserBuzzDashboard() {
             </Text>
             .
           </Text>
-          <EarlyAccessRewards />
+          <CreatorsProgramV2 />
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward />}
-          <SpendingBuzz withCTA />
-          <CreatorsProgramV2 />
-          <PurchasableRewards />
         </Stack>
       </Container>
     </>

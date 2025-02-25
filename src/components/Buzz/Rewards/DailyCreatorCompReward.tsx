@@ -193,153 +193,155 @@ export function DailyCreatorCompReward() {
 
   return (
     <>
-    <Grid gutter="xs">
-      <Grid.Col xs={12} md={8}>
-        <Paper withBorder className={classes.tileCard} h="100%">
-          <Stack p="md" h="100%">
-            <Stack spacing={0}>
-              <Group spacing={8} position="apart">
-                <Title order={3}>Generation Buzz Earned</Title>
-                <Select
-                  data={dateOptions}
-                  defaultValue={dateOptions[0].value}
-                  onChange={(value) => {
-                    setSelectedDate(
-                      dateOptions.find((x) => x.value === value)?.value ?? selectedDate
-                    );
-                    setSearch('');
-                    setFilteredVersionIds([]);
-                  }}
-                />
-              </Group>
-              <Group position="left" spacing={4}>
-                <CurrencyIcon currency={Currency.BUZZ} size={24} />
-                <Text
-                  size="xl"
-                  color="yellow.7"
-                  weight="bold"
-                  style={{ fontVariant: 'tabular-nums' }}
-                >
-                  {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
-                </Text>
-              </Group>
+      <Grid gutter="xs">
+        <Grid.Col xs={12} md={8}>
+          <Paper withBorder className={classes.tileCard} h="100%">
+            <Stack p="md" h="100%">
+              <Stack spacing={0}>
+                <Group spacing={8} position="apart">
+                  <Title order={3}>Generation Buzz Earned</Title>
+                  <Select
+                    data={dateOptions}
+                    defaultValue={dateOptions[0].value}
+                    onChange={(value) => {
+                      setSelectedDate(
+                        dateOptions.find((x) => x.value === value)?.value ?? selectedDate
+                      );
+                      setSearch('');
+                      setFilteredVersionIds([]);
+                    }}
+                  />
+                </Group>
+                <Group position="left" spacing={4}>
+                  <CurrencyIcon currency={Currency.BUZZ} size={24} />
+                  <Text
+                    size="xl"
+                    color="yellow.7"
+                    weight="bold"
+                    style={{ fontVariant: 'tabular-nums' }}
+                  >
+                    {formatCurrencyForDisplay(totalBuzz, Currency.BUZZ)}
+                  </Text>
+                </Group>
+              </Stack>
+              {!isLoading && resources.length > 0 ? (
+                <div style={{ position: 'relative', height: '100%', width: '100%' }}>
+                  <Bar
+                    key={filteredVersionIds.join('-')}
+                    options={options}
+                    data={{
+                      // labels,
+                      datasets,
+                    }}
+                  />
+                </div>
+              ) : isLoading ? (
+                <Center>
+                  <Loader />
+                </Center>
+              ) : (
+                <NoData />
+              )}
             </Stack>
-            {!isLoading && resources.length > 0 ? (
-              <div style={{ position: 'relative', height: '100%', width: '100%' }}>
-                <Bar
-                  key={filteredVersionIds.join('-')}
-                  options={options}
-                  data={{
-                    // labels,
-                    datasets,
-                  }}
-                />
-              </div>
-            ) : isLoading ? (
-              <Center>
-                <Loader />
-              </Center>
-            ) : (
-              <NoData />
-            )}
-          </Stack>
-        </Paper>
-      </Grid.Col>
-      <Grid.Col xs={12} md={4}>
-        <Paper className={classes.tileCard} h="100%" withBorder>
-          <Stack spacing={8} py="md">
-            <Title order={3} px="md">
-              Top Earning Resources
-            </Title>
-            <ClearableTextInput
-              px="md"
-              placeholder="Search your resources"
-              value={search}
-              onChange={(e) => setSearch(e.currentTarget.value)}
-            />
-            {filteredVersionIds.length > 0 && (
-              <Button
-                variant="subtle"
-                size="xs"
-                radius={0}
-                onClick={() => setFilteredVersionIds([])}
-                compact
-              >
-                Clear selection
-              </Button>
-            )}
-            {isLoading ? (
-              <Center px="md">
-                <Loader />
-              </Center>
-            ) : filteredResources.length > 0 ? (
-              <ScrollArea.Autosize maxHeight={400}>
-                <Stack spacing={8} px="md">
-                  {filteredResources.map((version) => {
-                    const isSelected = filteredVersionIds.includes(version.id);
+          </Paper>
+        </Grid.Col>
+        <Grid.Col xs={12} md={4}>
+          <Paper className={classes.tileCard} h="100%" withBorder>
+            <Stack spacing={8} py="md">
+              <Title order={3} px="md">
+                Top Earning Resources
+              </Title>
+              <ClearableTextInput
+                px="md"
+                placeholder="Search your resources"
+                value={search}
+                onChange={(e) => setSearch(e.currentTarget.value)}
+              />
+              {filteredVersionIds.length > 0 && (
+                <Button
+                  variant="subtle"
+                  size="xs"
+                  radius={0}
+                  onClick={() => setFilteredVersionIds([])}
+                  compact
+                >
+                  Clear selection
+                </Button>
+              )}
+              {isLoading ? (
+                <Center px="md">
+                  <Loader />
+                </Center>
+              ) : filteredResources.length > 0 ? (
+                <ScrollArea.Autosize maxHeight={400}>
+                  <Stack spacing={8} px="md">
+                    {filteredResources.map((version) => {
+                      const isSelected = filteredVersionIds.includes(version.id);
 
-                    return (
-                      <UnstyledButton
-                        key={version.id}
-                        py={4}
-                        px={8}
-                        sx={(theme) => ({
-                          borderRadius: theme.radius.sm,
-                          backgroundColor: isSelected
-                            ? theme.fn.rgba(theme.colors.yellow[7], 0.1)
-                            : undefined,
-                        })}
-                        onClick={() => {
-                          setFilteredVersionIds((ids) =>
-                            isSelected
-                              ? ids.filter((id) => id !== version.id)
-                              : [...ids, version.id]
-                          );
-                          setSearch('');
-                        }}
-                      >
-                        <Group position="apart" spacing={8} noWrap>
-                          <Stack spacing={0}>
-                            <Text size="sm" weight="bold" lineClamp={1}>
-                              {version.modelName}
-                            </Text>
-                            <Text size="xs" color="dimmed" lineClamp={1}>
-                              {version.name}
-                            </Text>
-                          </Stack>
-                          <Group spacing={4} noWrap>
-                            <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                            <Text
-                              size="sm"
-                              color="yellow.7"
-                              weight="bold"
-                              style={{ fontVariant: 'tabular-nums' }}
-                            >
-                              {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
-                            </Text>
+                      return (
+                        <UnstyledButton
+                          key={version.id}
+                          py={4}
+                          px={8}
+                          sx={(theme) => ({
+                            borderRadius: theme.radius.sm,
+                            backgroundColor: isSelected
+                              ? theme.fn.rgba(theme.colors.yellow[7], 0.1)
+                              : undefined,
+                          })}
+                          onClick={() => {
+                            setFilteredVersionIds((ids) =>
+                              isSelected
+                                ? ids.filter((id) => id !== version.id)
+                                : [...ids, version.id]
+                            );
+                            setSearch('');
+                          }}
+                        >
+                          <Group position="apart" spacing={8} noWrap>
+                            <Stack spacing={0}>
+                              <Text size="sm" weight="bold" lineClamp={1}>
+                                {version.modelName}
+                              </Text>
+                              <Text size="xs" color="dimmed" lineClamp={1}>
+                                {version.name}
+                              </Text>
+                            </Stack>
+                            <Group spacing={4} noWrap>
+                              <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                              <Text
+                                size="sm"
+                                color="yellow.7"
+                                weight="bold"
+                                style={{ fontVariant: 'tabular-nums' }}
+                              >
+                                {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
+                              </Text>
+                            </Group>
                           </Group>
-                        </Group>
-                      </UnstyledButton>
-                    );
-                  })}
-                </Stack>
-              </ScrollArea.Autosize>
-            ) : (
-              <Center px="md">
-                <NoData
-                  message={
-                    debouncedSearch && !filteredResources.length
-                      ? 'No resources found. Try changing your search terms'
-                      : undefined
-                  }
-                />
-              </Center>
-            )}
-          </Stack>
-        </Paper>
-      </Grid.Col>
-    </Grid>
-    <Text mt={-16} size="sm" align="right">New Creator's Program coming soon! <Text component={Link} variant="link" td="underline" href="/user/pool-estimate">See how much you might be able to earn</Text>.</Text>
+                        </UnstyledButton>
+                      );
+                    })}
+                  </Stack>
+                </ScrollArea.Autosize>
+              ) : (
+                <Center px="md">
+                  <NoData
+                    message={
+                      debouncedSearch && !filteredResources.length
+                        ? 'No resources found. Try changing your search terms'
+                        : undefined
+                    }
+                  />
+                </Center>
+              )}
+            </Stack>
+          </Paper>
+        </Grid.Col>
+      </Grid>
+      <Text mt={-16} size="sm" align="right">
+        New Creator's Program coming soon!
+      </Text>
     </>
   );
 }
