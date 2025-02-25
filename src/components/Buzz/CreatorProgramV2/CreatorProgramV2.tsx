@@ -85,29 +85,39 @@ const openPhasesModal = () => {
       size: 'lg',
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-4">
-          <p>Every month the Creator Program has two phases.</p>
+          <p>Every month, the Creator Program runs in two phases:</p>
 
           <div className="flex flex-col gap-2">
             <h3 className="text-xl font-bold">Banking Phase</h3>
-            <p>
-              During this phase creators can Bank any Yellow Buzz they&rsquo;ve earned. This phase
-              continues until 3 days before the end of the month (UTC). As the month continues the
-              value of the Buzz you&rsquo;ve Banked will <span className="font-bold">decrease</span>{' '}
-              in value as the total Buzz in the Bank increases.
-            </p>
+            <ul className="pl-4">
+              <li>During this phase, creators can bank any Yellow Buzz they&rsquo;ve earned.</li>
+              <li>This phase lasts until 3 days before the end of the month (UTC).</li>
+              <li>
+                As the month progresses, the value of your banked Buzz{' '}
+                <span className="font-bold">decrease</span> because the total amount of Buzz in the
+                bank increases.
+              </li>
+            </ul>
           </div>
 
           <div className="flex flex-col gap-2">
             <h3 className="text-xl font-bold">Extraction Phase</h3>
-            <p>
-              During this phase creators Bank Buzz is disabled, instead creators can review the
-              value of the piece of the Compensation Pool and determine if they want to keep their
-              Buzz in the Bank or Extract it to get it back for a future month or to use on Civitai.
-              This phase starts the last 3 days of the month and ends 1 hour before the end of the
-              month (UTC). As this phase continues the value of the Buzz you&rsquo;ve Banked will{' '}
-              <span className="font-bold">increase</span> in value as creators Extract Buzz from the
-              Bank, making your share of the pool bigger!
-            </p>
+            <ul className="pl-4">
+              <li>During this phase, banking Buzz is disabled.</li>
+              <li>
+                Creators can review their share of the Compensation Pool and decide whether to keep
+                their Buzz banked or extract it.
+              </li>
+              <li>Extracted Buzz can be saved for a future month or used on Civitai.</li>
+              <li>
+                This phase starts 3 days before the end of the month and ends 1 hour before the
+                month ends (UTC).
+              </li>
+              <li>
+                As more creators extract their Buzz, the value of your banked Buzz{' '}
+                <span className="font-bold">increase</span>, making your share of the pool bigger!
+              </li>
+            </ul>
           </div>
           <Button onClick={handleClose}>Close</Button>
         </div>
@@ -411,7 +421,7 @@ const CompensationPoolCard = () => {
         <div className="flex flex-col gap-1">
           <p className="text-center">{date}</p>
           <p className="text-center text-2xl font-bold">
-            ${numberWithCommas(compensationPool?.value)}
+            ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
           </p>
         </div>
         <Anchor
@@ -424,10 +434,10 @@ const CompensationPoolCard = () => {
                 children: ({ handleClose }) => (
                   <div className="flex flex-col justify-center gap-4">
                     <p>
-                      The Creator Program Compensation Pool is 10% of the revenue Civitai brought in
-                      last month. That means the pool grows as we do! The more active creators there
-                      are attracting people that spend Buzz, the bigger the pool will be the next
-                      month.
+                      The Creator Program Compensation Pool is made up of 10% of Civitai&rsquo;s
+                      revenue from the previous month. As Civitai grows, so does the pool! The more
+                      active Creators there are attracting users who spend Buzz, the larger the pool
+                      will be the next month
                     </p>
                     <Button onClick={handleClose}>Close</Button>
                   </div>
@@ -487,7 +497,7 @@ const BankBuzzCard = () => {
   return (
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
       <div className="flex h-full flex-col gap-2">
-        <h3 className="text-xl font-bold">Bank Buzz Card</h3>
+        <h3 className="text-xl font-bold">Bank Buzz</h3>
         <p className="text-sm">Claim your piece of the pool by banking your Buzz!</p>
 
         <div className="flex">
@@ -499,7 +509,7 @@ const BankBuzzCard = () => {
             min={10000}
             max={maxBankable}
             onChange={(value) => {
-              setToBank(value ?? 10000);
+              setToBank(Math.min(value ?? 10000, maxBankable));
             }}
             styles={{
               input: {
@@ -687,7 +697,7 @@ const EstimatedEarningsCard = () => {
           <div className="flex flex-col gap-0">
             <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
             <p className="text-sm">
-              You can Extract Buzz during the{' '}
+              You can extract Buzz during the{' '}
               <Anchor onClick={openPhasesModal}>Extraction Phase</Anchor>:
             </p>
             <p className="text-sm">
@@ -700,7 +710,7 @@ const EstimatedEarningsCard = () => {
           <div className="flex flex-col gap-0">
             <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
             <p className="text-sm">
-              You can Extract Buzz your Buzz until{' '}
+              You can extract Buzz your Buzz until{' '}
               {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]')}
             </p>
           </div>
@@ -737,9 +747,9 @@ const CreatorProgramCapsInfo = () => {
 
   const nextCap = CAP_DEFINITIONS.find(
     (c) =>
-      !c.limit ||
-      (banked.cap.cap < banked.cap.peakEarning.earned * (c.percentOfPeakEarning ?? 1) &&
-        c.tier !== banked.cap.definition.tier)
+      (!c.limit ||
+        banked.cap.cap < banked.cap.peakEarning.earned * (c.percentOfPeakEarning ?? 1)) &&
+      c.tier !== banked.cap.definition.tier
   );
 
   const potentialEarnings =
@@ -761,32 +771,38 @@ const CreatorProgramCapsInfo = () => {
             </tr>
           </thead>
           <tbody>
-            {CAP_DEFINITIONS.map((cap) => (
-              <tr key={cap.tier}>
-                <td className="font-bold">{capitalize(cap.tier)} Member</td>
-                <td>
-                  <p>
-                    {cap.percentOfPeakEarning
-                      ? `${cap.percentOfPeakEarning * 100}% of your Peak Earning Month with `
-                      : ''}
+            {CAP_DEFINITIONS.map((cap) => {
+              if (cap.hidden) {
+                return null;
+              }
 
-                    {!cap.limit ? (
-                      'no cap'
-                    ) : cap.percentOfPeakEarning ? (
-                      <span>
-                        a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-                        {abbreviateNumber(cap.limit)} cap
-                      </span>
-                    ) : (
-                      <span>
-                        <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-                        {abbreviateNumber(cap.limit)}
-                      </span>
-                    )}
-                  </p>
-                </td>
-              </tr>
-            ))}
+              return (
+                <tr key={cap.tier}>
+                  <td className="font-bold">{capitalize(cap.tier)} Member</td>
+                  <td>
+                    <p>
+                      {cap.percentOfPeakEarning
+                        ? `${cap.percentOfPeakEarning * 100}% of your Peak Earning Month with `
+                        : ''}
+
+                      {!cap.limit ? (
+                        'no cap'
+                      ) : cap.percentOfPeakEarning ? (
+                        <span>
+                          a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+                          {abbreviateNumber(cap.limit)} cap
+                        </span>
+                      ) : (
+                        <span>
+                          <CurrencyIcon currency={Currency.BUZZ} className="inline" />
+                          {abbreviateNumber(cap.limit)}
+                        </span>
+                      )}
+                    </p>
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </Table>
 

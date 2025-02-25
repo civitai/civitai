@@ -35,12 +35,13 @@ export type CapDefinition = {
   tier: UserTier;
   limit?: number;
   percentOfPeakEarning?: number;
+  hidden?: boolean;
 };
 export const PEAK_EARNING_WINDOW = 12;
 export const MIN_CAP = 100000;
 export const CAP_DEFINITIONS: CapDefinition[] = [
+  { tier: 'founder', limit: MIN_CAP, hidden: true },
   { tier: 'bronze', limit: MIN_CAP },
-  { tier: 'founder', limit: MIN_CAP },
   { tier: 'silver', limit: 1000000, percentOfPeakEarning: 1.25 },
   { tier: 'gold', percentOfPeakEarning: 1.5 },
 ];
