@@ -107,7 +107,6 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
       const forceRun = opts?.forceRun ?? state.forceRun;
       const currentTourData = getCurrentTourData(activeTour);
       const alreadyCompleted = currentTourData?.completed ?? false;
-
       if (alreadyCompleted && !forceRun) return;
 
       setState((old) => ({

@@ -4734,7 +4734,6 @@ export async function createImageResources({
     'modelversionid'
   );
   const resourcesWithoutModelVersions = resources.filter((x) => !x.modelversionid);
-  console.dir({ resourcesWithModelVersions, resourcesWithoutModelVersions }, { depth: null });
 
   const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
     (r) => Prisma.sql`
