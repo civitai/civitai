@@ -62,7 +62,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
     }
 
     await updateUserSettings.mutate({
-      creatorsProgramCodeOfConductAccepted: true,
+      creatorsProgramCodeOfConductAccepted: new Date(),
     });
 
     handleClose();

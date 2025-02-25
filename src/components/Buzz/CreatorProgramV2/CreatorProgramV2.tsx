@@ -48,6 +48,7 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRefreshSession } from '~/components/Stripe/memberships.util';
+import { TosModal } from '~/components/ToSModal/TosModal';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -263,16 +264,25 @@ const JoinCreatorProgramCard = () => {
   const { refreshSession, refreshing } = useRefreshSession(false);
 
   const handleJoinCreatorsProgram = async () => {
-    try {
-      await joinCreatorsProgram();
-      showSuccessNotification({
-        title: 'Success!',
-        message: 'You have successfully joined the Creator Program.',
-      });
-      refreshSession();
-    } catch (error) {
-      // no-op. The mutation should handle it.
-    }
+    dialogStore.trigger({
+      component: TosModal,
+      props: {
+        slug: 'creator-program-v2-tos',
+        key: 'creatorProgramToSAccepted' as any,
+        onAccepted: async () => {
+          try {
+            await joinCreatorsProgram();
+            showSuccessNotification({
+              title: 'Success!',
+              message: 'You have successfully joined the Creator Program.',
+            });
+            refreshSession();
+          } catch (error) {
+            // no-op. The mutation should handle it.
+          }
+        },
+      },
+    });
   };
 
   if (isLoading) {
