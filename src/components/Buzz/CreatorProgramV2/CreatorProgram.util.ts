@@ -164,6 +164,13 @@ export const useCreatorProgramMutate = () => {
     },
   });
   const extractBuzzMutation = trpc.creatorProgram.extractBuzz.useMutation({
+    onSuccess() {
+      utils.creatorProgram.getBanked.setData(undefined, (old) => {
+        if (!old) return old;
+        // Unbank all
+        return { ...old, total: 0 };
+      });
+    },
     onError(error) {
       handleTRPCError(error, 'Failed to extract your buzz.');
     },

@@ -19,6 +19,7 @@ import {
   IconInfoCircle,
   IconLock,
   IconLogout,
+  IconLogout2,
   IconPigMoney,
   IconUxCircle,
 } from '@tabler/icons-react';
@@ -727,7 +728,7 @@ export const CreatorProgramPhase = () => {
     return null;
   }
 
-  const Icon = phase === 'bank' ? IconPigMoney : IconUxCircle;
+  const Icon = phase === 'bank' ? IconPigMoney : IconLogout2;
   const color = phase === 'bank' ? 'green' : 'yellow';
 
   return (
@@ -1177,7 +1178,8 @@ const ExtractBuzzCard = () => {
                         <p>
                           You are about to extract{' '}
                           <CurrencyBadge unitAmount={banked?.total ?? 0} currency={Currency.BUZZ} />{' '}
-                          from the pool. This action is not reversible.{' '}
+                          from the Bank. This action is not reversible; you cannot re-bank Buzz
+                          until the next Banking Phase.{' '}
                         </p>
                         <p> Are you sure?</p>
                       </div>
@@ -1204,13 +1206,13 @@ const ExtractBuzzCard = () => {
               <CurrencyIcon currency={Currency.BUZZ} size={14} className="inline" />
               {numberWithCommas(extractionFee)}
             </p>
-            <ActionIcon
+            {/* <ActionIcon
               onClick={() => {
                 console.log('TODO');
               }}
             >
               <IconInfoCircle size={14} />
-            </ActionIcon>
+            </ActionIcon> */}
           </div>
         </div>
 

@@ -51,8 +51,6 @@ class SignalClient {
       },
     });
 
-    console.log(response.status);
-
     if (!response.ok) {
       throw new Error(`failed to send topic signal: ${target}`);
     }
