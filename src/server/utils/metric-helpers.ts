@@ -6,6 +6,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { Context } from '~/server/createContext';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { imageMetricsCache } from '~/server/redis/caches';
 
 export const updateEntityMetric = async ({
   ctx,
@@ -62,6 +63,7 @@ export const updateEntityMetric = async ({
         ).catch();
       }
     }
+    if (entityType === 'Image') await imageMetricsCache.bust(entityId);
   } catch (e) {
     const error = e as Error;
     // putting this into the clickhouse dataset for now
