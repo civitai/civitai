@@ -124,11 +124,11 @@ const openEarningEstimateModal = () => {
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-4">
           <p>
-            This is a forecasted value determined by estimating that a portion of all active
-            creators will bank their earnings for the month. The dollar value you receive will vary
-            depending on the amount of Buzz Banked by all creators at the end of the month. If
-            you&rsquo;re unsatisfied with the money you&rsquo;ll receive, you can get it back during
-            the 3 day Extraction Phase at the end of the month.{' '}
+            This is an estimated value based on the assumption that some active creators will bank
+            their earnings for the month. The amount you receive depends on the total Buzz Banked by
+            all creators at the end of the month. If you&rsquo;re not happy with your estimated
+            payout, you can withdraw your Buzz during the 3-day Extraction Phase at the end of the
+            month
           </p>
           <Button onClick={handleClose}>Close</Button>
         </div>
@@ -302,7 +302,7 @@ const JoinCreatorProgramCard = () => {
         <div className="flex gap-4">
           <CreatorProgramRequirement
             isMet={hasEnoughCreatorScore}
-            title={`Have a creator score higher than ${abbreviateNumber(
+            title={`Have a Creator Score higher than ${abbreviateNumber(
               requirements?.score.min ?? 10000
             )}`}
             content={
@@ -316,11 +316,11 @@ const JoinCreatorProgramCard = () => {
                         title: 'What is your Creator Score?',
                         type: 'info',
                         children: ({ handleClose }) => (
-                          <div className="align-center flex flex-col gap-4">
+                          <div className="flex flex-col justify-center gap-4">
                             <p className="text-center">
-                              Creator Score is a value that we compute behind the scenes based on
-                              your activity within the Civitai community and engagement with content
-                              and models that you&rsquo;ve created.
+                              Creator Score is a value we calculate based on your participation in
+                              the Civitai community, including your activity and how others engage
+                              with the content and models you create.
                             </p>
                             <Button onClick={handleClose}>Close</Button>
                           </div>
@@ -341,11 +341,13 @@ const JoinCreatorProgramCard = () => {
             content={
               membership ? (
                 <p>
-                  You are a {getDisplayName(membership as string)} member! Thank you for supporting
-                  Civitai.
+                  You are a {capitalize(getDisplayName(membership as string))} Member! Thank you for
+                  supporting Civitai.
                 </p>
               ) : (
-                <NextLink href="/pricing">Become a Civitai Member Now!</NextLink>
+                <NextLink href="/pricing">
+                  <Anchor>Become a Civitai Member Now!</Anchor>
+                </NextLink>
               )
             }
           />
