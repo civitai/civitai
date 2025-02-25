@@ -188,7 +188,11 @@ export function createCachedArray<T extends object>({
     await Promise.all(toRemove.map((id) => redis.del(`${key}:${id}`)));
   }
 
-  return { fetch, bust, refresh };
+  async function flush() {
+    await clearCacheByPattern(`${key}:*`);
+  }
+
+  return { fetch, bust, refresh, flush };
 }
 export type CachedArray<T extends object> = ReturnType<typeof createCachedArray<T>>;
 

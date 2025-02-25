@@ -30,4 +30,5 @@ export type WorkerIncomingMessage =
   | { type: 'event:register'; target: string }
   | { type: 'beforeunload' }
   | { type: 'ping' }
-  | { type: 'send'; target: string; args: Record<string, unknown> };
+  | { type: 'send'; target: string; args: Record<string, unknown> }
+  | { type: 'topic:register'; topic: string };

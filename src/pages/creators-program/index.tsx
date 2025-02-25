@@ -66,7 +66,7 @@ function CreatorsClubV1() {
   const applyFormUrl = `https://forms.clickup.com/8459928/f/825mr-10271/6KI6AW90JTXU6TYX4L?Username=${currentUser?.username}`;
   return (
     <>
-      <Meta title="Creators Program | Civitai" />
+      <Meta title="Creator Program | Civitai" />
       <Container>
         <Stack spacing="lg">
           <Title size={sizing.header.title} className={classes.highlightColor} lh={1} mb="sm">
@@ -74,13 +74,13 @@ function CreatorsClubV1() {
               Introducing the
             </Text>
             <br />
-            Civitai Creators Program
+            Civitai Creator Program
           </Title>
 
           <Text size={sizing.header.subtitle} lh={1.3} mb="xs">
             One of the core tenets of Civitai is that creators should be able to monetize their
-            work. The Civitai Creators Program is the pathway for creators on Civitai to getting
-            paid for their contributions
+            work. The Civitai Creator Program is the pathway for creators on Civitai to getting paid
+            for their contributions
           </Text>
           <Group>
             <Button
@@ -284,7 +284,7 @@ const EarnBuzzSection = () => {
           New ways to earn Buzz
         </Title>
         <Text size={sizing.sections.subtitle}>
-          As a valued member of the Creators Program, you get 3 new ways to earn buzz{' '}
+          As a valued member of the Creator Program, you get 3 new ways to earn buzz{' '}
         </Text>
       </Stack>
       <Grid>
@@ -509,7 +509,7 @@ function CreatorsClubV2() {
   const applyFormUrl = `https://forms.clickup.com/8459928/f/825mr-10271/6KI6AW90JTXU6TYX4L?Username=${currentUser?.username}`;
   return (
     <>
-      <Meta title="Creators Program | Civitai" />
+      <Meta title="Creator Program | Civitai" />
       <Container>
         <Stack spacing="lg">
           <Title
@@ -519,7 +519,7 @@ function CreatorsClubV2() {
             mb="sm"
             mt="lg"
           >
-            Civitai Creators Program
+            Civitai Creator Program
           </Title>
 
           <Text mb="xs" size="lg">

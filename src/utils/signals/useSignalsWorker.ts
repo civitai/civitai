@@ -123,10 +123,15 @@ export function useSignalsWorker(options?: {
       emitterRef.current.off(target, cb);
     }
 
+    function topicRegister(topic: string) {
+      worker?.port.postMessage({ type: 'topic:register', topic });
+    }
+
     return {
       on,
       off,
       send,
+      topicRegister,
     };
   }, [worker]);
 

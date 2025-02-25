@@ -74,14 +74,16 @@ export const appliesForFounderDiscount = (tier?: string) => {
   return appliesForDiscount;
 };
 
-export const useRefreshSession = () => {
+export const useRefreshSession = (shouldReload = true) => {
   const currentUser = useCurrentUser();
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefreshSession = async () => {
     setRefreshing(true);
     await currentUser?.refresh();
-    window?.location.reload();
+    if (shouldReload) {
+      window?.location.reload();
+    }
     setRefreshing(false);
   };
 

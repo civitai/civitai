@@ -1,8 +1,9 @@
 import { MantineColor, Notification, NotificationProps } from '@mantine/core';
+import { useInterval } from '@mantine/hooks';
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
-import { SignalMessages } from '~/server/common/enums';
+import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { useDebouncer } from '~/utils/debouncer';
 import { getRandomInt } from '~/utils/number-helpers';
 import { SignalStatus } from '~/utils/signals/types';
@@ -46,6 +47,23 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
       worker?.off(message, callback);
     };
   }, [worker, message]);
+};
+
+export const useSignalTopic = (topic: SignalTopic) => {
+  const { worker } = useSignalContext();
+ 
+  const interval = useInterval(() => { 
+    worker?.topicRegister(topic);
+
+   }, 30000);
+
+  useEffect(() => {
+    interval.start();
+
+    return () => {
+      interval.stop();
+    };
+  }, [worker]);
 };
 
 const SIGNAL_DATA_REFRESH_DEBOUNCE = 10;

@@ -262,8 +262,8 @@ const StripeConnectConfigurationCard = () => {
       ) : !userPaymentConfiguration ? (
         <Stack>
           <Alert color="red">
-            It looks like you are not authorized to receive payments or setup your account. Please
-            contact support.
+            It looks like you are not authorized to receive payments or setup your account yet. You
+            mioght
           </Alert>
         </Stack>
       ) : (

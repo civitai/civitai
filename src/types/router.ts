@@ -151,3 +151,5 @@ export type ToolGetAllModel = ToolRouter['getAll']['items'][number];
 
 type OrchestratorRouter = RouterOutput['orchestrator'];
 export type QueryGeneratedImages = OrchestratorRouter['queryGeneratedImages'];
+
+export type CompensationPool = RouterOutput['creatorProgram']['getCompensationPool'];
