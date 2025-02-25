@@ -138,11 +138,16 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   const closeTour = useCallback<TourContextState['closeTour']>(
     (opts) => {
       if (state.activeTour) {
-        const tour = {
-          [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
-        };
-        if (currentUser) updateUserSettingsMutation.mutate({ tour });
-        setLocalTour((old) => ({ ...old, ...tour }));
+        const currentTourData = getCurrentTourData(state.activeTour);
+        const alreadyCompleted = currentTourData?.completed ?? false;
+
+        if (!alreadyCompleted) {
+          const tour = {
+            [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
+          };
+          if (currentUser) updateUserSettingsMutation.mutate({ tour });
+          setLocalTour((old) => ({ ...old, ...tour }));
+        }
       }
 
       setState((old) => ({

@@ -84,6 +84,7 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         }}
         run={run}
         tooltipComponent={TourPopover}
+        disableScrollParentFix
         scrollToFirstStep
         disableScrolling
         showSkipButton
