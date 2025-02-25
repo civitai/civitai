@@ -73,7 +73,7 @@ export function useSignalsWorker(options?: {
     return () => {
       window.removeEventListener('beforeunload', unload);
     };
-  }, []);
+  }, [worker]);
 
   // init
   useEffect(() => {
