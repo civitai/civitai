@@ -365,6 +365,7 @@ async function getMediaGenerationData({
           cfgScale: meta.cfgScale !== 0 ? meta.cfgScale : undefined,
           steps: meta.steps !== 0 ? meta.steps : undefined,
           seed: meta.seed !== 0 ? meta.seed : undefined,
+          sampler: meta.sampler,
           width,
           height,
           aspectRatio,
