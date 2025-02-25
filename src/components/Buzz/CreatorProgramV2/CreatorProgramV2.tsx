@@ -223,7 +223,7 @@ export const CreatorsProgramV2 = () => {
 
       {!hasOnboardedInProgram && <JoinCreatorProgramCard />}
       {hasOnboardedInProgram && (
-        <div className="flex gap-4">
+        <div className="flex flex-col gap-4 md:flex-row">
           <CompensationPoolCard />
           <EstimatedEarningsCard />
           {phase === 'bank' && <BankBuzzCard />}
