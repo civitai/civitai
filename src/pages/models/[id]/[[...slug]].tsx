@@ -103,7 +103,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
@@ -187,7 +187,7 @@ export const getServerSideProps = createServerSideProps({
       }
 
       const [access] = await hasEntityAccess({
-        entityIds: [version?.id],
+        entityIds: [version.id],
         entityType: 'ModelVersion',
         userId: session.user.id,
         isModerator: session.user.isModerator,
@@ -755,12 +755,14 @@ export default function ModelDetailsV2({
                       href="https://education.civitai.com/civitais-guide-to-resource-types/#models"
                       tooltip="What is this?"
                     />
-                    <HelpButton
-                      size="xl"
-                      tooltip="Need help? Start the tour!"
-                      iconProps={{ size: 30, stroke: 1.5 }}
-                      onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
-                    />
+                    {features.appTour && (
+                      <HelpButton
+                        size="xl"
+                        tooltip="Need help? Start the tour!"
+                        iconProps={{ size: 30, stroke: 1.5 }}
+                        onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
+                      />
+                    )}
                     <ToggleModelNotification
                       className={classes.headerButton}
                       modelId={model.id}

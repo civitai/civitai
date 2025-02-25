@@ -1,55 +1,38 @@
 import { useRouter } from 'next/router';
-import React, { MouseEventHandler, MouseEvent } from 'react';
-import { env } from '~/env/client';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useTourContext } from '~/providers/TourProvider';
-import { getLoginLink, LoginRedirectReason } from '~/utils/login-helpers';
+import React, { cloneElement } from 'react';
+import { useTourContext } from '~/components/Tours/ToursProvider';
+import { LoginRedirectReason } from '~/utils/login-helpers';
+import { requireLogin } from '~/components/Login/requireLogin';
+import { QS } from '~/utils/qs';
 
-export type HookProps = {
+export type Props = {
   reason: LoginRedirectReason;
   returnUrl?: string;
+  children: React.ReactElement;
 };
-export function useLoginRedirect({ reason, returnUrl }: HookProps) {
+export function LoginRedirect({ children, reason, returnUrl }: Props) {
   const router = useRouter();
-  const user = useCurrentUser();
-
-  const requireLogin = (fn?: () => void, overrides?: HookProps) => {
-    if (!user) {
-      router.push(
-        getLoginLink({
-          returnUrl: overrides?.returnUrl ?? returnUrl ?? router.asPath,
-          reason: overrides?.reason ?? reason,
-        })
-      );
-    } else {
-      fn?.();
-    }
-  };
-
-  return { requireLogin };
-}
-
-export type Props = HookProps & {
-  children: React.ReactElement<{ onClick?: MouseEventHandler<HTMLElement> }>;
-  beforeRedirect?: () => void;
-};
-export function LoginRedirect({ children, reason, returnUrl, beforeRedirect }: Props) {
-  const router = useRouter();
-  const user = useCurrentUser();
   const { running, closeTour, activeTour } = useTourContext();
 
-  const url = new URL(returnUrl ?? router.asPath, env.NEXT_PUBLIC_BASE_URL);
-  if (running && activeTour) url.searchParams.set('tour', activeTour);
+  let url = returnUrl ?? router.asPath;
+  if (running && activeTour) {
+    // Add the active tour to the query string
+    const [path, params] = url.split('?');
+    const query = params ? QS.parse(params) : {};
+    const queryString = QS.stringify({ ...query, tour: activeTour });
 
-  return !user
-    ? React.cloneElement(children, {
-        ...children.props,
-        onClick: (e: MouseEvent<HTMLElement>) => {
-          e.preventDefault();
-          beforeRedirect?.();
-          router.push(getLoginLink({ returnUrl: url.toString(), reason }));
-          if (running) closeTour();
-        },
-      })
-    : children;
+    url = `${path}?${queryString}`;
+  }
+
+  function handleClick(e: React.MouseEvent) {
+    if (running) closeTour();
+    requireLogin({
+      uiEvent: e,
+      reason,
+      cb: () => children.props.onClick?.(e),
+      returnUrl: url,
+    });
+  }
+
+  return cloneElement(children, { onClick: handleClick });
 }

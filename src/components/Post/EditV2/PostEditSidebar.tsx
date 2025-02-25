@@ -25,13 +25,13 @@ import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -40,6 +40,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
   const { runTour } = useTourContext();
+  const features = useFeatureFlags();
 
   const [deleted, setDeleted] = useState(false);
   const [updatePost, isReordering, hasImages, showReorder, collectionId, collectionTagId, images] =
@@ -164,10 +165,12 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <Title size="sm">{postLabel}</Title>
-            <HelpButton
-              tooltip="Need help? Start the tour!"
-              onClick={() => runTour({ key: 'post-generation', step: 0, forceRun: true })}
-            />
+            {features.appTour && (
+              <HelpButton
+                tooltip="Need help? Start the tour!"
+                onClick={() => runTour({ key: 'post-generation', step: 0, forceRun: true })}
+              />
+            )}
           </div>
           <Badge color={mutating > 0 ? 'yellow' : 'green'} size="lg">
             {mutating > 0 ? 'Saving' : 'Saved'}

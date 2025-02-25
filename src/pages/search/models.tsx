@@ -2,6 +2,7 @@ import { Stack, Box, Center, Loader, Title, Text, ThemeIcon } from '@mantine/cor
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
+  ApplyCustomFilter,
   BrowsingLevelFilter,
   ChipRefinementList,
   ClearRefinements,
@@ -23,6 +24,8 @@ import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { Availability } from '~/shared/utils/prisma/enums';
 
 export default function ModelsSearch() {
   return (
@@ -36,8 +39,12 @@ export default function ModelsSearch() {
 }
 
 const RenderFilters = () => {
+  const currentUser = useCurrentUser();
   return (
     <>
+      <ApplyCustomFilter
+        filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}
+      />
       <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort models by"

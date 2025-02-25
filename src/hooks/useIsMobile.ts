@@ -1,15 +1,13 @@
 import { MantineSize } from '@mantine/core';
-import { useContainerQuery } from '~/components/ContainerProvider/useContainerQuery';
+import { useContainerQuery, useMediaQuery } from '~/components/ContainerProvider/useContainerQuery';
 
-export function useIsMobile(options?: { breakpoint: MantineSize }) {
+export function useIsMobile(options?: { breakpoint?: MantineSize; type?: 'media' | 'container' }) {
   // const theme = useMantineTheme();
   const { breakpoint = 'sm' } = options || {};
 
-  return useContainerQuery({ type: 'max-width', width: breakpoint });
+  const useHook = options?.type === 'media' ? useMediaQuery : useContainerQuery;
 
-  // return useMediaQuery(`(max-width: ${theme.breakpoints[breakpoint] - 1}px)`, false, {
-  //   getInitialValueInEffect: false,
-  // });
+  return useHook({ type: 'max-width', width: breakpoint });
 }
 
 let isMobile: boolean | undefined;

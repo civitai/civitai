@@ -160,7 +160,6 @@ export function UserMediaInfinite({ type = MediaType.image }: { type: MediaType 
               <Group className={classes.filtersWrapper} spacing={8} noWrap>
                 <SortFilter
                   type={isVideo ? 'videos' : 'images'}
-                  variant="button"
                   value={sort}
                   onChange={(x) => replace({ sort: x as ImageSort })}
                 />

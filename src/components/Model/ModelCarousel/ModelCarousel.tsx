@@ -24,7 +24,7 @@ import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { Reactions } from '~/components/Reaction/Reactions';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
@@ -125,7 +125,7 @@ function ModelCarouselContent({
   const features = useFeatureFlags();
   const { classes, cx } = useStyles();
 
-  const { runTour, activeTour, running, currentStep } = useTourContext();
+  const { running, helpers } = useTourContext();
 
   const { images, flatData, isLoading } = useQueryImages({
     modelVersionId: modelVersionId,
@@ -198,7 +198,7 @@ function ModelCarouselContent({
                                 id: image.id,
                               });
 
-                              if (running) runTour({ step: currentStep + 1 });
+                              if (running) helpers?.next();
                             }}
                           >
                             <IconBrush stroke={2.5} size={16} />

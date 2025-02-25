@@ -68,6 +68,7 @@ type SearchIndexProcessor = {
   client?: MeiliSearch | null;
   jobName?: string;
   partial?: boolean;
+  queues?: ('delete' | 'update')[];
 };
 
 const processSearchIndexTask = async (
@@ -180,6 +181,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
     workerCount = 10,
     jobName,
     partial,
+    queues,
   } = processor;
 
   return {
@@ -235,16 +237,28 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
         { batchSize, startId, endId, updateIds }
       );
 
-      const queuedUpdates = await SearchIndexUpdate.getQueue(
-        indexName,
-        SearchIndexUpdateQueueAction.Update,
-        partial ? true : false // readOnly
-      );
-      const queuedDeletes = await SearchIndexUpdate.getQueue(
-        indexName,
-        SearchIndexUpdateQueueAction.Delete,
-        partial ? true : false // readOnly
-      );
+      const queuedUpdates =
+        !queues || queues.includes('update')
+          ? await SearchIndexUpdate.getQueue(
+              indexName,
+              SearchIndexUpdateQueueAction.Update,
+              partial ? true : false // readOnly
+            )
+          : {
+              content: [],
+              commit: async () => {}, // noop
+            };
+      const queuedDeletes =
+        !queues || queues.includes('delete')
+          ? await SearchIndexUpdate.getQueue(
+              indexName,
+              SearchIndexUpdateQueueAction.Delete,
+              partial ? true : false // readOnly
+            )
+          : {
+              content: [],
+              commit: async () => {}, // noop
+            };
 
       const newItemsTasks = Math.ceil((endId - startId) / batchSize);
 

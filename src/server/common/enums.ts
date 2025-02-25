@@ -189,13 +189,13 @@ export enum ThreadSort {
   MostReactions = 'Most Reactions',
 }
 
-export enum MarkerType {
+export enum GenerationReactType {
   Favorited = 'favorited',
   Liked = 'liked',
   Disliked = 'disliked',
 }
 
-export enum MarkerSort {
+export enum GenerationSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
 }

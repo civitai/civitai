@@ -242,7 +242,8 @@ export async function batchProcessor({
     await Promise.all(cancelFns.map((cancel) => cancel()));
   });
 
-  let { batchSize, concurrency, ids } = params;
+  const { batchSize, concurrency } = params;
+  let { ids } = params;
   if (stop) return;
   const context = { ...params, cancelFns };
   ids ??= await batchFetcher(context);
