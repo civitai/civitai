@@ -418,3 +418,16 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
     </Accordion>
   );
 }
+
+export const ApplyCustomFilter = ({ filters, ...props }: { filters: string } & ConfigureProps) => {
+  const { refine } = useConfigure({
+    ...props,
+    filters: filters,
+  });
+
+  useEffect(() => {
+    refine(filters);
+  }, [filters]);
+
+  return null;
+};

@@ -1,5 +1,6 @@
 import { LoadingOverlay, SegmentedControl } from '@mantine/core';
 import { useEffect } from 'react';
+import GenerationErrorBoundary from '~/components/Generation/Error/ErrorBoundary';
 import { GenerationFormContent } from '~/components/ImageGeneration/GenerationForm/GenerationForm2';
 import { GenerationFormProvider } from '~/components/ImageGeneration/GenerationForm/GenerationFormProvider';
 import { TextToImageWhatIfProvider } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
@@ -36,39 +37,41 @@ export function GenerationForm() {
   if (!isClient) return null;
 
   return (
-    <GenerationProvider>
-      <div className="relative flex flex-1 flex-col overflow-hidden">
-        <LoadingOverlay visible={loading} />
-        <ScrollArea
-          scrollRestore={{ key: 'generation-form' }}
-          pt={0}
-          className="flex flex-col gap-2"
-        >
-          {/* TODO - image remix component */}
-          <div className="flex flex-col gap-2 px-3">
-            {/* <RemixOfControl /> */}
-            <SegmentedControl
-              value={type}
-              onChange={generationFormStore.setType}
-              className="overflow-visible"
-              color="blue"
-              data={[
-                { label: 'Image', value: 'image' },
-                { label: 'Video', value: 'video' },
-              ]}
-            />
-          </div>
-          {type === 'image' && (
-            <GenerationFormProvider key={counter}>
-              <TextToImageWhatIfProvider>
-                <GenerationFormContent />
-              </TextToImageWhatIfProvider>
-            </GenerationFormProvider>
-          )}
-          {type === 'video' && <VideoGenerationForm key={counter} />}
-        </ScrollArea>
-      </div>
-    </GenerationProvider>
+    <GenerationErrorBoundary>
+      <GenerationProvider>
+        <div className="relative flex flex-1 flex-col overflow-hidden">
+          <LoadingOverlay visible={loading} />
+          <ScrollArea
+            scrollRestore={{ key: 'generation-form' }}
+            pt={0}
+            className="flex flex-col gap-2"
+          >
+            {/* TODO - image remix component */}
+            <div className="flex flex-col gap-2 px-3">
+              {/* <RemixOfControl /> */}
+              <SegmentedControl
+                value={type}
+                onChange={generationFormStore.setType}
+                className="overflow-visible"
+                color="blue"
+                data={[
+                  { label: 'Image', value: 'image' },
+                  { label: 'Video', value: 'video' },
+                ]}
+              />
+            </div>
+            {type === 'image' && (
+              <GenerationFormProvider key={counter}>
+                <TextToImageWhatIfProvider>
+                  <GenerationFormContent />
+                </TextToImageWhatIfProvider>
+              </GenerationFormProvider>
+            )}
+            {type === 'video' && <VideoGenerationForm key={counter} />}
+          </ScrollArea>
+        </div>
+      </GenerationProvider>
+    </GenerationErrorBoundary>
   );
 }
 

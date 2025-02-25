@@ -201,7 +201,7 @@ export default function TrainingSelectFile({
         modelId: model.id,
         name: modelVersion.name,
         baseModel: modelVersion.baseModel,
-        trainedWords: [],
+        trainedWords: modelVersion.trainedWords,
         // ---
         trainingStatus: TrainingStatus.Approved,
       };

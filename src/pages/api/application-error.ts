@@ -9,7 +9,7 @@ import { SourceMapConsumer } from 'source-map';
 import path from 'node:path';
 import fs from 'fs';
 
-const schema = z.object({ message: z.string(), stack: z.string() });
+const schema = z.object({ message: z.string(), stack: z.string(), name: z.string().optional() });
 
 export default PublicEndpoint(
   async function handler(req, res) {
@@ -18,7 +18,7 @@ export default PublicEndpoint(
       const queryInput = schema.parse(JSON.parse(req.body));
       if (isProd) {
         const payload = {
-          name: 'application-error',
+          name: queryInput.name ?? 'application-error',
           type: 'error',
           url: req.headers.referer,
           userId: session?.user?.id,

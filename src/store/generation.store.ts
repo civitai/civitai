@@ -170,9 +170,8 @@ async function transformParams(data: Record<string, any>) {
   if (!sourceImage) {
     if ('image' in data && typeof data.image === 'string')
       sourceImage = await getSourceImageFromUrl({ url: data.image });
-    if ('sourceImage' in data && typeof data.sourceImage === 'string')
-      sourceImage = await getSourceImageFromUrl({ url: data.sourceImage });
-  }
+  } else if ('sourceImage' in data && typeof data.sourceImage === 'string')
+    sourceImage = await getSourceImageFromUrl({ url: data.sourceImage });
 
   return { ...data, sourceImage };
 }

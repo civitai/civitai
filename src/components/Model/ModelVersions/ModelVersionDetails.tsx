@@ -930,7 +930,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               title="Private Model"
             >
               <Text>
-                Want to start earning buzz?{' '}
+                Want to start earning Buzz?{' '}
                 <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
               </Text>
             </AlertWithIcon>
