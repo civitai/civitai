@@ -111,6 +111,9 @@ type Tabs = (typeof tabs)[number];
 
 const take = 20;
 
+// TODO - ResourceSelectProvider with filter so that we only show relevant model versions to select
+// TODO -
+
 export default function ResourceSelectModal({
   title,
   onSelect,
@@ -122,7 +125,12 @@ export default function ResourceSelectModal({
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
   const [selectedTab, setSelectedTab] = useState<Tabs>('all');
-  const [selectFilters, setSelectFilters] = useState<ResourceFilter>({ types: [], baseModels: [] });
+  const [selectFilters, setSelectFilters] = useState<ResourceFilter>({
+    types: [],
+    baseModels: [
+      ...new Set(options.resources?.flatMap((x) => x.baseModels ?? []) ?? []),
+    ] as BaseModel[],
+  });
 
   const {
     data: likedModels,
@@ -196,14 +204,19 @@ export default function ResourceSelectModal({
 
   const or: string[] = [];
   if (canGenerate !== undefined) filters.push(`canGenerate = ${canGenerate}`);
-  for (const { type, allSupportedBaseModels } of resources) {
-    if (!allSupportedBaseModels?.length) or.push(`type = ${type}`);
-    else
-      or.push(
-        `(type = ${type} AND versions.baseModel IN [${allSupportedBaseModels
-          .map((x) => `"${x}"`)
-          .join(',')}])`
-      );
+  for (const { type, allSupportedBaseModels = [] } of resources) {
+    if (!allSupportedBaseModels.length) or.push(`type = ${type}`);
+    else {
+      const baseModels = selectFilters.baseModels.length
+        ? selectFilters.baseModels.filter((baseModel) => allSupportedBaseModels.includes(baseModel))
+        : allSupportedBaseModels;
+      if (baseModels.length)
+        or.push(
+          `(type = ${type} AND versions.baseModel IN [${baseModels
+            .map((x) => `"${x}"`)
+            .join(',')}])`
+        );
+    }
   }
   if (or.length) filters.push(`(${or.join(' OR ')})`);
 

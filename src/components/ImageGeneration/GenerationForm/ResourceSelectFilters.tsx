@@ -93,7 +93,7 @@ export function ResourceSelectFiltersDropdown({
     ).map((rt) => ({ modelType: rt as ModelType }))
   );
   let baseModelsList = options.resources?.length
-    ? uniq(options.resources.flatMap((r) => (r.baseModels ?? []) as BaseModel[]))
+    ? uniq(options.resources.flatMap((r) => (r.allSupportedBaseModels ?? []) as BaseModel[]))
     : activeBaseModels;
   if (!resourceTypesList.length)
     resourceTypesList = Object.values(ModelType).map((rt) => ({ modelType: rt as ModelType }));
