@@ -24,6 +24,7 @@ import {
   IconUxCircle,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import dayjs from 'dayjs';
 import { capitalize } from 'lodash-es';
 import React, { HTMLProps, useEffect } from 'react';
 import {
@@ -38,6 +39,7 @@ import {
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useBuzz } from '~/components/Buzz/useBuzz';
+import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
@@ -478,6 +480,7 @@ const BankBuzzCard = () => {
   const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading || isLoadingBanked;
   const [_, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
   const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]');
+  const shouldUseCountdown = new Date() > dayjs(end).subtract(2, 'day').toDate();
 
   const handleBankBuzz = async () => {
     try {
@@ -588,8 +591,10 @@ const BankBuzzCard = () => {
           <div className="flex items-center gap-2">
             <IconCalendar size={24} className="shrink-0" />
             <div className="flex flex-1 flex-col">
-              <p className="font-bold">Banking Phase Ends</p>
-              <p className="text-nowrap text-xs">{endDate}</p>
+              <p className="text-nowrap font-bold">Banking Phase Ends</p>
+              <p className="text-nowrap text-xs">
+                {shouldUseCountdown ? <Countdown endTime={end} /> : endDate}
+              </p>
             </div>
             <ActionIcon onClick={openPhasesModal}>
               <IconInfoCircle size={18} />
@@ -1141,6 +1146,7 @@ const ExtractBuzzCard = () => {
   const extractionFee = getExtractionFee(banked?.total ?? 0);
 
   const [_, end] = compensationPool?.phases.extraction ?? [new Date(), new Date()];
+  const shouldUseCountdown = new Date() > dayjs(end).subtract(2, 'day').toDate();
   const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]');
 
   const handleExtractBuzz = async () => {
@@ -1186,10 +1192,10 @@ const ExtractBuzzCard = () => {
                     message: (
                       <div className="flex flex-col gap-2">
                         <p>
-                          You are about to extract{' '}
+                          You are about to Extract{' '}
                           <CurrencyBadge unitAmount={banked?.total ?? 0} currency={Currency.BUZZ} />{' '}
-                          from the Bank. This action is not reversible; you cannot re-bank Buzz
-                          until the next Banking Phase.{' '}
+                          from the Bank. This action is not reversible. You cannot Bank Buzz until
+                          the next Banking Phase.
                         </p>
                         <p> Are you sure?</p>
                       </div>
@@ -1216,13 +1222,13 @@ const ExtractBuzzCard = () => {
               <CurrencyIcon currency={Currency.BUZZ} size={14} className="inline" />
               {numberWithCommas(extractionFee)}
             </p>
-            {/* <ActionIcon
+            <ActionIcon
               onClick={() => {
                 console.log('TODO');
               }}
             >
               <IconInfoCircle size={14} />
-            </ActionIcon> */}
+            </ActionIcon>
           </div>
         </div>
 
@@ -1230,8 +1236,10 @@ const ExtractBuzzCard = () => {
           <div className="flex items-center gap-2">
             <IconCalendar size={24} className="shrink-0" />
             <div className="flex flex-1 flex-col">
-              <p className="font-bold">Extraction Phase Ends</p>
-              <p className="text-nowrap text-xs">{endDate}</p>
+              <p className="text-nowrap font-bold">Extraction Phase Ends</p>
+              <p className="text-nowrap text-xs">
+                {shouldUseCountdown ? <Countdown endTime={end} /> : endDate}
+              </p>
             </div>
             <ActionIcon onClick={openPhasesModal}>
               <IconInfoCircle size={18} />

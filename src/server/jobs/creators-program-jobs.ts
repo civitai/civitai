@@ -102,14 +102,14 @@ export const creatorsProgramInviteTipalti = createJob(
       WITH affected AS (
         SELECT DISTINCT toAccountId as id
         FROM buzzTransactions
-        WHERE toAccountType = 'cashpending'
+        WHERE toAccountType = 'cash-pending'
         AND date > subtractDays(now(), 1)
       )
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cashpending' OR (toAccountType = 'cashsettled' AND fromAccountType != 'cashpending'), amount, 0)) as balance
+        SUM(if(toAccountType = 'cash-pending' OR (toAccountType = 'cash-settled' AND fromAccountType != 'cash-pending'), amount, 0)) as balance
       FROM buzzTransactions
-      WHERE toAccountType IN ('cashpending', 'cashsettled')
+      WHERE toAccountType IN ('cash-pending', 'cash-settled')
         AND toAccountId IN (SELECT id FROM affected)
       GROUP BY toAccountId
       HAVING balance > ${MIN_WITHDRAWAL_AMOUNT};
@@ -159,16 +159,16 @@ export const creatorsProgramSettleCash = createJob(
     const pendingCash = await clickhouse.$query<{ userId: number; amount: number }>`
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cashpending', amount, -amount)) as amount
+        SUM(if(toAccountType = 'cash-settled', amount, -amount)) as amount
       FROM buzzTransactions
       WHERE (
         -- Settlements
-        fromAccountType = 'cashpending'
-        AND toAccountType = 'cashsettled'
+        fromAccountType = 'cash-settled'
+        AND toAccountType = 'cash-settled'
       ) OR (
         -- Deposits
         fromAccountId = 0
-        AND toAccountType = 'cashpending'
+        AND toAccountType = 'cash-settled'
       )
       GROUP BY userId
       HAVING amount > 0;

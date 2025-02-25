@@ -35,6 +35,7 @@ export const buzzAccountTypes = [
   'user',
   'club',
   'generation',
+  // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
   'creatorprogrambank',
   'cashpending',
   'cashsettled',

@@ -226,8 +226,8 @@ async function getPoolSize(month?: Date) {
       SUM(if(fromAccountType = 'user', amount, amount * -1)) as banked
     FROM buzzTransactions
     WHERE (
-        (fromAccountType = 'user' AND toAccountType = 'creatorprogrambank' AND toAccountId = ${monthAccount})
-      OR (toAccountType = 'user' AND fromAccountType = 'creatorprogrambank' AND fromAccountId = ${monthAccount})
+        (fromAccountType = 'user' AND toAccountType = 'creator-program-bank' AND toAccountId = ${monthAccount})
+      OR (toAccountType = 'user' AND fromAccountType = 'creator-program-bank' AND fromAccountId = ${monthAccount})
     )
     AND date > toStartOfMonth(${month});
   `;
@@ -420,10 +420,10 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
     const balances = await clickhouse.$query<{ userId: number; pending: number; ready: number }>`
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cashpending', if(type = 'withdrawal', -1, 1) * amount, 0)) as pending,
-        SUM(if(toAccountType = 'cashsettled', if(type = 'withdrawal', -1, 1) * amount, 0)) as ready
+        SUM(if(toAccountType = 'cash-pending', if(type = 'withdrawal', -1, 1) * amount, 0)) as pending,
+        SUM(if(toAccountType = 'cash-settled', if(type = 'withdrawal', -1, 1) * amount, 0)) as ready
       FROM buzzTransactions
-      WHERE toAccountType IN ('cashpending', 'cashsettled')
+      WHERE toAccountType IN ('cash-pending', 'cash-settled')
       AND (toAccountId IN (${ids}) OR fromAccountId IN (${ids}))
       GROUP BY userId;
     `;
@@ -570,17 +570,17 @@ export async function getPoolParticipants(month?: Date) {
   const monthAccount = getMonthAccount(month);
   const participants = await clickhouse!.$query<{ userId: number; amount: number }>`
     SELECT
-      if(toAccountType = 'creatorprogrambank', fromAccountId, toAccountId) as userId,
-      SUM(if(toAccountType = 'creatorprogrambank', amount, -amount)) as amount
+      if(toAccountType = 'creator-program-bank', fromAccountId, toAccountId) as userId,
+      SUM(if(toAccountType = 'creator-program-bank', amount, -amount)) as amount
     FROM buzzTransactions
     WHERE (
       -- Banks
-      toAccountType = 'creatorprogrambank'
+      toAccountType = 'creator-program-bank'
       AND toAccountId = ${monthAccount}
       AND fromAccountType = 'user'
     ) OR (
       -- Extracts
-      fromAccountType = 'creatorprogrambank'
+      fromAccountType = 'creator-program-bank'
       AND fromAccountId = ${monthAccount}
       AND toAccountType = 'user'
     )
