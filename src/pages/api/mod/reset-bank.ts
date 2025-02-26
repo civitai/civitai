@@ -3,7 +3,7 @@ import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 import { bulkSetReportStatus } from '~/server/services/report.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   bustCompensationPoolCache,
   getBanked,
@@ -16,6 +16,7 @@ import { sleep } from '~/server/utils/concurrency-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 
 const schema = z.object({
   userId: z.number(),
@@ -33,7 +34,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     });
   }
 
-  bustCompensationPoolCache();
   const { userId } = schema.parse(req.body);
 
   const user = await dbWrite.user.findUnique({
@@ -47,6 +47,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       error: 'The user you are trying to reset is not a mod. This might be a mistake.',
     });
   }
+
+  bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+  bustCompensationPoolCache();
 
   const compensationPool = await getCompensationPool({});
 
@@ -85,6 +88,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
 
   await sleep(1000);
+
+  bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
   bustCompensationPoolCache();
 
   const updatedCompensationPool = await getCompensationPool({});

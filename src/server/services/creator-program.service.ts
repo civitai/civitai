@@ -50,6 +50,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { createNotification } from '~/server/services/notification.service';
 import { signalClient } from '~/utils/signal-client';
 import { Flags } from '~/shared/utils';
+import { sleep } from '~/server/utils/concurrency-helpers';
 
 type UserCapCacheItem = {
   id: number;
@@ -346,6 +347,8 @@ export async function bankBuzz(userId: number, amount: number) {
   });
 
   // Bust affected caches
+  await sleep(1000); // Not ideal in any way, but gives some leeway for clickhouse to update.
+
   bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
   bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
