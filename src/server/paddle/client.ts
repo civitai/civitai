@@ -103,6 +103,25 @@ export const createBuzzTransaction = async ({
   });
 };
 
+export const createOneTimeProductPurchaseTransaction = async ({
+  customerId,
+  priceId,
+}: {
+  customerId: string;
+  priceId: string;
+}) => {
+  const paddle = getPaddle();
+  return paddle.transactions.create({
+    customerId: customerId,
+    items: [
+      {
+        quantity: 1,
+        priceId,
+      },
+    ],
+  });
+};
+
 export const subscriptionBuzzOneTimeCharge = async ({
   subscriptionId,
   unitAmount,
