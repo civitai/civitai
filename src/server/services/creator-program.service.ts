@@ -122,7 +122,7 @@ export async function getBankCap(userId: number) {
   return userCapCache.fetch(userId);
 }
 
-function getMonthAccount(month?: Date) {
+export function getMonthAccount(month?: Date) {
   month ??= new Date();
   return Number(dayjs(month).format('YYYYMM'));
 }
