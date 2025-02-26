@@ -876,7 +876,7 @@ export const createOneTimePurchaseTransaction = async ({
     select: {
       id: true,
       defaultPriceId: true,
-      prices: { where: { active: true, interval: 'one_time' } },
+      prices: { where: { active: true, type: 'one_time' } },
     },
   });
 
@@ -884,11 +884,16 @@ export const createOneTimePurchaseTransaction = async ({
     throw throwNotFoundError('Product not found');
   }
 
-  if (product.prices.length) {
+  if (!product.prices.length) {
     throw throwBadRequestError('Product does not have a one-time price');
   }
 
   const price = product.prices.find((p) => p.id === product.defaultPriceId) ?? product.prices[0];
+
+  if (!price) {
+    throw throwNotFoundError('Price not found');
+  }
+
   const user = await dbRead.user.findFirst({
     where: { id: userId },
     select: { paddleCustomerId: true, email: true },
