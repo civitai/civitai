@@ -102,7 +102,7 @@ export const CreatorsProgramV2 = () => {
     OnboardingSteps.CreatorProgram
   );
 
-  const isBanned = Flags.hasFlag(currentUser.flags, OnboardingSteps.BannedCreatorProgram);
+  const isBanned = Flags.hasFlag(currentUser.onboarding, OnboardingSteps.BannedCreatorProgram);
 
   if (isBanned) {
     return null;
