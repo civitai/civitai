@@ -49,11 +49,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     });
   }
 
-  bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
-  bustCompensationPoolCache();
+  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+  await bustCompensationPoolCache();
 
   const compensationPool = await getCompensationPool({});
-
   const currentValue = compensationPool.size.current;
   let change = -currentValue;
   const monthAccount = getMonthAccount();
@@ -93,8 +92,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
   await sleep(1000);
 
-  bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
-  bustCompensationPoolCache();
+  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+  await bustCompensationPoolCache();
 
   const updatedCompensationPool = await getCompensationPool({});
   await signalClient.topicSend({
