@@ -15,6 +15,7 @@ import { UserTier } from '~/server/schema/user.schema';
 import {
   createBuzzTransaction,
   getCounterPartyBuzzTransactions,
+  getUserBuzzAccount,
 } from '~/server/services/buzz.service';
 import {
   bustFetchThroughCache,
@@ -223,6 +224,7 @@ async function getPoolValue(month?: Date) {
     AND externalTransactionId NOT LIKE 'renewalBonus:%'
     AND toStartOfMonth(date) = toStartOfMonth(subtractMonths(${month}, 1));
   `;
+
   if (!results.length || !env.CREATOR_POOL_TAXES || !env.CREATOR_POOL_PORTION) return 35000;
   const gross = results[0].balance;
   const taxesAndFees = gross * (env.CREATOR_POOL_TAXES / 100);
@@ -233,17 +235,12 @@ async function getPoolValue(month?: Date) {
 async function getPoolSize(month?: Date) {
   month ??= new Date();
   const monthAccount = getMonthAccount(month);
-  const [result] = await clickhouse!.$query<{ banked: number }>`
-    SELECT
-      SUM(if(fromAccountType = 'user', amount, amount * -1)) as banked
-    FROM buzzTransactions
-    WHERE (
-        (fromAccountType = 'user' AND toAccountType = 'creator-program-bank' AND toAccountId = ${monthAccount})
-      OR (toAccountType = 'user' AND fromAccountType = 'creator-program-bank' AND fromAccountId = ${monthAccount})
-    )
-    AND date > toStartOfMonth(${month});
-  `;
-  return result.banked;
+  const account = await getUserBuzzAccount({
+    accountId: monthAccount,
+    accountType: 'creatorprogrambank',
+  });
+
+  return account.balance;
 }
 
 async function getPoolForecast(month?: Date) {
