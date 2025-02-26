@@ -64,40 +64,31 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
       if (userBanked.total > 0) {
         // Reset the banked amount by performing an extraction:
-        try {
-          await createBuzzTransaction({
-            amount: userBanked.total,
-            fromAccountId: monthAccount,
-            fromAccountType: 'creatorprogrambank',
-            toAccountId: userId,
-            toAccountType: 'user',
-            type: TransactionType.Extract,
-            description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
-          });
+        await createBuzzTransaction({
+          amount: userBanked.total,
+          fromAccountId: monthAccount,
+          fromAccountType: 'creatorprogrambank',
+          toAccountId: userId,
+          toAccountType: 'user',
+          type: TransactionType.Extract,
+          description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
+        });
 
-          change += userBanked.total;
-        } catch {
-          // no-op
-        }
-
+        change += userBanked.total;
       }
     }
 
     if (change !== 0) {
       const shouldTakeMoneyFromBank = change < 0;
-      try {
-        await createBuzzTransaction({
-          amount: Math.abs(change),
-          fromAccountId: shouldTakeMoneyFromBank ? monthAccount : 0,
-          fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'user',
-          toAccountId: shouldTakeMoneyFromBank ? 0 : monthAccount,
-          toAccountType: shouldTakeMoneyFromBank ? 'user' : 'creatorprogrambank',
-          type: shouldTakeMoneyFromBank ? TransactionType.Extract : TransactionType.Bank,
-          description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
-        });
-      } catch () {
-       // no-op 
-      }
+      await createBuzzTransaction({
+        amount: Math.abs(change),
+        fromAccountId: shouldTakeMoneyFromBank ? monthAccount : 0,
+        fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'user',
+        toAccountId: shouldTakeMoneyFromBank ? 0 : monthAccount,
+        toAccountType: shouldTakeMoneyFromBank ? 'user' : 'creatorprogrambank',
+        type: shouldTakeMoneyFromBank ? TransactionType.Extract : TransactionType.Bank,
+        description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
+      });
     }
 
     await sleep(1000);
