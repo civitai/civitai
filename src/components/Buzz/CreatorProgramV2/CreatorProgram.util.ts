@@ -89,8 +89,6 @@ export const useCreatorProgramPhase = () => {
     return phase; //
   }, [compensationPool, isLoading]);
 
-  console.log(phase, compensationPool);
-
   return {
     phase,
     isLoading,
