@@ -299,9 +299,9 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
 }
 
 export async function bustCompensationPoolCache() {
-  await clearCacheByPattern(REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE);
-  await clearCacheByPattern(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
-  await clearCacheByPattern(REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST);
+  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE);
+  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
+  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST);
 }
 
 async function getFlippedPhaseStatus() {
