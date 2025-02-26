@@ -138,6 +138,8 @@ export async function getBanked(userId: number) {
         counterPartyAccountType: 'user',
       });
 
+      console.log(data);
+
       return data.totalBalance;
     },
     { ttl: CacheTTL.month }
@@ -384,6 +386,13 @@ export async function extractBuzz(userId: number) {
   // Bust affected caches
   bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
   bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
+
+  const compensationPool = await getCompensationPool({});
+  await signalClient.topicSend({
+    topic: SignalTopic.CreatorProgram,
+    target: SignalMessages.CompensationPoolUpdate,
+    data: compensationPool,
+  });
 }
 
 type UserCashCacheItem = {

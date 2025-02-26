@@ -2,9 +2,9 @@ import { Button } from '@mantine/core';
 import { capitalize } from 'lodash-es';
 import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { WITHDRAWAL_FEES } from '~/shared/constants/creator-program.constants';
+import { EXTRACTION_FEES, WITHDRAWAL_FEES } from '~/shared/constants/creator-program.constants';
 import { CashWithdrawalMethod, Currency } from '~/shared/utils/prisma/enums';
-import { formatCurrencyForDisplay } from '~/utils/number-helpers';
+import { abbreviateNumber, formatCurrencyForDisplay } from '~/utils/number-helpers';
 
 export const openPhasesModal = () => {
   dialogStore.trigger({
@@ -123,6 +123,49 @@ export const openWithdrawalFreeModal = () => {
             );
           })}
 
+          <Button className="mt-2" onClick={handleClose}>
+            Close
+          </Button>
+        </div>
+      ),
+    },
+  });
+};
+
+export const openExtractionFeeModal = () => {
+  dialogStore.trigger({
+    component: AlertDialog,
+    props: {
+      title: 'Extraction Fees',
+      type: 'info',
+      children: ({ handleClose }) => (
+        <div className="flex flex-col gap-1">
+          <p className="mb-2">
+            Extraction is All or Nothing. You can&rsquo;t extract just a portion of what you have
+            Banked.
+          </p>
+          <p className="mb-2">
+            To prevent manipulation of the Buzz pool by Creators with large amounts of Buzz,
+            we&rsquo;ve implemented the following Extraction Fees:
+          </p>
+          <ul className="py-2 pl-4">
+            {EXTRACTION_FEES.map((fee) => (
+              <li key={fee.max}>
+                {fee.min === 0
+                  ? `<  ${abbreviateNumber(fee.max)} Buzz (${
+                      fee.fee > 0 ? `${fee.fee * 100}% Fee` : 'No Fee'
+                    })`
+                  : `${abbreviateNumber(fee.min)} - ${abbreviateNumber(fee.max)} Buzz (${
+                      fee.fee * 100
+                    }% Fee)`}
+              </li>
+            ))}
+          </ul>
+
+          <p>
+            The fees work on a bracket based system, meaning that your first 100k Buzz Extracted is
+            free, your next 900k carries a 5% fee and so on.
+          </p>
           <Button className="mt-2" onClick={handleClose}>
             Close
           </Button>

@@ -40,6 +40,7 @@ import {
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import {
   openEarningEstimateModal,
+  openExtractionFeeModal,
   openPhasesModal,
   openSettlementModal,
   openWithdrawalFreeModal,
@@ -1114,7 +1115,7 @@ const ExtractBuzzCard = () => {
             </p>
             <ActionIcon
               onClick={() => {
-                console.log('TODO');
+                openExtractionFeeModal();
               }}
             >
               <IconInfoCircle size={14} />
