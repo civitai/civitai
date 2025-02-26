@@ -57,6 +57,7 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
+import { BidModelButton } from '~/components/Auction/AuctionUtils';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -96,6 +97,7 @@ import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceR
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -103,7 +105,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useTourContext } from '~/components/Tours/ToursProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
@@ -761,6 +762,29 @@ export default function ModelDetailsV2({
                         tooltip="Need help? Start the tour!"
                         iconProps={{ size: 30, stroke: 1.5 }}
                         onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
+                      />
+                    )}
+                    {features.auctions && selectedVersion && (
+                      <BidModelButton
+                        className={classes.headerButton}
+                        entityData={{
+                          // TODO these overrides are colossally stupid.
+                          ...selectedVersion,
+                          model,
+                          image: !!image
+                            ? {
+                                ...image,
+                                userId: image.user.id,
+                                name: image.name ?? '',
+                                width: image.width ?? 0,
+                                height: image.height ?? 0,
+                                hash: image.hash ?? '',
+                                modelVersionId: image.modelVersionId ?? 0,
+                                tags: image.tags ? image.tags.map((t) => t.id) : [],
+                                availability: image.availability ?? Availability.Public,
+                              }
+                            : undefined,
+                        }}
                       />
                     )}
                     <ToggleModelNotification

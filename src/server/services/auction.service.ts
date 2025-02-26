@@ -129,12 +129,15 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
 
   return data.map((b) => {
     const mvMatch = mvData.find((d) => d.id === b.entityId);
+    const firstImage =
+      imageData[b.entityId]?.images?.length > 0 ? imageData[b.entityId]?.images?.[0] : undefined;
+
     return {
       ...b,
       entityData: !!mvMatch
         ? {
             ...mvMatch,
-            image: imageData[b.entityId]?.images?.[0],
+            image: firstImage,
           }
         : undefined,
     };

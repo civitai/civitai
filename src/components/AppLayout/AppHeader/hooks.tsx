@@ -1,35 +1,36 @@
 import { useMantineTheme } from '@mantine/core';
 import {
+  type Icon,
   IconBarbell,
   IconBookmark,
   IconBookmarkEdit,
+  IconBrush,
   IconCloudLock,
   IconClubs,
   IconCrown,
+  IconGavel,
   IconHistory,
   IconLink,
   IconMoneybag,
+  IconPhotoUp,
   IconPlayerPlayFilled,
   IconProgressBolt,
+  type IconProps,
+  IconThumbUp,
+  IconUpload,
   IconUser,
   IconUserCircle,
   IconUsers,
-  IconBrush,
-  IconPhotoUp,
-  IconUpload,
   IconVideoPlus,
   IconWriting,
-  type Icon,
-  type IconProps,
-  IconThumbUp,
 } from '@tabler/icons-react';
+import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useSystemCollections } from '~/components/Collections/collection.utils';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { LoginRedirectReason } from '~/utils/login-helpers';
-import dynamic from 'next/dynamic';
 import { trpc } from '~/utils/trpc';
 
 export type UserMenuItem = {
@@ -43,6 +44,7 @@ export type UserMenuItem = {
   onClick?: () => void;
   currency?: boolean;
   redirectReason?: LoginRedirectReason;
+  newUntil?: Date;
 };
 
 type UserMenuItemGroup = {
@@ -145,6 +147,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Leaderboard',
         },
         {
+          href: '/auctions',
+          icon: IconGavel,
+          color: theme.colors.yellow[theme.fn.primaryShade()],
+          label: 'Auctions',
+          newUntil: new Date('2025-03-20'),
+        },
+        {
           href: '/product/link',
           icon: IconLink,
           label: 'Download Link App',
@@ -182,6 +191,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconCrown,
           color: theme.colors.yellow[theme.fn.primaryShade()],
           label: 'Leaderboard',
+        },
+        {
+          href: '/auctions',
+          icon: IconGavel,
+          color: theme.colors.yellow[theme.fn.primaryShade()],
+          label: 'Auctions',
+          newUntil: new Date('2025-03-20'),
         },
         {
           href: '/product/link',

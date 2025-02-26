@@ -1,14 +1,18 @@
-import { Stack, Text } from '@mantine/core';
+import { ActionIcon, ActionIconProps, Stack, Text, Tooltip } from '@mantine/core';
 import { showNotification, updateNotification } from '@mantine/notifications';
-import { IconCheck, IconX } from '@tabler/icons-react';
-import React, { useState } from 'react';
+import { IconCheck, IconGavel, IconX } from '@tabler/icons-react';
+import { useRouter } from 'next/router';
+import React, { useMemo, useState } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import { getBaseModelResourceTypes } from '~/shared/constants/generation.constants';
-import { Currency, ModelType } from '~/shared/utils/prisma/enums';
+import {
+  getBaseModelResourceTypes,
+  getBaseModelSetType,
+} from '~/shared/constants/generation.constants';
+import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -154,3 +158,59 @@ export function usePurchaseBid() {
 
   return { handleBuy, createLoading };
 }
+
+export const BidModelButton = ({
+  entityData,
+  ...actionIconProps
+}: ActionIconProps & {
+  entityData: Exclude<GetAuctionBySlugReturn['bids'][number]['entityData'], undefined>;
+}) => {
+  const { setSelectedModel } = useAuctionContext();
+  const router = useRouter();
+
+  const { data: auctions = [] } = trpc.auction.getAll.useQuery();
+
+  const destAuction = useMemo(() => {
+    const modelSet =
+      entityData.model.type === ModelType.Checkpoint
+        ? null
+        : getBaseModelSetType(entityData.baseModel);
+    console.log({ modelSet });
+    return auctions.find(
+      (a) => a.auctionBase.type === AuctionType.Model && a.auctionBase.ecosystem === modelSet
+    );
+  }, [auctions, entityData.baseModel, entityData.model.type]);
+
+  const handle = () => {
+    if (!destAuction) return;
+
+    setSelectedModel({
+      ...entityData,
+      strength: -1,
+      minStrength: -1,
+      maxStrength: -1,
+      trainedWords: [],
+      canGenerate: true,
+      hasAccess: true,
+      covered: true,
+    });
+
+    router.push(`/auctions/${destAuction.auctionBase.slug}`).catch();
+  };
+
+  return (
+    <Tooltip
+      label={destAuction ? 'Bid to feature this model' : 'No auction available for this model'}
+    >
+      <ActionIcon
+        onClick={handle}
+        disabled={!destAuction}
+        {...actionIconProps}
+        size="xl"
+        variant="light"
+      >
+        <IconGavel size={30} stroke={1.5} />
+      </ActionIcon>
+    </Tooltip>
+  );
+};

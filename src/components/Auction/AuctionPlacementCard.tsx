@@ -27,7 +27,7 @@ import clsx from 'clsx';
 import produce from 'immer';
 import React, { useEffect, useRef } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
-import { usePurchaseBid } from '~/components/Auction/auctionUtils';
+import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';

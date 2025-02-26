@@ -16,13 +16,14 @@ import {
 } from '@mantine/core';
 import { DatePicker } from '@mantine/dates';
 import { IconAlertCircle, IconCalendar, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
+import { clsx } from 'clsx';
 import dayjs from 'dayjs';
 import React, { useMemo, useState } from 'react';
 import { useInView } from 'react-intersection-observer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ModelPlacementCard } from '~/components/Auction/AuctionPlacementCard';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
-import { geModelTypesForAuction, usePurchaseBid } from '~/components/Auction/auctionUtils';
+import { geModelTypesForAuction, usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -330,7 +331,9 @@ export const AuctionInfo = () => {
                     })
                   }
                   // error={hasIssue ? 'Error computing cost' : undefined}
-                  className={validBid ? 'animate-[wiggle_1.5s_ease-in-out_4.5]' : ''}
+                  className={clsx('sm:h-full', {
+                    'animate-[wiggle_1.5s_ease-in-out_4.5]': validBid,
+                  })}
                   size="md"
                   priceReplacement={
                     <Tooltip
