@@ -54,8 +54,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     await bustCompensationPoolCache();
 
     const compensationPool = await getCompensationPool({});
+    console.log(compensationPool.size.current);
     const currentValue = compensationPool.size.current;
-    let change = -currentValue;
     const monthAccount = getMonthAccount();
 
     if (userId) {
@@ -65,28 +65,26 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       if (userBanked.total > 0) {
         // Reset the banked amount by performing an extraction:
         await createBuzzTransaction({
-          amount: userBanked.total,
-          fromAccountId: monthAccount,
-          fromAccountType: 'creatorprogrambank',
+          amount: Math.min(userBanked.total, currentValue),
+          // Just pay from the bank
+          fromAccountId: 0,
+          fromAccountType: 'user',
           toAccountId: userId,
           toAccountType: 'user',
           type: TransactionType.Extract,
           description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
         });
-
-        change += userBanked.total;
       }
     }
 
-    if (change !== 0) {
-      const shouldTakeMoneyFromBank = change < 0;
+    if (currentValue !== 0) {
       await createBuzzTransaction({
-        amount: Math.abs(change),
-        fromAccountId: shouldTakeMoneyFromBank ? monthAccount : 0,
-        fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'user',
-        toAccountId: shouldTakeMoneyFromBank ? 0 : monthAccount,
-        toAccountType: shouldTakeMoneyFromBank ? 'user' : 'creatorprogrambank',
-        type: shouldTakeMoneyFromBank ? TransactionType.Extract : TransactionType.Bank,
+        amount: currentValue,
+        fromAccountId: monthAccount,
+        fromAccountType: 'creatorprogrambank',
+        toAccountId: 0,
+        toAccountType: 'user',
+        type: TransactionType.Extract,
         description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
       });
     }
@@ -107,6 +105,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       compensationPool: updatedCompensationPool,
     });
   } catch (error) {
+    console.log(error);
     return res.status(500).json({
       error: 'An error occurred while resetting the bank.',
     });

@@ -141,8 +141,6 @@ export async function getBanked(userId: number) {
         counterPartyAccountType: 'user',
       });
 
-      console.log(data);
-
       return data.totalBalance;
     },
     { ttl: CacheTTL.month }
@@ -240,7 +238,7 @@ async function getPoolSize(month?: Date) {
     accountType: 'creatorprogrambank',
   });
 
-  return account.balance;
+  return account.balance ?? 0;
 }
 
 async function getPoolForecast(month?: Date) {
@@ -280,11 +278,8 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
     { ttl: CacheTTL.month }
   );
 
-  const current = await fetchThroughCache(
-    REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE,
-    async () => await getPoolSize(),
-    { ttl: CacheTTL.month }
-  );
+  // Since it hits the buzz service, no need to cache this.
+  const current = await getPoolSize();
 
   const forecasted = await fetchThroughCache(
     REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
