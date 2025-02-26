@@ -29,6 +29,7 @@ import createSlots from '~/libs/slots/create-slots';
 import { getRandomInt } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import LoginModal from '~/components/Login/LoginModal';
+import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
@@ -121,6 +122,9 @@ export default function Test() {
         <Content />
       </ComponentWithSlots> */}
       <div className="container flex max-w-sm flex-col gap-3">
+        <GenerationSettingsPopover>
+          <Button>Popover</Button>
+        </GenerationSettingsPopover>
         <Button
           onClick={() =>
             dialogStore.trigger({

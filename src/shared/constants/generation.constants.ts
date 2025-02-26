@@ -514,8 +514,11 @@ export function getBaseModelSetTypes({
   return Object.entries(baseModelResourceTypes)
     .filter(([key, config]) => {
       if (key === baseModel) return true;
-      const baseModels = (config.find((x) => x.type === modelType)?.baseModels ?? []) as string[];
-      return baseModels.includes(baseModel);
+      const match = config.find((x) => x.type === modelType);
+      const baseModels = match?.baseModels ?? [];
+      const partialSupport = (match as any)?.partialSupport ?? [];
+      const combined = [...baseModels, ...partialSupport];
+      return combined.includes(baseModel);
     })
     .map(([key]) => key) as SupportedBaseModel[];
 }

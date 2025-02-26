@@ -6,10 +6,10 @@ export function useCurrentUserSettings() {
   return data;
 }
 
-export function useMutateUserSettings(
-  args?: Parameters<typeof trpc.user.setSettings.useMutation>[0]
-) {
-  const { onSuccess, onError } = args ?? {};
+export function useMutateUserSettings({
+  onSuccess,
+  onError,
+}: Parameters<typeof trpc.user.setSettings.useMutation>[0] = {}) {
   const queryUtils = trpc.useUtils();
   return trpc.user.setSettings.useMutation({
     async onMutate(data) {

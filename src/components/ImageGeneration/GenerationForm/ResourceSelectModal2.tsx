@@ -142,6 +142,7 @@ function ResourceSelectProvider({
   children,
   ...props
 }: ResourceSelectModalProps & { children: React.ReactNode }) {
+  const dialog = useDialogContext();
   const { generation } = useCurrentUserSettings();
   const [filters, setFilters] = useState<ResourceFilter>({
     types: [],
@@ -166,6 +167,11 @@ function ResourceSelectProvider({
         )
       : filters.baseModels;
 
+  function handleSelect(value: GenerationResourceWithImage) {
+    props.onSelect(value);
+    dialog.onClose();
+  }
+
   return (
     <ResourceSelectContext.Provider
       value={{
@@ -179,6 +185,7 @@ function ResourceSelectProvider({
           baseModels,
         },
         setFilters,
+        onSelect: handleSelect,
       }}
     >
       {children}

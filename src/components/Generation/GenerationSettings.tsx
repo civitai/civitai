@@ -14,7 +14,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { UserSettingsSchema } from '~/server/schema/user.schema';
 import { IconInfoCircle } from '@tabler/icons-react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 
 type GenerationKeys = keyof UserSettingsSchema['generation'];
 type GenerationSettingOption = {
@@ -43,9 +43,15 @@ export function GenerationSettings() {
   );
 }
 
-function GenerationSettingsOption({ option }: { option: GenerationSettingOption }) {
+function GenerationSettingsOption({
+  option,
+  onSuccess,
+}: {
+  option: GenerationSettingOption;
+  onSucces?: VoidFunction;
+}) {
   const { generation = {} } = useCurrentUserSettings();
-  const { mutate, isLoading } = useMutateUserSettings();
+  const { mutate, isLoading } = useMutateUserSettings({ onSuccess });
 
   function toggleSetting(key: GenerationKeys, value: boolean) {
     mutate({ generation: { ...generation, [key]: value } });
@@ -84,9 +90,11 @@ function AdvancedModeModal() {
   const { generation = {} } = useCurrentUserSettings();
   const { mutate } = useMutateUserSettings();
   const hasSetAdvancedMode = 'advancedMode' in generation;
-  const toggleOption = !hasSetAdvancedMode
-    ? options.find((x) => x.key === 'advancedMode')
-    : undefined;
+  const toggleOptionRef = useRef<GenerationSettingOption | null>(null);
+  if (!toggleOptionRef.current)
+    toggleOptionRef.current = !hasSetAdvancedMode
+      ? options.find((x) => x.key === 'advancedMode') ?? null
+      : null;
 
   function handleClose() {
     dialog.onClose();
@@ -111,13 +119,16 @@ function AdvancedModeModal() {
             </List.Item>
           </List>
         </div>
-        {toggleOption && (
+        {toggleOptionRef.current && (
           <>
             <Text>
               To continue using our recommended combinations, simply close this window. You can
               switch to Advanced Mode at any time in Settings.
             </Text>
-            <GenerationSettingsOption option={{ ...toggleOption, info: undefined }} />
+            <GenerationSettingsOption
+              option={{ ...toggleOptionRef.current, info: undefined }}
+              onSuccess={() => dialog.onClose()}
+            />
           </>
         )}
         <Button onClick={handleClose} className="mt-3">
