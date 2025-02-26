@@ -206,7 +206,11 @@ export async function createBuzzTransaction({
   });
 
   // 0 is the bank so technically, it always has funding.
-  if (payload.fromAccountId !== 0 && (account.balance ?? 0) < amount) {
+  if (
+    payload.fromAccountId !== 0 &&
+    payload.fromAccountType !== 'creatorprogrambank' &&
+    (account.balance ?? 0) < amount
+  ) {
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
