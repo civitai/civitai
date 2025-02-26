@@ -115,7 +115,7 @@ export const getDefaultModelVersion = async ({
 
   if (!result) throw throwNotFoundError();
 
-  // Attempt to return the first published version.
+  // Attempt to return the first published version. Otherwise, return whatever is available.
   const published = result.modelVersions.find((v) => v.status === ModelStatus.Published);
   return published ?? result.modelVersions[0];
 };
