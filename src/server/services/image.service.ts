@@ -2033,9 +2033,9 @@ const getImageMetrics = async (ids: number[]) => {
   type PgDataType = (typeof metricsData)[number];
 
   // - get images with no data at all
-  const missingIds = ids.filter((i) => !metricsData[i]);
+  const missingIds = ids.filter((i) => !metricsData.map((d) => d.imageId).includes(i));
   // - get images where some of the properties are null
-  const missingData = Object.values(metricsData)
+  const missingData = metricsData
     .filter((d) => Object.values(d).some((v) => !isDefined(v)))
     .map((x) => x.imageId);
   const missing = [...new Set([...missingIds, ...missingData])];
@@ -2146,7 +2146,7 @@ const getImageMetrics = async (ids: number[]) => {
     }
   }
 
-  return [...Object.values(metricsData), ...clickData].reduce((acc, row) => {
+  return [...metricsData, ...clickData].reduce((acc, row) => {
     const { imageId, ...rest } = row;
     acc[imageId] = Object.fromEntries(
       Object.entries(rest).map(([k, v]) => [k, isDefined(v) ? Math.max(0, v) : v])

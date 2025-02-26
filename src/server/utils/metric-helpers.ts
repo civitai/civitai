@@ -63,7 +63,7 @@ export const updateEntityMetric = async ({
         ).catch();
       }
     }
-    if (entityType === 'Image') await imageMetricsCache.bust(entityId);
+    if (entityType === 'Image') await imageMetricsCache.bust();
   } catch (e) {
     const error = e as Error;
     // putting this into the clickhouse dataset for now
