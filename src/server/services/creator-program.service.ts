@@ -339,7 +339,6 @@ export async function bankBuzz(userId: number, amount: number) {
   });
 
   // Bust affected caches
-  await sleep(1000); // Not ideal in any way, but gives some leeway for clickhouse to update.
 
   await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);

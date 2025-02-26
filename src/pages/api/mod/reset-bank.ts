@@ -54,9 +54,11 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     await bustCompensationPoolCache();
 
     const compensationPool = await getCompensationPool({});
-    console.log(compensationPool.size.current);
     const currentValue = compensationPool.size.current;
+    let change = currentValue;
     const monthAccount = getMonthAccount();
+
+    200;
 
     if (userId) {
       // Get user's current balance
@@ -64,32 +66,47 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
 
       if (userBanked.total > 0) {
         // Reset the banked amount by performing an extraction:
+
+        if (userBanked.total > currentValue) {
+          await createBuzzTransaction({
+            amount: userBanked.total - currentValue,
+            fromAccountId: 0,
+            fromAccountType: 'user',
+            toAccountId: monthAccount,
+            toAccountType: 'creatorprogrambank',
+            type: TransactionType.Bank,
+            description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
+          });
+
+          change += userBanked.total - currentValue;
+        }
+
         await createBuzzTransaction({
-          amount: Math.min(userBanked.total, currentValue),
-          // Just pay from the bank
-          fromAccountId: 0,
-          fromAccountType: 'user',
+          amount: userBanked.total,
+          fromAccountId: monthAccount,
+          fromAccountType: 'creatorprogrambank',
           toAccountId: userId,
           toAccountType: 'user',
           type: TransactionType.Extract,
           description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
         });
+
+        change -= userBanked.total;
       }
     }
 
-    if (currentValue !== 0) {
+    if (change !== 0) {
+      const shouldTakeMoneyFromBank = change > 0;
       await createBuzzTransaction({
-        amount: currentValue,
-        fromAccountId: monthAccount,
-        fromAccountType: 'creatorprogrambank',
-        toAccountId: 0,
-        toAccountType: 'user',
-        type: TransactionType.Extract,
+        amount: shouldTakeMoneyFromBank ? Math.min(Math.abs(change), currentValue) : change,
+        fromAccountId: shouldTakeMoneyFromBank ? monthAccount : 0,
+        fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'user',
+        toAccountId: shouldTakeMoneyFromBank ? 0 : monthAccount,
+        toAccountType: shouldTakeMoneyFromBank ? 'user' : 'creatorprogrambank',
+        type: shouldTakeMoneyFromBank ? TransactionType.Extract : TransactionType.Bank,
         description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
       });
     }
-
-    await sleep(1000);
 
     await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
     await bustCompensationPoolCache();
