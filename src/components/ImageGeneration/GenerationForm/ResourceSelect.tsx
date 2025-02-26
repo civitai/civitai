@@ -1,4 +1,4 @@
-import { Button, ButtonProps, Input, InputWrapperProps } from '@mantine/core';
+import { Button, ButtonProps, GroupPosition, Input, InputWrapperProps } from '@mantine/core';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useEffect } from 'react';
 import { openResourceSelectModal } from '~/components/Dialog/dialog-registry';
@@ -21,6 +21,7 @@ export const ResourceSelect = ({
   selectSource = 'generation',
   disabled,
   hideVersion,
+  groupPosition,
   ...inputWrapperProps
 }: {
   value?: GenerationResource;
@@ -32,6 +33,7 @@ export const ResourceSelect = ({
   allowRemove?: boolean;
   selectSource?: ResourceSelectSource;
   hideVersion?: boolean;
+  groupPosition?: GroupPosition;
 } & Omit<InputWrapperProps, 'children' | 'onChange'> & { disabled?: boolean }) => {
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.model.type) ? undefined : value;
@@ -90,6 +92,7 @@ export const ResourceSelect = ({
           onRemove={allowRemove ? handleRemove : undefined}
           onSwap={handleOpenResourceSearch}
           hideVersion={hideVersion}
+          groupPosition={groupPosition}
         />
       )}
     </Input.Wrapper>

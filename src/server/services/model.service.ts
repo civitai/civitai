@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import dayjs, { ManipulateType } from 'dayjs';
+import { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
@@ -21,7 +21,6 @@ import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
@@ -51,10 +50,7 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import {
-  associatedResourceSelect,
-  modelSearchIndexSelect,
-} from '~/server/selectors/model.selector';
+import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
@@ -69,8 +65,6 @@ import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   ImagesForModelVersions,
-  ingestImageBulk,
-  uploadImageFromUrl,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
@@ -78,7 +72,7 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -102,6 +96,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  AuctionType,
   Availability,
   CommercialUse,
   MetricTimeframe,
@@ -122,7 +117,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1902,6 +1896,23 @@ export const getRecentlyRecommended = async ({ take, userId }: LimitOnly & { use
     take,
   });
   return uniq(data.map((d) => d.resource.modelId));
+};
+
+export const getRecentlyBid = async ({ take, userId }: LimitOnly & { userId: number }) => {
+  const data = await dbRead.bid.findMany({
+    select: { entityId: true },
+    where: {
+      userId,
+      auction: {
+        auctionBase: {
+          type: AuctionType.Model,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take,
+  });
+  return uniq(data.map((d) => d.entityId));
 };
 
 // export const getFeaturedModels = async ({ take }: LimitOnly) => {

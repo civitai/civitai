@@ -11,6 +11,7 @@ import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
 import { registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
+import { getToken } from 'next-auth/jwt';
 import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
@@ -21,10 +22,11 @@ import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { BaseLayout } from '~/components/AppLayout/BaseLayout';
 import { FeatureLayout } from '~/components/AppLayout/FeatureLayout';
 import { CustomNextPage } from '~/components/AppLayout/Page';
+import { AuctionContextProvider } from '~/components/Auction/AuctionProvider';
 import { BrowserRouterProvider } from '~/components/BrowserRouter/BrowserRouterProvider';
 import {
-  BrowsingLevelProviderOptional,
   BrowsingLevelProvider,
+  BrowsingLevelProviderOptional,
 } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 // import ChadGPT from '~/components/ChadGPT/ChadGPT';
 import { ChatContextProvider } from '~/components/Chat/ChatProvider';
@@ -33,15 +35,18 @@ import { AccountProvider } from '~/components/CivitaiWrapped/AccountProvider';
 import { CivitaiSessionProvider } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { RoutedDialogProvider } from '~/components/Dialog/RoutedDialogProvider';
+import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
 import { HiddenPreferencesProvider } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 // import { RecaptchaWidgetProvider } from '~/components/Recaptcha/RecaptchaWidget';
 import { ReferralsProvider } from '~/components/Referrals/ReferralsProvider';
 import { RouterTransition } from '~/components/RouterTransition/RouterTransition';
 import { SignalProvider } from '~/components/Signals/SignalsProvider';
+import { ToursProvider } from '~/components/Tours/ToursProvider';
 import { TrackPageView } from '~/components/TrackView/TrackPageView';
 import { UpdateRequiredWatcher } from '~/components/UpdateRequiredWatcher/UpdateRequiredWatcher';
 import { isDev, isProd } from '~/env/other';
+import { civitaiTokenCookieName } from '~/libs/auth';
 import { ActivityReportingProvider } from '~/providers/ActivityReportingProvider';
 import { AppProvider } from '~/providers/AppProvider';
 import { BrowserSettingsProvider } from '~/providers/BrowserSettingsProvider';
@@ -62,10 +67,6 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
-import { getToken } from 'next-auth/jwt';
-import { civitaiTokenCookieName } from '~/libs/auth';
-import { ToursProvider } from '~/components/Tours/ToursProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -162,17 +163,19 @@ function MyApp(props: CustomAppProps) {
                                             <BrowserRouterProvider>
                                               <IntersectionObserverProvider>
                                                 <ToursProvider>
-                                                  <BaseLayout>
-                                                    {isProd && <TrackPageView />}
-                                                    <ChatContextProvider>
-                                                      <CustomModalsProvider>
-                                                        {getLayout(<Component {...pageProps} />)}
-                                                        {/* <StripeSetupSuccessProvider /> */}
-                                                        <DialogProvider />
-                                                        <RoutedDialogProvider />
-                                                      </CustomModalsProvider>
-                                                    </ChatContextProvider>
-                                                  </BaseLayout>
+                                                  <AuctionContextProvider>
+                                                    <BaseLayout>
+                                                      {isProd && <TrackPageView />}
+                                                      <ChatContextProvider>
+                                                        <CustomModalsProvider>
+                                                          {getLayout(<Component {...pageProps} />)}
+                                                          {/* <StripeSetupSuccessProvider /> */}
+                                                          <DialogProvider />
+                                                          <RoutedDialogProvider />
+                                                        </CustomModalsProvider>
+                                                      </ChatContextProvider>
+                                                    </BaseLayout>
+                                                  </AuctionContextProvider>
                                                 </ToursProvider>
                                               </IntersectionObserverProvider>
                                             </BrowserRouterProvider>

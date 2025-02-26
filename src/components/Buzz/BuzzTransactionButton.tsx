@@ -27,6 +27,7 @@ type Props = ButtonProps & {
   error?: string;
   transactionType?: 'Generation' | 'Default';
   showTypePct?: boolean;
+  priceReplacement?: React.ReactNode;
 };
 
 export function BuzzTransactionButton({
@@ -42,6 +43,7 @@ export function BuzzTransactionButton({
   error,
   transactionType,
   showTypePct = false,
+  priceReplacement,
   ...buttonProps
 }: Props) {
   const features = useFeatureFlags();
@@ -80,7 +82,7 @@ export function BuzzTransactionButton({
       color={error ? 'red.9' : hasCost || loading ? buttonColor : 'blue'}
       {...buttonProps}
       onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
-      pr={hasCost ? 8 : undefined}
+      pr={hasCost && !priceReplacement ? 8 : undefined}
       styles={{
         label: { width: '100%' },
       }}
@@ -95,7 +97,8 @@ export function BuzzTransactionButton({
       <Text size={size ?? 14} ta={!hasCost ? 'center' : undefined} sx={{ flex: 1 }}>
         {label}
       </Text>
-      {(hasCost || loading) && (
+      {priceReplacement}
+      {(hasCost || loading) && !priceReplacement && (
         <CurrencyBadge
           data-tour="gen:buzz"
           currency={Currency.BUZZ}

@@ -293,6 +293,8 @@ model User {
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
   resolvedAppeals            Appeal[]                       @relation("resolvedAppeals")
+  bids                       Bid[]
+  recurringBids              BidRecurring[]
 }
 
 model CustomerSubscription {
@@ -3303,6 +3305,81 @@ model Appeal {
   @@unique([entityType, entityId, userId])
   @@index([userId])
   @@index([status])
+}
+
+enum AuctionType {
+  Model
+  Image
+  Collection
+  Article
+}
+
+model AuctionBase {
+  id        Int         @id @default(autoincrement())
+  type      AuctionType
+  ecosystem String? // like Pony, SDXL, etc
+  name      String
+  slug      String
+  quantity  Int // propagates to individual item
+  minPrice  Int // propagates to individual item
+  // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
+  active    Boolean     @default(true)
+
+  auctions      Auction[]
+  recurringBids BidRecurring[]
+
+  @@unique([type, ecosystem])
+  @@unique([name])
+  @@unique([slug])
+}
+
+model Auction {
+  id            Int         @id @default(autoincrement())
+  auctionBaseId Int
+  auctionBase   AuctionBase @relation(fields: [auctionBaseId], references: [id], onDelete: Cascade)
+  startAt       DateTime
+  endAt         DateTime
+  quantity      Int
+  minPrice      Int
+  // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
+  // sold Int
+
+  bids Bid[]
+
+  @@unique([auctionBaseId, startAt])
+}
+
+model Bid {
+  id            Int      @id @default(autoincrement())
+  auctionId     Int
+  auction       Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityId      Int
+  amount        Int
+  createdAt     DateTime @default(now())
+  deleted       Boolean  @default(false)
+  transactionId String
+  isRefunded    Boolean  @default(false)
+  fromRecurring Boolean  @default(false)
+
+  @@unique([auctionId, userId, entityId])
+}
+
+model BidRecurring {
+  id            Int         @id @default(autoincrement())
+  auctionBaseId Int
+  auctionBase   AuctionBase @relation(fields: [auctionBaseId], references: [id], onDelete: Cascade)
+  userId        Int
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityId      Int
+  amount        Int
+  createdAt     DateTime    @default(now())
+  startAt       DateTime
+  endAt         DateTime?
+  isPaused      Boolean     @default(false)
+
+  @@unique([auctionBaseId, userId, entityId])
 }
 
 /// @view

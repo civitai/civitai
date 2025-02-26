@@ -1,6 +1,7 @@
 import dayjs from 'dayjs';
 import minMax from 'dayjs/plugin/minMax';
 import utc from 'dayjs/plugin/utc';
+
 dayjs.extend(minMax);
 dayjs.extend(utc);
 
@@ -61,6 +62,7 @@ export function isBetweenToday(value: Date) {
 }
 
 export const aDayAgo = dayjs().subtract(1, 'day').toDate();
+export const aDayAhead = dayjs().add(1, 'day').toDate();
 
 export function stripTime(value: Date) {
   return value.toISOString().substring(0, 10);

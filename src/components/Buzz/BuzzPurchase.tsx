@@ -1,42 +1,42 @@
 import {
+  Accordion,
   Button,
   Center,
+  Chip,
+  Grid,
   Group,
+  Input,
+  Loader,
   Stack,
   Text,
-  Chip,
-  Loader,
-  Input,
-  Accordion,
   ThemeIcon,
-  Grid,
 } from '@mantine/core';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { Price } from '~/shared/utils/prisma/models';
 import { IconArrowsExchange, IconBolt, IconInfoCircle, IconMoodDollar } from '@tabler/icons-react';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-
-import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
-import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
-import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
+import { useBuzzButtonStyles } from '~/components/Buzz/styles';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
-import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useIsMobile } from '~/hooks/useIsMobile';
-import { constants } from '~/server/common/constants';
-// import { BuzzPaypalButton } from './BuzzPaypalButton';
-import { dialogStore } from '../Dialog/dialogStore';
-import AlertDialog from '../Dialog/Common/AlertDialog';
-import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
-import { BuzzPurchaseMultiplierFeature } from '~/components/Subscriptions/SubscriptionFeature';
-import { useCanUpgrade } from '~/components/Stripe/memberships.util';
+import { openStripeTransactionModal } from '~/components/Modals/StripeTransactionModal';
 import PaddleTransactionModal from '~/components/Paddle/PaddleTransacionModal';
 import { useMutatePaddle } from '~/components/Paddle/util';
 import { usePaymentProvider } from '~/components/Payments/usePaymentProvider';
-import { useBuzzButtonStyles } from '~/components/Buzz/styles';
+import { useCanUpgrade } from '~/components/Stripe/memberships.util';
+import { MembershipUpsell } from '~/components/Stripe/MembershipUpsell';
+import { BuzzPurchaseMultiplierFeature } from '~/components/Subscriptions/SubscriptionFeature';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { constants } from '~/server/common/constants';
+import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { Price } from '~/shared/utils/prisma/models';
+import { formatCurrencyForDisplay, formatPriceForDisplay } from '~/utils/number-helpers';
+
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { useQueryBuzzPackages } from '../Buzz/buzz.utils';
+import { CurrencyIcon } from '../Currency/CurrencyIcon';
+import AlertDialog from '../Dialog/Common/AlertDialog';
+// import { BuzzPaypalButton } from './BuzzPaypalButton';
+import { dialogStore } from '../Dialog/dialogStore';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -200,7 +200,7 @@ export const BuzzPurchase = ({
 }: Props) => {
   const { classes, cx, theme } = useBuzzButtonStyles();
   const canUpgradeMembership = useCanUpgrade();
-
+  const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
@@ -380,7 +380,10 @@ export const BuzzPurchase = ({
                       <Group
                         spacing={8}
                         align="flex-end"
-                        sx={{ ['& > *']: { flexGrow: 1 } }}
+                        sx={{
+                          ['& > *']: { flexGrow: 1 },
+                        }}
+                        className={!isMobile ? 'flex-col items-center' : ''}
                         noWrap
                       >
                         <NumberInputWrapper
@@ -398,6 +401,7 @@ export const BuzzPurchase = ({
                             setCustomAmount(Math.ceil((value ?? 0) / 10));
                           }}
                           step={100}
+                          w={!isMobile ? '80%' : undefined}
                         />
                         {/* @ts-ignore: transparent variant works with ThemeIcon */}
                         <ThemeIcon size={36} maw={24} variant="transparent" color="gray">
@@ -421,6 +425,7 @@ export const BuzzPurchase = ({
                             setError('');
                             setCustomAmount(value ?? 0);
                           }}
+                          w={!isMobile ? '80%' : undefined}
                         />
                       </Group>
                       <Text size="xs" color="dimmed" mt="xs">

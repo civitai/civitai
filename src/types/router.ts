@@ -151,3 +151,6 @@ export type ToolGetAllModel = ToolRouter['getAll']['items'][number];
 
 type OrchestratorRouter = RouterOutput['orchestrator'];
 export type QueryGeneratedImages = OrchestratorRouter['queryGeneratedImages'];
+
+type AuctionRouter = RouterOutput['auction'];
+export type AuctionBySlug = AuctionRouter['getBySlug'];

@@ -4,14 +4,15 @@ import {
   Badge,
   Button,
   Group,
+  GroupPosition,
   Overlay,
   Paper,
   Popover,
   Stack,
   Text,
   ThemeIcon,
-  useMantineTheme,
   Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -37,6 +38,7 @@ type Props = {
   onSwap?: VoidFunction;
   disabled?: boolean;
   hideVersion?: boolean;
+  groupPosition?: GroupPosition;
 };
 
 export const ResourceSelectCard = (props: Props) => {
@@ -58,11 +60,18 @@ export const ResourceSelectCard = (props: Props) => {
   );
 };
 
-function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion }: Props) {
+function CheckpointInfo({
+  resource,
+  onRemove,
+  onSwap,
+  selectSource,
+  hideVersion,
+  groupPosition,
+}: Props) {
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
-    <Group spacing="xs" position="apart" noWrap>
+    <Group spacing="xs" position={groupPosition ?? 'apart'} noWrap>
       <Group spacing={4} noWrap>
         {unavailable ? (
           <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>

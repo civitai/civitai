@@ -154,6 +154,8 @@ export type TechniqueType = "Image" | "Video";
 
 export type AppealStatus = "Pending" | "Approved" | "Rejected";
 
+export type AuctionType = "Model" | "Image" | "Collection" | "Article";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -380,6 +382,8 @@ export interface User {
   collectionItemScores?: CollectionItemScore[];
   appeals?: Appeal[];
   resolvedAppeals?: Appeal[];
+  bids?: Bid[];
+  recurringBids?: BidRecurring[];
 }
 
 export interface CustomerSubscription {
@@ -2508,6 +2512,59 @@ export interface Appeal {
   resolvedMessage: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+}
+
+export interface AuctionBase {
+  id: number;
+  type: AuctionType;
+  ecosystem: string | null;
+  name: string;
+  slug: string;
+  quantity: number;
+  minPrice: number;
+  active: boolean;
+  auctions?: Auction[];
+  recurringBids?: BidRecurring[];
+}
+
+export interface Auction {
+  id: number;
+  auctionBaseId: number;
+  auctionBase?: AuctionBase;
+  startAt: Date;
+  endAt: Date;
+  quantity: number;
+  minPrice: number;
+  bids?: Bid[];
+}
+
+export interface Bid {
+  id: number;
+  auctionId: number;
+  auction?: Auction;
+  userId: number;
+  user?: User;
+  entityId: number;
+  amount: number;
+  createdAt: Date;
+  deleted: boolean;
+  transactionId: string;
+  isRefunded: boolean;
+  fromRecurring: boolean;
+}
+
+export interface BidRecurring {
+  id: number;
+  auctionBaseId: number;
+  auctionBase?: AuctionBase;
+  userId: number;
+  user?: User;
+  entityId: number;
+  amount: number;
+  createdAt: Date;
+  startAt: Date;
+  endAt: Date | null;
+  isPaused: boolean;
 }
 
 export interface QuestionRank {

@@ -174,12 +174,22 @@ export default function ResourceSelectModal({
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'modelVersion' }
   );
 
+  const {
+    data: auctionModels,
+    isFetching: isLoadingAuctionModels,
+    // isError: isErrorAuctionModels,
+  } = trpc.model.getRecentlyBid.useQuery(
+    { take },
+    { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'auction' }
+  );
+
   const isLoadingExtra =
     (isLoadingFeatured && selectedTab === 'featured') ||
     ((isLoadingGenerations ||
       isLoadingTraining ||
       isLoadingManuallyAdded ||
-      isLoadingRecommendedModels) &&
+      isLoadingRecommendedModels ||
+      isLoadingAuctionModels) &&
       selectedTab === 'recent');
 
   // TODO handle fetching errors from above
@@ -254,6 +264,10 @@ export default function ResourceSelectModal({
     } else if (selectSource === 'modelVersion') {
       if (!!recommendedModels) {
         filters.push(`id IN [${recommendedModels.join(',')}]`);
+      }
+    } else if (selectSource === 'auction') {
+      if (!!auctionModels) {
+        filters.push(`id IN [${auctionModels.join(',')}]`);
       }
     }
   } else if (selectedTab === 'liked') {
@@ -445,7 +459,6 @@ function ResourceHitList({
       </div>
     );
 
- 
   if (!filtered.length)
     return (
       <div className="p-3 py-5">

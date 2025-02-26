@@ -238,7 +238,7 @@ export async function createBuzzTransaction({
     }
   }
 
-  const data: { transactionId: string } = await response.json();
+  const data: { transactionId: string | null } = await response.json();
 
   return data;
 }
@@ -319,6 +319,10 @@ export async function upsertBuzzTip({
   }
 }
 
+/*
+ * Consider using singular transactions instead
+ * Ask Koen for details!
+ */
 export async function createBuzzTransactionMany(
   transactions: (CreateBuzzTransactionInput & {
     fromAccountId: number;

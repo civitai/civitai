@@ -424,7 +424,7 @@ const genUsers = (num: number, includeCiv = false) => {
   const seenUserNames: string[] = [];
 
   // random users
-  for (let step = extraUsers.length + 1; step <= num; step++) {
+  for (let step = extraUsers.length + (includeCiv ? 0 : 1); step <= num; step++) {
     const created = faker.date.past({ years: 3 }).toISOString();
     const isMuted = fbool(0.01);
     let username = faker.internet.userName();

@@ -1,19 +1,17 @@
+import { auctionRouter } from '~/server/routers/auction.router';
+
+import { blocklistRouter } from '~/server/routers/blocklist.router';
 import { clubRouter } from '~/server/routers/club.router';
 import { clubMembershipRouter } from '~/server/routers/clubMembership.router';
 import { clubPostRouter } from '~/server/routers/clubPost.router';
 import { commonRouter } from '~/server/routers/common.router';
+import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { cosmeticRouter } from '~/server/routers/cosmetic.router';
 import { csamRouter } from '~/server/routers/csam.router';
-import { eventRouter } from '~/server/routers/event.router';
-import { userProfileRouter } from '~/server/routers/user-profile.router';
-import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
-import { router } from '~/server/trpc';
-
-import { blocklistRouter } from '~/server/routers/blocklist.router';
-import { cosmeticShopRouter } from '~/server/routers/cosmetic-shop.router';
 import { dailyChallengeRouter } from '~/server/routers/daily-challenge.router';
 import { donationGoalRouter } from '~/server/routers/donation-goal.router';
 import { entityCollaboratorRouter } from '~/server/routers/entity-collaborator.router';
+import { eventRouter } from '~/server/routers/event.router';
 import { gamesRouter } from '~/server/routers/games.router';
 import { modRouter } from '~/server/routers/moderator';
 import { orchestratorRouter } from '~/server/routers/orchestrator.router';
@@ -23,7 +21,10 @@ import { researchRouter } from '~/server/routers/research.router';
 import { subscriptionsRouter } from '~/server/routers/subscriptions.router';
 import { techniqueRouter } from '~/server/routers/technique.router';
 import { toolRouter } from '~/server/routers/tool.router';
+import { userProfileRouter } from '~/server/routers/user-profile.router';
+import { userReferralCodeRouter } from '~/server/routers/user-referral-code.router';
 import { vimeoRouter } from '~/server/routers/vimeo.router';
+import { router } from '~/server/trpc';
 import { accountRouter } from './account.router';
 import { announcementRouter } from './announcement.router';
 import { answerRouter } from './answer.router';
@@ -146,6 +147,7 @@ export const appRouter = router({
   blocklist: blocklistRouter,
   dailyChallenge: dailyChallengeRouter,
   vimeo: vimeoRouter,
+  auction: auctionRouter,
 });
 
 // export type definition of API
