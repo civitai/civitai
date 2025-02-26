@@ -48,7 +48,7 @@ function GenerationSettingsOption({
   onSuccess,
 }: {
   option: GenerationSettingOption;
-  onSucces?: VoidFunction;
+  onSuccess?: VoidFunction;
 }) {
   const { generation = {} } = useCurrentUserSettings();
   const { mutate, isLoading } = useMutateUserSettings({ onSuccess });
