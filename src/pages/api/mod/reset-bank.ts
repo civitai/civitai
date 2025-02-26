@@ -24,7 +24,7 @@ const schema = z.object({
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   // USE WITH THE UTMOST CARE PLEASE <3. NEVER RUN WITHOUT CONSULTING A DEV
-  const data = schema.safeParse(req.body);
+  const data = schema.safeParse(req.query);
 
   if (!data.success) {
     return res.status(400).json({
@@ -34,7 +34,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     });
   }
 
-  const { userId } = schema.parse(req.body);
+  const { userId } = data.data;
 
   const user = await dbWrite.user.findUnique({
     where: {
