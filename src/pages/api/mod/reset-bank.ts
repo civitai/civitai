@@ -17,9 +17,10 @@ import { signalClient } from '~/utils/signal-client';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
+import { numericString } from '~/utils/zod-helpers';
 
 const schema = z.object({
-  userId: z.number(),
+  userId: numericString(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
