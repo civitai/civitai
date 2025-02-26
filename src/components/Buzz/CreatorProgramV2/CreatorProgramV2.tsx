@@ -307,7 +307,7 @@ const CreatorProgramRequirement = ({
 const CompensationPoolCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const isLoading = isLoadingCompensationPool;
-  const date = formatDate(compensationPool?.phases.bank[0] ?? new Date(), 'MMMM, YYYY');
+  const date = formatDate(compensationPool?.phases.bank[0] ?? new Date(), 'MMMM, YYYY', true);
 
   if (isLoading) {
     return (
@@ -370,8 +370,8 @@ const BankBuzzCard = () => {
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
   const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading || isLoadingBanked;
   const [_, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
-  const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]');
-  const shouldUseCountdown = new Date() > dayjs(end).subtract(2, 'day').toDate();
+  const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]', true);
+  const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
 
   const handleBankBuzz = async () => {
     try {
@@ -608,8 +608,9 @@ const EstimatedEarningsCard = () => {
               <Anchor onClick={openPhasesModal}>Extraction Phase</Anchor>:
             </p>
             <p className="text-sm">
-              {formatDate(compensationPool.phases.extraction[0], 'MMM D, YYYY @ hA [UTC]')} &ndash;{' '}
-              {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]')}
+              {formatDate(compensationPool.phases.extraction[0], 'MMM D, YYYY @ hA [UTC]', true)}{' '}
+              &ndash;{' '}
+              {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]', true)}
             </p>
           </div>
         )}
@@ -618,7 +619,7 @@ const EstimatedEarningsCard = () => {
             <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
             <p className="text-sm">
               You can extract Buzz your Buzz until{' '}
-              {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]')}
+              {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]', true)}
             </p>
           </div>
         )}
@@ -995,7 +996,7 @@ const WithdrawalHistoryModal = () => {
                 <tbody>
                   {withdrawalHistory?.map((withdrawal) => (
                     <tr key={withdrawal.id}>
-                      <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA [UTC]')}</td>
+                      <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA [UTC]', true)}</td>
                       <td>
                         <div className="flex items-center gap-2">
                           <span>${numberWithCommas(withdrawal.amount)}</span>
@@ -1037,8 +1038,8 @@ const ExtractBuzzCard = () => {
   const extractionFee = getExtractionFee(banked?.total ?? 0);
 
   const [_, end] = compensationPool?.phases.extraction ?? [new Date(), new Date()];
-  const shouldUseCountdown = new Date() > dayjs(end).subtract(2, 'day').toDate();
-  const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]');
+  const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
+  const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]', true);
 
   const handleExtractBuzz = async () => {
     try {

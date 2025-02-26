@@ -40,7 +40,7 @@ export function getExtractionFee(toExtract: number): number {
 
 export function getPhases({ month, flip }: { month?: Date; flip?: boolean } = {}) {
   month ??= new Date();
-  const dayjsMonth = dayjs(month);
+  const dayjsMonth = dayjs.utc(month);
 
   const bank = [
     dayjsMonth.startOf('month').toDate(),

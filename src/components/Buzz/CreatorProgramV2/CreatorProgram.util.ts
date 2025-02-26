@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { use } from 'motion/dist/react-m';
 import { useMemo, useState } from 'react';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
@@ -73,7 +74,7 @@ export const useCreatorProgramPhase = () => {
   const { compensationPool, isLoading } = useCompensationPool();
 
   const phase = useMemo(() => {
-    const now = new Date();
+    const now = dayjs.utc().toDate();
     if (!compensationPool) {
       return undefined;
     }
@@ -82,11 +83,13 @@ export const useCreatorProgramPhase = () => {
       const [start, end] =
         compensationPool?.phases[phase as keyof (typeof compensationPool)['phases']];
 
-      return new Date(start) <= now && now <= new Date(end);
+      return dayjs.utc(start).toDate() <= now && now <= dayjs.utc(end).toDate();
     }) as keyof (typeof compensationPool)['phases'];
 
     return phase; //
   }, [compensationPool, isLoading]);
+
+  console.log(phase, compensationPool);
 
   return {
     phase,
