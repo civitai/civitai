@@ -115,7 +115,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         currentStep: opts?.step ?? old.currentStep,
       }));
 
-      if (opts?.step != null && activeTour && !currentTourData?.completed) {
+      if (opts?.step != null && activeTour && !alreadyCompleted) {
         const tour = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
         if (currentUser) updateUserSettingsMutation.mutate({ tour });
         setLocalTour((old) => ({ ...old, ...tour }));
@@ -166,20 +166,6 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     // Set initial step based on user settings
     const currentStep = currentTourData?.currentStep ?? 0;
     setState((old) => ({ ...old, currentStep, returnUrl: path }));
-
-    // handle initialization of the active tour
-    switch (tourKey) {
-      case 'content-generation':
-        generationPanel.setView(currentStep > 6 ? 'feed' : 'generate');
-        generationPanel.open();
-        break;
-      case 'remix-content-generation':
-        generationPanel.setView(currentStep > 5 ? 'feed' : 'generate');
-        generationPanel.open();
-        break;
-      default:
-        break;
-    }
   }, [isInitialLoading, tourKey]);
 
   const completed = currentTourData?.completed;

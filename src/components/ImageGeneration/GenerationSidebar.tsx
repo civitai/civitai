@@ -9,6 +9,9 @@ import { useResizeStore } from '~/components/Resizable/useResize';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
 const GenerationTabs = dynamic(() => import('~/components/ImageGeneration/GenerationTabs'));
 
+const RESIZE_STORE_NAME = 'generation-sidebar';
+const DEFAULT_WIDTH = 400;
+
 export function GenerationSidebar() {
   const _opened = useGenerationStore((state) => state.opened);
   const router = useRouter();
@@ -18,7 +21,7 @@ export function GenerationSidebar() {
   const opened = _opened || isGeneratePage;
 
   const updateShowDrawer = useCallback(() => {
-    const width = useResizeStore.getState()['generation-sidebar'];
+    const width = useResizeStore.getState()[RESIZE_STORE_NAME] ?? DEFAULT_WIDTH;
     setFullScreen(width + 320 > window.innerWidth);
   }, []);
 
@@ -30,7 +33,7 @@ export function GenerationSidebar() {
     if (opened) {
       updateShowDrawer();
       useResizeStore.subscribe((state) => {
-        const width = state['generation-sidebar'] ?? 400;
+        const width = state[RESIZE_STORE_NAME] ?? DEFAULT_WIDTH;
         setFullScreen(width + 320 > window.innerWidth);
       });
     }
@@ -42,16 +45,16 @@ export function GenerationSidebar() {
 
   return (
     <ResizableSidebar
-      name="generation-sidebar"
+      name={RESIZE_STORE_NAME}
       data-tour="gen:start"
       resizePosition="right"
       minWidth={350}
       maxWidth={800}
-      defaultWidth={400}
+      defaultWidth={DEFAULT_WIDTH}
       className={clsx('z-10', fullScreen && 'z-[210] !w-screen')}
     >
       <div className="size-full">
-        <ContainerProvider containerName="generation-sidebar" className="bg-gray-0 dark:bg-dark-7">
+        <ContainerProvider containerName={RESIZE_STORE_NAME} className="bg-gray-0 dark:bg-dark-7">
           <GenerationTabs fullScreen={fullScreen} />
         </ContainerProvider>
       </div>
