@@ -9,7 +9,6 @@ export type ResourceSelectOptions = {
     type: string;
     baseModels?: string[];
     partialSupport?: string[];
-    allSupportedBaseModels?: string[];
   }[];
   excludeIds?: number[];
 };

@@ -17,9 +17,9 @@ import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react'
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
 import { useSortBy } from 'react-instantsearch';
+import { useResourceSelectContext } from '~/components/ImageGeneration/GenerationForm/ResourceSelectModal2';
 import {
   ResourceFilter,
-  ResourceSelectOptions,
   resourceSort,
   ResourceSort,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
@@ -67,15 +67,12 @@ export const useFilterStyles = createStyles((theme) => ({
 
 const baseModelLimit = 4;
 
-export function ResourceSelectFiltersDropdown({
-  options,
-  selectFilters,
-  setSelectFilters,
-}: {
-  options: ResourceSelectOptions;
-  selectFilters: ResourceFilter;
-  setSelectFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
-}) {
+export function ResourceSelectFiltersDropdown() {
+  const {
+    resources,
+    filters: selectFilters,
+    setFilters: setSelectFilters,
+  } = useResourceSelectContext();
   const { classes, theme, cx } = useFilterStyles();
   const mobile = useIsMobile();
   const isClient = useIsClient();
@@ -87,13 +84,12 @@ export function ResourceSelectFiltersDropdown({
   });
 
   let resourceTypesList = sortByModelTypes(
-    (options.resources?.length
-      ? options.resources.map((r) => r.type)
-      : Object.values(ModelType)
-    ).map((rt) => ({ modelType: rt as ModelType }))
+    (resources?.length ? resources.map((r) => r.type) : Object.values(ModelType)).map((rt) => ({
+      modelType: rt as ModelType,
+    }))
   );
-  let baseModelsList = options.resources?.length
-    ? uniq(options.resources.flatMap((r) => (r.allSupportedBaseModels ?? []) as BaseModel[]))
+  let baseModelsList = resources?.length
+    ? uniq(resources.flatMap((r) => (r.baseModels ?? []) as BaseModel[]))
     : activeBaseModels;
   if (!resourceTypesList.length)
     resourceTypesList = Object.values(ModelType).map((rt) => ({ modelType: rt as ModelType }));

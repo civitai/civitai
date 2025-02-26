@@ -52,9 +52,7 @@ export const DialogProvider = () => {
   return (
     <>
       {dialogs.map((dialog, i) => (
-        <Freeze freeze={dialogs.length !== i + 1} key={dialog.id.toString()}>
-          {createRenderElement(dialog, i)}
-        </Freeze>
+        <React.Fragment key={dialog.id.toString()}>{createRenderElement(dialog, i)}</React.Fragment>
       ))}
     </>
   );

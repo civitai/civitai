@@ -408,32 +408,36 @@ export const baseModelResourceTypes = {
   ],
   SDXL: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL.baseModels] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SDXL.baseModels, 'SD 1.5'] },
+    {
+      type: ModelType.TextualInversion,
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: ['SD 1.5'],
+    },
     { type: ModelType.LORA, baseModels: [...baseModelSets.SDXL.baseModels] },
     { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL.baseModels] },
     { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL.baseModels] },
     { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL.baseModels] },
   ],
   Pony: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.Pony.baseModels },
     {
       type: ModelType.TextualInversion,
-      baseModels: [...baseModelSets.Pony.baseModels],
+      baseModels: baseModelSets.Pony.baseModels,
       partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Pony.baseModels],
+      baseModels: baseModelSets.Pony.baseModels,
       partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Pony.baseModels],
+      baseModels: baseModelSets.Pony.baseModels,
       partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Pony.baseModels],
+      baseModels: baseModelSets.Pony.baseModels,
       partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
@@ -442,25 +446,25 @@ export const baseModelResourceTypes = {
     },
   ],
   Illustrious: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.Illustrious.baseModels },
     {
       type: ModelType.TextualInversion,
-      baseModels: [...baseModelSets.Illustrious.baseModels],
+      baseModels: baseModelSets.Illustrious.baseModels,
       partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Illustrious.baseModels],
+      baseModels: baseModelSets.Illustrious.baseModels,
       partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Illustrious.baseModels],
+      baseModels: baseModelSets.Illustrious.baseModels,
       partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Illustrious.baseModels],
+      baseModels: baseModelSets.Illustrious.baseModels,
       partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
@@ -469,16 +473,16 @@ export const baseModelResourceTypes = {
     },
   ],
   Flux1: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1.baseModels] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1.baseModels },
+    { type: ModelType.LORA, baseModels: baseModelSets.Flux1.baseModels },
   ],
   SD3: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3.baseModels] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3.baseModels },
+    { type: ModelType.LORA, baseModels: baseModelSets.SD3.baseModels },
   ],
   SD3_5M: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3_5M.baseModels] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3_5M.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
+    { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {

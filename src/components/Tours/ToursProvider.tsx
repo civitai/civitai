@@ -18,6 +18,7 @@ import { TourKey, tourSteps } from '~/components/Tours/tours';
 import { trpc } from '~/utils/trpc';
 import dynamic from 'next/dynamic';
 import { StoreHelpers } from 'react-joyride';
+import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 const LazyTours = dynamic(() => import('~/components/Tours/LazyTours'));
 
@@ -57,7 +58,6 @@ export const useTourContext = () => {
 };
 
 export function ToursProvider({ children }: { children: React.ReactNode }) {
-  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
   const path = usePathname();
@@ -84,11 +84,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     enabled: !!currentUser,
   });
 
-  const updateUserSettingsMutation = trpc.user.setSettings.useMutation({
-    onSuccess: (result) => {
-      queryUtils.user.getSettings.setData(undefined, (old) => ({ ...old, ...result }));
-    },
-  });
+  const updateUserSettingsMutation = useMutateUserSettings();
 
   const getCurrentTourData = useCallback(
     (key?: TourKey | null) =>

@@ -356,13 +356,14 @@ export const updateUserById = async ({
 
 export async function setUserSetting(userId: number, settings: UserSettingsInput) {
   const toSet = removeEmpty(settings);
-  if (Object.keys(toSet).length) {
-    await dbWrite.$executeRawUnsafe(`
+  const keys = Object.keys(toSet);
+  if (!keys.length) return;
+
+  await dbWrite.$executeRawUnsafe(`
       UPDATE "User"
       SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
       WHERE id = ${userId}
     `);
-  }
 
   const toRemove = Object.entries(settings)
     .filter(([, value]) => value === undefined)
