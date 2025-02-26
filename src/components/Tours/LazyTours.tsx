@@ -81,8 +81,8 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         }}
         floaterProps={{
           styles: {
-            floater: { position: 'absolute', top: 0 }
-          }
+            floater: { position: 'absolute', top: 0 },
+          },
         }}
         locale={{
           nextLabelWithProgress: 'Next',

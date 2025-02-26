@@ -289,7 +289,7 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacy
   };
 
   client.setNxKeepTtlWithEx = async (key, value, ttl) => {
-    const script: string = `
+    const script = `
       if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'KEEPTTL') then
           return redis.call('EXPIRE', KEYS[1], ARGV[2])
       else

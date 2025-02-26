@@ -109,7 +109,7 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
     if (ctx.user?.isModerator || isDev || isTest) return await next();
 
     // Get valid limits
-    let validLimits: RateLimit[] = [];
+    const validLimits: RateLimit[] = [];
     for (const rateLimit of rateLimits) {
       const matchedPeriod = validLimits.find((x) => x.period === rateLimit.period);
       if (matchedPeriod?.limit && matchedPeriod.limit > rateLimit.limit) continue;
@@ -126,7 +126,7 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
     // Check if user can proceed
     const canProceed = validLimits.every(({ limit, period }) => {
       const cutoff = Date.now() - period! * 1000;
-      let relevantAttempts = attempts.filter((x) => x > cutoff).length;
+      const relevantAttempts = attempts.filter((x) => x > cutoff).length;
       return relevantAttempts <= limit!;
     });
 

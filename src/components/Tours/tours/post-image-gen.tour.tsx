@@ -1,4 +1,3 @@
-import { generationPanel } from '~/store/generation.store';
 import { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 

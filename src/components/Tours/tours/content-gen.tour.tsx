@@ -82,7 +82,9 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightPadding: 10,
     data: {
       onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(() => null);
+        await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(
+          () => null
+        );
       },
     },
     styles: {
