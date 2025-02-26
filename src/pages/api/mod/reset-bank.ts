@@ -61,24 +61,27 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   if (userId) {
     // Get user's current balance
     const userBanked = await getBanked(userId);
-    // Reset the banked amount by performing an extraction:
-    await createBuzzTransaction({
-      amount: userBanked.total,
-      fromAccountId: monthAccount,
-      fromAccountType: 'creatorprogrambank',
-      toAccountId: userId,
-      toAccountType: 'user',
-      type: TransactionType.Extract,
-      description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
-    });
 
-    change += userBanked.total;
+    if (userBanked.total > 0) {
+      // Reset the banked amount by performing an extraction:
+      await createBuzzTransaction({
+        amount: userBanked.total,
+        fromAccountId: monthAccount,
+        fromAccountType: 'creatorprogrambank',
+        toAccountId: userId,
+        toAccountType: 'user',
+        type: TransactionType.Extract,
+        description: `ADMIN-FORCED-EXTRACTION: RESET BANK`,
+      });
+
+      change += userBanked.total;
+    }
   }
 
   if (change !== 0) {
     const shouldTakeMoneyFromBank = change < 0;
     await createBuzzTransaction({
-      amount: change,
+      amount: Math.abs(change),
       fromAccountId: shouldTakeMoneyFromBank ? monthAccount : 0,
       fromAccountType: shouldTakeMoneyFromBank ? 'creatorprogrambank' : 'user',
       toAccountId: shouldTakeMoneyFromBank ? 0 : monthAccount,
