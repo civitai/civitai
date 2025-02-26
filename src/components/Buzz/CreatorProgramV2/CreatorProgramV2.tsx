@@ -102,6 +102,12 @@ export const CreatorsProgramV2 = () => {
     OnboardingSteps.CreatorProgram
   );
 
+  const isBanned = Flags.hasFlag(currentUser.flags, OnboardingSteps.BannedCreatorProgram);
+
+  if (isBanned) {
+    return null;
+  }
+
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-2">

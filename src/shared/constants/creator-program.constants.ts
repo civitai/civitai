@@ -48,7 +48,7 @@ export const CAP_DEFINITIONS: CapDefinition[] = [
 
 export const MIN_BANK_AMOUNT = 10000;
 export const MIN_WITHDRAWAL_AMOUNT = 5000;
-export const MIN_CREATOR_SCORE = 100000;
+export const MIN_CREATOR_SCORE = 40000;
 
 type WithdrawalFee = {
   type: 'fixed' | 'percent';

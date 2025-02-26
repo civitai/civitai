@@ -49,6 +49,7 @@ import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prism
 import { withRetries } from '~/utils/errorHandling';
 import { createNotification } from '~/server/services/notification.service';
 import { signalClient } from '~/utils/signal-client';
+import { Flags } from '~/shared/utils';
 
 type UserCapCacheItem = {
   id: number;
@@ -194,6 +195,14 @@ export async function joinCreatorsProgram(userId: number) {
     throw throwBadRequestError('User does not meet the minimum creator score');
   }
 
+  const user = await dbWrite.user.findFirstOrThrow({
+    where: { id: userId },
+  });
+
+  if (Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)) {
+    throw throwBadRequestError('User is banned from the Creator Program');
+  }
+
   await dbWrite.$executeRaw`
     UPDATE "User" SET onboarding = onboarding | ${OnboardingSteps.CreatorProgram}
     WHERE id = ${userId};
@@ -308,6 +317,13 @@ async function getFlippedPhaseStatus() {
 
 export async function bankBuzz(userId: number, amount: number) {
   // Check that we're in the banking phase
+  const user = await dbWrite.user.findFirstOrThrow({
+    where: { id: userId },
+  });
+
+  if (Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)) {
+    throw throwBadRequestError('User is banned from the Creator Program');
+  }
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (new Date() > phases.bank[1]) throw new Error('Banking phase is closed');
@@ -343,6 +359,14 @@ export async function bankBuzz(userId: number, amount: number) {
 
 export async function extractBuzz(userId: number) {
   // Check that we're in the extraction phase
+  const user = await dbWrite.user.findFirstOrThrow({
+    where: { id: userId },
+  });
+
+  if (Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)) {
+    throw throwBadRequestError('User is banned from the Creator Program');
+  }
+
   // TODO: Remove flip when we're ready to go live
   const phases = getPhases({ flip: (await getFlippedPhaseStatus()) === 'true' });
   if (new Date() < phases.extraction[0]) throw new Error('Extraction phase has not started');
@@ -498,6 +522,14 @@ export async function getWithdrawalHistory(userId: number) {
 
 export async function withdrawCash(userId: number, amount: number) {
   // Check setup for withdrawal
+  const user = await dbWrite.user.findFirstOrThrow({
+    where: { id: userId },
+  });
+
+  if (Flags.hasFlag(user.onboarding, OnboardingSteps.BannedCreatorProgram)) {
+    throw throwBadRequestError('User is banned from the Creator Program');
+  }
+
   const cash = await getCash(userId);
   if (cash.status === 'pending') throw new Error('Payment setup is pending');
 
