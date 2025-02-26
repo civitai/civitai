@@ -289,8 +289,8 @@ export interface User {
   profile?: UserProfile | null;
   profilePictureId: number | null;
   profilePicture?: Image | null;
-  settings: JsonValue;
-  publicSettings: JsonValue;
+  settings: JsonValue | null;
+  publicSettings: JsonValue | null;
   paymentConfiguration?: UserPaymentConfiguration | null;
   accounts?: Account[];
   sessions?: Session[];
