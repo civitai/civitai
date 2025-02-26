@@ -9,6 +9,7 @@ import {
   Loader,
   Menu,
   Modal,
+  Popover,
   SegmentedControl,
   Select,
   Stack,
@@ -26,11 +27,12 @@ import {
   IconHorse,
   IconInfoCircle,
   IconLock,
+  IconSettings,
   IconTagOff,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { uniq } from 'lodash-es';
-import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Configure,
   InstantSearch,
@@ -97,10 +99,18 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 
+// type SelectValue =
+//   | ({ kind: 'generation' } & GenerationResource)
+//   | { kind: 'training' | 'addResource' | 'modelVersion' };
+type GenerationResourceWithImage = GenerationResource & {
+  image: SearchIndexDataMap['models'][number]['images'][number];
+};
 export type ResourceSelectModalProps = {
   title?: React.ReactNode;
-  onSelect: (value: GenerationResource) => void;
+  onSelect: (value: GenerationResourceWithImage) => void;
   onClose?: () => void;
   options?: ResourceSelectOptions;
   selectSource?: ResourceSelectSource;
@@ -111,18 +121,95 @@ type Tabs = (typeof tabs)[number];
 
 const take = 20;
 
-export default function ResourceSelectModal({
-  title,
-  onSelect,
-  onClose,
-  options = {},
-  selectSource = 'generation',
-}: ResourceSelectModalProps) {
+// TODO - ResourceSelectProvider with filter so that we only show relevant model versions to select
+
+type ResourceSelectState = Omit<ResourceSelectModalProps, 'options'> & {
+  canGenerate?: boolean;
+  excludedIds: number[];
+  resources: DeepRequired<ResourceSelectOptions>['resources'];
+  filters: ResourceFilter;
+  setFilters: React.Dispatch<React.SetStateAction<ResourceFilter>>;
+};
+
+const ResourceSelectContext = createContext<ResourceSelectState | null>(null);
+export const useResourceSelectContext = () => {
+  const context = useContext(ResourceSelectContext);
+  if (!context) throw new Error('missing ResourceSelectContext');
+  return context;
+};
+
+function ResourceSelectProvider({
+  children,
+  ...props
+}: ResourceSelectModalProps & { children: React.ReactNode }) {
+  const dialog = useDialogContext();
+  const { generation } = useCurrentUserSettings();
+  const [filters, setFilters] = useState<ResourceFilter>({
+    types: [],
+    baseModels: [],
+  });
+  const resources = (props.options?.resources ?? []).map(
+    ({ type, baseModels = [], partialSupport = [] }) => ({
+      type,
+      baseModels: generation?.advancedMode ? [...baseModels, ...partialSupport] : baseModels,
+      partialSupport,
+    })
+  );
+  const types =
+    resources.length > 0
+      ? filters.types.filter((type) => resources.some((x) => x.type === type))
+      : filters.types;
+
+  const baseModels =
+    resources.length > 0
+      ? filters.baseModels.filter((baseModel) =>
+          resources.some((x) => x.baseModels.includes(baseModel))
+        )
+      : filters.baseModels;
+
+  function handleSelect(value: GenerationResourceWithImage) {
+    props.onSelect(value);
+    dialog.onClose();
+  }
+
+  return (
+    <ResourceSelectContext.Provider
+      value={{
+        ...props,
+        selectSource: props.selectSource ?? 'generation',
+        canGenerate: props.options?.canGenerate,
+        excludedIds: props.options?.excludeIds ?? [],
+        resources,
+        filters: {
+          types,
+          baseModels,
+        },
+        setFilters,
+        onSelect: handleSelect,
+      }}
+    >
+      {children}
+    </ResourceSelectContext.Provider>
+  );
+}
+
+export default function ResourceSelectModal(props: ResourceSelectModalProps) {
+  return (
+    <ResourceSelectProvider {...props}>
+      <ResourceSelectModalContent />
+    </ResourceSelectProvider>
+  );
+}
+
+function ResourceSelectModalContent() {
+  const { title, onSelect, onClose, canGenerate, resources, selectSource, filters, setFilters } =
+    useResourceSelectContext();
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
   const [selectedTab, setSelectedTab] = useState<Tabs>('all');
-  const [selectFilters, setSelectFilters] = useState<ResourceFilter>({ types: [], baseModels: [] });
+  // const availableBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
+  // const _selectedFilters = selectedFilters.filter((x) => availableBaseModels.includes)
 
   const {
     data: likedModels,
@@ -184,26 +271,35 @@ export default function ResourceSelectModal({
 
   // TODO handle fetching errors from above
 
-  const { resources = [], excludeIds = [], canGenerate } = options;
   const allowedTabs = tabs.filter((t) => {
     return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
 
-  const filters: string[] = [
+  const meiliFilters: string[] = [
     // Default filter for visibility:
     `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
   ];
 
   const or: string[] = [];
-  if (canGenerate !== undefined) filters.push(`canGenerate = ${canGenerate}`);
-  for (const { type, baseModels } of resources) {
-    if (!baseModels?.length) or.push(`type = ${type}`);
-    else
-      or.push(
-        `(type = ${type} AND versions.baseModel IN [${baseModels.map((x) => `"${x}"`).join(',')}])`
-      );
+  if (canGenerate !== undefined) meiliFilters.push(`canGenerate = ${canGenerate}`);
+  for (const { type, baseModels = [] } of resources) {
+    const _type = filters.types.length > 0 ? filters.types.find((x) => x === type) : type;
+    const _baseModels =
+      filters.baseModels.length > 0
+        ? filters.baseModels.filter((baseModel) => baseModels.includes(baseModel))
+        : baseModels;
+
+    if (_type) {
+      if (!_baseModels.length) or.push(`type = ${_type}`);
+      else
+        or.push(
+          `(type = ${_type} AND versions.baseModel IN [${_baseModels
+            .map((x) => `"${x}"`)
+            .join(',')}])`
+        );
+    }
   }
-  if (or.length) filters.push(`(${or.join(' OR ')})`);
+  if (or.length) meiliFilters.push(`(${or.join(' OR ')})`);
 
   const exclude: string[] = [];
   exclude.push('NOT tags.name = "celebrity"');
@@ -213,18 +309,18 @@ export default function ResourceSelectModal({
   //   exclude.push(`versions.id NOT IN [${excludeIds.join(',')}]`);
   // }
 
-  if (selectFilters.types.length) {
-    filters.push(`type IN [${selectFilters.types.map((x) => `"${x}"`).join(',')}]`);
+  if (filters.types.length) {
+    meiliFilters.push(`type IN [${filters.types.map((x) => `"${x}"`).join(',')}]`);
   }
-  if (selectFilters.baseModels.length) {
-    filters.push(
-      `versions.baseModel IN [${selectFilters.baseModels.map((x) => `"${x}"`).join(',')}]`
+  if (filters.baseModels.length) {
+    meiliFilters.push(
+      `versions.baseModel IN [${filters.baseModels.map((x) => `"${x}"`).join(',')}]`
     );
   }
 
   if (selectedTab === 'featured') {
     if (!!featuredModels) {
-      filters.push(`id IN [${featuredModels.join(',')}]`);
+      meiliFilters.push(`id IN [${featuredModels.join(',')}]`);
     }
   } else if (selectedTab === 'recent') {
     if (selectSource === 'generation') {
@@ -232,11 +328,11 @@ export default function ResourceSelectModal({
         const usedResources = uniq(
           steps.flatMap(({ resources }) => resources.map((r) => r.model.id))
         );
-        filters.push(`id IN [${usedResources.join(',')}]`);
+        meiliFilters.push(`id IN [${usedResources.join(',')}]`);
       }
     } else if (selectSource === 'addResource') {
       if (!!manuallyAdded) {
-        filters.push(`id IN [${manuallyAdded.join(',')}]`);
+        meiliFilters.push(`id IN [${manuallyAdded.join(',')}]`);
       }
     } else if (selectSource === 'training') {
       if (!!trainingModels) {
@@ -249,29 +345,24 @@ export default function ResourceSelectModal({
             )
             .filter(isDefined)
         );
-        filters.push(`id IN [${uniq(customModels).join(',')}]`);
+        meiliFilters.push(`id IN [${uniq(customModels).join(',')}]`);
       }
     } else if (selectSource === 'modelVersion') {
       if (!!recommendedModels) {
-        filters.push(`id IN [${recommendedModels.join(',')}]`);
+        meiliFilters.push(`id IN [${recommendedModels.join(',')}]`);
       }
     }
   } else if (selectedTab === 'liked') {
     if (!!likedModels) {
-      filters.push(`id IN [${likedModels.join(',')}]`);
+      meiliFilters.push(`id IN [${likedModels.join(',')}]`);
     }
   } else if (selectedTab === 'mine') {
     if (currentUser) {
-      filters.push(`user.id = ${currentUser.id}`);
+      meiliFilters.push(`user.id = ${currentUser.id}`);
     }
   }
 
-  const totalFilters = [...filters, ...exclude].join(' AND ');
-
-  function handleSelect(value: GenerationResource) {
-    onSelect(value);
-    dialog.onClose();
-  }
+  const totalFilters = [...meiliFilters, ...exclude].join(' AND ');
 
   function handleClose() {
     dialog.onClose();
@@ -281,82 +372,60 @@ export default function ResourceSelectModal({
   return (
     <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
       <div className="flex size-full max-h-full max-w-full flex-col">
-        <ResourceSelectContext.Provider value={{ onSelect: handleSelect, canGenerate, resources }}>
-          <InstantSearch
-            searchClient={searchClient}
-            indexName={searchIndexMap.models}
-            future={{ preserveSharedStateOnUnmount: true }}
-          >
-            <Configure hitsPerPage={20} filters={totalFilters} />
+        <InstantSearch
+          searchClient={searchClient}
+          indexName={searchIndexMap.models}
+          future={{ preserveSharedStateOnUnmount: true }}
+        >
+          <Configure hitsPerPage={20} filters={totalFilters} />
 
-            <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
-              <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
-                <Text>{title}</Text>
-                <CustomSearchBox
-                  isMobile={isMobile}
-                  autoFocus
-                  className="order-last w-full grow sm:order-none sm:w-auto"
-                />
-                <CloseButton onClick={handleClose} />
-              </div>
-
-              <div className="flex flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between sm:gap-10">
-                <SegmentedControl
-                  value={selectedTab}
-                  onChange={(v) => setSelectedTab(v as Tabs)}
-                  data={allowedTabs.map((v) => ({ value: v, label: v.toUpperCase() }))}
-                  className="shrink-0 @sm:w-full"
-                />
-                <CategoryTagFilters />
-                <div className="flex shrink-0 flex-row gap-3">
-                  <ResourceSelectSort />
-                  <ResourceSelectFiltersDropdown
-                    options={options}
-                    selectFilters={selectFilters}
-                    setSelectFilters={setSelectFilters}
-                  />
-                </div>
-              </div>
-
-              <Divider />
+          <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
+            <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
+              <Text>{title}</Text>
+              <CustomSearchBox
+                isMobile={isMobile}
+                autoFocus
+                className="order-last w-full grow sm:order-none sm:w-auto"
+              />
+              <CloseButton onClick={handleClose} />
             </div>
 
-            {isLoadingExtra ? (
-              <div className="p-3 py-5">
-                <Center mt="md">
-                  <Loader />
-                </Center>
-              </div>
-            ) : (
-              <ResourceHitList
-                resources={resources}
-                canGenerate={canGenerate}
-                excludeIds={excludeIds}
-                likes={likedModels}
-                selectSource={selectSource}
+            <div className="flex flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between sm:gap-10">
+              <SegmentedControl
+                value={selectedTab}
+                onChange={(v) => setSelectedTab(v as Tabs)}
+                data={allowedTabs.map((v) => ({ value: v, label: v.toUpperCase() }))}
+                className="shrink-0 @sm:w-full"
               />
-            )}
-          </InstantSearch>
-        </ResourceSelectContext.Provider>
+              <CategoryTagFilters />
+              <div className="flex shrink-0 flex-row items-center justify-end gap-3">
+                <ResourceSelectSort />
+                <ResourceSelectFiltersDropdown />
+                <GenerationSettingsPopover>
+                  <ActionIcon>
+                    <IconSettings />
+                  </ActionIcon>
+                </GenerationSettingsPopover>
+              </div>
+            </div>
+
+            <Divider />
+          </div>
+
+          {isLoadingExtra ? (
+            <div className="p-3 py-5">
+              <Center mt="md">
+                <Loader />
+              </Center>
+            </div>
+          ) : (
+            <ResourceHitList likes={likedModels} />
+          )}
+        </InstantSearch>
       </div>
     </Modal>
   );
 }
-
-// TODO I don't think canGenerate and resources are being used here
-const ResourceSelectContext = React.createContext<{
-  canGenerate?: boolean;
-  resources: { type: string; baseModels?: string[] }[];
-  onSelect: (
-    value: GenerationResource & { image: SearchIndexDataMap['models'][number]['images'][number] }
-  ) => void;
-} | null>(null);
-
-const useResourceSelectContext = () => {
-  const context = useContext(ResourceSelectContext);
-  if (!context) throw new Error('missing ResourceSelectContext');
-  return context;
-};
 
 function CategoryTagFilters() {
   const [tag, setTag] = useState<string>();
@@ -380,16 +449,11 @@ function CategoryTagFilters() {
 }
 
 function ResourceHitList({
-  canGenerate,
-  resources,
-  excludeIds,
   likes,
-  selectSource,
-}: ResourceSelectOptions &
-  Required<Pick<ResourceSelectOptions, 'resources' | 'excludeIds'>> & {
-    likes: number[] | undefined;
-    selectSource?: ResourceSelectSource;
-  }) {
+}: ResourceSelectOptions & {
+  likes: number[] | undefined;
+}) {
+  const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
@@ -414,21 +478,20 @@ function ResourceHitList({
       .map((model) => {
         const resourceType = resources.find((x) => x.type === model.type);
         if (!resourceType) return null;
+        const { baseModels } = resourceType;
 
         const versions = model.versions.filter((version) => {
           return (
             (canGenerate ? canGenerate === version.canGenerate : true) &&
-            (!!resourceType.baseModels?.length
-              ? resourceType.baseModels.includes(version.baseModel)
-              : true) &&
-            !excludeIds.includes(version.id)
+            (baseModels.length > 0 ? baseModels.includes(version.baseModel) : true) &&
+            !excludedIds.includes(version.id)
           );
         });
         if (!versions.length) return null;
         return { ...model, versions };
       })
       .filter(isDefined);
-  }, [canGenerate, excludeIds, models, resources]);
+  }, [canGenerate, excludedIds, models, resources]);
   // console.log({ filtered });
 
   useEffect(() => {
@@ -445,7 +508,6 @@ function ResourceHitList({
       </div>
     );
 
- 
   if (!filtered.length)
     return (
       <div className="p-3 py-5">
@@ -657,11 +719,13 @@ function ResourceSelectCard({
   });
 
   const versions = data.versions;
-  const [selected, setSelected] = useState<number | undefined>(versions[0]?.id);
+  const [selectedIndex, setSelectedIndex] = useState<number>(0);
+  const _selectedIndex = selectedIndex < versions.length ? selectedIndex : 0;
+  const selectedVersion = versions[_selectedIndex];
   const [flipped, setFlipped] = useState(false);
 
   const handleSelect = async () => {
-    const version = versions.find((x) => x.id === selected);
+    const version = selectedVersion;
     if (!version) return;
     const { id } = version;
 
@@ -696,9 +760,8 @@ function ResourceSelectCard({
     });
   };
 
-  const selectedVersion = versions.find((x) => x.id === selected)!;
-  const isSDXL = getIsSdxl(selectedVersion?.baseModel);
-  const isPony = selectedVersion?.baseModel === 'Pony';
+  const isSDXL = getIsSdxl(selectedVersion.baseModel);
+  const isPony = selectedVersion.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
     data.lastVersionAt &&
@@ -832,6 +895,18 @@ function ResourceSelectCard({
     },
   ];
 
+  // return (
+  //   <AspectRatioImageCard
+  //     href={`/models/${data.id}?modelVersionId=${selected}`}
+  //     target="_blank"
+  //     contentType="model"
+  //     contentId={data.model.id}
+  //     image={image}
+  //     header={}
+  //     footer={}
+  //   />
+  // );
+
   return (
     // Visually hide card if there are no versions
     <TwCard
@@ -848,7 +923,10 @@ function ResourceSelectCard({
                 return (
                   <div className="relative overflow-hidden aspect-portrait">
                     {safe ? (
-                      <Link href={`/models/${data.id}?modelVersionId=${selected}`} target="_blank">
+                      <Link
+                        href={`/models/${data.id}?modelVersionId=${selectedVersion.id}`}
+                        target="_blank"
+                      >
                         <EdgeMedia
                           src={image.url}
                           name={image.name ?? image.id.toString()}
@@ -978,12 +1056,12 @@ function ResourceSelectCard({
                 e.stopPropagation();
               }}
               readOnly={versions.length <= 1}
-              value={selected?.toString()}
-              data={versions.map((version) => ({
+              value={_selectedIndex?.toString()}
+              data={versions.map((version, index) => ({
                 label: version.name,
-                value: version.id.toString(),
+                value: index.toString(),
               }))}
-              onChange={(id) => setSelected(id !== null ? Number(id) : undefined)}
+              onChange={(index) => setSelectedIndex(Number(index ?? 0))}
               styles={{ input: { cursor: versions.length <= 1 ? 'auto !important' : undefined } }}
             />
             <Button

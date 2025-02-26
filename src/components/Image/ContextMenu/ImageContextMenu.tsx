@@ -48,6 +48,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/utils/prisma/enums';
 import { imageStore, useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -182,8 +183,9 @@ function ImageMenuItems(
       )}
       {postId && !Router.query.postId && (
         <Menu.Item
+          component={NextLink}
+          href={`/posts/${postId}`}
           icon={<IconEye size={14} stroke={1.5} />}
-          onClick={() => triggerRoutedDialog({ name: 'postDetail', state: { postId: postId } })}
         >
           View Post
         </Menu.Item>
