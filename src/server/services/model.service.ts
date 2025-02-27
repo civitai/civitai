@@ -18,7 +18,7 @@ import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { requestScannerTasks } from '~/server/jobs/scan-files';
 import { logToAxiom } from '~/server/logging/client';
 import { modelMetrics } from '~/server/metrics';
-import { dataForModelsCache, userContentOverviewCache } from '~/server/redis/caches';
+import { dataForModelsCache, modelTagCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
@@ -51,10 +51,7 @@ import {
   modelsSearchIndex,
 } from '~/server/search-index';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import {
-  associatedResourceSelect,
-  modelSearchIndexSelect,
-} from '~/server/selectors/model.selector';
+import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
@@ -1410,6 +1407,7 @@ export const upsertModel = async (
       });
     }
 
+    await modelTagCache.bust(result.id);
     await preventReplicationLag('model', result.id);
     return { ...result, meta: modelMeta };
   } else {
@@ -1495,6 +1493,7 @@ export const upsertModel = async (
 
     // Update search index if listing changes
     if (tagsOnModels || poiChanged || minorChanged) {
+      await modelTagCache.bust(result.id);
       await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     }
 
@@ -2090,6 +2089,8 @@ export const setModelsCategory = async ({
         AND m.id IN (${models})
       ON CONFLICT ("modelId", "tagId") DO NOTHING;
     `;
+
+    await modelTagCache.bust(modelIds);
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);

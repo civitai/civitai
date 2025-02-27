@@ -191,23 +191,23 @@ export const getTags = async ({
            ${isCategory}
            ${isNsfwLevel}
     FROM "Tag" t
-      ${Prisma.raw(orderBy.includes('r.') ? `LEFT JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
+      ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
   `;
 
   const models: Record<number, number[]> = {};
-  if (withModels) {
-    const modelTags = await dbRead.tagsOnModels.findMany({
-      where: { tagId: { in: tagsRaw.map((t) => t.id) } },
-      select: { tagId: true, modelId: true },
-    });
-    for (const { tagId, modelId } of modelTags) {
-      if (!models[tagId]) models[tagId] = [];
-      models[tagId].push(modelId);
-    }
-  }
+  // if (withModels) {
+  //   const modelTags = await dbRead.tagsOnModels.findMany({
+  //     where: { tagId: { in: tagsRaw.map((t) => t.id) } },
+  //     select: { tagId: true, modelId: true },
+  //   });
+  //   for (const { tagId, modelId } of modelTags) {
+  //     if (!models[tagId]) models[tagId] = [];
+  //     models[tagId].push(modelId);
+  //   }
+  // }
 
   const items = tagsRaw.map((t) =>
     removeEmpty({

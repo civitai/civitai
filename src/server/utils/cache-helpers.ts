@@ -70,7 +70,7 @@ export function createCachedArray<T extends object>({
   debounceTime = 10,
   cacheNotFound = true,
   dontCacheFn,
-  staleWhileRevalidate = true,
+  staleWhileRevalidate = false,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
@@ -163,7 +163,11 @@ export function createCachedArray<T extends object>({
 
     if (appendFn) await appendFn(results);
 
-    return [...results];
+    return [...results].map((x) => {
+      // Remove cachedAt from result since this is an internal value
+      if ('cachedAt' in x) delete x.cachedAt;
+      return x;
+    });
   }
 
   async function bust(id: number | number[], options: { debounceTime?: number } = {}) {
