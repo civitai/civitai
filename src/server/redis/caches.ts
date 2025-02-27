@@ -19,7 +19,12 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { ProfileImage } from '~/server/selectors/image.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
-import { CachedObject, createCachedObject } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  CachedObject,
+  createCachedObject,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
@@ -580,4 +585,37 @@ export const thumbnailCache = createCachedObject<{
   },
   dontCacheFn: (data) => !data.nsfwLevel,
   ttl: CacheTTL.day,
+});
+
+type ImageMetricLookup = {
+  imageId: number;
+  reactionLike: number | null;
+  reactionHeart: number | null;
+  reactionLaugh: number | null;
+  reactionCry: number | null;
+  comment: number | null;
+  collection: number | null;
+  buzz: number | null;
+};
+export const imageMetricsCache = createCachedObject<ImageMetricLookup>({
+  key: REDIS_KEYS.CACHES.IMAGE_METRICS,
+  idKey: 'imageId',
+  lookupFn: async (ids) => {
+    const imageMetric = await dbRead.entityMetricImage.findMany({
+      where: { imageId: { in: ids } },
+      select: {
+        imageId: true,
+        reactionLike: true,
+        reactionHeart: true,
+        reactionLaugh: true,
+        reactionCry: true,
+        // reactionTotal: true,
+        comment: true,
+        collection: true,
+        buzz: true,
+      },
+    });
+    return Object.fromEntries(imageMetric.map((x) => [x.imageId, x]));
+  },
+  ttl: CacheTTL.sm,
 });
