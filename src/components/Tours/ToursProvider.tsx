@@ -166,6 +166,17 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     // Set initial step based on user settings
     const currentStep = currentTourData?.currentStep ?? 0;
     setState((old) => ({ ...old, currentStep, returnUrl: path }));
+
+    // handle initialization of the active tour
+    switch (tourKey) {
+      case 'content-generation':
+      case 'remix-content-generation':
+        generationPanel.setView('generate');
+        generationPanel.open();
+        break;
+      default:
+        break;
+    }
   }, [isInitialLoading, tourKey]);
 
   const completed = currentTourData?.completed;
