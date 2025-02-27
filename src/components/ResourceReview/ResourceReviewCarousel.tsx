@@ -84,14 +84,7 @@ export function ResourceReviewCarousel({
                       <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
 
                       <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-                        <AspectRatio
-                          ratio={1}
-                          sx={(theme) => ({
-                            width: '100%',
-                            borderRadius: theme.radius.md,
-                            overflow: 'hidden',
-                          })}
-                        >
+                        <div className="relative aspect-square">
                           {!safe ? (
                             <MediaHash {...image} />
                           ) : (
@@ -105,7 +98,7 @@ export function ResourceReviewCarousel({
                               style={{ width: '100%', objectPosition: 'top' }}
                             />
                           )}
-                        </AspectRatio>
+                        </div>
                       </RoutedDialogLink>
                       <Reactions
                         entityId={image.id}
