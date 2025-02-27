@@ -54,7 +54,7 @@ export default function Confirm() {
   const confirmEmail = (
     <Container size="xs">
       <Stack>
-        <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Supporter ❤️`}</Text>
+        <Text size="xl" weight={500} ta="center">{`Thanks for being a Civitai Member ❤️`}</Text>
         <Text>{`To complete your application, please enter the email that you used when you applied for the Artist in Residence program`}</Text>
         <Stack spacing={5}>
           <TextInput
@@ -93,11 +93,11 @@ export default function Confirm() {
         </Alert>
         <Button
           component="a"
-          href="https://air.civitai.com/application-success"
+          href="https://studio.civitai.com/cohort-application/success"
           rightIcon={<IconArrowRight />}
           size="lg"
         >
-          Return to AiR Application
+          Return to Studio Cohort Application
         </Button>
       </Stack>
     </Container>
@@ -106,7 +106,7 @@ export default function Confirm() {
   const subscriptionsLoading = subscriptionLoading || productsLoading;
   const notMember = (
     <Stack>
-      <Text size="xl" weight={500} ta="center">{`Become a Supporter today!`}</Text>
+      <Text size="xl" weight={500} ta="center">{`Become a Member today!`}</Text>
       {subscriptionsLoading ? (
         <Loader />
       ) : (
@@ -127,7 +127,7 @@ export default function Confirm() {
   return (
     <Container>
       <Title order={1} align="center" mb="lg">
-        AiR Supporter Confirmation
+        Studio Member Confirmation
       </Title>
       {!isMember ? notMember : isConfirmed ? confirmed : confirmEmail}
     </Container>

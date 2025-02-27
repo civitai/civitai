@@ -26,6 +26,7 @@ import {
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
+  userFollowsCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -523,6 +524,7 @@ export const toggleFollowUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
+  await userFollowsCache.bust(userId);
   return true;
 };
 
@@ -553,6 +555,7 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
+  await userFollowsCache.bust(userId);
   return true;
 };
 

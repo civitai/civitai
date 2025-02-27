@@ -4,7 +4,7 @@ import { CacheTTL } from '~/server/common/constants';
 import { ImageSort, NsfwLevel } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { getUserFollows, tagIdsForImagesCache } from '~/server/redis/caches';
 import { getPeriods } from '~/server/utils/enum-helpers';
 import {
   Availability,
@@ -332,11 +332,7 @@ export async function queryImages({
 
   // #region [followed user images]
   if (user && followed) {
-    const followedUsers = await dbRead.userEngagement.findMany({
-      where: { userId, type: 'Follow' },
-      select: { targetUserId: true },
-    });
-    const userIds = followedUsers.map((x) => x.targetUserId);
+    const userIds = await getUserFollows(user.id);
     if (userIds.length) {
       cacheTime = 0;
       AND.push(Prisma.sql`i."userId" IN (${Prisma.join(userIds)})`);

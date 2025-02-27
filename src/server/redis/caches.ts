@@ -1,4 +1,16 @@
 import { Prisma } from '@prisma/client';
+import dayjs from 'dayjs';
+import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { ProfileImage } from '~/server/selectors/image.selector';
+import type { EntityAccessDataType } from '~/server/services/common.service';
+import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
+import { CachedObject, createCachedObject } from '~/server/utils/cache-helpers';
 import {
   Availability,
   CollectionReadConfiguration,
@@ -9,19 +21,7 @@ import {
   TagSource,
   TagType,
 } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
-import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ProfileImage } from '~/server/selectors/image.selector';
-import type { EntityAccessDataType } from '~/server/services/common.service';
-import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
-import { CachedObject, createCachedObject } from '~/server/utils/cache-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -84,6 +84,7 @@ type UserCosmeticLookup = {
 export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   key: REDIS_KEYS.CACHES.USER_COSMETICS,
   idKey: 'userId',
+  staleWhileRevalidate: false, // To avoid delay in creator seeing new cosmetics
   lookupFn: async (ids) => {
     const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
       where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
@@ -126,6 +127,7 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
 export const profilePictureCache = createCachedObject<ProfileImage>({
   key: REDIS_KEYS.CACHES.PROFILE_PICTURES,
   idKey: 'userId',
+  staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
   lookupFn: async (ids) => {
     const profilePictures = await dbRead.$queryRaw<ProfileImage[]>`
       SELECT
@@ -157,6 +159,7 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
   ttl: CacheTTL.sm,
+  // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
   lookupFn: async (ids) => {
     const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
 
@@ -193,6 +196,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
       cacheNotFound: false,
+      staleWhileRevalidate: false,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
           SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
@@ -326,8 +330,8 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
         mv.id AS "entityId",
         mmv."userId" AS "userId",
         -- Model availability prevails if it's private
-        CASE 
-          WHEN mmv.availability = 'Private' 
+        CASE
+          WHEN mmv.availability = 'Private'
             THEN mmv."availability"
           ELSE mv."availability"
         END AS "availability",
@@ -581,3 +585,63 @@ export const thumbnailCache = createCachedObject<{
   dontCacheFn: (data) => !data.nsfwLevel,
   ttl: CacheTTL.day,
 });
+
+type ImageMetricLookup = {
+  imageId: number;
+  reactionLike: number | null;
+  reactionHeart: number | null;
+  reactionLaugh: number | null;
+  reactionCry: number | null;
+  comment: number | null;
+  collection: number | null;
+  buzz: number | null;
+};
+export const imageMetricsCache = createCachedObject<ImageMetricLookup>({
+  key: REDIS_KEYS.CACHES.IMAGE_METRICS,
+  idKey: 'imageId',
+  lookupFn: async (ids) => {
+    const imageMetric = await dbRead.entityMetricImage.findMany({
+      where: { imageId: { in: ids } },
+      select: {
+        imageId: true,
+        reactionLike: true,
+        reactionHeart: true,
+        reactionLaugh: true,
+        reactionCry: true,
+        // reactionTotal: true,
+        comment: true,
+        collection: true,
+        buzz: true,
+      },
+    });
+    return Object.fromEntries(imageMetric.map((x) => [x.imageId, x]));
+  },
+  ttl: CacheTTL.sm,
+});
+
+type UserFollowsCacheItem = {
+  userId: number;
+  follows: number[];
+};
+export const userFollowsCache = createCachedObject<UserFollowsCacheItem>({
+  key: REDIS_KEYS.CACHES.USER_FOLLOWS,
+  idKey: 'userId',
+  lookupFn: async (ids) => {
+    const userFollows = await dbRead.userEngagement.findMany({
+      where: { userId: { in: ids }, type: 'Follow' },
+      select: { userId: true, targetUserId: true },
+    });
+    const result = userFollows.reduce((acc, { userId, targetUserId }) => {
+      acc[userId] ??= { userId, follows: [] };
+      acc[userId].follows.push(targetUserId);
+      return acc;
+    }, {} as Record<number, UserFollowsCacheItem>);
+    return result;
+  },
+  ttl: CacheTTL.day,
+  staleWhileRevalidate: false,
+});
+export async function getUserFollows(userId: number) {
+  const userFollows = await userFollowsCache.fetch(userId);
+  return userFollows[userId]?.follows ?? [];
+}
