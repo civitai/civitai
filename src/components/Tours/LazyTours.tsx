@@ -79,11 +79,17 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
             backgroundColor: 'rgba(255, 255, 255, 0.3)',
           },
         }}
+        floaterProps={{
+          styles: {
+            floater: { position: 'absolute', top: 0 },
+          },
+        }}
         locale={{
           nextLabelWithProgress: 'Next',
         }}
         run={run}
         tooltipComponent={TourPopover}
+        disableScrollParentFix
         scrollToFirstStep
         disableScrolling
         showSkipButton

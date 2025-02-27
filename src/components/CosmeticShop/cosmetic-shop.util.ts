@@ -17,6 +17,7 @@ import {
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { stringArray } from '~/utils/zod-helpers';
+import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 export const useQueryCosmeticShopItemsPaged = (
   filters?: Partial<GetPaginatedCosmeticShopItemInput>,
@@ -283,7 +284,7 @@ export const useShopLastViewed = () => {
     cosmeticStoreLastViewed: null,
   };
 
-  const updateUserSettings = trpc.user.setSettings.useMutation({
+  const updateUserSettings = useMutateUserSettings({
     onError(_error, _payload, context) {
       // Simply ignore really. We don't want to show an error notification for this.
     },

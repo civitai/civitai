@@ -66,7 +66,7 @@ export const modelPageTour: StepWithData[] = [
     disableBeacon: true,
     spotlightClicks: true,
     disableOverlayClose: true,
-    spotlightPadding: 16,
+    spotlightPadding: 10,
     styles: {
       spotlight: {
         animation: 'shadowGlow 2s infinite',
@@ -98,7 +98,7 @@ export const welcomeTour: StepWithData[] = [
     disableBeacon: true,
     showProgress: false,
     hideFooter: true,
-    spotlightPadding: 16,
+    spotlightPadding: 10,
     spotlightClicks: true,
     disableOverlayClose: true,
     styles: {

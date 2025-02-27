@@ -79,10 +79,12 @@ export const contentGenerationTour: StepWithData[] = [
     spotlightClicks: true,
     disableCloseOnEsc: true,
     disableOverlayClose: true,
-    spotlightPadding: 16,
+    spotlightPadding: 10,
     data: {
       onNext: async () => {
-        await waitForElement({ selector: '[data-tour="gen:submit"]' }).catch(() => null);
+        await waitForElement({ selector: '[data-tour="gen:submit"]', interval: 1000 }).catch(
+          () => null
+        );
       },
     },
     styles: {
@@ -163,7 +165,7 @@ export const contentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightClicks: true,
-    spotlightPadding: 16,
+    spotlightPadding: 10,
     data: {
       onBeforeStart: async () => {
         generationPanel.setView('feed');
@@ -303,7 +305,7 @@ export const remixContentGenerationTour: StepWithData[] = [
     disableCloseOnEsc: true,
     disableOverlayClose: true,
     spotlightClicks: true,
-    spotlightPadding: 16,
+    spotlightPadding: 10,
     data: {
       onBeforeStart: async () => {
         generationPanel.setView('feed');

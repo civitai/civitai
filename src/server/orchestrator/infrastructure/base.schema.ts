@@ -16,10 +16,10 @@ export const negativePromptSchema = z
 export type SourceImageProps = z.input<typeof sourceImageSchema>;
 export const sourceImageSchema = z.object({
   url: z.string().startsWith('https://orchestration').includes('.civitai.com'),
-  width: z.number().max(maxUpscaleSize),
-  height: z.number().max(maxUpscaleSize),
-  upscaleWidth: z.number().max(maxUpscaleSize).optional(),
-  upscaleHeight: z.number().max(maxUpscaleSize).optional(),
+  width: z.number(),
+  height: z.number(),
+  upscaleWidth: z.number().optional(),
+  upscaleHeight: z.number().optional(),
 });
 
 export const seedSchema = z.number().optional();

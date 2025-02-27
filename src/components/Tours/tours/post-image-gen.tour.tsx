@@ -1,4 +1,3 @@
-import { generationPanel } from '~/store/generation.store';
 import { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
 
@@ -8,14 +7,7 @@ export const postGenerationTour: StepWithData[] = [
     title: 'Add a Title',
     content:
       'Add a title to your post to give it some context. This step is optional but helps personalize your creation.',
-    hideBackButton: true,
     disableBeacon: true,
-    data: {
-      onPrev: async () => {
-        generationPanel.open();
-        await waitForElement({ selector: '[data-tour="gen:select"]' }).catch(() => null);
-      },
-    },
   },
   {
     target: '[data-tour="post:tag"]',
@@ -34,8 +26,9 @@ export const postGenerationTour: StepWithData[] = [
       onNext: async () => {
         await waitForElement({
           selector: '[data-tour="post:rate-resource"]',
-          timeout: 30000,
-        }).catch(() => null);
+          timeout: 10000,
+          interval: 1000,
+        });
       },
     },
   },

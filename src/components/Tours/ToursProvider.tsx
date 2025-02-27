@@ -18,6 +18,7 @@ import { TourKey, tourSteps } from '~/components/Tours/tours';
 import { trpc } from '~/utils/trpc';
 import dynamic from 'next/dynamic';
 import { StoreHelpers } from 'react-joyride';
+import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 const LazyTours = dynamic(() => import('~/components/Tours/LazyTours'));
 
@@ -57,7 +58,6 @@ export const useTourContext = () => {
 };
 
 export function ToursProvider({ children }: { children: React.ReactNode }) {
-  const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const searchParams = useSearchParams();
   const path = usePathname();
@@ -84,11 +84,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     enabled: !!currentUser,
   });
 
-  const updateUserSettingsMutation = trpc.user.setSettings.useMutation({
-    onSuccess: (result) => {
-      queryUtils.user.getSettings.setData(undefined, (old) => ({ ...old, ...result }));
-    },
-  });
+  const updateUserSettingsMutation = useMutateUserSettings();
 
   const getCurrentTourData = useCallback(
     (key?: TourKey | null) =>
@@ -119,7 +115,7 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         currentStep: opts?.step ?? old.currentStep,
       }));
 
-      if (opts?.step != null && activeTour && !currentTourData?.completed) {
+      if (opts?.step != null && activeTour && !alreadyCompleted) {
         const tour = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
         if (currentUser) updateUserSettingsMutation.mutate({ tour });
         setLocalTour((old) => ({ ...old, ...tour }));
@@ -138,11 +134,16 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
   const closeTour = useCallback<TourContextState['closeTour']>(
     (opts) => {
       if (state.activeTour) {
-        const tour = {
-          [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
-        };
-        if (currentUser) updateUserSettingsMutation.mutate({ tour });
-        setLocalTour((old) => ({ ...old, ...tour }));
+        const currentTourData = getCurrentTourData(state.activeTour);
+        const alreadyCompleted = currentTourData?.completed ?? false;
+
+        if (!alreadyCompleted) {
+          const tour = {
+            [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
+          };
+          if (currentUser) updateUserSettingsMutation.mutate({ tour });
+          setLocalTour((old) => ({ ...old, ...tour }));
+        }
       }
 
       setState((old) => ({
@@ -169,11 +170,8 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
     // handle initialization of the active tour
     switch (tourKey) {
       case 'content-generation':
-        generationPanel.setView(currentStep > 6 ? 'feed' : 'generate');
-        generationPanel.open();
-        break;
       case 'remix-content-generation':
-        generationPanel.setView(currentStep > 5 ? 'feed' : 'generate');
+        generationPanel.setView('generate');
         generationPanel.open();
         break;
       default:

@@ -365,6 +365,7 @@ async function getMediaGenerationData({
           cfgScale: meta.cfgScale !== 0 ? meta.cfgScale : undefined,
           steps: meta.steps !== 0 ? meta.steps : undefined,
           seed: meta.seed !== 0 ? meta.seed : undefined,
+          sampler: meta.sampler,
           width,
           height,
           aspectRatio,
@@ -689,6 +690,7 @@ export async function getResourceData({
 
       let substituteData;
 
+      // TODO - review hasAccess - if private, use a substitute, if early access, don't use substitute
       if (substitute) {
         const { model, availability, ...sub } = substitute;
         substituteData = removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess });

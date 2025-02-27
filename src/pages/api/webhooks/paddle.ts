@@ -123,7 +123,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case EventName.ProductUpdated: {
             const data = event.data;
             const meta = data.customData as SubscriptionProductMetadata;
-            if (!meta?.tier) {
+            if (!meta?.tier && !('one_time' in meta)) {
               break;
             }
 

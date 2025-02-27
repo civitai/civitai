@@ -67,6 +67,8 @@ import { ErrorBoundary } from '~/components/ErrorBoundary/ErrorBoundary';
 import { getToken } from 'next-auth/jwt';
 import { civitaiTokenCookieName } from '~/libs/auth';
 import { ToursProvider } from '~/components/Tours/ToursProvider';
+import { UserSettingsSchema } from '~/server/schema/user.schema';
+import { env } from '~/env/client';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -86,6 +88,7 @@ type CustomAppProps = {
   cookies: ParsedCookies;
   flags?: FeatureAccess;
   seed: number;
+  settings: UserSettingsSchema;
   canIndex: boolean;
   hasAuthCookie: boolean;
 }>;
@@ -101,6 +104,7 @@ function MyApp(props: CustomAppProps) {
       seed = Date.now(),
       canIndex,
       hasAuthCookie,
+      settings,
       ...pageProps
     },
   } = props;
@@ -125,7 +129,7 @@ function MyApp(props: CustomAppProps) {
   );
 
   return (
-    <AppProvider seed={seed} canIndex={canIndex}>
+    <AppProvider seed={seed} canIndex={canIndex} settings={settings}>
       <Head>
         <title>Civitai | Share your models</title>
       </Head>
@@ -245,7 +249,7 @@ function MyApp(props: CustomAppProps) {
 
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
-  const request = appContext.ctx.req;
+  const { req: request } = appContext.ctx;
   if (!request) return initialProps;
 
   // const url = appContext.ctx?.req?.url;
@@ -267,10 +271,13 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   });
 
   const session = token?.user ? { user: token.user } : null;
+
+  const settings = await fetch(`${env.NEXT_PUBLIC_BASE_URL}/api/user/settings`, {
+    headers: { ...request.headers } as HeadersInit,
+  }).then((res) => res.json() as UserSettingsSchema);
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;
-    // (appContext.ctx.req as any)['flags'] = flags;
   }
 
   return {
@@ -281,6 +288,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       canIndex,
       // cookieKeys: Object.keys(cookies),
       session,
+      settings,
       flags,
       seed: Date.now(),
       hasAuthCookie,
