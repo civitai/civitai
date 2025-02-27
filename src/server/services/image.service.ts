@@ -441,7 +441,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
       tags: {
         where: { disabledAt: null },
         select: {
-          source: true,
+          confidence: true,
           tag: {
             select: simpleTagSelect,
           },
@@ -453,9 +453,9 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
   return image
     ? {
         ...image,
-        tags: image.tags.map(({ source, ...tag }) => ({
+        tags: image.tags.map(({ confidence, ...tag }) => ({
           ...tag,
-          automated: source !== TagSource.User,
+          automated: confidence !== 0,
         })),
       }
     : undefined;

@@ -45,7 +45,7 @@ async function applyUpvotes() {
     SELECT
       "tagId",
       "imageId",
-      ${-1}
+      ${0}
     FROM over_threshold
     ON CONFLICT ("tagId", "imageId") DO NOTHING
     RETURNING "tagId", "imageId";

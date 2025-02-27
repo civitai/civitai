@@ -491,7 +491,7 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
       SELECT i."id",
              t."id",
-             ${-1}
+             ${0}
       FROM "Image" i
              JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
       WHERE i."id" IN (${entityIds.join(', ')})
