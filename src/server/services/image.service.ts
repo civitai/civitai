@@ -29,6 +29,7 @@ import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
+  getUserFollows,
   imageMetaCache,
   imageMetadataCache,
   imagesForModelVersionsCache,
@@ -894,11 +895,7 @@ export const getAllImages = async (
   // Filter only followed users
   // [x]
   if (userId && followed) {
-    const followedUsers = await dbRead.userEngagement.findMany({
-      where: { userId, type: 'Follow' },
-      select: { targetUserId: true },
-    });
-    const userIds = followedUsers.map((x) => x.targetUserId);
+    const userIds = await getUserFollows(userId);
     if (userIds.length) {
       // cacheTime = 0;
       AND.push(Prisma.sql`i."userId" IN (${Prisma.join(userIds)})`);
@@ -2483,6 +2480,7 @@ export const getImagesForModelVersion = async ({
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const query = Prisma.sql`
+    -- getImagesForModelVersion
     WITH targets AS (
       SELECT
         id,
