@@ -67,7 +67,9 @@ const headings = [
   },
 ];
 
-export default function Safety({ content }: InferGetServerSidePropsType<typeof getStaticProps>) {
+export default function Safety({
+  content,
+}: InferGetServerSidePropsType<typeof getServerSideProps>) {
   const { classes } = useStyles();
 
   return (
