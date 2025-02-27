@@ -17,7 +17,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: () => ({
       message: `Your account has been verified and approved for payments! You can now start earning money from your content!`,
-      url: `/creators-program`,
+      url: `/creator-program`,
     }),
   },
   'creators-program-rejected-stripe': {
@@ -26,7 +26,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: () => ({
       message: `We're sorry, but it looks like your stripe account has been rejected for payments. If you need more information, you can contact support.`,
-      url: `/creators-program`,
+      url: `/creator-program`,
     }),
   },
   'creators-program-withdrawal-approved': {

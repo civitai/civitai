@@ -110,7 +110,7 @@ export const CreatorsProgramV2 = () => {
   }
 
   return (
-    <div className="flex flex-col gap-5">
+    <div className="flex flex-col gap-5" id="creator-program">
       <div className="flex flex-col gap-2">
         <div className="flex items-center gap-2">
           <h2 className="text-2xl font-bold">Get Paid</h2>
@@ -118,7 +118,7 @@ export const CreatorsProgramV2 = () => {
         </div>
         <div className="flex gap-2">
           <p>Generating a lot of Buzz? Bank it to earn cash!</p>
-          <Anchor href="/creators-program">Learn more</Anchor>
+          <Anchor href="/creator-program">Learn more</Anchor>
         </div>
       </div>
 

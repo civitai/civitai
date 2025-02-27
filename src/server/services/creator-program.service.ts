@@ -432,6 +432,12 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 
+    if (ids.length > 10) {
+      // Safeguard due to the buzz account fetch. So far this is not a concern as this cache is only called
+      // with 1 single user, however, worth keeping in mind.
+      throw new Error('Too many users to fetch');
+    }
+
     const statuses = await dbWrite.$queryRawUnsafe<
       { userId: number; status: 'pending' | 'ready'; withdrawalMethod?: CashWithdrawalMethod }[]
     >(`
@@ -443,17 +449,23 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
       WHERE "userId" IN (${ids.join(',')});
     `);
 
-    // TODO creators program: Need a way to get this from the Buzz service so that we don't need to wait for things to settle in ClickHouse
-    const balances = await clickhouse.$query<{ userId: number; pending: number; ready: number }>`
-      SELECT
-        toAccountId as userId,
-        SUM(if(toAccountType = 'cash-pending', if(type = 'withdrawal', -1, 1) * amount, 0)) as pending,
-        SUM(if(toAccountType = 'cash-settled', if(type = 'withdrawal', -1, 1) * amount, 0)) as ready
-      FROM buzzTransactions
-      WHERE toAccountType IN ('cash-pending', 'cash-settled')
-      AND (toAccountId IN (${ids}) OR fromAccountId IN (${ids}))
-      GROUP BY userId;
-    `;
+    const buzzAccountBalances = await Promise.all(
+      ids.map(async (id) => {
+        const pending = await getUserBuzzAccount({
+          accountId: id,
+          accountType: 'cashpending',
+        });
+        const settled = await getUserBuzzAccount({
+          accountId: id,
+          accountType: 'cashsettled',
+        });
+        return {
+          id,
+          pending: pending.balance ?? 0,
+          ready: settled.balance ?? 0,
+        };
+      })
+    );
 
     const withdrawals = await dbWrite.$queryRawUnsafe<{ userId: number; amount: number }[]>(`
       SELECT
@@ -473,14 +485,14 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
     return Object.fromEntries(
       ids.map((id) => {
         const status = statuses.find((s) => s.userId === id)?.status ?? 'pending';
-        const { pending, ready } = balances.find((b) => b.userId === id) ?? {
-          pending: 0,
-          ready: 0,
-        };
         const withdrawn = withdrawals.find((w) => w.userId === id)?.amount ?? 0;
         const paymentMethod = (paymentMethods.find((m) => m.userId === id)?.method ??
           CashWithdrawalMethod.ACH) as CashWithdrawalMethod;
-        return [id, { id, status, pending, ready, withdrawn, paymentMethod }];
+        const { ready, pending } = buzzAccountBalances.find((b) => b.id === id) ?? {
+          ready: 0,
+          pending: 0,
+        };
+        return [id, { id, status, withdrawn, paymentMethod, ready, pending }];
       })
     );
   },
@@ -490,7 +502,8 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
       item.withdrawalFee = WITHDRAWAL_FEES[item.paymentMethod];
     }
   },
-  ttl: CacheTTL.month,
+  // Users may be extracting / managing their cash often, so we'll keep this cache short.
+  ttl: CacheTTL.day,
 });
 export async function getCash(userId: number) {
   return (await userCashCache.fetch(userId))[userId];
