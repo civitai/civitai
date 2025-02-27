@@ -67,14 +67,14 @@ function CreatorsClubV1() {
               Introducing the
             </Text>
             <br />
-            Civitai Creator Program: Evolved!
+             Civitai Creator Program: Evolved!
           </Title>
 
           <Text size={sizing.header.subtitle} lh={1.3} mb="xs">
             The Civitai Creator Program is our way of supporting our talented Creator community by
             providing a path to earn from their work. Creators earn Buzz by developing and sharing
             models, and the Creator Program allows them to turn their contributions into real
-            earnings!
+            earnings! 
           </Text>
           <Grid>
             <Grid.Col span={12}>

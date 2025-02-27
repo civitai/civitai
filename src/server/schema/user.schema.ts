@@ -201,6 +201,10 @@ const tourSettingsSchema = z.record(
   })
 );
 
+const generationSettingsSchema = z.object({
+  advancedMode: z.boolean().optional(),
+});
+
 export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
@@ -210,7 +214,7 @@ export const userSettingsSchema = z.object({
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
   airEmail: z.string().email().optional(),
-  creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
+  creatorsProgramCodeOfConductAccepted: z.union([z.boolean().optional(), z.date().optional()]),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
@@ -220,6 +224,7 @@ export const userSettingsSchema = z.object({
     .partial()
     .optional(),
   tourSettings: tourSettingsSchema.optional(),
+  generation: generationSettingsSchema.optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -232,10 +237,12 @@ export const toggleFeatureInputSchema = z.object({
 
 export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
 export const setUserSettingsInput = z.object({
-  creatorsProgramCodeOfConductAccepted: z.boolean().optional(),
+  creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
   tour: tourSettingsSchema.optional(),
+  generation: generationSettingsSchema.optional(),
+  creatorProgramToSAccepted: z.date().optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });

@@ -88,16 +88,18 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
 export const getDefaultModelVersion = async ({
   modelId,
   modelVersionId,
+  userId,
 }: {
   modelId: number;
   modelVersionId?: number;
+  userId?: number;
 }) => {
   const db = await getDbWithoutLag('model', modelId);
   const result = await db.model.findUnique({
     where: { id: modelId },
     select: {
       modelVersions: {
-        take: 1,
+        take: 10,
         where: modelVersionId ? { id: modelVersionId } : undefined,
         orderBy: { index: 'asc' },
         select: {
@@ -110,8 +112,12 @@ export const getDefaultModelVersion = async ({
       },
     },
   });
+
   if (!result) throw throwNotFoundError();
-  return result.modelVersions[0];
+
+  // Attempt to return the first published version. Otherwise, return whatever is available.
+  const published = result.modelVersions.find((v) => v.status === ModelStatus.Published);
+  return published ?? result.modelVersions[0];
 };
 
 export const toggleModelVersionEngagement = async ({

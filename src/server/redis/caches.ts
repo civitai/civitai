@@ -303,6 +303,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
   idKey: 'entityId',
   ttl: CacheTTL.day,
+  cacheNotFound: false,
   dontCacheFn: (data) => {
     // We only wanna cache public models. Otherwise, we better confirm every time. It's a safer bet.
     // Also, only cache it if it's been published for more than an hour.

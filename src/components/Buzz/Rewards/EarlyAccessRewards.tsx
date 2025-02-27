@@ -121,7 +121,7 @@ export const EarlyAccessRewards = () => {
         <Title order={3}>Your early access models</Title>
         <Stack spacing={0}>
           <Text>
-            As a member of the Civitai Creators Program, your models in early access will award you
+            As a member of the Civitai Creator Program, your models in early access will award you
             buzz per unique download.
           </Text>
           <Text>

@@ -18,6 +18,7 @@ import { updateCollectionItemRandomId } from '~/server/jobs/collection-item-rand
 import { checkImageExistence } from '~/server/jobs/confirm-image-existence';
 import { confirmMutes } from '~/server/jobs/confirm-mutes';
 import { countReviewImages } from '~/server/jobs/count-review-images';
+import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { updateCreatorResourceCompensation } from '~/server/jobs/deliver-creator-compensation';
@@ -132,6 +133,7 @@ export const jobs: Job[] = [
   contestCollectionVimeoUpload,
   dummyJob,
   retroactiveHashBlocking,
+  ...creatorProgramJobs,
 ];
 
 const log = createLogger('jobs', 'green');
