@@ -70,7 +70,7 @@ export function createCachedArray<T extends object>({
   debounceTime = 10,
   cacheNotFound = true,
   dontCacheFn,
-  staleWhileRevalidate = false,
+  staleWhileRevalidate = true,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
@@ -184,7 +184,7 @@ export function createCachedArray<T extends object>({
     log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
   }
 
-  async function invalidate(id: number | number[]) {
+  async function invalidate(id: number | number[], options: { debounceTime?: number } = {}) {
     const ids = Array.isArray(id) ? id : [id];
     if (ids.length === 0) return;
 
@@ -197,7 +197,7 @@ export function createCachedArray<T extends object>({
     }
 
     // Invalidate cache
-    const invaliDate = new Date(0);
+    const invaliDate = new Date(Date.now() + (options.debounceTime ?? debounceTime) * 1000);
     const updates = cacheResults.filter(
       (x) => x !== null && 'cachedAt' in x && x.cachedAt !== invaliDate
     ) as T[];
