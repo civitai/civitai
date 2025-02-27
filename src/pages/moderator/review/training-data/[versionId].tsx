@@ -1,5 +1,5 @@
-import { Button, Loader, Popover, Text } from '@mantine/core';
-import { IconInfoSquareRounded } from '@tabler/icons-react';
+import { Button, Loader, Popover, Text, ActionIcon } from '@mantine/core';
+import { IconInfoSquareRounded, IconExternalLink } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useEffect, useRef, useState } from 'react';
 import { Page } from '~/components/AppLayout/Page';
@@ -14,6 +14,7 @@ import { fetchBlob } from '~/utils/file-utils';
 import { getJSZip } from '~/utils/lazy';
 import { unzipTrainingData } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
+import { NextLink } from '~/components/NextLink/NextLink';
 
 function ReviewTrainingData() {
   const router = useRouter();
@@ -104,9 +105,18 @@ function ReviewTrainingData() {
   ) : (
     <>
       <div className="container flex max-w-lg justify-end gap-3 p-3">
+        <ActionIcon
+          component={NextLink}
+          href={`/models/${data?.modelId}?modelVersionId=${versionId}`}
+          target="_blank"
+        >
+          <IconExternalLink />
+        </ActionIcon>
         <Popover width={300} withArrow withinPortal shadow="sm">
           <Popover.Target>
-            <IconInfoSquareRounded size={16} style={{ cursor: 'pointer', opacity: 0.7 }} />
+            <ActionIcon>
+              <IconInfoSquareRounded />
+            </ActionIcon>
           </Popover.Target>
           <Popover.Dropdown>
             <DescriptionTable items={details} />
