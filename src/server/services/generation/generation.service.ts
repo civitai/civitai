@@ -690,6 +690,7 @@ export async function getResourceData({
 
       let substituteData;
 
+      // TODO - review hasAccess - if private, use a substitute, if early access, don't use substitute
       if (substitute) {
         const { model, availability, ...sub } = substitute;
         substituteData = removeNulls({ ...sub, canGenerate: sub.covered && sub.hasAccess });

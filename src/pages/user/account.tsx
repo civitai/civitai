@@ -1,5 +1,4 @@
 import { Container, Stack, Title, Text } from '@mantine/core';
-import { getProviders } from 'next-auth/react';
 import React from 'react';
 
 import { AccountsCard } from '~/components/Account/AccountsCard';
@@ -19,8 +18,9 @@ import { PaymentMethodsCard } from '~/components/Account/PaymentMethodsCard';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { ContentControlsCard } from '~/components/Account/ContentControlsCard';
 import { RefreshSessionCard } from '~/components/Account/RefreshSessionCard';
+import { GenerationSettingsCard } from '~/components/Account/GenerationSettingsCard';
 
-export default function Account({ providers }: Props) {
+export default function Account() {
   const { apiKeys, canViewNsfw } = useFeatureFlags();
   const currentUser = useCurrentUser();
 
@@ -41,6 +41,7 @@ export default function Account({ providers }: Props) {
           <SocialProfileCard />
           <SettingsCard />
           <ContentControlsCard />
+          <GenerationSettingsCard />
           {canViewNsfw && <ModerationCard />}
           <AccountsCard />
           <UserPaymentConfigurationCard />
@@ -57,10 +58,6 @@ export default function Account({ providers }: Props) {
   );
 }
 
-type Props = {
-  providers: AsyncReturnType<typeof getProviders>;
-};
-
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
@@ -73,14 +70,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    const providers = await getProviders();
     await ssg?.account.getAll.prefetch();
     if (session?.user?.subscriptionId) await ssg?.subscriptions.getUserSubscription.prefetch();
-
-    return {
-      props: {
-        providers,
-      },
-    };
   },
 });

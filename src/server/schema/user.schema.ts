@@ -201,6 +201,10 @@ const tourSettingsSchema = z.record(
   })
 );
 
+const generationSettingsSchema = z.object({
+  advancedMode: z.boolean().optional(),
+});
+
 export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
@@ -220,6 +224,7 @@ export const userSettingsSchema = z.object({
     .partial()
     .optional(),
   tourSettings: tourSettingsSchema.optional(),
+  generation: generationSettingsSchema.optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;
@@ -236,6 +241,7 @@ export const setUserSettingsInput = z.object({
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
   tour: tourSettingsSchema.optional(),
+  generation: generationSettingsSchema.optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });
