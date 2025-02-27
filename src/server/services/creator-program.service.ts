@@ -444,7 +444,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
       SELECT
         "userId",
         IIF("tipaltiAccountStatus" = 'Active', 'ready'::text, 'pending'::text) as status,
-        "tipaltiWithdrawalMethod" as withdrawalMethod
+        COALESCE("tipaltiWithdrawalMethod", 'NoPM') as "withdrawalMethod"
       FROM "UserPaymentConfiguration" uc
       WHERE "userId" IN (${ids.join(',')});
     `);
@@ -470,7 +470,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
     const withdrawals = await dbWrite.$queryRawUnsafe<{ userId: number; amount: number }[]>(`
       SELECT
         "userId",
-        SUM(amount) as amount
+        SUM(amount)::INT as amount
       FROM "CashWithdrawal" cw
       WHERE "userId" IN (${ids.join(',')})
         AND status NOT IN ('Rejected', 'Canceled', 'FailedFee')
@@ -487,7 +487,7 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
         const status = statuses.find((s) => s.userId === id)?.status ?? 'pending';
         const withdrawn = withdrawals.find((w) => w.userId === id)?.amount ?? 0;
         const paymentMethod = (paymentMethods.find((m) => m.userId === id)?.method ??
-          CashWithdrawalMethod.ACH) as CashWithdrawalMethod;
+          CashWithdrawalMethod.NoPM) as CashWithdrawalMethod;
         const { ready, pending } = buzzAccountBalances.find((b) => b.id === id) ?? {
           ready: 0,
           pending: 0,
@@ -553,7 +553,10 @@ export async function withdrawCash(userId: number, amount: number) {
     throw new Error('User is not payable');
   }
 
-  if (!userPaymentConfiguration.tipaltiWithdrawalMethod) {
+  if (
+    !userPaymentConfiguration.tipaltiWithdrawalMethod ||
+    userPaymentConfiguration.tipaltiWithdrawalMethod === CashWithdrawalMethod.NoPM
+  ) {
     throw new Error('User does not have a payment method');
   }
 
@@ -562,19 +565,26 @@ export async function withdrawCash(userId: number, amount: number) {
   const toWithdraw = amount - fee;
 
   // Create withdrawal record
-  const [{ id }] = await dbWrite.$queryRaw<{ id: string }[]>`
-    INSERT INTO "CashWithdrawal" ("userId", "amount", "fee", "status", "method")
-    VALUES (${userId}, ${toWithdraw}, ${fee}, 'Started', ${userPaymentConfiguration.tipaltiWithdrawalMethod})
-    RETURNING id;
-  `;
+  const { id } = await dbWrite.cashWithdrawal.create({
+    data: {
+      userId,
+      amount: toWithdraw,
+      fee,
+      status: CashWithdrawalStatus.Scheduled,
+      method: userPaymentConfiguration.tipaltiWithdrawalMethod,
+    },
+    select: {
+      id: true,
+    },
+  });
 
   // Burn full amount
   const { transactionId } = await createBuzzTransaction({
     amount,
     fromAccountId: userId,
-    fromAccountType: 'user',
+    fromAccountType: 'cashsettled',
     toAccountId: 0,
-    toAccountType: 'cashsettled',
+    toAccountType: 'user',
     type: TransactionType.Withdrawal,
     description: 'Withdrawal request',
   });
@@ -587,13 +597,12 @@ export async function withdrawCash(userId: number, amount: number) {
   `;
 
   // Create tipalti payment
-  const paidAmount = toWithdraw - fee;
   const refCode = getWithdrawalRefCode(id, userId);
 
   const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
     requestId: refCode,
     toUserId: userId as number, // Ofcs, user should exist for one.
-    amount: (toWithdraw - fee) / 100, // Tipalti doesn't use cents like 99% of other payment processors :shrug:
+    amount: toWithdraw / 100, // Tipalti doesn't use cents like 99% of other payment processors :shrug:
     description: `Payment for withdrawal request ${refCode}`,
     byUserId: -1, // The bank
   });
@@ -604,14 +613,20 @@ export async function withdrawCash(userId: number, amount: number) {
     SET status = 'Submitted', 
       metadata = jsonb_build_object(
         'paymentBatchId', ${paymentBatchId},
-        'paymentRefCode', ${paymentRefCode}
-        'paidAmount', ${paidAmount}
+        'paymentRefCode', ${paymentRefCode},
+        'paidAmount', ${toWithdraw}
       )
     WHERE id = ${id};
   `;
 
   // Bust affected caches
-  userCashCache.bust(userId);
+  await userCashCache.bust(userId);
+
+  await signalClient.topicSend({
+    topic: SignalTopic.CreatorProgram,
+    target: SignalMessages.CashInvalidator,
+    data: {},
+  });
 }
 
 export async function getPoolParticipants(month?: Date) {

@@ -31,12 +31,12 @@ export const creatorProgramRouter = router({
   getWithdrawalHistory: protectedProcedure.query(({ ctx }) => getWithdrawalHistory(ctx.user.id)),
 
   bankBuzz: protectedProcedure.input(bankBuzzSchema).mutation(({ ctx, input }) => {
-    bankBuzz(ctx.user.id, input.amount);
+    return bankBuzz(ctx.user.id, input.amount);
   }),
   extractBuzz: protectedProcedure.mutation(({ ctx }) => {
-    extractBuzz(ctx.user.id);
+    return extractBuzz(ctx.user.id);
   }),
   withdrawCash: protectedProcedure.input(withdrawCashSchema).mutation(({ ctx, input }) => {
-    withdrawCash(ctx.user.id, input.amount);
+    return withdrawCash(ctx.user.id, input.amount);
   }),
 });

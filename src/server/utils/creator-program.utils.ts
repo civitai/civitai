@@ -60,7 +60,7 @@ export function getWithdrawalFee(amount: number, method: CashWithdrawalMethod) {
 }
 
 export function getWithdrawalRefCode(id: string, userId: number) {
-  return `CW:${userId}:${id}`.slice(0, 16); // Tipalti only supports 16 characters.....
+  return `CW${userId}${id}`.slice(0, 16); // Tipalti only supports 16 characters.....
 }
 
 /**

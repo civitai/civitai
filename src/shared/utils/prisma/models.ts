@@ -272,8 +272,8 @@ export interface CashWithdrawal {
   status: CashWithdrawalStatus;
   note: string | null;
   metadata: JsonValue;
-  createdAt: Date;
-  updatedAt: Date;
+  createdAt: Date | null;
+  updatedAt: Date | null;
 }
 
 export interface User {

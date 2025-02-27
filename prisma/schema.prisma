@@ -203,8 +203,8 @@ model CashWithdrawal {
   status        CashWithdrawalStatus
   note          String?
   metadata      Json                 @default("{}")
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  createdAt     DateTime?            @default(now())
+  updatedAt     DateTime?            @updatedAt
 
   @@index([userId])
 }

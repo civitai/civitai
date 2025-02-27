@@ -21,6 +21,7 @@ import {
   IconLogout,
   IconLogout2,
   IconPigMoney,
+  IconSettings,
   IconUxCircle,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -803,7 +804,12 @@ const WithdrawCashCard = () => {
   return (
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
       <div className="flex h-full flex-col gap-2">
-        <h3 className="text-xl font-bold">Withdraw Cash</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="text-xl font-bold">Withdraw Cash</h3>
+          <Anchor href="/user/account#payments" color="white">
+            <IconSettings />
+          </Anchor>
+        </div>
         <p className="text-sm">Once you&rsquo;ve earned cash, you can withdraw it to your bank</p>
         <table className="mb-4 table-auto text-sm">
           <tbody>
@@ -990,9 +996,12 @@ const WithdrawalHistoryModal = () => {
                       <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA [UTC]', true)}</td>
                       <td>
                         <div className="flex items-center gap-2">
-                          <span>${numberWithCommas(withdrawal.amount)}</span>
+                          <span>${formatCurrencyForDisplay(withdrawal.amount)}</span>
                           {withdrawal.fee && (
-                            <Tooltip label={`Withdrawal fee: $${withdrawal.fee}`} position="top">
+                            <Tooltip
+                              label={`Withdrawal fee: $${formatCurrencyForDisplay(withdrawal.fee)}`}
+                              position="top"
+                            >
                               <IconInfoCircle size={14} />
                             </Tooltip>
                           )}
