@@ -13,6 +13,7 @@ import {
 import { useState } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -84,18 +85,18 @@ export const TosModal = ({
             <Stack>
               <CustomMarkdown
                 // allowedElements={['p', 'a', 'strong', 'h1', 'h2', 'ul', 'ol', 'li']}
-                rehypePlugins={[rehypeRaw, remarkGfm]}
+                rehypePlugins={[rehypeRaw, remarkGfm, remarkBreaks]}
               >
                 {data.content}
               </CustomMarkdown>
-              <Checkbox
-                checked={acceptedCoC}
-                onChange={(event) => setAcceptedCoC(event.currentTarget.checked)}
-                label="I have read and agree to the Terms of Service"
-                size="sm"
-              />
             </Stack>
           </ScrollArea.Autosize>
+          <Checkbox
+            checked={acceptedCoC}
+            onChange={(event) => setAcceptedCoC(event.currentTarget.checked)}
+            label="I have read and agree to the Terms of Service"
+            size="sm"
+          />
           <Group ml="auto">
             <Button onClick={handleClose} color="gray" disabled={updateUserSettings.isLoading}>
               Go back
