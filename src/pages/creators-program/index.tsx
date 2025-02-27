@@ -10,6 +10,7 @@ import {
   Grid,
   Group,
   List,
+  Loader,
   Paper,
   Stack,
   Text,
@@ -32,7 +33,19 @@ import { Currency } from '~/shared/utils/prisma/enums';
 import { CurrencyIcon } from '../../components/Currency/CurrencyIcon';
 import { Meta } from '../../components/Meta/Meta';
 import { constants } from '../../server/common/constants';
-import { formatCurrencyForDisplay, numberWithCommas } from '../../utils/number-helpers';
+import {
+  abbreviateNumber,
+  formatCurrencyForDisplay,
+  numberWithCommas,
+} from '../../utils/number-helpers';
+import AlertDialog from '~/components/Dialog/Common/AlertDialog';
+import { CreatorProgramRequirement } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { getDisplayName } from '~/utils/string-helpers';
+import { capitalize } from 'lodash-es';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
+import { openCreatorScoreModal } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 
 const sizing = {
   header: {
@@ -67,14 +80,14 @@ function CreatorsClubV1() {
               Introducing the
             </Text>
             <br />
-             Civitai Creator Program: Evolved!
+            Civitai Creator Program: Evolved!
           </Title>
 
           <Text size={sizing.header.subtitle} lh={1.3} mb="xs">
             The Civitai Creator Program is our way of supporting our talented Creator community by
             providing a path to earn from their work. Creators earn Buzz by developing and sharing
             models, and the Creator Program allows them to turn their contributions into real
-            earnings! 
+            earnings!
           </Text>
           <Grid>
             <Grid.Col span={12}>
@@ -189,6 +202,11 @@ const HowItWorksSection = () => {
 
 const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
   const { cx, classes, theme } = useStyles();
+  const { requirements, isLoading: isLoadingRequirements } = useCreatorProgramRequirements();
+  const hasValidMembership = requirements?.validMembership;
+  const membership = requirements?.membership;
+  const hasEnoughCreatorScore =
+    (requirements?.score.current ?? 0) >= (requirements?.score.min ?? 0);
 
   return (
     <Stack className={classes.section}>
@@ -204,15 +222,59 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
               <Text mb="lg" className={classes.highlightColor} size="lg">
                 Program requirements:
               </Text>
-              <Group noWrap w="100%">
-                <IconCircleDashed size={24} />
-                <Text>Have an active Civitai Membership</Text>
-              </Group>
-              <Divider />
-              <Group noWrap w="100%" mb="xl">
-                <IconCircleDashed size={24} />
-                <Text>Have a Creator Score higher than 40,000</Text>
-              </Group>
+              {isLoadingRequirements ? (
+                <Center>
+                  <Loader />
+                </Center>
+              ) : (
+                <>
+                  <CreatorProgramRequirement
+                    isMet={hasEnoughCreatorScore}
+                    title={`Have a Creator Score higher than ${abbreviateNumber(
+                      requirements?.score.min ?? 10000
+                    )}`}
+                    content={
+                      <p>
+                        Your current{' '}
+                        <Anchor
+                          onClick={() => {
+                            openCreatorScoreModal();
+                          }}
+                        >
+                          Creator Score
+                        </Anchor>{' '}
+                        is {abbreviateNumber(requirements?.score.current ?? 0)}.
+                      </p>
+                    }
+                  />
+                  <CreatorProgramRequirement
+                    isMet={!!membership}
+                    title="Be a Civitai Member"
+                    content={
+                      hasValidMembership ? (
+                        <p>
+                          You are a {capitalize(getDisplayName(membership as string))} Member! Thank
+                          you for supporting Civitai.
+                        </p>
+                      ) : membership ? (
+                        <p>
+                          You are a {capitalize(getDisplayName(membership as string))} Member. Your
+                          current membership does not apply to join the Creator Program. Consider
+                          upgrading to one our supported memberships.
+                          <br />
+                          <NextLink href="/pricing">
+                            <Anchor>Upgrade Membership</Anchor>
+                          </NextLink>
+                        </p>
+                      ) : (
+                        <NextLink href="/pricing">
+                          <Anchor>Become a Civitai Member Now!</Anchor>
+                        </NextLink>
+                      )
+                    }
+                  />
+                </>
+              )}
 
               <Button
                 size="lg"

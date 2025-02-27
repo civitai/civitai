@@ -39,6 +39,7 @@ import {
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import {
+  openCreatorScoreModal,
   openEarningEstimateModal,
   openExtractionFeeModal,
   openPhasesModal,
@@ -220,23 +221,7 @@ const JoinCreatorProgramCard = () => {
                 Your current{' '}
                 <Anchor
                   onClick={() => {
-                    dialogStore.trigger({
-                      component: AlertDialog,
-                      props: {
-                        title: 'What is your Creator Score?',
-                        type: 'info',
-                        children: ({ handleClose }) => (
-                          <div className="flex flex-col justify-center gap-4">
-                            <p className="text-center">
-                              Creator Score is a value we calculate based on your participation in
-                              the Civitai community, including your activity and how others engage
-                              with the content and models you create.
-                            </p>
-                            <Button onClick={handleClose}>Close</Button>
-                          </div>
-                        ),
-                      },
-                    });
+                    openCreatorScoreModal();
                   }}
                 >
                   Creator Score
@@ -286,7 +271,7 @@ const JoinCreatorProgramCard = () => {
   );
 };
 
-const CreatorProgramRequirement = ({
+export const CreatorProgramRequirement = ({
   title,
   content,
   isMet,
@@ -605,7 +590,6 @@ const EstimatedEarningsCard = () => {
             </p>
           )}
         </div>
-
         {phase === 'bank' && (
           <div className="flex flex-col gap-0">
             <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
@@ -624,7 +608,7 @@ const EstimatedEarningsCard = () => {
           <div className="flex flex-col gap-0">
             <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
             <p className="text-sm">
-              You can extract Buzz your Buzz until{' '}
+              You can extract your Buzz until{' '}
               {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]', true)}
             </p>
           </div>

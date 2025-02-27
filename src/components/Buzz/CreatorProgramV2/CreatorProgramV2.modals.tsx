@@ -174,3 +174,25 @@ export const openExtractionFeeModal = () => {
     },
   });
 };
+
+export const openCreatorScoreModal = () => {
+  dialogStore.trigger({
+    component: AlertDialog,
+    props: {
+      title: 'What is your Creator Score?',
+      type: 'info',
+      children: ({ handleClose }) => (
+        <div className="flex flex-col justify-center gap-4">
+          <p>
+            Creator Score is a value we calculate based on your participation in the Civitai
+            community, including your activity and how others engage with the content and models you
+            create.
+          </p>
+          <Button className="mt-2" onClick={handleClose}>
+            Close
+          </Button>
+        </div>
+      ),
+    },
+  });
+};
