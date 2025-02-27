@@ -411,12 +411,32 @@ export const baseModelResourceTypes = {
     {
       type: ModelType.TextualInversion,
       baseModels: [...baseModelSets.SDXL.baseModels],
-      partialSupport: ['SD 1.5'],
+      partialSupport: [
+        'SD 1.5',
+        ...baseModelSets.Pony.baseModels,
+        ...baseModelSets.Illustrious.baseModels,
+      ],
     },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SDXL.baseModels] },
-    { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL.baseModels] },
-    { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL.baseModels] },
-    { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL.baseModels] },
+    {
+      type: ModelType.LORA,
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
+    },
+    {
+      type: ModelType.DoRA,
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
+    },
+    {
+      type: ModelType.LoCon,
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
+    },
+    {
+      type: ModelType.VAE,
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
+    },
   ],
   Pony: [
     { type: ModelType.Checkpoint, baseModels: baseModelSets.Pony.baseModels },
