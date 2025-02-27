@@ -938,7 +938,7 @@ const WithdrawCashCard = () => {
               </Tooltip>
             </div>
             {userCash?.withdrawalFee && (
-              <div className="flex flex-col gap-2">
+              <div className="flex gap-2">
                 <p>
                   <span className="font-bold">Withdrawal fee:</span> $
                   {userCash?.withdrawalFee.type === 'fixed'
