@@ -23,12 +23,16 @@ import {
 import { createJob } from './job';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
+import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
   '2 23 L * *',
   async () => {
     if (!clickhouse) return;
+
+    const availability = getCreatorProgramAvailability();
+    if (!availability) return;
 
     // Determine `month` we're settling
     let month = await dbKV.get('compensation-pool-month', FIRST_CREATOR_PROGRAM_MONTH);
@@ -97,6 +101,8 @@ export const creatorsProgramInviteTipalti = createJob(
   'creators-program-invite-tipalti',
   '50 23 L * *',
   async () => {
+    const availability = getCreatorProgramAvailability();
+    if (!availability) return;
     // Send tipalti invite to users with $50+ in cash without a tipalti account
     const usersOverThreshold = await clickhouse!.$query<{ userId: number; balance: number }>`
       WITH affected AS (
@@ -156,6 +162,10 @@ export const creatorsProgramSettleCash = createJob(
   '0 0 15 * *',
   async () => {
     if (!clickhouse) return;
+
+    const availability = getCreatorProgramAvailability();
+    if (!availability) return;
+
     const pendingCash = await clickhouse.$query<{ userId: number; amount: number }>`
       SELECT
         toAccountId as userId,
