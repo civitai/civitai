@@ -928,8 +928,8 @@ const WithdrawCashCard = () => {
                         message: (
                           <div className="flex flex-col gap-2">
                             <p>
-                              You are about to withdraw ${formatCurrencyForDisplay(toWithdraw)} to
-                              your bank.{' '}
+                              You are about to request a withdrawal of $
+                              {formatCurrencyForDisplay(toWithdraw)}{' '}
                             </p>
                             <p> Are you sure?</p>
                           </div>
