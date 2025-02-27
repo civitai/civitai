@@ -122,7 +122,7 @@ export const CreatorsProgramV2 = () => {
         </div>
       </div>
 
-      {<JoinCreatorProgramCard />}
+      {!hasOnboardedInProgram && <JoinCreatorProgramCard />}
       {hasOnboardedInProgram && (
         <div className="flex flex-col gap-4 md:flex-row">
           <CompensationPoolCard />

@@ -1,6 +1,6 @@
 # Civitai Creator Program – Terms of Service
 
-**Effective Date**: [Insert Date]
+**Effective Date**: 02 February, 2025
 
 By joining the Civitai Creator Program ("Program"), you agree to the following Terms of Service ("ToS"). These rules ensure fairness, prevent abuse, and maintain the integrity of the Program. Failure to comply may result in penalties, including forfeiture of Buzz, loss of earnings, and removal from the Program.
 

@@ -86,7 +86,7 @@ export const TosModal = ({
             <Stack>
               <CustomMarkdown
                 // allowedElements={['p', 'a', 'strong', 'h1', 'h2', 'ul', 'ol', 'li']}
-                rehypePlugins={[rehypeRaw, remarkGfm, remarkBreaks]}
+                rehypePlugins={[rehypeRaw, remarkBreaks, remarkGfm]}
               >
                 {data.content}
               </CustomMarkdown>
