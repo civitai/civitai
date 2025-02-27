@@ -355,15 +355,14 @@ async function handleSuccess({
     if (tags.length > 0) {
       const uniqTags = uniqBy(tags, (x) => x.id);
       await dbWrite.$executeRawUnsafe(`
-        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source")
+        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "source", "disabledAt")
         VALUES ${uniqTags
           .filter((x) => x.id)
           .map(
             (x) =>
-              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(
-                x.tag,
-                x.source ?? source
-              )}, '${x.source ?? source}')`
+              `(${id}, ${x.id}, ${x.confidence}, '${x.source ?? source}, ${
+                shouldIgnore(x.tag, x.source ?? source) ? 'NOW()' : 'null'
+              }')`
           )
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
@@ -376,7 +375,7 @@ async function handleSuccess({
     const tagsOnImage =
       (
         await dbWrite.tagsOnImage.findMany({
-          where: { imageId: id, automated: true, disabledAt: null },
+          where: { imageId: id, disabledAt: null, source: { not: TagSource.User } },
           select: { tag: { select: { type: true, name: true } } },
         })
       )?.map((x) => x.tag) ?? [];

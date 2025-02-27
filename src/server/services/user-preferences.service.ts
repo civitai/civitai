@@ -119,7 +119,7 @@ const getVotedHideImages = async ({
   // TODO.Briant
   /*
     Instead of returning every image the user has voted on that matches their hidden preferences, only return the images the user has voted on where the tag hasn't been applied to the image yet (due to scoring, moderator controls)
-    tagsOnImage.disabled indicates that the tag isn't applied
+    tagsOnImage.disabledAt indicates that the tag isn't applied
   */
   const hidden = votedHideImages.filter((x) => hiddenTagIds.includes(x.tagId));
   const moderated = votedHideImages.filter((x) => moderatedTagIds.includes(x.tagId));

@@ -41,12 +41,11 @@ export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', a
       JOIN "Image" i ON i."postId" = top."postId"
       WHERE top."tagId" IN (${postTagIds}) AND top."createdAt" > ${lastApplied}
     )
-    INSERT INTO "TagsOnImage"("tagId", "imageId", "confidence","automated")
+    INSERT INTO "TagsOnImage"("tagId", "imageId", "confidence")
     SELECT
       t.id,
       a.id,
-      100,
-      true
+      100
     FROM affected a
     JOIN "Tag" t ON t.id IN (${postTagIds})
     ON CONFLICT ("tagId", "imageId") DO NOTHING;

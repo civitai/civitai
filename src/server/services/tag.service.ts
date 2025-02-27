@@ -488,15 +488,15 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
     `);
   } else if (entityType === 'image') {
     await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId")
+      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
       SELECT i."id",
-             t."id"
+             t."id",
+             ${-1}
       FROM "Image" i
              JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
       WHERE i."id" IN (${entityIds.join(', ')})
-      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled"    = false,
-                                                     "needsReview" = false,
-                                                     automated     = false
+      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabledAt"  = null,
+                                                     "needsReview" = false
     `);
     updateImageNSFWLevels(entityIds);
   } else if (entityType === 'article') {
@@ -605,8 +605,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
   } else if (entityType === 'image') {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "TagsOnImage"
-      SET "disabled"    = true,
-          "needsReview" = false,
+      SET "needsReview" = false,
           "disabledAt"  = NOW()
       WHERE "imageId" IN (${entityIds.join(', ')})
         ${
@@ -643,9 +642,7 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
   } else if (entityType === 'image') {
     await dbWrite.$executeRawUnsafe(`
       UPDATE "TagsOnImage"
-      SET "disabled"    = ${disable},
-          "needsReview" = false,
-          "automated"   = false,
+      SET "needsReview" = false,
           "disabledAt"  = ${disable ? 'NOW()' : 'null'}
       WHERE "needsReview" = true
         AND "imageId" IN (${entityIds.join(', ')})

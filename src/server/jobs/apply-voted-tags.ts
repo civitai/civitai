@@ -41,11 +41,11 @@ async function applyUpvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) >= ${UPVOTE_TAG_THRESHOLD}
     )
-    INSERT INTO "TagsOnImage"("tagId", "imageId", "createdAt")
+    INSERT INTO "TagsOnImage"("tagId", "imageId", "confidence")
     SELECT
       "tagId",
       "imageId",
-      ${now}
+      ${-1}
     FROM over_threshold
     ON CONFLICT ("tagId", "imageId") DO NOTHING
     RETURNING "tagId", "imageId";
@@ -63,7 +63,7 @@ async function applyUpvotes() {
         AND applied."disabledAt" IS NOT NULL
         AND vote.vote > 5
     )
-    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null, "createdAt" = ${now}
+    UPDATE "TagsOnImage" SET "disabledAt" = null, "createdAt" = ${now}
     WHERE ("tagId", "imageId") IN (
       SELECT "tagId", "imageId" FROM affected
     )
@@ -162,7 +162,7 @@ async function applyDownvotes() {
         AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
         AND applied."disabledAt" IS NULL
         AND applied."needsReview" = FALSE
-        AND applied."automated" = TRUE
+        AND applied."source" = 'User'
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -206,7 +206,7 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= 0
     )
-    UPDATE "TagsOnImage" SET "disabled" = true, "needsReview" = false, "disabledAt" = ${now}
+    UPDATE "TagsOnImage" SET "needsReview" = false, "disabledAt" = ${now}
     WHERE ("tagId", "imageId") IN (
       SELECT
         "tagId",

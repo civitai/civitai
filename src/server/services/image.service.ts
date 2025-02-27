@@ -122,6 +122,7 @@ import {
   ReportReason,
   ReportStatus,
   ReviewReactions,
+  TagSource,
 } from '~/shared/utils/prisma/enums';
 import { ImageResource } from '~/shared/utils/prisma/models';
 import { fetchBlob, getBase64 } from '~/utils/file-utils';
@@ -371,7 +372,7 @@ export const moderateImages = async ({
 
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true, disabledAt: new Date(), needsReview: false },
+      data: { disabledAt: new Date(), needsReview: false },
     });
 
     // Resolve any pending appeals
@@ -426,7 +427,7 @@ export const updateImageReportStatusByReason = ({
 };
 
 export const getImageDetail = async ({ id }: GetByIdInput) => {
-  return await dbWrite.image.findUnique({
+  const image = await dbWrite.image.findUnique({
     where: { id },
     select: {
       resources: {
@@ -440,7 +441,7 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
       tags: {
         where: { disabledAt: null },
         select: {
-          automated: true,
+          source: true,
           tag: {
             select: simpleTagSelect,
           },
@@ -448,6 +449,16 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
       },
     },
   });
+
+  return image
+    ? {
+        ...image,
+        tags: image.tags.map(({ source, ...tag }) => ({
+          ...tag,
+          automated: source !== TagSource.User,
+        })),
+      }
+    : undefined;
 };
 
 export const getImageById = async ({ id }: GetByIdInput) => {
@@ -466,7 +477,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 
   await dbWrite.tagsOnImage.updateMany({
     where: { imageId: images[0].id, disabledAt: { not: null } },
-    data: { disabled: false, disabledAt: null },
+    data: { disabledAt: null },
   });
 
   return await ingestImage({ image: images[0] });

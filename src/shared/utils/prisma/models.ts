@@ -1228,9 +1228,7 @@ export interface TagsOnImage {
   tagId: number;
   tag?: Tag;
   createdAt: Date;
-  automated: boolean;
-  confidence: number | null;
-  disabled: boolean;
+  confidence: number;
   disabledAt: Date | null;
   needsReview: boolean;
   source: TagSource;

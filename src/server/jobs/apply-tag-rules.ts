@@ -86,8 +86,8 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
     log(`Updating images ${start} - ${end}`);
     return async () => {
       await dbWrite.$executeRaw`
-        INSERT INTO "TagsOnImage"("imageId", "tagId", automated, confidence, "needsReview", source)
-        SELECT "imageId", ${fromId}, automated, confidence, toi."needsReview", source
+        INSERT INTO "TagsOnImage"("imageId", "tagId", confidence, "needsReview", source)
+        SELECT "imageId", ${fromId}, confidence, toi."needsReview", source
         FROM "TagsOnImage" toi
         WHERE "tagId" = ${toId}
           AND "disabledAt" IS NULL
@@ -143,7 +143,7 @@ async function deleteTag({ toId }: TagRule, maxImageId: number, since?: Date) {
     log(`Updating images ${start} - ${end}`);
     return async () => {
       await dbWrite.$executeRaw`
-        UPDATE "TagsOnImage" SET disabled = true, "disabledAt" = now(), "disabledReason" = 'Replaced'
+        UPDATE "TagsOnImage" SET "disabledAt" = now()
         WHERE "tagId" = ${toId} AND "disabledAt" IS NULL
           AND "imageId" >= ${start}
           AND "imageId" < ${end}
