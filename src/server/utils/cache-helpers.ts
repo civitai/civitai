@@ -59,6 +59,7 @@ type CachedLookupOptions<T extends object> = {
   debounceTime?: number;
   cacheNotFound?: boolean;
   dontCacheFn?: (data: T) => boolean;
+  staleWhileRevalidate?: boolean;
 };
 export function createCachedArray<T extends object>({
   key,
@@ -69,6 +70,7 @@ export function createCachedArray<T extends object>({
   debounceTime = 10,
   cacheNotFound = true,
   dontCacheFn,
+  staleWhileRevalidate = true,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
@@ -81,16 +83,13 @@ export function createCachedArray<T extends object>({
       cacheResults.push(...batchResults.filter(isDefined));
     }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
-    const cache = Object.fromEntries(
-      cacheArray.map((x) => {
-        if ('cachedAt' in x) delete x.cachedAt;
-        return [x[idKey], x];
-      })
-    );
+    const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
 
     const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
     const cacheMisses = new Set<number>();
     const dontCache = new Set<number>();
+    const ttlExpiry = new Date(Date.now() + ttl * 1000);
+    const locks = new Set<RedisKeyTemplateCache>();
     for (const id of [...new Set(ids)]) {
       const cached = cache[id];
       if (cached) {
@@ -99,6 +98,17 @@ export function createCachedArray<T extends object>({
           if (cached.cachedAt > cacheDebounceCutoff) dontCache.add(id);
           cacheMisses.add(id);
           continue;
+        }
+        if (staleWhileRevalidate && cached.cachedAt < ttlExpiry) {
+          // Try get lock to update cache
+          const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}` as const;
+          const gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', 10);
+          if (gotLock) {
+            locks.add(lockKey);
+            cacheMisses.add(id); // Got lock, so treat as miss
+            continue;
+          }
+          // No lock, so treat as hit
         }
         results.add(cached);
       } else cacheMisses.add(id);
@@ -131,10 +141,11 @@ export function createCachedArray<T extends object>({
       }
 
       // then cache the results
+      const EX = staleWhileRevalidate ? ttl * 2 : ttl;
       if (Object.keys(toCache).length > 0)
         await Promise.all(
           Object.entries(toCache).map(([id, cache]) =>
-            redis.packed.set(`${key}:${id}`, cache, { EX: ttl })
+            redis.packed.set(`${key}:${id}`, cache, { EX })
           )
         );
 
@@ -142,10 +153,13 @@ export function createCachedArray<T extends object>({
       if (Object.keys(toCacheNotFound).length > 0)
         await Promise.all(
           Object.entries(toCacheNotFound).map(([id, cache]) =>
-            redis.packed.set(`${key}:${id}`, cache, { EX: ttl, NX: true })
+            redis.packed.set(`${key}:${id}`, cache, { EX, NX: true })
           )
         );
     }
+
+    // Remove locks
+    if (locks.size > 0) await redis.del([...locks]);
 
     if (appendFn) await appendFn(results);
 
@@ -170,6 +184,32 @@ export function createCachedArray<T extends object>({
     log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
   }
 
+  async function invalidate(id: number | number[], options: { debounceTime?: number } = {}) {
+    const ids = Array.isArray(id) ? id : [id];
+    if (ids.length === 0) return;
+
+    const cacheResults: T[] = [];
+    for (const batch of chunk(ids, 200)) {
+      const batchResults = await redis.packed.mGet<T>(
+        batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache)
+      );
+      cacheResults.push(...batchResults.filter(isDefined));
+    }
+
+    // Invalidate cache
+    const invaliDate = new Date(Date.now() + (options.debounceTime ?? debounceTime) * 1000);
+    const updates = cacheResults.filter(
+      (x) => x !== null && 'cachedAt' in x && x.cachedAt !== invaliDate
+    ) as T[];
+    if (updates.length === 0) return;
+    const toCache = Object.fromEntries(
+      updates.map((x) => [x[idKey], { ...x, cachedAt: invaliDate }])
+    );
+    await redis.packed.mSet(toCache);
+
+    log(`Invalidated ${ids.length} ${key} items: ${ids.join(', ')}`);
+  }
+
   async function refresh(id: number | number[]) {
     if (!Array.isArray(id)) id = [id];
 
@@ -188,7 +228,11 @@ export function createCachedArray<T extends object>({
     await Promise.all(toRemove.map((id) => redis.del(`${key}:${id}`)));
   }
 
-  return { fetch, bust, refresh };
+  async function flush() {
+    await clearCacheByPattern(`${key}:*`);
+  }
+
+  return { fetch, bust: staleWhileRevalidate ? invalidate : bust, refresh, flush };
 }
 export type CachedArray<T extends object> = ReturnType<typeof createCachedArray<T>>;
 
