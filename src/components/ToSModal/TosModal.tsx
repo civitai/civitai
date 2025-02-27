@@ -50,6 +50,7 @@ export const TosModal = ({
       });
     },
   });
+
   const handleConfirm = async () => {
     if (!acceptedCoC) {
       return;

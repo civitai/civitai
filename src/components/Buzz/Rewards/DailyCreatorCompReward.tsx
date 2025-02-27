@@ -339,9 +339,6 @@ export function DailyCreatorCompReward() {
           </Paper>
         </Grid.Col>
       </Grid>
-      <Text mt={-16} size="sm" align="right">
-        New Creator's Program coming soon!
-      </Text>
     </>
   );
 }
