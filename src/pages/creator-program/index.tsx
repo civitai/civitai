@@ -46,6 +46,8 @@ import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { openCreatorScoreModal } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
+import { formatDate } from '~/utils/date-helpers';
+import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 
 const sizing = {
   header: {
@@ -70,6 +72,8 @@ function CreatorsClubV1() {
   const { cx, classes, theme } = useStyles();
   const currentUser = useCurrentUser();
   const applyFormUrl = `/user/buzz-dashboard`;
+  const availability = getCreatorProgramAvailability();
+
   return (
     <>
       <Meta title="Creator Program | Civitai" />
@@ -96,20 +100,36 @@ function CreatorsClubV1() {
                 className={cx(classes.card, classes.highlightCard, classes.earnBuzzCard)}
                 h="100%"
               >
-                <Group position="apart" noWrap>
-                  <Title order={3} color="yellow.8">
-                    Turn your Buzz into earnings!
-                  </Title>
-                  <Group spacing={0} noWrap>
-                    <IconBolt style={{ fill: theme.colors.yellow[7] }} size={40} color="yellow.7" />
-                    <IconBolt
-                      style={{ fill: theme.colors.yellow[7], margin: '0 -20' }}
-                      size={64}
-                      color="yellow.7"
-                    />
-                    <IconBolt style={{ fill: theme.colors.yellow[7] }} size={40} color="yellow.7" />
+                <Stack>
+                  <Group position="apart" noWrap>
+                    <Title order={3} color="yellow.8">
+                      Turn your Buzz into earnings!{' '}
+                      {!availability.isAvailable &&
+                        `Launching on ${formatDate(
+                          availability.availableDate,
+                          'MMM D, YYYY @ hA [UTC]',
+                          true
+                        )}`}
+                    </Title>
+                    <Group spacing={0} noWrap>
+                      <IconBolt
+                        style={{ fill: theme.colors.yellow[7] }}
+                        size={40}
+                        color="yellow.7"
+                      />
+                      <IconBolt
+                        style={{ fill: theme.colors.yellow[7], margin: '0 -20' }}
+                        size={64}
+                        color="yellow.7"
+                      />
+                      <IconBolt
+                        style={{ fill: theme.colors.yellow[7] }}
+                        size={40}
+                        color="yellow.7"
+                      />
+                    </Group>
                   </Group>
-                </Group>
+                </Stack>
               </Paper>
             </Grid.Col>
           </Grid>
@@ -207,6 +227,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
   const membership = requirements?.membership;
   const hasEnoughCreatorScore =
     (requirements?.score.current ?? 0) >= (requirements?.score.min ?? 0);
+  const availability = getCreatorProgramAvailability();
 
   return (
     <Stack className={classes.section}>
@@ -283,6 +304,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 component="a"
                 href={applyFormUrl}
                 target="_blank"
+                disabled={!availability.isAvailable}
               >
                 Join now!
               </Button>

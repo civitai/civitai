@@ -77,3 +77,13 @@ export function parseRefCodeToWithdrawalId(refCode: string) {
     idPart,
   };
 }
+
+export const getCreatorProgramAvailability = (isModerator = false) => {
+  // 2 - March.
+  const availableDate = dayjs().utc().set('month', 2).startOf('month');
+
+  return {
+    isAvailable: isModerator || dayjs().isAfter(availableDate),
+    availableDate: availableDate.toDate(),
+  };
+};

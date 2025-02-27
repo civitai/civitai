@@ -502,7 +502,8 @@ export const userCashCache = createCachedObject<UserCashCacheItem>({
       item.withdrawalFee = WITHDRAWAL_FEES[item.paymentMethod];
     }
   },
-  // Users may be extracting / managing their cash often, so we'll keep this cache short.
+  // Users may be extracting / managing their cash often, so we'll keep this cache short,
+  // Specially now that clickhouse is not involved.
   ttl: CacheTTL.day,
 });
 export async function getCash(userId: number) {

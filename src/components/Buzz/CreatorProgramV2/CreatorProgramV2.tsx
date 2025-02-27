@@ -62,6 +62,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { OnboardingSteps } from '~/server/common/enums';
 import {
+  getCreatorProgramAvailability,
   getCurrentValue,
   getExtractionFee,
   getForecastedValue,
@@ -69,10 +70,9 @@ import {
 import {
   CAP_DEFINITIONS,
   MIN_WITHDRAWAL_AMOUNT,
-  WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
-import { CashWithdrawalMethod, Currency } from '~/shared/utils/prisma/enums';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import {
@@ -92,9 +92,10 @@ const cardProps: HTMLProps<HTMLDivElement> = {
 export const CreatorsProgramV2 = () => {
   const currentUser = useCurrentUser();
   const { phase, isLoading } = useCreatorProgramPhase();
+  const availability = getCreatorProgramAvailability(currentUser?.isModerator);
   useCreatorPoolListener();
 
-  if (!currentUser || isLoading) {
+  if (!currentUser || isLoading || !availability.isAvailable) {
     return null;
   }
 
