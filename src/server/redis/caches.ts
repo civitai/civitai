@@ -586,30 +586,35 @@ export const thumbnailCache = createCachedObject<{
   ttl: CacheTTL.day,
 });
 
-export const imageMetricsCache = {
-  fetch: (ids: number[]) => {
-    return fetchThroughCache(
-      REDIS_KEYS.CACHES.IMAGE_METRICS,
-      () => {
-        return dbRead.entityMetricImage.findMany({
-          where: { imageId: { in: ids } },
-          select: {
-            imageId: true,
-            reactionLike: true,
-            reactionHeart: true,
-            reactionLaugh: true,
-            reactionCry: true,
-            // reactionTotal: true,
-            comment: true,
-            collection: true,
-            buzz: true,
-          },
-        });
-      },
-      { ttl: CacheTTL.sm }
-    );
-  },
-  bust: () => {
-    return bustFetchThroughCache(REDIS_KEYS.CACHES.IMAGE_METRICS);
-  },
+type ImageMetricLookup = {
+  imageId: number;
+  reactionLike: number | null;
+  reactionHeart: number | null;
+  reactionLaugh: number | null;
+  reactionCry: number | null;
+  comment: number | null;
+  collection: number | null;
+  buzz: number | null;
 };
+export const imageMetricsCache = createCachedObject<ImageMetricLookup>({
+  key: REDIS_KEYS.CACHES.IMAGE_METRICS,
+  idKey: 'imageId',
+  lookupFn: async (ids) => {
+    const imageMetric = await dbRead.entityMetricImage.findMany({
+      where: { imageId: { in: ids } },
+      select: {
+        imageId: true,
+        reactionLike: true,
+        reactionHeart: true,
+        reactionLaugh: true,
+        reactionCry: true,
+        // reactionTotal: true,
+        comment: true,
+        collection: true,
+        buzz: true,
+      },
+    });
+    return Object.fromEntries(imageMetric.map((x) => [x.imageId, x]));
+  },
+  ttl: CacheTTL.sm,
+});
