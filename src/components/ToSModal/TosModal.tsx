@@ -76,17 +76,24 @@ export const TosModal = ({
         </Center>
       ) : (
         <Stack spacing="md">
-          <Group position="apart" mb="md">
-            <Text size="lg" weight="bold">
-              {data?.title}
-            </Text>
-          </Group>
-          <Divider mx="-lg" mb="md" />
+          {data?.title && (
+            <>
+              <Group position="apart" mb="md">
+                <Text size="lg" weight="bold">
+                  {data?.title}
+                </Text>
+              </Group>
+              <Divider mx="-lg" mb="md" />
+            </>
+          )}
           <ScrollArea.Autosize maxHeight={500}>
             <Stack>
               <CustomMarkdown
                 // allowedElements={['p', 'a', 'strong', 'h1', 'h2', 'ul', 'ol', 'li']}
-                rehypePlugins={[rehypeRaw, remarkBreaks, remarkGfm]}
+                rehypePlugins={[rehypeRaw]}
+                remarkPlugins={[remarkBreaks, remarkGfm]}
+                unwrapDisallowed
+                className="markdown-content-spaced"
               >
                 {data.content}
               </CustomMarkdown>

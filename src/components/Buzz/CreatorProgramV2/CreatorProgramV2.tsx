@@ -122,7 +122,7 @@ export const CreatorsProgramV2 = () => {
         </div>
       </div>
 
-      {!hasOnboardedInProgram && <JoinCreatorProgramCard />}
+      {<JoinCreatorProgramCard />}
       {hasOnboardedInProgram && (
         <div className="flex flex-col gap-4 md:flex-row">
           <CompensationPoolCard />
@@ -797,7 +797,7 @@ const WithdrawCashCard = () => {
   }
 
   const canWithdraw =
-    (userCash?.ready ?? 0) > MIN_WITHDRAWAL_AMOUNT || (userCash?.withdrawn ?? 0) > 0;
+    (userCash?.ready ?? 0) >= MIN_WITHDRAWAL_AMOUNT || (userCash?.withdrawn ?? 0) > 0;
 
   return (
     <div className={clsx(cardProps.className, 'basis-1/4 gap-6')}>
