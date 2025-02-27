@@ -111,7 +111,15 @@ export default MixedAuthEndpoint(async function handler(
         creator: user
           ? {
               username: user.username,
-              image: user.image ? getEdgeUrl(user.image, { width: 96, name: user.username }) : null,
+              image: user.profilePicture
+                ? getEdgeUrl(user.profilePicture.url, {
+                    width: 96,
+                    name: user.username,
+                    type: user.profilePicture.type,
+                  })
+                : user.image
+                ? getEdgeUrl(user.image, { width: 96, name: user.username })
+                : null,
             }
           : undefined,
         tags: tagsOnModels.map(({ name }) => name),
@@ -157,7 +165,11 @@ export default MixedAuthEndpoint(async function handler(
                     )
                     .map(({ url, id, ...image }) => ({
                       id,
-                      url: getEdgeUrl(url, { width: 450, name: id.toString() }),
+                      url: getEdgeUrl(url, {
+                        width: image.width ?? 450,
+                        name: id.toString(),
+                        type: image.type,
+                      }),
                       ...image,
                     }))
                 : [],
