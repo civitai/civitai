@@ -19,27 +19,29 @@ import remarkGfm from 'remark-gfm';
 import { TableOfContent } from '~/components/Article/Detail/TableOfContent';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { Meta } from '~/components/Meta/Meta';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 
 const contentRoot = 'src/static-content/rules';
 const files = ['minors', 'real-people'];
-export const getStaticProps: GetStaticProps<{
-  content: Record<string, string>;
-}> = async (context) => {
-  console.log(context);
-  const content = files.reduce((acc, file) => {
-    const fileName = fs.readFileSync(`${contentRoot}/${file}.md`, 'utf-8');
-    const { content } = matter(fileName);
-    acc[file] = content;
-    return acc;
-  }, {} as Record<string, string>);
 
-  return {
-    props: {
-      content,
-    },
-  };
-};
+export const getServerSideProps = createServerSideProps({
+  useSSG: true,
+  resolver: async ({ ctx }) => {
+    const content = files.reduce((acc, file) => {
+      const fileName = fs.readFileSync(`${contentRoot}/${file}.md`, 'utf-8');
+      const { content } = matter(fileName);
+      acc[file] = content;
+      return acc;
+    }, {} as Record<string, string>);
+
+    return {
+      props: {
+        content,
+      },
+    };
+  },
+});
 
 const headings = [
   { id: 'welcome', title: 'Welcome', level: 1 },
