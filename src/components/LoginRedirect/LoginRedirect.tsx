@@ -25,7 +25,7 @@ export function LoginRedirect({ children, reason, returnUrl }: Props) {
   }
 
   function handleClick(e: React.MouseEvent) {
-    if (running) closeTour({ reset: true });
+    if (running) closeTour();
     requireLogin({
       uiEvent: e,
       reason,
