@@ -137,6 +137,28 @@ export const openWithdrawalFreeModal = () => {
   });
 };
 
+export const openCompensationPoolModal = () => {
+  dialogStore.trigger({
+    component: AlertDialog,
+    props: {
+      title: 'Compensation Pool',
+      type: 'info',
+      icon: null,
+      children: ({ handleClose }) => (
+        <div className="flex flex-col justify-center gap-4">
+          <p>
+            The Creator Program Compensation Pool is made up of a portion of
+            Civitai&rsquo;s revenue from the previous month. As Civitai grows, so does the
+            pool! The more active Creators there are attracting users who spend Buzz, the
+            larger the pool will be the next month
+          </p>
+          <Button onClick={handleClose}>Close</Button>
+        </div>
+      ),
+    },
+  });
+}
+
 export const openExtractionFeeModal = () => {
   dialogStore.trigger({
     component: AlertDialog,

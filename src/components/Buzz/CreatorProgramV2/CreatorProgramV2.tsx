@@ -8,6 +8,7 @@ import {
   Loader,
   Modal,
   Table,
+  Text,
   Tooltip,
 } from '@mantine/core';
 import {
@@ -21,8 +22,7 @@ import {
   IconLogout,
   IconLogout2,
   IconPigMoney,
-  IconSettings,
-  IconUxCircle,
+  IconSettings
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import dayjs from 'dayjs';
@@ -40,6 +40,7 @@ import {
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import {
+  openCompensationPoolModal,
   openCreatorScoreModal,
   openEarningEstimateModal,
   openExtractionFeeModal,
@@ -51,7 +52,6 @@ import { useBuzz } from '~/components/Buzz/useBuzz';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import AlertDialog from '~/components/Dialog/Common/AlertDialog';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -307,7 +307,7 @@ export const CreatorProgramRequirement = ({
 const CompensationPoolCard = () => {
   const { compensationPool, isLoading: isLoadingCompensationPool } = useCompensationPool();
   const isLoading = isLoadingCompensationPool;
-  const date = formatDate(compensationPool?.phases.bank[0] ?? new Date(), 'MMMM, YYYY', true);
+  const date = formatDate(compensationPool?.phases.bank[0] ?? new Date(), 'MMMM YYYY', true);
 
   if (isLoading) {
     return (
@@ -322,38 +322,16 @@ const CompensationPoolCard = () => {
       <div className="flex h-full flex-col justify-between gap-12">
         <h3 className="text-center text-xl font-bold">Compensation Pool</h3>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col">
           <p className="text-center">{date}</p>
           <p className="text-center text-2xl font-bold">
             ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
           </p>
         </div>
-        <Anchor
-          onClick={() => {
-            dialogStore.trigger({
-              component: AlertDialog,
-              props: {
-                title: 'Compensation Pool',
-                type: 'info',
-                icon: null,
-                children: ({ handleClose }) => (
-                  <div className="flex flex-col justify-center gap-4">
-                    <p>
-                      The Creator Program Compensation Pool is made up of a portion of
-                      Civitai&rsquo;s revenue from the previous month. As Civitai grows, so does the
-                      pool! The more active Creators there are attracting users who spend Buzz, the
-                      larger the pool will be the next month
-                    </p>
-                    <Button onClick={handleClose}>Close</Button>
-                  </div>
-                ),
-              },
-            });
-          }}
-        >
+        <Anchor onClick={openCompensationPoolModal}>
           <div className="flex items-center justify-center gap-2">
-            <IconInfoCircle size={14} />
-            <p>How is this determined?</p>
+            <IconInfoCircle size={18} />
+            <p className="text-sm leading-tight">How is this determined?</p>
           </div>
         </Anchor>
       </div>
@@ -479,7 +457,7 @@ const BankBuzzCard = () => {
           </ActionIcon>
         </div>
 
-        <Alert color="yellow" className="mt-auto px-2">
+        <Alert color="yellow" className="mt-auto p-2">
           <div className="flex items-center gap-2">
             <IconCalendar size={24} className="shrink-0" />
             <div className="flex flex-1 flex-col">
@@ -520,19 +498,24 @@ const EstimatedEarningsCard = () => {
       <div className="flex flex-col gap-2">
         <h3 className="text-xl font-bold">Estimated Earnings</h3>
 
-        <table className="table-auto">
+        <table className="table-auto -mt-2">
           <tbody>
-            <tr>
-              <td>Compensation Pool</td>
-              <td>&nbsp;</td>
-              <td className="border-l-2 py-1 pl-2">
+            <tr className="font-bold">
+              <td colSpan={2} className="border-b">
+                <div className="flex items-center gap-1">
+                  <span>Compensation Pool</span>
+                  <ActionIcon onClick={openCompensationPoolModal}>
+                    <IconInfoCircle size={18} />
+                  </ActionIcon>
+                </div>
+              </td>
+              <td className="border-l border-b py-1 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
               </td>
             </tr>
             <tr>
-              <td>Total Banked Buzz</td>
-              <td>&nbsp;</td>
-              <td className="border-l-2 py-1 pl-2">
+              <td colSpan={2} className="border-b">Total Banked Buzz</td>
+              <td className="border-l border-b py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
@@ -540,22 +523,24 @@ const EstimatedEarningsCard = () => {
               </td>
             </tr>
             <tr>
-              <td>Your Banked Buzz</td>
+              <td >Your Banked Buzz</td>
               <td className="text-right">
                 {cap && (
-                  <Anchor
+                  <Text
+                    variant="link"
+                    className="cursor-pointer pr-2 text-sm"
+                    td="underline"
                     onClick={() => {
                       dialogStore.trigger({
                         component: CreatorProgramCapsInfo,
                       });
                     }}
-                    className="pr-2 text-sm "
                   >
                     {abbreviateNumber(cap)} Cap
-                  </Anchor>
+                  </Text>
                 )}
               </td>
-              <td className="border-l-2 py-1 pl-2">
+              <td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(banked.total)}</span>
@@ -570,18 +555,16 @@ const EstimatedEarningsCard = () => {
           </tbody>
         </table>
 
-        <Divider my="sm" />
-
         <div className="mb-4 flex flex-col gap-0">
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1">
             <p className="text-lg">
-              <span className="font-bold">Current Value:</span> $
+              <span className="font-bold">Your Current Value:</span> $
               {compensationPool
                 ? numberWithCommas(getCurrentValue(banked.total ?? 0, compensationPool))
                 : 'N/A'}
             </p>
             <ActionIcon onClick={openEarningEstimateModal}>
-              <IconInfoCircle size={14} />
+              <IconInfoCircle size={18} />
             </ActionIcon>
           </div>
           {phase === 'bank' && (
@@ -715,7 +698,7 @@ const CreatorProgramCapsInfo = () => {
           </tbody>
         </Table>
 
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col">
           <p>
             <span className="font-bold">Tier:</span> {capitalize(banked.cap.definition.tier)} Member
           </p>
@@ -738,7 +721,7 @@ const CreatorProgramCapsInfo = () => {
           </p>
 
           {banked.cap.cap <= MIN_CAP && (
-            <p className="opacity-50">
+            <p className="opacity-50 text-sm">
               All members have a minimum cap of{' '}
               <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
               {abbreviateNumber(MIN_CAP)}
@@ -835,18 +818,18 @@ const WithdrawCashCard = () => {
           )}
         </div>
         <p className="text-sm">Once you&rsquo;ve earned cash, you can withdraw it to your bank</p>
-        <table className="mb-4 table-auto text-sm">
+        <table className="mb-4 table-auto">
           <tbody>
-            <tr>
+            <tr className="border-b">
               <td>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-1">
                   <span>Pending Settlement </span>
                   <ActionIcon onClick={openSettlementModal}>
                     <IconInfoCircle size={14} />
                   </ActionIcon>
                 </div>
               </td>
-              <td className="border-l-2 py-1 pl-2">
+              <td className="py-1 pl-2 border-l">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.pending ?? 0, Currency.USD)}</span>
                 </div>
@@ -858,14 +841,14 @@ const WithdrawCashCard = () => {
                   <span>Ready to Withdraw </span>
                 </div>
               </td>
-              <td className="border-l-2 py-1 pl-2">
+              <td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.ready ?? 0, Currency.USD)}</span>
                 </div>
               </td>
             </tr>
             {userCash?.withdrawn > 0 && (
-              <tr>
+              <tr className="border-t">
                 <td>
                   <div className="flex items-center gap-2">
                     <span>Total Withdrawn </span>
@@ -880,7 +863,7 @@ const WithdrawCashCard = () => {
                     </ActionIcon>
                   </div>
                 </td>
-                <td className="border-l-2 py-1 pl-2">
+                <td className="border-l py-1 pl-2">
                   <div className="flex items-center gap-2">
                     $<span>{formatCurrencyForDisplay(userCash?.withdrawn ?? 0, Currency.USD)}</span>
                   </div>
@@ -891,12 +874,12 @@ const WithdrawCashCard = () => {
         </table>
 
         {!canWithdraw && (
-          <Alert color="red" className="mt-auto px-2">
+          <Alert color="red" className="mt-auto p-2">
             <div className="flex items-center gap-2">
               <IconLock size={24} className="shrink-0" />
               <div className="flex flex-1 flex-col">
-                <p className="text-sm">
-                  ${formatPriceForDisplay(MIN_WITHDRAWAL_AMOUNT)} is required to make a withdrawal
+                <p className="text-sm leading-tight">
+                  ${formatPriceForDisplay(MIN_WITHDRAWAL_AMOUNT, 'USD', { decimals: false })} is required to make a withdrawal
                 </p>
               </div>
             </div>
@@ -1148,7 +1131,7 @@ const ExtractBuzzCard = () => {
           </div>
         </div>
 
-        <Alert color="yellow" className="mt-auto px-2">
+        <Alert color="yellow" className="mt-auto p-2">
           <div className="flex items-center gap-2">
             <IconCalendar size={24} className="shrink-0" />
             <div className="flex flex-1 flex-col">
