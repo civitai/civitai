@@ -110,8 +110,7 @@ function CreatorsClubV1() {
                       Turn your Buzz into earnings!{' '}
                       {!availability.isAvailable && (
                         <>
-                          Launching on
-                          <Countdown endTime={availability.availableDate} />
+                          Launching on <Countdown endTime={availability.availableDate} />
                         </>
                       )}
                     </Title>
