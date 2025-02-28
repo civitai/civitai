@@ -186,7 +186,7 @@ async function getReactionTasks(ctx: ImageMetricContext) {
         tf.timeframe,
         ${snippets.reactionTimeframes()}
       FROM "ImageReaction" r
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE r."imageId" IN (${ids})
       GROUP BY r."imageId", tf.timeframe
     `;
@@ -243,7 +243,7 @@ async function getCommentTasks(ctx: ImageMetricContext) {
         ${snippets.timeframeSum('c."createdAt"')} "commentCount"
       FROM "Thread" t
       JOIN "CommentV2" c ON c."threadId" = t.id
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE t."imageId" IN (${ids})
         AND t."imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY t."imageId", tf.timeframe
@@ -273,7 +273,7 @@ async function getCollectionTasks(ctx: ImageMetricContext) {
         tf.timeframe,
         ${snippets.timeframeSum('ci."createdAt"')} "collectedCount"
       FROM "CollectionItem" ci
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE ci."imageId" IN (${ids})
         AND ci."imageId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY ci."imageId", tf.timeframe
@@ -304,7 +304,7 @@ async function getBuzzTasks(ctx: ImageMetricContext) {
         ${snippets.timeframeSum('bt."updatedAt"')} "tippedCount",
         ${snippets.timeframeSum('bt."updatedAt"', 'amount')} "tippedAmountCount"
       FROM "BuzzTip" bt
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE "entityId" IN (${ids}) AND "entityType" = 'Image'
         AND "entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY "entityId", tf.timeframe
