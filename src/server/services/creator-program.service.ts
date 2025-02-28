@@ -11,12 +11,19 @@ import {
 import { dbRead, dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import {
+  CashWithdrawalMetadataSchema,
+  CompensationPoolInput,
+  UpdateCashWithdrawalSchema,
+} from '~/server/schema/creator-program.schema';
 import { UserTier } from '~/server/schema/user.schema';
 import {
   createBuzzTransaction,
   getCounterPartyBuzzTransactions,
   getUserBuzzAccount,
 } from '~/server/services/buzz.service';
+import { createNotification } from '~/server/services/notification.service';
+import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
 import {
   bustFetchThroughCache,
   clearCacheByPattern,
@@ -29,6 +36,7 @@ import {
   getWithdrawalFee,
   getWithdrawalRefCode,
 } from '~/server/utils/creator-program.utils';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { invalidateSession } from '~/server/utils/session-helpers';
 import {
   CAP_DEFINITIONS,
@@ -39,19 +47,10 @@ import {
   PEAK_EARNING_WINDOW,
   WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
-import { throwBadRequestError } from '~/server/utils/errorHandling';
-import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
-import {
-  CashWithdrawalMetadataSchema,
-  CompensationPoolInput,
-  UpdateCashWithdrawalSchema,
-} from '~/server/schema/creator-program.schema';
+import { Flags } from '~/shared/utils';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
-import { createNotification } from '~/server/services/notification.service';
 import { signalClient } from '~/utils/signal-client';
-import { Flags } from '~/shared/utils';
-import { sleep } from '~/server/utils/concurrency-helpers';
 
 type UserCapCacheItem = {
   id: number;
@@ -83,7 +82,7 @@ export const userCapCache = createCachedObject<UserCapCacheItem>({
         SUM(amount) as earned
       FROM buzzTransactions
       WHERE (
-        (type IN ('compensation', 'tip')) -- Generation
+        (type IN ('compensation')) -- Generation
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
       AND toAccountType = 'user'
@@ -249,7 +248,7 @@ async function getPoolForecast(month?: Date) {
     FROM buzzTransactions
     WHERE toAccountType = 'user'
     AND (
-      (type IN ('compensation', 'tip')) -- Generation
+      (type IN ('compensation')) -- Generation
       OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
     )
     AND toAccountId != 0
@@ -612,7 +611,7 @@ export async function withdrawCash(userId: number, amount: number) {
   // Update withdrawal record
   await dbWrite.$executeRaw`
     UPDATE "CashWithdrawal"
-    SET status = 'Submitted', 
+    SET status = 'Submitted',
       metadata = jsonb_build_object(
         'paymentBatchId', ${paymentBatchId},
         'paymentRefCode', ${paymentRefCode},

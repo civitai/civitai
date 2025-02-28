@@ -842,7 +842,7 @@ const earnedCache = createCachedObject<{ id: number; earned: number }>({
         SUM(amount) as earned
       FROM buzzTransactions
       WHERE (
-        (type IN ('compensation', 'tip')) -- Generation
+        (type IN ('compensation')) -- Generation
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
       AND toAccountType = 'user'
@@ -875,7 +875,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         FROM buzzTransactions
         WHERE toAccountType = 'user'
         AND (
-          (type IN ('compensation', 'tip')) -- Generation
+          (type IN ('compensation')) -- Generation
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
         )
         AND toAccountId != 0
