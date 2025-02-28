@@ -33,7 +33,7 @@ const defaultBenefits = [
         <Anchor variant="link" td="underline" component="a" href="/creator-program" target="_blank">
           Creator Program
         </Anchor>{' '}
-        to get paid for your Buzz
+        to get paid for earned Buzz
       </Text>
     ),
   },
