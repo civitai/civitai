@@ -9,6 +9,7 @@ import isBetween from 'dayjs/plugin/isBetween';
 import minMax from 'dayjs/plugin/minMax';
 import relativeTime from 'dayjs/plugin/relativeTime';
 import utc from 'dayjs/plugin/utc';
+import timezone from 'dayjs/plugin/timezone';
 import { registerCustomProtocol } from 'linkifyjs';
 import type { Session } from 'next-auth';
 import { getToken } from 'next-auth/jwt';
@@ -75,6 +76,7 @@ dayjs.extend(isBetween);
 dayjs.extend(minMax);
 dayjs.extend(relativeTime);
 dayjs.extend(utc);
+dayjs.extend(timezone);
 
 registerCustomProtocol('civitai', true);
 // registerCustomProtocol('urn', true);

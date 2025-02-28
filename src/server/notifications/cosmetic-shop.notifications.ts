@@ -44,7 +44,7 @@ export const cosmeticShopNotifications = createNotificationProcessor({
   },
   // Moveable
   'cosmetic-shop-item-sold': {
-    displayName: "Shop: Your Item got bought (Creator's club exclusive)",
+    displayName: 'Shop: Your Item got bought (Creator Program exclusive)',
     category: NotificationCategory.System,
     prepareMessage: ({ details }) => ({
       message: `You got paid ${details.buzzAmount} Buzz for selling 1 "${details.shopItemTitle}" item`,

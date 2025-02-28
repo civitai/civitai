@@ -98,18 +98,19 @@ model UserReferralCode {
 }
 
 model UserPaymentConfiguration {
-  userId                 Int     @unique
-  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                  Int                   @unique
+  user                    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Tipalti
-  tipaltiAccountId       String? @unique
-  tipaltiAccountStatus   String  @default("PendingOnboarding")
-  tipaltiPaymentsEnabled Boolean @default(false)
+  tipaltiAccountId        String?               @unique
+  tipaltiAccountStatus    String                @default("PendingOnboarding")
+  tipaltiPaymentsEnabled  Boolean               @default(false)
+  tipaltiWithdrawalMethod CashWithdrawalMethod?
   // Stripe, mainly here for safekeeping or in case we ever support this again.
-  stripeAccountId        String? @unique
-  stripeAccountStatus    String  @default("PendingOnboarding")
-  stripePaymentsEnabled  Boolean @default(false)
+  stripeAccountId         String?               @unique
+  stripeAccountStatus     String                @default("PendingOnboarding")
+  stripePaymentsEnabled   Boolean               @default(false)
   //
-  meta                   Json    @default("{}")
+  meta                    Json                  @default("{}")
 }
 
 enum BuzzWithdrawalRequestStatus {
@@ -157,6 +158,55 @@ model BuzzWithdrawalRequest {
   updatedAt                   DateTime                       @updatedAt
   status                      BuzzWithdrawalRequestStatus    @default(Requested) // updated with trigger
   history                     BuzzWithdrawalRequestHistory[]
+}
+
+enum CashWithdrawalStatus {
+  // Tipalti
+  Paid
+  Rejected
+  Scheduled
+  Submitted
+  Deferred
+  DeferredInternal
+  Canceled
+  Cleared
+  FraudReview
+  PendingPayerFunds
+  InternalValue
+  // Civitai Custom State
+  FailedFee
+}
+
+enum CashWithdrawalMethod {
+  NoPM
+  WireTransfer
+  Payoneer
+  PayPal
+  ACH
+  Check
+  eCheck
+  HoldMyPayments
+  Custom
+  Intercash
+  Card
+  TipaltiInternalValue
+}
+
+model CashWithdrawal {
+  id            String               @id @default(cuid())
+  transactionId String?              @unique
+  userId        Int
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Int
+  method        CashWithdrawalMethod
+  fee           Int
+  status        CashWithdrawalStatus
+  note          String?
+  metadata      Json                 @default("{}")
+  createdAt     DateTime?            @default(now())
+  updatedAt     DateTime?            @updatedAt
+
+  @@index([userId])
 }
 
 enum RewardsEligibility {
@@ -293,8 +343,11 @@ model User {
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
   resolvedAppeals            Appeal[]                       @relation("resolvedAppeals")
+  cashWithdrawals            CashWithdrawal[]
   bids                       Bid[]
   recurringBids              BidRecurring[]
+
+  @@index([deletedAt])
 }
 
 model CustomerSubscription {
@@ -380,6 +433,7 @@ model UserEngagement {
   createdAt    DateTime           @default(now())
 
   @@id([userId, targetUserId])
+  @@index([type, userId])
 }
 
 model UserMetric {
@@ -697,38 +751,39 @@ model ModelVersionMonetization {
 }
 
 model ModelVersion {
-  id                Int               @id @default(autoincrement())
-  index             Int?
-  name              String
-  description       String?
-  modelId           Int
-  model             Model             @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords      String[]
-  steps             Int?
-  epochs            Int?
-  clipSkip          Int?
-  vaeId             Int?
-  vae               ModelVersion?     @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  publishedAt       DateTime?
-  status            ModelStatus       @default(Draft)
-  trainingStatus    TrainingStatus?
-  trainingDetails   Json?
-  fromImport        Import?           @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId      Int?
-  inaccurate        Boolean           @default(false)
-  baseModel         String
-  baseModelType     String?
-  meta              Json              @default("{}")
-  requireAuth       Boolean           @default(false)
-  settings          Json?
-  availability      Availability      @default(Public)
-  nsfwLevel         Int               @default(0)
-  earlyAccessEndsAt DateTime?
-  earlyAccessConfig Json?
-  uploadType        ModelUploadType   @default(Created)
-  usageControl      ModelUsageControl @default(Download)
+  id                   Int               @id @default(autoincrement())
+  index                Int?
+  name                 String
+  description          String?
+  modelId              Int
+  model                Model             @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords         String[]
+  steps                Int?
+  epochs               Int?
+  clipSkip             Int?
+  vaeId                Int?
+  vae                  ModelVersion?     @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  publishedAt          DateTime?
+  status               ModelStatus       @default(Draft)
+  trainingStatus       TrainingStatus?
+  trainingDetails      Json?
+  fromImport           Import?           @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId         Int?
+  inaccurate           Boolean           @default(false)
+  baseModel            String
+  baseModelType        String?
+  meta                 Json              @default("{}")
+  requireAuth          Boolean           @default(false)
+  settings             Json?
+  availability         Availability      @default(Public)
+  nsfwLevel            Int               @default(0)
+  earlyAccessEndsAt    DateTime?
+  earlyAccessConfig    Json?
+  uploadType           ModelUploadType   @default(Created)
+  usageControl         ModelUsageControl @default(Download)
+  earlyAccessTimeFrame Int               @default(0)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1130,7 +1185,7 @@ model ResourceReview {
   modelVersionId Int
   modelVersion   ModelVersion             @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   rating         Int
-  recommended    Boolean
+  recommended    Boolean                  @default(true)
   details        String?
   userId         Int
   user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1221,8 +1276,10 @@ model PostMetric {
   commentCount   Int             @default(0)
   collectedCount Int             @default(0)
   updatedAt      DateTime        @default(now())
+  ageGroup       MetricTimeframe @default(Day)
 
   @@id([postId, timeframe])
+  @@index([postId, ageGroup])
 }
 
 enum ImageGenerationProcess {
@@ -2759,7 +2816,7 @@ model EntityAccess {
   addedById    Int
   addedBy      User     @relation(fields: [addedById], references: [id])
   addedAt      DateTime @default(now())
-  permissions  Int      @default(1024)
+  permissions  Int      @default(0)
   meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])
@@ -2999,6 +3056,8 @@ model ChatMember {
   user              User         @relation(fields: [userId], references: [id])
   chat              Chat         @relation(fields: [chatId], references: [id])
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
+
+  @@index([userId, status, isMuted])
 }
 
 enum ChatMessageType {

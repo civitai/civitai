@@ -15,7 +15,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   features?: (features: FeatureAccess) => boolean;
 })[] = [
   {
-    href: '/creators-program',
+    href: '/creator-program',
     color: 'blue',
     children: 'Creators',
   },

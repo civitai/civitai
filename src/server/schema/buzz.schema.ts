@@ -26,10 +26,21 @@ export enum TransactionType {
   AuthorizedPurchase = 20,
   Compensation = 21,
   Appeal = 22,
+  Bank = 23,
+  Extract = 24,
+  Fee = 25,
   Bid = 26,
 }
 
-export const buzzAccountTypes = ['user', 'club', 'generation'] as const;
+export const buzzAccountTypes = [
+  'user',
+  'club',
+  'generation',
+  // WHEN LOOKING INTO CLICKHOUSE, THESE ARE PARSED AS KEBAB CASE.
+  'creatorprogrambank',
+  'cashpending',
+  'cashsettled',
+] as const;
 export type BuzzAccountType = (typeof buzzAccountTypes)[number];
 
 function preprocessAccountType(value: unknown) {
@@ -206,3 +217,25 @@ export const getTransactionsReportResultSchema = z.array(
     ),
   })
 );
+
+export type GetBuzzMovementsBetweenAccounts = z.infer<typeof getBuzzMovementsBetweenAccounts>;
+export const getBuzzMovementsBetweenAccounts = z.object({
+  accountId: z.number().min(0),
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  counterPartyAccountId: z.number().min(0),
+  counterPartyAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+});
+
+export type GetBuzzMovementsBetweenAccountsResponse = z.infer<
+  typeof getBuzzMovementsBetweenAccountsResponse
+>;
+export const getBuzzMovementsBetweenAccountsResponse = z.object({
+  // This is the user id
+  accountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  accountId: z.number(),
+  counterPartyAccountType: z.preprocess(preprocessAccountType, z.enum(buzzAccountTypes).optional()),
+  counterPartyAccountId: z.number(),
+  inwardsBalance: z.number(),
+  outwardsBalance: z.number(),
+  totalBalance: z.number(),
+});
