@@ -86,7 +86,7 @@ export const creatorsProgramDistribute = createJob(
     const affectedUsers = participants.map((p) => p.userId);
     userCashCache.bust(affectedUsers);
 
-    await signalClient.topicSend({
+    signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CashInvalidator,
       data: {},
@@ -140,7 +140,7 @@ export const creatorsProgramInviteTipalti = createJob(
     // Bust user caches
     userCashCache.bust(usersWithoutTipalti);
 
-    await signalClient.topicSend({
+    signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CashInvalidator,
       data: {},
@@ -205,7 +205,7 @@ export const creatorsProgramSettleCash = createJob(
     // Bust user caches
     const affectedUsers = pendingCash.map((p) => p.userId);
     userCashCache.bust(affectedUsers);
-    await signalClient.topicSend({
+    signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CashInvalidator,
       data: {},

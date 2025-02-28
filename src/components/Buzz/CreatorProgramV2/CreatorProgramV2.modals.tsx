@@ -155,9 +155,9 @@ export const openExtractionFeeModal = () => {
                   ? `<  ${abbreviateNumber(fee.max)} Buzz (${
                       fee.fee > 0 ? `${fee.fee * 100}% Fee` : 'No Fee'
                     })`
-                  : `${abbreviateNumber(fee.min)} - ${abbreviateNumber(fee.max)} Buzz (${
-                      fee.fee * 100
-                    }% Fee)`}
+                  : `${abbreviateNumber(fee.min)}${
+                      fee.max ? ` - ${abbreviateNumber(fee.max)}` : '+'
+                    } Buzz (${fee.fee * 100}% Fee)`}
               </li>
             ))}
           </ul>

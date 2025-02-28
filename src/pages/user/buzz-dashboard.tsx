@@ -19,7 +19,7 @@ import { useRouter } from 'next/router';
 import React, { useEffect } from 'react';
 import { UserPaymentConfigurationCard } from '~/components/Account/UserPaymentConfigurationCard';
 import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
-import { CreatorsProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
+import { CreatorProgramV2 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2';
 import { BuzzDashboardOverview } from '~/components/Buzz/Dashboard/BuzzDashboardOverview';
 import { EarningBuzz, SpendingBuzz } from '~/components/Buzz/FeatureCards/FeatureCards';
 import { DailyCreatorCompReward } from '~/components/Buzz/Rewards/DailyCreatorCompReward';
@@ -223,9 +223,9 @@ export default function UserBuzzDashboard() {
             </Text>
             .
           </Text>
-          <CreatorsProgramV2 />
           <GeneratedImagesReward />
           {features.creatorComp && <DailyCreatorCompReward />}
+          <CreatorProgramV2 />
         </Stack>
       </Container>
     </>

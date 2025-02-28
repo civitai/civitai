@@ -122,3 +122,10 @@ export function isHolidaysTime() {
   const today = dayjs();
   return today.month() === 11;
 }
+
+export function roundMinutes(date: Date) {
+  date.setHours(date.getHours() + Math.round(date.getMinutes() / 60));
+  date.setMinutes(0, 0, 0); // Resets also seconds and milliseconds
+
+  return date;
+}

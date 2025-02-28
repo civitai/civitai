@@ -5,7 +5,7 @@ export const EXTRACTION_PHASE_DURATION = 3; // days
 
 type ExtractionFee = {
   min: number;
-  max: number;
+  max?: number;
   fee: number;
 };
 export const EXTRACTION_FEES: ExtractionFee[] = [
@@ -26,7 +26,7 @@ export const EXTRACTION_FEES: ExtractionFee[] = [
   },
   {
     min: 5000000,
-    max: Infinity,
+    max: undefined,
     fee: 0.15,
   },
 ];

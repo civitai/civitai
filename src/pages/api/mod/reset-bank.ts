@@ -112,7 +112,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     await bustCompensationPoolCache();
 
     const updatedCompensationPool = await getCompensationPool({});
-    await signalClient.topicSend({
+    signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CompensationPoolUpdate,
       data: updatedCompensationPool,
