@@ -4,6 +4,10 @@ export type BuzzWithdrawalRequestStatus = "Requested" | "Canceled" | "Rejected" 
 
 export type UserPaymentConfigurationProvider = "Stripe" | "Tipalti";
 
+export type CashWithdrawalStatus = "Paid" | "Rejected" | "Scheduled" | "Submitted" | "Deferred" | "DeferredInternal" | "Canceled" | "Cleared" | "FraudReview" | "PendingPayerFunds" | "InternalValue" | "FailedFee";
+
+export type CashWithdrawalMethod = "NoPM" | "WireTransfer" | "Payoneer" | "PayPal" | "ACH" | "Check" | "eCheck" | "HoldMyPayments" | "Custom" | "Intercash" | "Card" | "TipaltiInternalValue";
+
 export type RewardsEligibility = "Eligible" | "Ineligible" | "Protected";
 
 export type PaymentProvider = "Stripe" | "Paddle";
@@ -219,6 +223,7 @@ export interface UserPaymentConfiguration {
   tipaltiAccountId: string | null;
   tipaltiAccountStatus: string;
   tipaltiPaymentsEnabled: boolean;
+  tipaltiWithdrawalMethod: CashWithdrawalMethod | null;
   stripeAccountId: string | null;
   stripeAccountStatus: string;
   stripePaymentsEnabled: boolean;
@@ -254,6 +259,21 @@ export interface BuzzWithdrawalRequest {
   updatedAt: Date;
   status: BuzzWithdrawalRequestStatus;
   history?: BuzzWithdrawalRequestHistory[];
+}
+
+export interface CashWithdrawal {
+  id: string;
+  transactionId: string | null;
+  userId: number;
+  user?: User;
+  amount: number;
+  method: CashWithdrawalMethod;
+  fee: number;
+  status: CashWithdrawalStatus;
+  note: string | null;
+  metadata: JsonValue;
+  createdAt: Date | null;
+  updatedAt: Date | null;
 }
 
 export interface User {
@@ -380,6 +400,7 @@ export interface User {
   collectionItemScores?: CollectionItemScore[];
   appeals?: Appeal[];
   resolvedAppeals?: Appeal[];
+  cashWithdrawals?: CashWithdrawal[];
 }
 
 export interface CustomerSubscription {

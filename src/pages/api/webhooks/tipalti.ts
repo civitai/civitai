@@ -3,9 +3,16 @@ import { Readable } from 'node:stream';
 import { env } from '~/env/server';
 import { dbRead } from '~/server/db/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
+import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
+import { updateCashWithdrawal, userCashCache } from '~/server/services/creator-program.service';
 import { updateByTipaltiAccount } from '~/server/services/user-payment-configuration.service';
-import { BuzzWithdrawalRequestStatus } from '~/shared/utils/prisma/enums';
+import { parseRefCodeToWithdrawalId } from '~/server/utils/creator-program.utils';
+import {
+  BuzzWithdrawalRequestStatus,
+  CashWithdrawalMethod,
+  CashWithdrawalStatus,
+} from '~/shared/utils/prisma/enums';
 
 export const config = {
   api: {
@@ -13,9 +20,9 @@ export const config = {
   },
 };
 
-type TipaltiWebhookEvent = {
+type TipaltiWebhookEventData = {
   id: string;
-  type: string;
+  type: Tipalti.TipaltiWebhookEventType;
   createdDate: string;
   isTest: boolean;
   version: string;
@@ -40,7 +47,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       req.headers['Tipalti-Signature'];
 
     const webhookSecret = env.TIPALTI_WEBTOKEN_SECRET;
-    let event: TipaltiWebhookEvent;
+    let event: TipaltiWebhookEventData;
     const buf = await buffer(req);
 
     try {
@@ -68,7 +75,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
         });
       }
 
-      event = JSON.parse(buffAsString) as TipaltiWebhookEvent;
+      event = JSON.parse(buffAsString) as TipaltiWebhookEventData;
 
       switch (event.type) {
         case 'payeeDetailsChanged':
@@ -78,144 +85,24 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             userId: Number.parseInt(event.eventData.payeeId),
             tipaltiAccountStatus: event.eventData.status,
             tipaltiPaymentsEnabled: event.eventData.isPayable,
+            tipaltiWithdrawalMethod: event.eventData.paymentMethod as CashWithdrawalMethod,
           });
           break;
         case 'paymentGroupApproved':
-        case 'paymentGroupDeclined': {
-          const payment = event.eventData.payments[0] as { refCode: string; paymentStatus: string };
-          const request = await dbRead.buzzWithdrawalRequest.findFirst({
-            where: {
-              transferId: payment.refCode,
-            },
-          });
-
-          if (!request) {
-            console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-            return res
-              .status(400)
-              .send(`Withdrawal request not found for transferId: ${payment.refCode}`);
-          }
-
-          // Update the status of the withdrawal request:
-          const status =
-            event.type === 'paymentGroupApproved'
-              ? BuzzWithdrawalRequestStatus.Approved
-              : BuzzWithdrawalRequestStatus.Rejected;
-          const metadata = {
-            ...((request.metadata as MixedObject) ?? {}),
-            paymentStatus: payment.paymentStatus,
-            approvalDate: event.eventData.approvalDate,
-          };
-          const note = `Payment group ${
-            event.type === 'paymentGroupApproved' ? 'approved' : 'declined'
-          }. Payment status: ${payment.paymentStatus}`;
-
-          await updateBuzzWithdrawalRequest({
-            requestIds: [request.id],
-            status,
-            metadata,
-            note,
-            userId: -1, // Done by Webhook
-          });
-
-          break;
-        }
+        case 'paymentGroupDeclined':
         case 'paymentCompleted':
         case 'paymentSubmitted':
         case 'paymentDeferred':
-        case 'paymentCanceled': {
-          const payment = event.eventData as { refCode: string; paymentStatus: string };
-          const request = await dbRead.buzzWithdrawalRequest.findFirst({
-            where: {
-              transferId: payment.refCode,
-            },
-          });
-
-          if (!request) {
-            console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-            return res
-              .status(400)
-              .send(`Withdrawal request not found for transferId: ${payment.refCode}`);
-          }
-
-          // Update the status of the withdrawal request:
-          const status =
-            event.type === 'paymentCompleted'
-              ? BuzzWithdrawalRequestStatus.Transferred
-              : event.type === 'paymentDeferred' || event.type === 'paymentSubmitted'
-              ? BuzzWithdrawalRequestStatus.Approved
-              : BuzzWithdrawalRequestStatus.Rejected;
-
-          const metadata = {
-            ...((request.metadata as MixedObject) ?? {}),
-            cancelledDate: event.eventData.cancelledDate,
-            errorDescription: event.eventData.errorDescription,
-            errorCode: event.eventData.errorCode,
-            errorDate: event.eventData.errorDate,
-            deferredReasons: event.eventData.deferredReasons,
-          };
-          const note =
-            event.type === 'paymentCompleted'
-              ? 'Payment completed'
-              : event.type === 'paymentDeferred'
-              ? `Payment deferred. Reasons: ${event.eventData.deferredReasons
-                  .map((r: { reasonDescription: string }) => r.reasonDescription)
-                  .join(', ')}`
-              : event.type === 'paymentSubmitted'
-              ? 'Payment submitted'
-              : 'Payment canceled';
-
-          await updateBuzzWithdrawalRequest({
-            requestIds: [request.id],
-            status,
-            metadata,
-            note,
-            userId: -1, // Done by Webhook
-          });
-
-          break;
-        }
+        case 'paymentCanceled':
         case 'paymentError': {
           const payment = event.eventData as { refCode: string; paymentStatus: string };
-          const request = await dbRead.buzzWithdrawalRequest.findFirst({
-            where: {
-              transferId: payment.refCode,
-            },
-          });
 
-          if (!request) {
-            console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
-            return res
-              .status(400)
-              .send(`Withdrawal request not found for transferId: ${payment.refCode}`);
+          if (payment.refCode.startsWith('CW')) {
+            // Creator Program V2:
+            await processCashWithdrawalEvent(event);
+          } else {
+            await processBuzzWithdrawalRequest(event);
           }
-
-          const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
-
-          if (!paymentRecord) {
-            throw new Error('Could not fetch payment record');
-          }
-
-          const feesTotal = paymentRecord?.fees.reduce((acc, fee) => acc + fee.amount.amount, 0);
-          // Update the status of the withdrawal request:
-
-          await updateBuzzWithdrawalRequest({
-            requestIds: [request.id],
-            status: BuzzWithdrawalRequestStatus.Rejected,
-            metadata: {
-              ...((request.metadata as MixedObject) ?? {}),
-              cancelledDate: event.eventData.cancelledDate,
-              errorDescription: event.eventData.errorDescription,
-              errorCode: event.eventData.errorCode,
-              errorDate: event.eventData.errorDate,
-              deferredReasons: event.eventData.deferredReasons,
-            },
-            note: `Payment error: ${event.eventData.errorDescription}`,
-            userId: -1, // Done by Webhook
-            refundFees: feesTotal * 1000,
-          });
-
-          break;
         }
         default:
           throw new Error('Unhandled relevant event!');
@@ -231,3 +118,309 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(405).end('Method Not Allowed');
   }
 }
+
+const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
+  const client = await tipaltiCaller();
+
+  switch (event.type) {
+    case 'paymentGroupApproved':
+    case 'paymentGroupDeclined': {
+      const payment = event.eventData.payments[0] as { refCode: string; paymentStatus: string };
+
+      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+        where: {
+          transferId: payment.refCode,
+        },
+      });
+
+      if (!request) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      // Update the status of the withdrawal request:
+      const status =
+        event.type === 'paymentGroupApproved'
+          ? BuzzWithdrawalRequestStatus.Approved
+          : BuzzWithdrawalRequestStatus.Rejected;
+      const metadata = {
+        ...((request.metadata as MixedObject) ?? {}),
+        paymentStatus: payment.paymentStatus,
+        approvalDate: event.eventData.approvalDate,
+      };
+      const note = `Payment group ${
+        event.type === 'paymentGroupApproved' ? 'approved' : 'declined'
+      }. Payment status: ${payment.paymentStatus}`;
+
+      await updateBuzzWithdrawalRequest({
+        requestIds: [request.id],
+        status,
+        metadata,
+        note,
+        userId: -1, // Done by Webhook
+      });
+
+      break;
+    }
+    case 'paymentCompleted':
+    case 'paymentSubmitted':
+    case 'paymentDeferred':
+    case 'paymentCanceled': {
+      const payment = event.eventData as { refCode: string; paymentStatus: string };
+      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+        where: {
+          transferId: payment.refCode,
+        },
+      });
+
+      if (!request) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      // Update the status of the withdrawal request:
+      const status =
+        event.type === 'paymentCompleted'
+          ? BuzzWithdrawalRequestStatus.Transferred
+          : event.type === 'paymentDeferred' || event.type === 'paymentSubmitted'
+          ? BuzzWithdrawalRequestStatus.Approved
+          : BuzzWithdrawalRequestStatus.Rejected;
+
+      const metadata = {
+        ...((request.metadata as MixedObject) ?? {}),
+        cancelledDate: event.eventData.cancelledDate,
+        errorDescription: event.eventData.errorDescription,
+        errorCode: event.eventData.errorCode,
+        errorDate: event.eventData.errorDate,
+        deferredReasons: event.eventData.deferredReasons,
+      };
+      const note =
+        event.type === 'paymentCompleted'
+          ? 'Payment completed'
+          : event.type === 'paymentDeferred'
+          ? `Payment deferred. Reasons: ${event.eventData.deferredReasons
+              .map((r: { reasonDescription: string }) => r.reasonDescription)
+              .join(', ')}`
+          : event.type === 'paymentSubmitted'
+          ? 'Payment submitted'
+          : 'Payment canceled';
+
+      await updateBuzzWithdrawalRequest({
+        requestIds: [request.id],
+        status,
+        metadata,
+        note,
+        userId: -1, // Done by Webhook
+      });
+
+      break;
+    }
+    case 'paymentError': {
+      const payment = event.eventData as { refCode: string; paymentStatus: string };
+      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+        where: {
+          transferId: payment.refCode,
+        },
+      });
+
+      if (!request) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
+
+      if (!paymentRecord) {
+        throw new Error('Could not fetch payment record');
+      }
+
+      const feesTotal = paymentRecord?.fees.reduce((acc, fee) => acc + fee.amount.amount, 0);
+      // Update the status of the withdrawal request:
+
+      await updateBuzzWithdrawalRequest({
+        requestIds: [request.id],
+        status: BuzzWithdrawalRequestStatus.Rejected,
+        metadata: {
+          ...((request.metadata as MixedObject) ?? {}),
+          cancelledDate: event.eventData.cancelledDate,
+          errorDescription: event.eventData.errorDescription,
+          errorCode: event.eventData.errorCode,
+          errorDate: event.eventData.errorDate,
+          deferredReasons: event.eventData.deferredReasons,
+        },
+        note: `Payment error: ${event.eventData.errorDescription}`,
+        userId: -1, // Done by Webhook
+        refundFees: feesTotal * 1000,
+      });
+
+      break;
+    }
+  }
+};
+
+const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
+  const client = await tipaltiCaller();
+
+  switch (event.type) {
+    case 'paymentGroupApproved':
+    case 'paymentGroupDeclined': {
+      const payment = event.eventData.payments[0] as { refCode: string; paymentStatus: string };
+      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
+
+      if (!userId || !idPart) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+        where: {
+          userId,
+          id: {
+            startsWith: idPart,
+          },
+        },
+      });
+
+      if (!cashWithdrawal) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      // Update the status of the withdrawal request:
+      const status =
+        event.type === 'paymentGroupApproved'
+          ? CashWithdrawalStatus.Scheduled
+          : CashWithdrawalStatus.Rejected;
+
+      const metadata = {
+        ...((cashWithdrawal.metadata as MixedObject) ?? {}),
+        paymentStatus: payment.paymentStatus,
+        approvalDate: event.eventData.approvalDate,
+      };
+
+      await updateCashWithdrawal({
+        withdrawalId: cashWithdrawal.id,
+        status,
+        metadata,
+      });
+
+      break;
+    }
+    case 'paymentCompleted':
+    case 'paymentSubmitted':
+    case 'paymentDeferred':
+    case 'paymentCanceled': {
+      const payment = event.eventData as { refCode: string; paymentStatus: string };
+      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
+
+      if (!userId || !idPart) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+        where: {
+          userId,
+          id: {
+            startsWith: idPart,
+          },
+        },
+      });
+
+      if (!cashWithdrawal) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      // Update the status of the withdrawal request:
+      const status =
+        event.type === 'paymentCompleted'
+          ? CashWithdrawalStatus.Paid
+          : event.type === 'paymentDeferred'
+          ? CashWithdrawalStatus.Deferred
+          : event.type === 'paymentSubmitted'
+          ? CashWithdrawalStatus.Scheduled
+          : CashWithdrawalStatus.Canceled;
+
+      const metadata = {
+        ...((cashWithdrawal.metadata as MixedObject) ?? {}),
+        cancelledDate: event.eventData.cancelledDate,
+        errorDescription: event.eventData.errorDescription,
+        errorCode: event.eventData.errorCode,
+        errorDate: event.eventData.errorDate,
+        deferredReasons: event.eventData.deferredReasons,
+      };
+
+      const note =
+        event.type === 'paymentCompleted'
+          ? 'Payment completed'
+          : event.type === 'paymentDeferred'
+          ? `Payment deferred. Reasons: ${event.eventData.deferredReasons
+              .map((r: { reasonDescription: string }) => r.reasonDescription)
+              .join(', ')}`
+          : event.type === 'paymentSubmitted'
+          ? 'Payment submitted'
+          : 'Payment canceled';
+
+      await updateCashWithdrawal({
+        withdrawalId: cashWithdrawal.id,
+        status,
+        metadata,
+        note,
+      });
+
+      await userCashCache.bust(cashWithdrawal.userId);
+
+      break;
+    }
+    case 'paymentError': {
+      const payment = event.eventData as { refCode: string; paymentStatus: string };
+      const { userId, idPart } = parseRefCodeToWithdrawalId(payment.refCode);
+
+      if (!userId || !idPart) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+        where: {
+          userId,
+          id: {
+            startsWith: idPart,
+          },
+        },
+      });
+
+      if (!cashWithdrawal) {
+        console.log(`❌ Withdrawal request not found for transferId: ${payment.refCode}`);
+        throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
+      }
+
+      const paymentRecord = await client.getPaymentByRefCode(payment.refCode);
+
+      if (!paymentRecord) {
+        throw new Error('Could not fetch payment record');
+      }
+
+      const feesTotal = paymentRecord?.fees.reduce((acc, fee) => acc + fee.amount.amount, 0);
+
+      await updateCashWithdrawal({
+        withdrawalId: cashWithdrawal.id,
+        status: CashWithdrawalStatus.Rejected,
+        metadata: {
+          ...((cashWithdrawal.metadata as MixedObject) ?? {}),
+          cancelledDate: event.eventData.cancelledDate,
+          errorDescription: event.eventData.errorDescription,
+          errorCode: event.eventData.errorCode,
+          errorDate: event.eventData.errorDate,
+          deferredReasons: event.eventData.deferredReasons,
+        },
+        note: `Payment error: ${event.eventData.errorDescription}`,
+        fees: feesTotal * 100,
+      });
+
+      await userCashCache.bust(cashWithdrawal.userId);
+      break;
+    }
+  }
+};
