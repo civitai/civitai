@@ -571,8 +571,8 @@ const EstimatedEarningsCard = () => {
 
         <Divider my="sm" />
 
-        <div className="mb-4 flex flex-col gap-2">
-          <div className="flex items-center gap-0">
+        <div className="mb-4 flex flex-col gap-0">
+          <div className="flex items-center gap-2">
             <p className="text-lg">
               <span className="font-bold">Current Value:</span> $
               {compensationPool
