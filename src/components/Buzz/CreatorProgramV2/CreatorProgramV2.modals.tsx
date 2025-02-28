@@ -24,8 +24,8 @@ export const openPhasesModal = () => {
               <li>This phase lasts until 3 days before the end of the month (UTC).</li>
               <li>
                 As the month progresses, the value of your Banked Buzz{' '}
-                <span className="font-bold underline">decreases</span> because the total amount of Buzz in the
-                Bank increases.
+                <span className="font-bold underline">decreases</span> because the total amount of
+                Buzz in the Bank increases.
               </li>
             </ul>
           </div>
@@ -45,7 +45,8 @@ export const openPhasesModal = () => {
               </li>
               <li>
                 As more creators extract their Buzz, the value of your Banked Buzz{' '}
-                <span className="font-bold underline">increases</span>, making your share of the Pool bigger!
+                <span className="font-bold underline">increases</span>, making your share of the
+                Pool bigger!
               </li>
             </ul>
           </div>
@@ -145,21 +146,26 @@ export const openExtractionFeeModal = () => {
             Banked.
           </p>
           <p className="mb-2">
-            To prevent manipulation of the total Banked amount by Creators with large amounts of Buzz,
-            we&rsquo;ve implemented the following Extraction Fees:
+            To prevent manipulation of the total Banked amount by Creators with large amounts of
+            Buzz, we&rsquo;ve implemented the following Extraction Fees:
           </p>
           <ul className="py-2 pl-4">
-            {EXTRACTION_FEES.map((fee) => (
-              <li key={fee.max}>
-                {fee.min === 0
-                  ? `<  ${abbreviateNumber(fee.max ?? 0)} Buzz (${
-                      fee.fee > 0 ? `${fee.fee * 100}% Fee` : 'No Fee'
-                    })`
-                  : `${abbreviateNumber(fee.min)}${
-                      fee.max ? ` - ${abbreviateNumber(fee.max)}` : '+'
-                    } Buzz (${fee.fee * 100}% Fee)`}
-              </li>
-            ))}
+            {EXTRACTION_FEES.map((fee) => {
+              const feeCopy = fee.fee > 0 ? `${fee.fee * 100}% Fee` : 'No Fee';
+
+              return (
+                <li key={fee.max}>
+                  <span className="font-bold">
+                    {fee.min === 0
+                      ? `<  ${abbreviateNumber(fee.max ?? 0)} Buzz`
+                      : `${abbreviateNumber(fee.min)}${
+                          fee.max ? ` - ${abbreviateNumber(fee.max)}` : '+'
+                        } Buzz`}:
+                  </span>{' '}
+                  {feeCopy}
+                </li>
+              );
+            })}
           </ul>
 
           <p>
