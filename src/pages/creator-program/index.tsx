@@ -138,6 +138,7 @@ function CreatorsClubV1() {
           </Grid>
           <HowItWorksSection />
           <JoinSection applyFormUrl={applyFormUrl} />
+          <FAQ />
         </Stack>
       </Container>
     </>
@@ -196,21 +197,25 @@ const HowItWorksSection = () => {
                 <Divider />
                 <Group noWrap w="100%">
                   <IconPercentage10 size={24} />
-                  <Text>Each month Civitai allocates a Creator Compensation Pool from a portion of our revenue</Text>
+                  <Text>
+                    Each month Civitai allocates a Creator Compensation Pool from a portion of our
+                    revenue
+                  </Text>
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
                   <IconPig size={24} />
                   <Text>
-                    During the Banking Phase, you Bank Buzz to secure your share of the
-                    Compensation Pool
+                    During the Banking Phase, you Bank Buzz to secure your share of the Compensation
+                    Pool
                   </Text>
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
                   <IconLogout size={24} />
                   <Text>
-                    During the Extraction Phase, you can choose to keep Buzz in the Bank to get paid or Extract it to save it for the future
+                    During the Extraction Phase, you can choose to keep Buzz in the Bank to get paid
+                    or Extract it to save it for the future
                   </Text>
                 </Group>
                 <Divider />
@@ -353,6 +358,53 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
           </Paper>
         </Grid.Col>
       </Grid>
+    </Stack>
+  );
+};
+
+const faq: { q: string; a: string | React.ReactNode }[] = [
+  {
+    q: 'Is this voluntary?',
+    a: 'Yes! If you’re eligible for the program, but don’t want to participate, nobody’s forcing you! Even if you do join the program, but don’t want to contribute Buzz, that’s fine – there’s no requirement to Bank anything.',
+  },
+  {
+    q: 'What happens if cancel my Civitai Membership?',
+    a: 'If you deactivate your Subscription you’ll remain in the Program until the end of the month, allowing you to Bank your Buzz and withdraw through the end of the period.',
+  },
+  {
+    q: 'When, and how, do I sign up with your Payment Partner to withdraw my cash?',
+    a: 'When you have at least $50 in Ready to Withdraw status, you’ll be invited to set up your account with our Payment Partner, via the email tied to your Civitai account, and a link on the Creator Program interface.',
+  },
+  {
+    q: 'Must I withdraw my “Ready to Withdraw” funds each month?',
+    a: 'No, funds can accumulate in your account until you’re ready to pay out! There’s no requirement to pay out each month.',
+  },
+];
+
+const FAQ = () => {
+  const { cx, classes, theme } = useStyles();
+
+  return (
+    <Stack className={classes.section}>
+      <Stack>
+        <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+          Frequently asked questions
+        </Title>
+        <Accordion variant="default">
+          {faq.map(({ q, a }, index) => (
+            <Accordion.Item key={index} value={`q${index}`}>
+              <Accordion.Control>
+                <Group spacing={8}>
+                  <Text size="lg" weight={700}>
+                    {q}
+                  </Text>
+                </Group>
+              </Accordion.Control>
+              <Accordion.Panel>{typeof a === 'string' ? <Text>{a}</Text> : a}</Accordion.Panel>
+            </Accordion.Item>
+          ))}
+        </Accordion>
+      </Stack>
     </Stack>
   );
 };
