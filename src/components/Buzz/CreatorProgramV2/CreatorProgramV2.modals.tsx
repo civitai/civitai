@@ -152,7 +152,7 @@ export const openExtractionFeeModal = () => {
             {EXTRACTION_FEES.map((fee) => (
               <li key={fee.max}>
                 {fee.min === 0
-                  ? `<  ${abbreviateNumber(fee.max)} Buzz (${
+                  ? `<  ${abbreviateNumber(fee.max ?? 0)} Buzz (${
                       fee.fee > 0 ? `${fee.fee * 100}% Fee` : 'No Fee'
                     })`
                   : `${abbreviateNumber(fee.min)}${
