@@ -4,11 +4,8 @@ BEGIN
     INSERT INTO "ImageMetric" ("imageId", timeframe, "createdAt")
     SELECT
       NEW.id,
-      timeframe,
-      NEW."createdAt"
-    FROM (
-      SELECT UNNEST(ENUM_RANGE(NULL::"MetricTimeframe")) AS timeframe
-    ) tf(timeframe);
+      'AllTime',
+      NEW."createdAt";
     RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;

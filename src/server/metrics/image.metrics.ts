@@ -11,6 +11,7 @@ import { getJobDate } from '~/server/jobs/job';
 const log = createLogger('metrics:image');
 
 export const imageMetrics = createMetricProcessor({
+  disabled: true,
   name: 'Image',
   async update(baseCtx) {
     const ctx = baseCtx as ImageMetricContext;
