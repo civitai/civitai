@@ -756,6 +756,14 @@ export const updateCashWithdrawal = async ({
       where: { id: withdrawalId },
     });
 
+    await userCashCache.bust(userId);
+
+    await signalClient.topicSend({
+      topic: SignalTopic.CreatorProgram,
+      target: SignalMessages.CashInvalidator,
+      data: {},
+    });
+
     return updated;
   } catch (e) {
     throw e;
