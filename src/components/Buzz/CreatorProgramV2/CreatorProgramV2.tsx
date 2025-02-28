@@ -70,11 +70,12 @@ import {
 } from '~/server/utils/creator-program.utils';
 import {
   CAP_DEFINITIONS,
+  MIN_CAP,
   MIN_WITHDRAWAL_AMOUNT,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
 import { Currency } from '~/shared/utils/prisma/enums';
-import { formatDate } from '~/utils/date-helpers';
+import { formatDate, roundMinutes } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import {
   abbreviateNumber,
@@ -89,8 +90,10 @@ const cardProps: HTMLProps<HTMLDivElement> = {
   className: 'light:bg-gray-0 align-center flex flex-col rounded-lg p-4 dark:bg-dark-5',
 };
 
+const DATE_FORMAT = 'MMM D, YYYY @ hA z';
+
 // TODO creators program Can probably separate this file into multiple smaller ones. It's getting a bit long.
-export const CreatorsProgramV2 = () => {
+export const CreatorProgramV2 = () => {
   const currentUser = useCurrentUser();
   const { phase, isLoading } = useCreatorProgramPhase();
   const availability = getCreatorProgramAvailability(currentUser?.isModerator);
@@ -124,13 +127,17 @@ export const CreatorsProgramV2 = () => {
         </div>
       </div>
 
-      {!hasOnboardedInProgram && <JoinCreatorProgramCard />}
+      {!hasOnboardedInProgram && (
+        <div className="flex flex-col gap-4 md:flex-row">
+          <JoinCreatorProgramCard />
+          <CompensationPoolCard />
+        </div>
+      )}
       {hasOnboardedInProgram && (
         <div className="flex flex-col gap-4 md:flex-row">
-          <CompensationPoolCard />
-          <EstimatedEarningsCard />
           {phase === 'bank' && <BankBuzzCard />}
           {phase === 'extraction' && <ExtractBuzzCard />}
+          <EstimatedEarningsCard />
           {<WithdrawCashCard />}
         </div>
       )}
@@ -363,7 +370,7 @@ const BankBuzzCard = () => {
   const forecasted = compensationPool ? getForecastedValue(toBank, compensationPool) : undefined;
   const isLoading = isLoadingCompensationPool || buzzAccount.balanceLoading || isLoadingBanked;
   const [_, end] = compensationPool?.phases.bank ?? [new Date(), new Date()];
-  const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]', true);
+  const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
 
   const handleBankBuzz = async () => {
@@ -564,7 +571,7 @@ const EstimatedEarningsCard = () => {
 
         <Divider my="sm" />
 
-        <div className="mb-4 flex flex-col gap-2">
+        <div className="mb-4 flex flex-col gap-0">
           <div className="flex items-center gap-2">
             <p className="text-lg">
               <span className="font-bold">Current Value:</span> $
@@ -600,9 +607,9 @@ const EstimatedEarningsCard = () => {
               <Anchor onClick={openPhasesModal}>Extraction Phase</Anchor>:
             </p>
             <p className="text-sm">
-              {formatDate(compensationPool.phases.extraction[0], 'MMM D, YYYY @ hA [UTC]', true)}{' '}
+              {formatDate(roundMinutes(compensationPool.phases.extraction[0]), DATE_FORMAT, false)}{' '}
               &ndash;{' '}
-              {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]', true)}
+              {formatDate(roundMinutes(compensationPool.phases.extraction[1]), DATE_FORMAT, false)}
             </p>
           </div>
         )}
@@ -611,7 +618,7 @@ const EstimatedEarningsCard = () => {
             <p className="text-sm font-bold"> Not happy with your estimated earnings?</p>
             <p className="text-sm">
               You can extract your Buzz until{' '}
-              {formatDate(compensationPool.phases.extraction[1], 'MMM D, YYYY @ hA [UTC]', true)}
+              {formatDate(roundMinutes(compensationPool.phases.extraction[1]), DATE_FORMAT, false)}
             </p>
           </div>
         )}
@@ -656,8 +663,9 @@ const CreatorProgramCapsInfo = () => {
     nextCap && banked.cap.peakEarning.earned * (nextCap.percentOfPeakEarning ?? 1);
 
   return (
-    <Modal {...dialog} title="Creator Banking Caps" size="lg" radius="md">
+    <Modal {...dialog} size="lg" radius="md" withCloseButton={false}>
       <div className="flex flex-col gap-4">
+        <p className="text-center text-lg font-bold">Creator Banking Caps</p>
         <p>
           Every creator in the program has a Cap to the amount of Buzz they can Bank in a month.
           Caps align with membership tiers as outlined below.
@@ -708,8 +716,7 @@ const CreatorProgramCapsInfo = () => {
 
         <div className="flex flex-col gap-1">
           <p>
-            <span className="font-bold">Your Cap:</span> {capitalize(banked.cap.definition.tier)}{' '}
-            Member
+            <span className="font-bold">Tier:</span> {capitalize(banked.cap.definition.tier)} Member
           </p>
           <p>
             <span className="font-bold">Peak Earning Month:</span>{' '}
@@ -723,6 +730,14 @@ const CreatorProgramCapsInfo = () => {
             <span className="font-bold">Tier Cap:</span>{' '}
             <CurrencyIcon currency={Currency.BUZZ} className="inline" />
             {banked.cap.definition.limit ? numberWithCommas(banked.cap.definition.limit) : 'No Cap'}
+          </p>
+          <p className="font-bold">
+            Your Cap: <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+            {numberWithCommas(banked.cap.cap)}
+          </p>
+          <p className="opacity-50">
+            All members have a minimum cap of{' '}
+            <CurrencyIcon currency={Currency.BUZZ} className="inline" /> {abbreviateNumber(MIN_CAP)}
           </p>
         </div>
 
@@ -1041,7 +1056,7 @@ const ExtractBuzzCard = () => {
 
   const [_, end] = compensationPool?.phases.extraction ?? [new Date(), new Date()];
   const shouldUseCountdown = new Date() > dayjs.utc(end).subtract(2, 'day').toDate();
-  const endDate = formatDate(end, 'MMM D, YYYY @ hA [UTC]', true);
+  const endDate = formatDate(roundMinutes(end), DATE_FORMAT, false);
 
   const handleExtractBuzz = async () => {
     try {

@@ -344,7 +344,7 @@ export async function bankBuzz(userId: number, amount: number) {
   await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
   const compensationPool = await getCompensationPool({});
-  await signalClient.topicSend({
+  signalClient.topicSend({
     topic: SignalTopic.CreatorProgram,
     target: SignalMessages.CompensationPoolUpdate,
     data: compensationPool,
@@ -406,7 +406,7 @@ export async function extractBuzz(userId: number) {
   bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
   const compensationPool = await getCompensationPool({});
-  await signalClient.topicSend({
+  signalClient.topicSend({
     topic: SignalTopic.CreatorProgram,
     target: SignalMessages.CompensationPoolUpdate,
     data: compensationPool,
@@ -624,7 +624,7 @@ export async function withdrawCash(userId: number, amount: number) {
   // Bust affected caches
   await userCashCache.bust(userId);
 
-  await signalClient.topicSend({
+  signalClient.topicSend({
     topic: SignalTopic.CreatorProgram,
     target: SignalMessages.CashInvalidator,
     data: {},
@@ -758,7 +758,7 @@ export const updateCashWithdrawal = async ({
 
     await userCashCache.bust(userId);
 
-    await signalClient.topicSend({
+    signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CashInvalidator,
       data: {},

@@ -30,7 +30,7 @@ export function getExtractionFee(toExtract: number): number {
   for (const { min, max, fee: rate } of EXTRACTION_FEES) {
     if (remaining <= 0) break;
 
-    const taxableAmount = Math.min(remaining, max - min);
+    const taxableAmount = max ? Math.min(remaining, max - min) : remaining;
     fee += taxableAmount * rate;
     remaining -= taxableAmount;
   }

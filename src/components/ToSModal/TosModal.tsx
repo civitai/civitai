@@ -9,6 +9,7 @@ import {
   ScrollArea,
   Stack,
   Text,
+  Title,
 } from '@mantine/core';
 import { useState } from 'react';
 import rehypeRaw from 'rehype-raw';
@@ -78,12 +79,8 @@ export const TosModal = ({
         <Stack spacing="md">
           {data?.title && (
             <>
-              <Group position="apart" mb="md">
-                <Text size="lg" weight="bold">
-                  {data?.title}
-                </Text>
-              </Group>
-              <Divider mx="-lg" mb="md" />
+              <Title order={2}>{data?.title}</Title>
+              <Divider mx="-lg" my="md" />
             </>
           )}
           <ScrollArea.Autosize maxHeight={500}>

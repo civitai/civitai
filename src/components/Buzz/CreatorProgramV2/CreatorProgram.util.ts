@@ -150,6 +150,10 @@ export const useCreatorProgramMutate = () => {
   });
   const bankBuzzMutation = trpc.creatorProgram.bankBuzz.useMutation({
     onSuccess(_, { amount }) {
+      utils.creatorProgram.getCompensationPool.setData({}, (old) => {
+        if (!old) return old;
+        return { ...old, size: { ...old.size, current: old.size.current + amount } };
+      });
       utils.creatorProgram.getBanked.setData(undefined, (old) => {
         if (!old) return old;
         return { ...old, total: old.total + amount };
@@ -160,6 +164,16 @@ export const useCreatorProgramMutate = () => {
     },
   });
   const withdrawCashMutation = trpc.creatorProgram.withdrawCash.useMutation({
+    onSuccess(_, { amount }) {
+      utils.creatorProgram.getCash.setData(undefined, (old) => {
+        if (!old) return old;
+        return {
+          ...old,
+          ready: old.ready - amount,
+          withdrawn: (old.withdrawn ?? 0) + amount,
+        };
+      });
+    },
     onError(error) {
       handleTRPCError(error, 'Failed to withdraw your cash.');
     },
