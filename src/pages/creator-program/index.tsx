@@ -110,7 +110,7 @@ function CreatorsClubV1() {
                       Turn your Buzz into earnings!{' '}
                       {!availability.isAvailable && (
                         <>
-                          Launching on <Countdown endTime={availability.availableDate} />
+                          Launching in <Countdown endTime={availability.availableDate} />
                         </>
                       )}
                     </Title>
@@ -146,15 +146,15 @@ function CreatorsClubV1() {
 
 const HowItWorks: { text: string; icon: React.ReactNode }[] = [
   {
-    text: 'Earn Buzz!',
+    text: 'Earn Buzz',
     icon: <IconBolt size={sizing.HowItWorks.icons} />,
   },
   {
-    text: 'Bank Your Buzz!',
+    text: 'Bank your Buzz',
     icon: <IconPig size={sizing.HowItWorks.icons} />,
   },
   {
-    text: 'Share the Pool',
+    text: 'Claim your Share',
     icon: <IconPercentage10 size={sizing.HowItWorks.icons} />,
   },
 ];
@@ -195,23 +195,28 @@ const HowItWorksSection = () => {
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
+                  <IconPercentage10 size={24} />
+                  <Text>Each month Civitai allocates a Creator Compensation Pool from a portion of our revenue</Text>
+                </Group>
+                <Divider />
+                <Group noWrap w="100%">
                   <IconPig size={24} />
                   <Text>
-                    During the Banking Phase, deposit Buzz to the Bank to secure a share of the
-                    Compensation Pool!
+                    During the Banking Phase, you Bank Buzz to secure your share of the
+                    Compensation Pool
                   </Text>
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
                   <IconLogout size={24} />
                   <Text>
-                    During the Extraction Phase, choose to keep Buzz in for payout or extract it!
+                    During the Extraction Phase, you can choose to keep Buzz in the Bank to get paid or Extract it to save it for the future
                   </Text>
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
                   <IconMoneybag size={24} />
-                  <Text>Get paid!</Text>
+                  <Text fw={700}>Get paid!</Text>
                 </Group>
               </Stack>
             </Group>
