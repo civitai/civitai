@@ -20,12 +20,12 @@ export const openPhasesModal = () => {
           <div className="flex flex-col gap-2">
             <h3 className="text-xl font-bold">Banking Phase</h3>
             <ul className="pl-4">
-              <li>During this phase, creators can bank any Yellow Buzz they&rsquo;ve earned.</li>
+              <li>During this phase, creators can Bank any Yellow Buzz they&rsquo;ve earned.</li>
               <li>This phase lasts until 3 days before the end of the month (UTC).</li>
               <li>
-                As the month progresses, the value of your banked Buzz{' '}
-                <span className="font-bold">decrease</span> because the total amount of Buzz in the
-                bank increases.
+                As the month progresses, the value of your Banked Buzz{' '}
+                <span className="font-bold underline">decreases</span> because the total amount of Buzz in the
+                Bank increases.
               </li>
             </ul>
           </div>
@@ -33,10 +33,10 @@ export const openPhasesModal = () => {
           <div className="flex flex-col gap-2">
             <h3 className="text-xl font-bold">Extraction Phase</h3>
             <ul className="pl-4">
-              <li>During this phase, banking Buzz is disabled.</li>
+              <li>During this phase, Banking Buzz is disabled.</li>
               <li>
                 Creators can review their share of the Compensation Pool and decide whether to keep
-                their Buzz banked or extract it.
+                their Buzz Banked or extract it.
               </li>
               <li>Extracted Buzz can be saved for a future month or used on Civitai.</li>
               <li>
@@ -44,8 +44,8 @@ export const openPhasesModal = () => {
                 month ends (UTC).
               </li>
               <li>
-                As more creators extract their Buzz, the value of your banked Buzz{' '}
-                <span className="font-bold">increase</span>, making your share of the pool bigger!
+                As more creators extract their Buzz, the value of your Banked Buzz{' '}
+                <span className="font-bold underline">increases</span>, making your share of the Pool bigger!
               </li>
             </ul>
           </div>
@@ -141,11 +141,11 @@ export const openExtractionFeeModal = () => {
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-1">
           <p className="mb-2">
-            Extraction is All or Nothing. You can&rsquo;t extract just a portion of what you have
+            Extraction is all or nothing. You can&rsquo;t Extract just a portion of what you have
             Banked.
           </p>
           <p className="mb-2">
-            To prevent manipulation of the Buzz pool by Creators with large amounts of Buzz,
+            To prevent manipulation of the total Banked amount by Creators with large amounts of Buzz,
             we&rsquo;ve implemented the following Extraction Fees:
           </p>
           <ul className="py-2 pl-4">
@@ -163,7 +163,7 @@ export const openExtractionFeeModal = () => {
           </ul>
 
           <p>
-            The fees work on a bracket based system, meaning that your first 100k Buzz Extracted is
+            The fees work on a bracket-based system, meaning that your first 100k Buzz Extracted is
             free, your next 900k carries a 5% fee and so on.
           </p>
           <Button className="mt-2" onClick={handleClose}>
