@@ -114,7 +114,12 @@ export function rateLimit(rateLimits: undefined | RateLimit | RateLimit[]) {
       const matchedPeriod = validLimits.find((x) => x.period === rateLimit.period);
       if (matchedPeriod?.limit && matchedPeriod.limit > rateLimit.limit) continue;
       if (!rateLimit.userReq || (ctx.user && rateLimit.userReq(ctx.user))) {
-        validLimits.push(rateLimit);
+        // Replace the existing limit if it exists
+        if (matchedPeriod) {
+          validLimits.splice(validLimits.indexOf(matchedPeriod), 1, rateLimit);
+        } else {
+          validLimits.push(rateLimit);
+        }
       }
     }
 
