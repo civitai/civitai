@@ -650,6 +650,7 @@ export interface ModelVersion {
   earlyAccessConfig: JsonValue | null;
   uploadType: ModelUploadType;
   usageControl: ModelUsageControl;
+  earlyAccessTimeFrame: number;
   monetization?: ModelVersionMonetization | null;
   metrics?: ModelVersionMetric[];
   files?: ModelFile[];
@@ -1002,6 +1003,7 @@ export interface PostMetric {
   commentCount: number;
   collectedCount: number;
   updatedAt: Date;
+  ageGroup: MetricTimeframe;
 }
 
 export interface Image {
