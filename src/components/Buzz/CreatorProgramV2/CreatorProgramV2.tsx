@@ -335,6 +335,7 @@ const CompensationPoolCard = () => {
               props: {
                 title: 'Compensation Pool',
                 type: 'info',
+                icon: null,
                 children: ({ handleClose }) => (
                   <div className="flex flex-col justify-center gap-4">
                     <p>

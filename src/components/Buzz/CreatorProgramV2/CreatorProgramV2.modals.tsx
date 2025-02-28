@@ -12,6 +12,7 @@ export const openPhasesModal = () => {
     props: {
       title: 'Creator Program Phases',
       type: 'info',
+      icon: null,
       size: 'lg',
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-4">
@@ -62,6 +63,7 @@ export const openEarningEstimateModal = () => {
     props: {
       title: 'How does this work?',
       type: 'info',
+      icon: null,
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-4">
           <p>
@@ -83,6 +85,7 @@ export const openSettlementModal = () => {
     props: {
       title: 'What is Pending Settlement?',
       type: 'info',
+      icon: null,
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-4">
           <p>
@@ -104,6 +107,7 @@ export const openWithdrawalFreeModal = () => {
     props: {
       title: 'Withdrawal Fees',
       type: 'info',
+      icon: null,
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-1">
           <p className="mb-2">Withdrawl fees vary depending on the Payout Method you choose.</p>
@@ -139,6 +143,7 @@ export const openExtractionFeeModal = () => {
     props: {
       title: 'Extraction Fees',
       type: 'info',
+      icon: null,
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-1">
           <p className="mb-2">
@@ -160,7 +165,8 @@ export const openExtractionFeeModal = () => {
                       ? `<  ${abbreviateNumber(fee.max ?? 0)} Buzz`
                       : `${abbreviateNumber(fee.min)}${
                           fee.max ? ` - ${abbreviateNumber(fee.max)}` : '+'
-                        } Buzz`}:
+                        } Buzz`}
+                    :
                   </span>{' '}
                   {feeCopy}
                 </li>
@@ -187,6 +193,7 @@ export const openCreatorScoreModal = () => {
     props: {
       title: 'What is your Creator Score?',
       type: 'info',
+      icon: null,
       children: ({ handleClose }) => (
         <div className="flex flex-col justify-center gap-4">
           <p>
