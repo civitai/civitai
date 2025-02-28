@@ -70,7 +70,7 @@ export function createCachedArray<T extends object>({
   debounceTime = 10,
   cacheNotFound = true,
   dontCacheFn,
-  staleWhileRevalidate = false,
+  staleWhileRevalidate = true,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
@@ -88,7 +88,8 @@ export function createCachedArray<T extends object>({
     const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
     const cacheMisses = new Set<number>();
     const dontCache = new Set<number>();
-    const ttlExpiry = new Date(Date.now() + ttl * 1000);
+    const toRevalidate: Record<number, T> = {};
+    const ttlExpiry = new Date(Date.now() - ttl * 1000);
     const locks = new Set<RedisKeyTemplateCache>();
     for (const id of [...new Set(ids)]) {
       const cached = cache[id];
@@ -100,18 +101,29 @@ export function createCachedArray<T extends object>({
           continue;
         }
         if (staleWhileRevalidate && cached.cachedAt < ttlExpiry) {
-          // Try get lock to update cache
-          const lockKey = `${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}` as const;
-          const gotLock = await redis.setNxKeepTtlWithEx(lockKey, '1', 10);
-          if (gotLock) {
-            locks.add(lockKey);
-            cacheMisses.add(id); // Got lock, so treat as miss
-            continue;
-          }
-          // No lock, so treat as hit
+          toRevalidate[id] = cached;
+          continue;
         }
         results.add(cached);
       } else cacheMisses.add(id);
+    }
+
+    const toRevalidateIds = Object.keys(toRevalidate).map(Number);
+    if (toRevalidateIds.length > 0) {
+      const gotLocks = await Promise.all(
+        toRevalidateIds.map((id) =>
+          redis.setNxKeepTtlWithEx(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`, '1', 10)
+        )
+      );
+      for (let i = 0; i < toRevalidateIds.length; i++) {
+        const id = toRevalidateIds[i];
+        if (!gotLocks[i]) {
+          results.add(toRevalidate[id]);
+          continue;
+        }
+        cacheMisses.add(id);
+        locks.add(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`);
+      }
     }
 
     if (dontCache.size > 0)
