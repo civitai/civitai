@@ -753,6 +753,8 @@ const CreatorProgramCapsInfo = () => {
             </Anchor>
           </p>
         )}
+
+        <Button onClick={dialog.onClose}>Close</Button>
       </div>
     </Modal>
   );
