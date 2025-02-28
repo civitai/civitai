@@ -90,6 +90,20 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           break;
         case 'paymentGroupApproved':
         case 'paymentGroupDeclined':
+          const payment = event.eventData.payments[0] as {
+            refCode: string;
+            paymentStatus: string;
+          };
+
+          if (payment.refCode.startsWith('CW')) {
+            // Creator Program V2:
+            await processCashWithdrawalEvent(event);
+          } else {
+            await processBuzzWithdrawalRequest(event);
+          }
+
+          break;
+
         case 'paymentCompleted':
         case 'paymentSubmitted':
         case 'paymentDeferred':
