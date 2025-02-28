@@ -68,7 +68,7 @@ export const imageMetrics = createMetricProcessor({
           NOW() as "updatedAt",
           ${metricValues}
         FROM data d
-        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS "timeframe") tf
+        CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
         LEFT JOIN "ImageMetric" im ON im."imageId" = d."imageId" AND im."timeframe" = tf.timeframe
         WHERE EXISTS (SELECT 1 FROM "Image" WHERE id = d."imageId") -- ensure the image exists
         ON CONFLICT ("imageId", "timeframe") DO UPDATE
