@@ -173,7 +173,7 @@ enum CashWithdrawalStatus {
   FraudReview
   PendingPayerFunds
   InternalValue
-  // Civitai Custom State 
+  // Civitai Custom State
   FailedFee
 }
 
@@ -344,6 +344,8 @@ model User {
   appeals                    Appeal[]                       @relation("submittedAppeals")
   resolvedAppeals            Appeal[]                       @relation("resolvedAppeals")
   cashWithdrawals            CashWithdrawal[]
+
+  @@index([deletedAt])
 }
 
 model CustomerSubscription {
@@ -429,6 +431,7 @@ model UserEngagement {
   createdAt    DateTime           @default(now())
 
   @@id([userId, targetUserId])
+  @@index([type, userId])
 }
 
 model UserMetric {
@@ -746,38 +749,39 @@ model ModelVersionMonetization {
 }
 
 model ModelVersion {
-  id                Int               @id @default(autoincrement())
-  index             Int?
-  name              String
-  description       String?
-  modelId           Int
-  model             Model             @relation(fields: [modelId], references: [id], onDelete: Cascade)
-  trainedWords      String[]
-  steps             Int?
-  epochs            Int?
-  clipSkip          Int?
-  vaeId             Int?
-  vae               ModelVersion?     @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  publishedAt       DateTime?
-  status            ModelStatus       @default(Draft)
-  trainingStatus    TrainingStatus?
-  trainingDetails   Json?
-  fromImport        Import?           @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
-  fromImportId      Int?
-  inaccurate        Boolean           @default(false)
-  baseModel         String
-  baseModelType     String?
-  meta              Json              @default("{}")
-  requireAuth       Boolean           @default(false)
-  settings          Json?
-  availability      Availability      @default(Public)
-  nsfwLevel         Int               @default(0)
-  earlyAccessEndsAt DateTime?
-  earlyAccessConfig Json?
-  uploadType        ModelUploadType   @default(Created)
-  usageControl      ModelUsageControl @default(Download)
+  id                   Int               @id @default(autoincrement())
+  index                Int?
+  name                 String
+  description          String?
+  modelId              Int
+  model                Model             @relation(fields: [modelId], references: [id], onDelete: Cascade)
+  trainedWords         String[]
+  steps                Int?
+  epochs               Int?
+  clipSkip             Int?
+  vaeId                Int?
+  vae                  ModelVersion?     @relation("vae", fields: [vaeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  publishedAt          DateTime?
+  status               ModelStatus       @default(Draft)
+  trainingStatus       TrainingStatus?
+  trainingDetails      Json?
+  fromImport           Import?           @relation(fields: [fromImportId], references: [id], onDelete: SetNull)
+  fromImportId         Int?
+  inaccurate           Boolean           @default(false)
+  baseModel            String
+  baseModelType        String?
+  meta                 Json              @default("{}")
+  requireAuth          Boolean           @default(false)
+  settings             Json?
+  availability         Availability      @default(Public)
+  nsfwLevel            Int               @default(0)
+  earlyAccessEndsAt    DateTime?
+  earlyAccessConfig    Json?
+  uploadType           ModelUploadType   @default(Created)
+  usageControl         ModelUsageControl @default(Download)
+  earlyAccessTimeFrame Int               @default(0)
 
   monetization            ModelVersionMonetization?
   metrics                 ModelVersionMetric[]
@@ -1179,7 +1183,7 @@ model ResourceReview {
   modelVersionId Int
   modelVersion   ModelVersion             @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
   rating         Int
-  recommended    Boolean
+  recommended    Boolean                  @default(true)
   details        String?
   userId         Int
   user           User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1270,8 +1274,10 @@ model PostMetric {
   commentCount   Int             @default(0)
   collectedCount Int             @default(0)
   updatedAt      DateTime        @default(now())
+  ageGroup       MetricTimeframe @default(Day)
 
   @@id([postId, timeframe])
+  @@index([postId, ageGroup])
 }
 
 enum ImageGenerationProcess {
@@ -2808,7 +2814,7 @@ model EntityAccess {
   addedById    Int
   addedBy      User     @relation(fields: [addedById], references: [id])
   addedAt      DateTime @default(now())
-  permissions  Int      @default(1024)
+  permissions  Int      @default(0)
   meta         Json?    @default("{}")
 
   @@id([accessToId, accessToType, accessorId, accessorType])
@@ -3048,6 +3054,8 @@ model ChatMember {
   user              User         @relation(fields: [userId], references: [id])
   chat              Chat         @relation(fields: [chatId], references: [id])
   lastViewedMessage ChatMessage? @relation(fields: [lastViewedMessageId], references: [id])
+
+  @@index([userId, status, isMuted])
 }
 
 enum ChatMessageType {
