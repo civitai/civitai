@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.520",
+  "version": "5.0.521",
   "private": true,
   "scripts": {
     "start": "next start",
