@@ -48,6 +48,8 @@ import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV
 import { openCreatorScoreModal } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { formatDate } from '~/utils/date-helpers';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
+import { Flags } from '~/shared/utils';
+import { OnboardingSteps } from '~/server/common/enums';
 
 const sizing = {
   header: {
@@ -228,6 +230,11 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
   const hasEnoughCreatorScore =
     (requirements?.score.current ?? 0) >= (requirements?.score.min ?? 0);
   const availability = getCreatorProgramAvailability();
+  const currentUser = useCurrentUser();
+  const isBanned = Flags.hasFlag(
+    currentUser?.onboarding ?? 0,
+    OnboardingSteps.BannedCreatorProgram
+  );
 
   return (
     <Stack className={classes.section}>
@@ -304,7 +311,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 component="a"
                 href={applyFormUrl}
                 target="_blank"
-                disabled={!availability.isAvailable}
+                disabled={!availability.isAvailable || isBanned}
               >
                 {availability.isAvailable ? 'Join Now!' : 'Coming Soon!'}
               </Button>
