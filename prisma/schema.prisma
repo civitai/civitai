@@ -1623,18 +1623,12 @@ model TagsOnImage {
   tagId       Int
   tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
-  automated   Boolean   @default(false)
-  confidence  Int?
-  disabled    Boolean   @default(false)
+  confidence  Int       @default(0) @db.SmallInt()
   disabledAt  DateTime?
   needsReview Boolean   @default(false)
   source      TagSource @default(User)
 
-  @@id([tagId, imageId])
-  @@index([imageId], type: Hash)
-  @@index([automated])
-  @@index([source])
-  @@index([disabled])
+  @@id([imageId, tagId])
 }
 
 model TagsOnImageVote {

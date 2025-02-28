@@ -25,7 +25,6 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
   tags: {
     select: {
       tag: { select: { ...simpleTagSelect, type: true } },
-      automated: true,
       needsReview: true,
     },
     where: { disabledAt: null },

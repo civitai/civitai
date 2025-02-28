@@ -53,11 +53,10 @@ export default ModEndpoint(
             value ->> 'tag' AS tag
           FROM json_array_elements(${json}::json)
         )
-        INSERT INTO "TagsOnImage" ("imageId", "tagId", "automated", "confidence", "source")
+        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "source")
         SELECT
           it.id "imageId",
           t.id "tagId",
-          true "automated",
           70 "confidence",
           'Computed' "source"
         FROM image_tags it

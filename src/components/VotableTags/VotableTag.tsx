@@ -99,7 +99,7 @@ export function VotableTag({
   const key = getKey({ entityType, entityId, name });
   const vote = useVotableTagStore(useCallback((state) => state.votes[key] ?? initialVote, [key])); //eslint-disable-line
   const upvoteDate = useVotableTagStore(useCallback((state) => state.upvoteDates[key], [key]));
-  const moderatorVariant = highlightContested && needsReview
+  const moderatorVariant = highlightContested && needsReview;
 
   const theme = useMantineTheme();
   const isNsfw = !getIsSafeBrowsingLevel(nsfwLevel);
