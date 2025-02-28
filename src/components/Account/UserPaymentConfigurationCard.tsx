@@ -368,10 +368,19 @@ export function UserPaymentConfigurationCard() {
   const features = useFeatureFlags();
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
 
-  if (!features.creatorsProgram || !userPaymentConfiguration) return null;
+  if (!features.creatorsProgram) return null;
+
+  if (!isLoading && !userPaymentConfiguration) {
+    return null;
+  }
 
   return (
     <Card withBorder id="payments">
+      {isLoading && (
+        <Stack>
+          <Loader />
+        </Stack>
+      )}
       {userPaymentConfiguration?.stripeAccountId && <StripeConnectConfigurationCard />}
       {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
         <Divider my="xl" />

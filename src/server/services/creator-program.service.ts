@@ -557,7 +557,9 @@ export async function withdrawCash(userId: number, amount: number) {
     !userPaymentConfiguration.tipaltiWithdrawalMethod ||
     userPaymentConfiguration.tipaltiWithdrawalMethod === CashWithdrawalMethod.NoPM
   ) {
-    throw new Error('User does not have a payment method');
+    throw new Error(
+      'We could not determine your Tipalti payment method. Please update it and check back.'
+    );
   }
 
   // Determine withdrawal amount

@@ -806,9 +806,11 @@ const WithdrawCashCard = () => {
       <div className="flex h-full flex-col gap-2">
         <div className="flex items-center gap-2">
           <h3 className="text-xl font-bold">Withdraw Cash</h3>
-          <Anchor href="/user/account#payments" color="white">
-            <IconSettings />
-          </Anchor>
+          {userPaymentConfiguration?.tipaltiPaymentsEnabled && (
+            <Anchor href="/tipalti/setup" color="white">
+              <IconSettings size={18} color="white" />
+            </Anchor>
+          )}
         </div>
         <p className="text-sm">Once you&rsquo;ve earned cash, you can withdraw it to your bank</p>
         <table className="mb-4 table-auto text-sm">

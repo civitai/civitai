@@ -300,13 +300,13 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
               <Button
                 size="lg"
                 mt="auto"
-                rightIcon={<IconCaretRightFilled />}
+                rightIcon={availability.isAvailable ? <IconCaretRightFilled /> : undefined}
                 component="a"
                 href={applyFormUrl}
                 target="_blank"
                 disabled={!availability.isAvailable}
               >
-                Join now!
+                {availability.isAvailable ? 'Join Now!' : 'Coming Soon!'}
               </Button>
             </Stack>
           </Paper>
