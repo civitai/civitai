@@ -4,7 +4,7 @@ import { TypoTolerance } from 'meilisearch';
 import { ModelFileType, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { imagesForModelVersionsCache } from '~/server/redis/caches';
+import { imagesForModelVersionsCache, modelTagCache } from '~/server/redis/caches';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
@@ -150,10 +150,11 @@ type Model = Prisma.ModelGetPayload<{
 }>;
 type PullDataResult = {
   models: Model[];
+  tags: Awaited<ReturnType<typeof modelTagCache.fetch>>;
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
 };
-const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
+const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
@@ -164,7 +165,6 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
       const {
         user,
         modelVersions,
-        tagsOnModels,
         hashes,
         allowNoCredit,
         allowCommercialUse,
@@ -187,16 +187,17 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
         (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
       );
 
-      const category = tagsOnModels.find((tagOnModel) =>
-        modelCategoriesIds.includes(tagOnModel.tag.id)
-      );
+      const category = tags[model.id]?.tags.find(({ id }) => modelCategoriesIds.includes(id))!;
 
       return {
         ...model,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
-        category: category?.tag,
+        category: {
+          id: category.id,
+          name: category.name!,
+        },
         permissions: {
           allowNoCredit,
           allowCommercialUse,
@@ -235,7 +236,11 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
           ),
         ],
         hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-        tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag),
+        tags:
+          tags[model.id]?.tags.map((x) => ({
+            id: x.id,
+            name: x.name,
+          })) ?? [],
         metrics: {
           ...metrics,
           weightedRating,
@@ -373,6 +378,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
 
     const results: PullDataResult = {
       models,
+      tags: {},
       cosmetics: {},
       images: [],
     };
@@ -382,16 +388,22 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
     const pullBatches = chunk(models, 500);
     const tasks: Task[] = [];
     for (const batch of pullBatches) {
+      const batchIds = batch.map((m) => m.id);
       tasks.push(async () => {
         logger(`PullData :: Pull cosmetics`, batchLogKey);
-        const batchIds = batch.map((m) => m.id);
         const cosmetics = await getCosmeticsForEntity({
           ids: batchIds,
           entity: 'Model',
         });
         logger(`PullData :: Pulled cosmetics`, batchLogKey);
-
         Object.assign(results.cosmetics, cosmetics);
+      });
+
+      tasks.push(async () => {
+        logger(`PullData :: Pull tags`, batchLogKey);
+        const tags = await modelTagCache.fetch(batchIds);
+        logger(`PullData :: Pulled tags`, batchLogKey);
+        Object.assign(results.tags, tags);
       });
 
       const modelVersionIds = batch.flatMap((m) => m.modelVersions.map((m) => m.id));

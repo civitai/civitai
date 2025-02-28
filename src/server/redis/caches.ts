@@ -351,6 +351,7 @@ type TagLookup = {
   name: string | null;
   type: TagType;
   nsfwLevel: NsfwLevel;
+  unlisted?: true;
 };
 export const tagCache = createCachedObject<TagLookup>({
   key: REDIS_KEYS.CACHES.BASIC_TAGS,
@@ -363,9 +364,12 @@ export const tagCache = createCachedObject<TagLookup>({
         name: true,
         nsfwLevel: true,
         type: true,
+        unlisted: true,
       },
     });
-    return Object.fromEntries(tagBasicData.map((x) => [x.id, x]));
+    return Object.fromEntries(
+      tagBasicData.map(({ unlisted, ...x }) => [x.id, { ...x, unlisted: unlisted || undefined }])
+    );
   },
   ttl: CacheTTL.day,
 });
@@ -436,22 +440,23 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
         AND "fileType" IN ('Model', 'Pruned Model');
     `;
 
-    const tags = await db.$queryRaw<{ modelId: number; tagId: number; name: string }[]>`
-      SELECT "modelId", "tagId", t."name"
-      FROM "TagsOnModels"
-      JOIN "Tag" t ON "tagId" = t."id"
-      WHERE "modelId" IN (${Prisma.join(ids)})
-      AND "tagId" IS NOT NULL;
-    `;
-
     const results = versions.reduce((acc, { modelId, ...version }) => {
       acc[modelId] ??= { modelId, hashes: [], tags: [], versions: [] };
       acc[modelId].versions.push(version);
       return acc;
     }, {} as Record<number, ModelDataCache>);
     for (const { modelId, hash } of hashes) results[modelId]?.hashes.push(hash);
-    for (const { modelId, ...tag } of tags) results[modelId]?.tags.push(tag);
     return results;
+  },
+  appendFn: async (records) => {
+    const modelIds = [...records].map((x) => x.modelId);
+    const modelTags = await modelTagCache.fetch(modelIds);
+
+    for (const record of records) {
+      const modelTagsData = modelTags[record.modelId];
+      if (!modelTagsData) continue;
+      record.tags = modelTagsData.tags.map((x) => ({ tagId: x.id, name: x.name! }));
+    }
   },
 });
 
@@ -645,3 +650,35 @@ export async function getUserFollows(userId: number) {
   const userFollows = await userFollowsCache.fetch(userId);
   return userFollows[userId]?.follows ?? [];
 }
+
+type ModelTagCacheItem = {
+  modelId: number;
+  tagIds: number[];
+  tags: TagLookup[];
+};
+export const modelTagCache = createCachedObject<ModelTagCacheItem>({
+  key: REDIS_KEYS.CACHES.MODEL_TAGS,
+  idKey: 'modelId',
+  staleWhileRevalidate: false, // To avoid delay in creator seeing their new tags
+  lookupFn: async (ids) => {
+    const modelTags = await dbRead.tagsOnModels.findMany({
+      where: { modelId: { in: ids } },
+      select: { modelId: true, tagId: true },
+    });
+    const result = modelTags.reduce((acc, { modelId, tagId }) => {
+      acc[modelId] ??= { modelId, tagIds: [] } as unknown as ModelTagCacheItem; // Hack so we don't need to store empty tags array
+      acc[modelId].tagIds.push(tagId);
+      return acc;
+    }, {} as Record<number, ModelTagCacheItem>);
+    return result;
+  },
+  appendFn: async (records) => {
+    const tagIds = [...records].flatMap((x) => x.tagIds);
+    const tags = await tagCache.fetch(tagIds);
+
+    for (const record of records) {
+      record.tags = record.tagIds.map((tagId) => tags[tagId]).filter(isDefined);
+    }
+  },
+  ttl: CacheTTL.day,
+});

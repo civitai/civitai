@@ -10,7 +10,7 @@ import {
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -170,6 +170,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       select: { id: true, modelVersionId: true },
       orderBy: { id: 'asc' },
     });
+    const tagsOnModels = await modelTagCache.fetch(model.id);
 
     // recommended VAEs
     const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
@@ -222,15 +223,16 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       ),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta as ModelMeta | null,
-      tagsOnModels: model.tagsOnModels
-        .filter(({ tag }) => !tag.unlisted)
-        .map(({ tag }) => ({
-          tag: {
-            id: tag.id,
-            name: tag.name,
-            isCategory: modelCategories.some((c) => c.id === tag.id),
-          },
-        })),
+      tagsOnModels:
+        tagsOnModels[model.id]?.tags
+          .filter(({ unlisted }) => !unlisted)
+          .map(({ id, name }) => ({
+            tag: {
+              id,
+              name: name!,
+              isCategory: modelCategories.some((c) => c.id === id),
+            },
+          })) ?? [],
       modelVersions: filteredVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
         if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
@@ -627,13 +629,14 @@ export const getModelsWithVersionsHandler = async ({
       browsingLevel: input.browsingLevel,
       pending: input.pending,
     });
+    const modelIds = rawResults.items.map(({ id }) => id);
+    const tagsOnModels = await modelTagCache.fetch(modelIds);
 
     const vaeIds = rawResults.items
       .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
       .filter(isDefined);
     const vaeFiles = await getVaeFiles({ vaeIds });
 
-    const modelIds = rawResults.items.map(({ id }) => id);
     const metrics = await dbRead.modelMetric.findMany({
       where: { modelId: { in: modelIds }, timeframe: MetricTimeframe.AllTime },
     });
@@ -656,6 +659,7 @@ export const getModelsWithVersionsHandler = async ({
       count: rawResults.count,
       items: rawResults.items.map(({ modelVersions, ...model }) => ({
         ...model,
+        tags: tagsOnModels[model.id]?.tags.map((x) => x.name) ?? [],
         modelVersions: modelVersions.map(({ metrics, files, ...modelVersion }) => {
           const vaeFile = vaeFiles.filter((x) => x.modelVersionId === modelVersion.vaeId);
           files.push(...vaeFile);
