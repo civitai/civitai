@@ -736,10 +736,14 @@ const CreatorProgramCapsInfo = () => {
             Your Cap: <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
             {numberWithCommas(banked.cap.cap)}
           </p>
-          <p className="opacity-50">
-            All members have a minimum cap of{' '}
-            <CurrencyIcon currency={Currency.BUZZ} className="inline" /> {abbreviateNumber(MIN_CAP)}
-          </p>
+
+          {banked.cap.cap <= MIN_CAP && (
+            <p className="opacity-50">
+              All members have a minimum cap of{' '}
+              <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
+              {abbreviateNumber(MIN_CAP)}
+            </p>
+          )}
         </div>
 
         {nextCap && (

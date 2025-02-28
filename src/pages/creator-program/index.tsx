@@ -368,6 +368,18 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
     a: 'Yes! If you’re eligible for the program, but don’t want to participate, nobody’s forcing you! Even if you do join the program, but don’t want to contribute Buzz, that’s fine – there’s no requirement to Bank anything.',
   },
   {
+    q: 'Would buying a higher Membership Tier (Silver or Gold) increase my earnings?',
+    a: 'Not your earnings, as such, but it does increase the maximum you can Bank each month.',
+  },
+  {
+    q: 'Will I get my Banked Buzz back?',
+    a: 'No, your Banked Buzz will be consumed each month, unless you choose to Extract it during the Extraction Phase!',
+  },
+  {
+    q: 'What types of Buzz can be Banked?',
+    a: 'Any earned Yellow Buzz can be Banked, up to your cap. This includes Buzz from sources such as Early Access, Tips, and Generator Compensation.',
+  },
+  {
     q: 'What happens if cancel my Civitai Membership?',
     a: 'If you deactivate your Subscription you’ll remain in the Program until the end of the month, allowing you to Bank your Buzz and withdraw through the end of the period.',
   },
