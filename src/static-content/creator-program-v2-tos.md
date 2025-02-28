@@ -1,5 +1,6 @@
 ---
 title: Civitai Creator Program – Terms of Service
+description: Terms of Service for our Creator Program
 ---
 **Effective Date**: 2025-02-28
 

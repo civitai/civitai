@@ -27,6 +27,7 @@ import {
   IconBook,
   IconPercentage10,
   IconCaretRightFilled,
+  IconCircleCheck,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -50,6 +51,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils';
 import { OnboardingSteps } from '~/server/common/enums';
+import { Countdown } from '~/components/Countdown/Countdown';
 
 const sizing = {
   header: {
@@ -106,12 +108,12 @@ function CreatorsClubV1() {
                   <Group position="apart" noWrap>
                     <Title order={3} color="yellow.8">
                       Turn your Buzz into earnings!{' '}
-                      {!availability.isAvailable &&
-                        `Launching on ${formatDate(
-                          availability.availableDate,
-                          'MMM D, YYYY @ hA [UTC]',
-                          true
-                        )}`}
+                      {!availability.isAvailable && (
+                        <>
+                          Launching on
+                          <Countdown endTime={availability.availableDate} />
+                        </>
+                      )}
                     </Title>
                     <Group spacing={0} noWrap>
                       <IconBolt
@@ -212,7 +214,6 @@ const HowItWorksSection = () => {
                   <IconMoneybag size={24} />
                   <Text>Get paid!</Text>
                 </Group>
-                <Divider />
               </Stack>
             </Group>
           </Paper>
@@ -235,6 +236,7 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
     currentUser?.onboarding ?? 0,
     OnboardingSteps.BannedCreatorProgram
   );
+  const isJoined = Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram);
 
   return (
     <Stack className={classes.section}>
@@ -308,12 +310,17 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 size="lg"
                 mt="auto"
                 rightIcon={availability.isAvailable ? <IconCaretRightFilled /> : undefined}
+                leftIcon={isJoined && availability.isAvailable ? <IconCircleCheck /> : undefined}
                 component="a"
                 href={applyFormUrl}
                 target="_blank"
                 disabled={!availability.isAvailable || isBanned}
               >
-                {availability.isAvailable ? 'Join Now!' : 'Coming Soon!'}
+                {availability.isAvailable
+                  ? isJoined && !isBanned
+                    ? "You've Joined"
+                    : 'Join Now!'
+                  : 'Coming Soon!'}
               </Button>
             </Stack>
           </Paper>
@@ -333,6 +340,10 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 >
                   Earning with the Creator Program
                 </Anchor>
+              </Group>
+              <Group noWrap w="100%">
+                <IconBook size={24} />
+                <Anchor href="/content/creator-program-v2-tos">Terms of Service</Anchor>
               </Group>
             </Stack>
           </Paper>
