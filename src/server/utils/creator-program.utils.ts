@@ -60,7 +60,7 @@ export function getWithdrawalFee(amount: number, method: CashWithdrawalMethod) {
 }
 
 export function getWithdrawalRefCode(id: string, userId: number) {
-  return `CW${userId}:${id}`.slice(0, 16); // Tipalti only supports 16 characters.....
+  return `CW${userId}_${id}`.slice(0, 16); // Tipalti only supports 16 characters.....
 }
 
 /**
@@ -71,7 +71,7 @@ export function getWithdrawalRefCode(id: string, userId: number) {
  * @returns  The user ID and the ID part of the cash withdrawal ID.
  */
 export function parseRefCodeToWithdrawalId(refCode: string) {
-  const pattern = /^CW(\d+):?(\w+)$/;
+  const pattern = /^CW(\d+)_?(\w+)$/;
 
   const match = refCode.match(pattern);
   if (!match) {
