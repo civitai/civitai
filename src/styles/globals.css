@@ -143,6 +143,26 @@ a {
   text-decoration: underline;
 }
 
+.markdown-content ol {
+  padding-left: 16px;
+}
+
+.markdown-content ul {
+  padding-left: 20px;
+}
+
+.markdown-content-spaced {
+  li p {
+    margin-bottom: 0.5em;
+    margin-top: 0.5em;
+  }
+
+  p {
+    margin-bottom: 0.75em;
+    margin-top: 0.75em;
+  }
+}
+
 .mantine-Alert-body .markdown-content a {
   color: inherit;
 }

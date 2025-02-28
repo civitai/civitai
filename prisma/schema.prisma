@@ -98,18 +98,19 @@ model UserReferralCode {
 }
 
 model UserPaymentConfiguration {
-  userId                 Int     @unique
-  user                   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId                  Int                   @unique
+  user                    User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
   // Tipalti
-  tipaltiAccountId       String? @unique
-  tipaltiAccountStatus   String  @default("PendingOnboarding")
-  tipaltiPaymentsEnabled Boolean @default(false)
+  tipaltiAccountId        String?               @unique
+  tipaltiAccountStatus    String                @default("PendingOnboarding")
+  tipaltiPaymentsEnabled  Boolean               @default(false)
+  tipaltiWithdrawalMethod CashWithdrawalMethod?
   // Stripe, mainly here for safekeeping or in case we ever support this again.
-  stripeAccountId        String? @unique
-  stripeAccountStatus    String  @default("PendingOnboarding")
-  stripePaymentsEnabled  Boolean @default(false)
+  stripeAccountId         String?               @unique
+  stripeAccountStatus     String                @default("PendingOnboarding")
+  stripePaymentsEnabled   Boolean               @default(false)
   //
-  meta                   Json    @default("{}")
+  meta                    Json                  @default("{}")
 }
 
 enum BuzzWithdrawalRequestStatus {
@@ -157,6 +158,55 @@ model BuzzWithdrawalRequest {
   updatedAt                   DateTime                       @updatedAt
   status                      BuzzWithdrawalRequestStatus    @default(Requested) // updated with trigger
   history                     BuzzWithdrawalRequestHistory[]
+}
+
+enum CashWithdrawalStatus {
+  // Tipalti
+  Paid
+  Rejected
+  Scheduled
+  Submitted
+  Deferred
+  DeferredInternal
+  Canceled
+  Cleared
+  FraudReview
+  PendingPayerFunds
+  InternalValue
+  // Civitai Custom State 
+  FailedFee
+}
+
+enum CashWithdrawalMethod {
+  NoPM
+  WireTransfer
+  Payoneer
+  PayPal
+  ACH
+  Check
+  eCheck
+  HoldMyPayments
+  Custom
+  Intercash
+  Card
+  TipaltiInternalValue
+}
+
+model CashWithdrawal {
+  id            String               @id @default(cuid())
+  transactionId String?              @unique
+  userId        Int
+  user          User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  amount        Int
+  method        CashWithdrawalMethod
+  fee           Int
+  status        CashWithdrawalStatus
+  note          String?
+  metadata      Json                 @default("{}")
+  createdAt     DateTime?            @default(now())
+  updatedAt     DateTime?            @updatedAt
+
+  @@index([userId])
 }
 
 enum RewardsEligibility {
@@ -293,6 +343,7 @@ model User {
   collectionItemScores       CollectionItemScore[]
   appeals                    Appeal[]                       @relation("submittedAppeals")
   resolvedAppeals            Appeal[]                       @relation("resolvedAppeals")
+  cashWithdrawals            CashWithdrawal[]
 }
 
 model CustomerSubscription {
