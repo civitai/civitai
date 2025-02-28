@@ -1,4 +1,5 @@
 import { faker } from '@faker-js/faker';
+import dayjs from 'dayjs';
 import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -37,7 +38,7 @@ import {
 import { checkLocalDb, insertRows } from './utils';
 // import { fetchBlob } from '~/utils/file-utils';
 
-const numRows = 200;
+const numRows = 500;
 
 faker.seed(1337);
 const randw = faker.helpers.weightedArrayElement;
@@ -142,7 +143,7 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 const truncateRows = async () => {
   console.log('Truncating tables');
   await pgDbWrite.query(
-    'TRUNCATE TABLE "User", "Tag", "Leaderboard", "Tool", "Technique" RESTART IDENTITY CASCADE'
+    'TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique" RESTART IDENTITY CASCADE'
   );
 };
 
@@ -2700,6 +2701,198 @@ First model added in the last 30 days`,
   ];
 };
 
+/**
+ * AuctionBase
+ */
+const genAuctionBases = () => {
+  return [
+    [
+      1, // id
+      'Model', // type
+      null, // ecosystem
+      'Featured Checkpoints', // name
+      40, // quantity
+      1000, // minPrice
+      true, // active
+      'featured-checkpoints', // slug
+    ],
+    [
+      2, // id
+      'Model', // type
+      'Pony', // ecosystem
+      'Featured Resources - Pony', // name
+      20, // quantity
+      500, // minPrice
+      true, // active
+      'featured-resources-pony', // slug
+    ],
+    [
+      3, // id
+      'Model', // type
+      'Illustrious', // ecosystem
+      'Featured Resources - Illustrious', // name
+      20, // quantity
+      500, // minPrice
+      false, // active
+      'featured-resources-illustrious', // slug
+    ],
+    [
+      4, // id
+      'Model', // type
+      'Flux.1 D', // ecosystem
+      'Featured Resources - Flux', // name
+      10, // quantity
+      200, // minPrice
+      true, // active
+      'featured-resources-flux', // slug
+    ],
+  ];
+};
+
+/**
+ * Auction
+ */
+const genAuctions = (auctionBaseIds: number[]) => {
+  const ret: (number | boolean | null | string)[][] = [];
+  let step = 1;
+  const now = dayjs();
+
+  // for each auction base, create an auction from yesterday, today, and tomorrow
+  for (const abi of auctionBaseIds) {
+    ret.push(
+      [
+        step, // id
+        now.subtract(1, 'day').startOf('day').format(), // startAt
+        now.startOf('day').format(), // endAt
+        rand([20, 30, 40]), // quantity
+        rand([200, 500, 1000]), // minPrice
+        abi, // auctionBaseId
+        now.startOf('day').format(), // validFrom
+        now.add(1, 'day').startOf('day').format(), // validTo
+        true, // finalized
+      ],
+      [
+        step + 1, // id
+        now.startOf('day').format(), // startAt
+        now.add(1, 'day').startOf('day').format(), // endAt
+        rand([20, 30, 40]), // quantity
+        rand([200, 500, 1000]), // minPrice
+        abi, // auctionBaseId
+        now.add(1, 'day').startOf('day').format(), // validFrom
+        now.add(2, 'day').startOf('day').format(), // validTo
+        false, // finalized
+      ],
+      [
+        step + 2, // id
+        now.add(2, 'day').startOf('day').format(), // startAt
+        now.add(3, 'day').startOf('day').format(), // endAt
+        rand([20, 30, 40]), // quantity
+        rand([200, 500, 1000]), // minPrice
+        abi, // auctionBaseId
+        now.add(3, 'day').startOf('day').format(), // validFrom
+        now.add(4, 'day').startOf('day').format(), // validTo
+        false, // finalized
+      ]
+    );
+    step += 3;
+  }
+  return ret;
+};
+
+/**
+ * Bid
+ */
+const genBids = (num: number, auctionIds: number[], userIds: number[], modelIds: number[]) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // not quite right, but whatever
+    const created = faker.date.recent({ days: 2 }).toISOString();
+
+    const row = [
+      step, // id
+      rand(auctionIds), // auctionId
+      rand(userIds), // userId
+      rand(modelIds), // entityId
+      faker.number.int({ min: 1, max: 5_000 }), // amount
+      created, // createdAt
+      fbool(0.05), // deleted
+      faker.string.uuid(), // transactionId
+      fbool(0.1), // fromRecurring
+      fbool(0.05), // isRefunded
+    ];
+
+    ret.push(row);
+  }
+
+  return ret;
+};
+
+/**
+ * BidRecurring
+ */
+const genBidRecurrings = (
+  num: number,
+  auctionBaseIds: number[],
+  userIds: number[],
+  modelIds: number[]
+) => {
+  const ret = [];
+
+  for (let step = 1; step <= num; step++) {
+    // not quite right, but whatever
+    const created = faker.date.recent({ days: 3 });
+
+    const row = [
+      step, // id
+      rand(userIds), // userId
+      rand(modelIds), // entityId
+      faker.number.int({ min: 1, max: 5_000 }), // amount
+      created.toISOString(), // createdAt
+      created.toISOString(), // startAt
+      dayjs(created)
+        .add(faker.number.int({ min: 1, max: 10 }), 'day')
+        .startOf('day')
+        .format(), // endAt
+      rand(auctionBaseIds), // auctionBaseId
+      fbool(0.05), // isPaused
+    ];
+
+    ret.push(row);
+  }
+
+  return ret;
+};
+
+/**
+ * FeaturedModelVersion
+ */
+const genFeaturedModelVersions = (num: number, mvIds: number[]) => {
+  const ret = [];
+
+  let usableMvIds = mvIds;
+
+  for (let step = 1; step <= num; step++) {
+    const mvId = rand(usableMvIds);
+    usableMvIds = without(usableMvIds, mvId);
+    const start = rand([dayjs(faker.date.recent({ days: 3 })), dayjs()]);
+
+    const row = [
+      step, // id
+      mvId, // modelVersionId
+      start.startOf('day').format(), // validFrom
+      start.add(1, 'day').format(), // validTo
+      faker.number.int({ min: 1, max: 40 }), // position
+    ];
+
+    ret.push(row);
+  }
+
+  return ret;
+};
+
+// ---
+
 const genRows = async (truncate = true) => {
   if (truncate) await truncateRows();
 
@@ -2880,191 +3073,29 @@ const genRows = async (truncate = true) => {
   const homeblocks = genHomeBlocks(collectionData);
   await insertRows('HomeBlock', homeblocks);
 
-  /*
-  Account
-  Announcement
-  ❌ Answer
-    ❌ AnswerMetric
-    ❌ AnswerReaction
-    ❌ AnswerVote
-  ApiKey
-  ✔️ Article
-    ✔️ ArticleEngagement
-    ❌ ArticleMetric
-    ❌ ArticleRank
-    ✔️ ArticleReaction
-    ArticleReport
-  BlockedImage
-  Bounty
-    BountyBenefactor
-    BountyEngagement
-    BountyEntry
-    ❌ BountyEntryMetric
-    ❌ BountyEntryRank
-    BountyEntryReaction
-    BountyEntryReport
-    ❌ BountyMetric
-    ❌ BountyRank
-    BountyReport
-  BuildGuide
-  BuzzClaim
-  BuzzTip
-  BuzzWithdrawalRequest
-  BuzzWithdrawalRequestHistory
-  ❌ Chat
-    ❌ ChatMember
-    ❌ ChatMessage
-    ❌ ChatReport
-  ❌ Club
-    ❌ ClubAdmin
-    ❌ ClubAdminInvite
-    ❌ ClubMembership
-    ❌ ClubMembershipCharge
-    ❌ ClubMetric
-    ❌ ClubPost
-    ❌ ClubPostMetric
-    ❌ ClubPostReaction
-    ❌ ClubRank
-    ❌ ClubTier
-  ✔️ Collection
-    CollectionContributor
-    ✔️ CollectionItem
-    ❌ CollectionMetric
-    ❌ CollectionRank
-    CollectionReport
-  ✔️ Comment
-    ✔️ CommentReaction
-    CommentReport
-  ✔️ CommentV2
-    ✔️ CommentV2Reaction
-    CommentV2Report
-  Cosmetic
-    CosmeticShopItem
-    CosmeticShopSection
-    CosmeticShopSectionItem
-  CoveredCheckpoint
-  CsamReport
-  CustomerSubscription
-  Donation
-    DonationGoal
-  DownloadHistory
-  EntityAccess
-  EntityCollaborator
-  ❌ EntityMetric
-  File
-  GenerationServiceProvider
-  ✔️ HomeBlock
-  ✔️ Image
-    ImageConnection
-    ✔️ ImageEngagement
-    ImageFlag
-    ❌ ImageMetric
-    ❌ ImageRank
-    ImageRatingRequest
-    ✔️ ImageReaction
-    ImageReport
-    ✔️ ImageResource
-    ✔️ ImageTechnique
-    ✔️ ImageTool
-    ImagesOnModels
-  Import
-  JobQueue
-  KeyValue
-  ✔️ Leaderboard
-  LeaderboardResult
-  LegendsBoardResult
-  License
-  Link
-  Log
-  MetricUpdateQueue
-  ModActivity
-  ✔️ Model
-    ModelAssociations
-    ✔️ ModelEngagement
-  ✔️ ModelFile
-    ModelFileHash
-    ModelFlag
-  ModelInterest
-  ❌ ModelMetric
-  ❌ ModelMetricDaily
-  ❌ ModelRank_New
-  ModelReport
-  ✔️ ModelVersion
-    ✔️ ModelVersionEngagement
-    ModelVersionExploration
-    ❌ ModelVersionMetric
-    ModelVersionMonetization
-    ❌ ModelVersionRank
-    ModelVersionSponsorshipSettings
-  OauthClient
-  OauthToken
-  Partner
-  ✔️ Post
-    ❌ PostMetric
-    ❌ PostRank
-    ✔️ PostReaction
-    PostReport
-  PressMention
-  Price
-  Product
-  PurchasableReward
-  Purchase
-  QueryDurationLog
-  QueryParamsLog
-  QuerySqlLog
-  ❌ Question
-    ❌ QuestionMetric
-    ❌ QuestionReaction
-  RecommendedResource
-  RedeemableCode
-  Report
-  ✔️ ResourceReview
-    ❌ ResourceReviewReaction
-  ResourceReviewReport
-  RunStrategy
-  SavedModel
-  SearchIndexUpdateQueue
-  Session
-  SessionInvalidation
-  ✔️ Tag
-    ✔️ TagEngagement
-    ❌ TagMetric
-    ❌ TagRank
-    ✔️ TagsOnArticle
-    TagsOnBounty
-    TagsOnCollection
-    ✔️ TagsOnImage
-    TagsOnImageVote
-    ✔️ TagsOnModels
-    TagsOnModelsVote
-    ✔️ TagsOnPost
-    ❌ TagsOnPostVote
-    ❌ TagsOnQuestions
-    TagsOnTags
-  ✔️ Technique
-  ✔️ Thread
-  TipConnection
-  ✔️ Tool
-  ✔️ User
-    UserCosmetic
-    UserCosmeticShopPurchases
-    ✔️ UserEngagement
-    UserLink
-    ❌ UserMetric
-    UserNotificationSettings
-    UserPaymentConfiguration
-    UserProfile
-    UserPurchasedRewards
-    ❌ UserRank
-    UserReferral
-    UserReferralCode
-    UserReport
-  Vault
-    VaultItem
-  VerificationToken
-  Webhook
-  _LicenseToModel
-   */
+  const auctionBases = genAuctionBases();
+  const auctionBaseIds = await insertRows('AuctionBase', auctionBases);
+
+  const auctions = genAuctions(auctionBaseIds);
+  await insertRows('Auction', auctions);
+  // get all auctions except the last one (future date)
+  const filteredAuctionIds = auctions
+    .filter((_, index) => (index + 1) % 3 !== 0)
+    .map((a) => a[0] as number);
+
+  const bids = genBids(numRows, filteredAuctionIds, userIds, modelIds);
+  await insertRows('Bid', bids);
+
+  const bidRecurrings = genBidRecurrings(
+    Math.round(numRows / 4),
+    auctionBaseIds,
+    userIds,
+    modelIds
+  );
+  await insertRows('BidRecurring', bidRecurrings);
+
+  const featuredModelVersions = genFeaturedModelVersions(auctions.length * 10, mvIds);
+  await insertRows('FeaturedModelVersion', featuredModelVersions);
 };
 
 /**

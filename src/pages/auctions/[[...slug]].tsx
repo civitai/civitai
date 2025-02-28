@@ -146,7 +146,9 @@ export default function Auctions({
               p={itemSize}
               label={
                 <Group position="apart">
-                  <Text weight={500}>{a.auctionBase.name}</Text>
+                  <Text weight={500} className="shrink basis-2/3">
+                    {a.auctionBase.name}
+                  </Text>
                   <Tooltip label="Min bid currently required to place">
                     <CurrencyBadge
                       currency="BUZZ"

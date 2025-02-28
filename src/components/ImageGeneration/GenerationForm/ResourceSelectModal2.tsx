@@ -9,7 +9,6 @@ import {
   Loader,
   Menu,
   Modal,
-  Popover,
   SegmentedControl,
   Select,
   Stack,
@@ -40,6 +39,7 @@ import {
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
+import { BidModelButton } from '~/components/Auction/AuctionUtils';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -51,6 +51,7 @@ import {
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -77,15 +78,17 @@ import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
-import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GetFeaturedModels } from '~/server/services/model.service';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation.store';
@@ -99,8 +102,6 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
-import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -116,7 +117,7 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-const tabs = ['all', 'featured', 'recent', 'liked', 'mine'] as const;
+const tabs = ['featured', 'all', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
 
 const take = 20;
@@ -162,7 +163,6 @@ function ResourceSelectProvider({
       : filters.types;
 
   const resourceBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
-  console.log({ resourceBaseModels });
   const baseModels =
     resourceBaseModels.length > 0
       ? filters.baseModels.filter((baseModel) => resourceBaseModels.includes(baseModel))
@@ -208,7 +208,7 @@ function ResourceSelectModalContent() {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const [selectedTab, setSelectedTab] = useState<Tabs>('all');
+  const [selectedTab, setSelectedTab] = useState<Tabs>('featured');
   // const availableBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
   // const _selectedFilters = selectedFilters.filter((x) => availableBaseModels.includes)
 
@@ -331,7 +331,7 @@ function ResourceSelectModalContent() {
 
   if (selectedTab === 'featured') {
     if (!!featuredModels) {
-      meiliFilters.push(`id IN [${featuredModels.join(',')}]`);
+      meiliFilters.push(`id IN [${featuredModels.map((fm) => fm.modelId).join(',')}]`);
     }
   } else if (selectedTab === 'recent') {
     if (selectSource === 'generation') {
@@ -364,7 +364,7 @@ function ResourceSelectModalContent() {
       }
     } else if (selectSource === 'auction') {
       if (!!auctionModels) {
-        filters.push(`id IN [${auctionModels.join(',')}]`);
+        meiliFilters.push(`id IN [${auctionModels.join(',')}]`);
       }
     }
   } else if (selectedTab === 'liked') {
@@ -434,7 +434,11 @@ function ResourceSelectModalContent() {
               </Center>
             </div>
           ) : (
-            <ResourceHitList likes={likedModels} />
+            <ResourceHitList
+              likes={likedModels}
+              featured={featuredModels}
+              selectedTab={selectedTab}
+            />
           )}
         </InstantSearch>
       </div>
@@ -465,8 +469,12 @@ function CategoryTagFilters() {
 
 function ResourceHitList({
   likes,
+  featured,
+  selectedTab,
 }: ResourceSelectOptions & {
   likes: number[] | undefined;
+  featured: GetFeaturedModels | undefined;
+  selectedTab: Tabs;
 }) {
   const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
   const startedRef = useRef(false);
@@ -505,9 +513,9 @@ function ResourceHitList({
         if (!versions.length) return null;
         return { ...model, versions };
       })
-      .filter(isDefined);
+      .filter(isDefined)
+      .filter((model) => model.versions.length > 0);
   }, [canGenerate, excludedIds, models, resources]);
-  // console.log({ filtered });
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
@@ -548,6 +556,20 @@ function ResourceHitList({
       </div>
     );
 
+  const filteredSorted =
+    selectedTab === 'featured'
+      ? filtered.sort((a, b) => {
+          if (!featured) return 0;
+          const aIndex = featured.findIndex((fm) => fm.modelId === a.id);
+          const bIndex = featured.findIndex((fm) => fm.modelId === b.id);
+          if (aIndex === -1) return 1;
+          if (bIndex === -1) return -1;
+          return aIndex - bIndex;
+        })
+      : filtered;
+  const topItems = selectedTab === 'featured' ? filteredSorted.slice(0, 3) : [];
+  const restItems = selectedTab === 'featured' ? filteredSorted.slice(3) : filteredSorted;
+
   return (
     // <ScrollArea id="resource-select-modal" className="flex-1 p-3">
     <div className="flex flex-col gap-3 p-3">
@@ -555,17 +577,41 @@ function ResourceHitList({
         <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
 
-      <div className={classes.grid}>
-        {filtered
-          .filter((model) => model.versions.length > 0)
-          .map((model) => (
+      {topItems.length > 0 && (
+        <Group align="center" position="center">
+          <ResourceSelectCard
+            data={topItems[0]}
+            isFavorite={!!likes && likes.includes(topItems[0].id)}
+            selectSource={selectSource}
+            position={1}
+          />
+          {topItems.length > 1 && (
             <ResourceSelectCard
-              key={model.id}
-              data={model}
-              isFavorite={!!likes && likes.includes(model.id)}
+              data={topItems[1]}
+              isFavorite={!!likes && likes.includes(topItems[1].id)}
               selectSource={selectSource}
+              position={2}
             />
-          ))}
+          )}
+          {topItems.length > 2 && (
+            <ResourceSelectCard
+              data={topItems[2]}
+              isFavorite={!!likes && likes.includes(topItems[2].id)}
+              selectSource={selectSource}
+              position={3}
+            />
+          )}
+        </Group>
+      )}
+      <div className={classes.grid}>
+        {restItems.map((model) => (
+          <ResourceSelectCard
+            key={model.id}
+            data={model}
+            isFavorite={!!likes && likes.includes(model.id)}
+            selectSource={selectSource}
+          />
+        ))}
       </div>
       {items.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
@@ -717,10 +763,12 @@ function ResourceSelectCard({
   data,
   isFavorite,
   selectSource,
+  position,
 }: {
   data: SearchIndexDataMap['models'][number];
   isFavorite: boolean;
   selectSource?: ResourceSelectSource;
+  position?: number;
 }) {
   // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
   const { onSelect } = useResourceSelectContext();
@@ -925,7 +973,12 @@ function ResourceSelectCard({
   return (
     // Visually hide card if there are no versions
     <TwCard
-      className={clsx(classes.root, 'justify-between')}
+      className={clsx(classes.root, 'justify-between', {
+        '!shadow-[0_0_10px]': !!position && position < 3,
+        '!shadow-yellow-5': position === 1,
+        '!shadow-gray-5': position === 2,
+        '!shadow-orange-5': position === 3,
+      })}
       // onClick={handleSelect}
       style={{ display: versions.length === 0 ? 'none' : undefined }}
     >
@@ -998,8 +1051,8 @@ function ResourceSelectCard({
                       )}
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
-                    {data.availability === Availability.Private && (
-                      <div className="absolute bottom-2 left-2 flex items-center gap-1">
+                    <Group className="absolute bottom-2 right-2 flex items-center gap-1">
+                      {data.availability === Availability.Private && (
                         <Tooltip
                           label="This is a private model which requires permission to generate with."
                           position="top"
@@ -1019,10 +1072,20 @@ function ResourceSelectCard({
                             <IconLock size={16} />
                           </Badge>
                         </Tooltip>
-                      </div>
-                    )}
-                    {!!currentUser && (
-                      <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                      )}
+                      {selectSource !== 'auction' && (
+                        <BidModelButton
+                          size="md"
+                          variant={theme.colorScheme === 'light' ? undefined : 'light'}
+                          px={4}
+                          entityData={{
+                            ...selectedVersion,
+                            model: data,
+                            image,
+                          }}
+                        />
+                      )}
+                      {!!currentUser && (
                         <Tooltip
                           label={isFavorite ? 'Unlike' : 'Like'}
                           position="top"
@@ -1039,8 +1102,8 @@ function ResourceSelectCard({
                             <ThumbsUpIcon color="#fff" filled={isFavorite} size={20} />
                           </Button>
                         </Tooltip>
-                      </div>
-                    )}
+                      )}
+                    </Group>
                   </div>
                 );
               }}

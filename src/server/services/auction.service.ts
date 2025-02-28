@@ -21,8 +21,9 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { withRetries } from '~/utils/errorHandling';
 
-const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
+export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   id: true,
   type: true,
   ecosystem: true,
@@ -30,7 +31,7 @@ const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   slug: true,
 });
 
-const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
+export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
   id: true,
   startAt: true,
   endAt: true,
@@ -81,7 +82,7 @@ export async function getAllAuctions() {
   });
 }
 
-const prepareBids = (a: AuctionType) => {
+export const prepareBids = (a: AuctionType) => {
   return Object.values(
     a.bids
       .filter((bid) => !bid.deleted)
@@ -333,11 +334,13 @@ export const createBid = async ({
   }
 
   const { transactionId } = await createBuzzTransaction({
+    type: TransactionType.Bid,
     fromAccountId: userId,
     toAccountId: 0,
     amount,
-    type: TransactionType.Bid,
+    description: 'Regular bid',
     details: {
+      auctionId,
       entityId,
       entityType: auctionData.auctionBase.type,
     },
@@ -394,7 +397,7 @@ export const createBid = async ({
         stack: err.stack,
         cause: err.cause,
       }).catch();
-      await refundTransaction(transactionId, 'Failed to create bid.');
+      await withRetries(() => refundTransaction(transactionId, 'Failed to create bid.'));
     }
   }
 
@@ -435,6 +438,7 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
     where: { id: bidId },
     select: {
       userId: true,
+      transactionId: true,
       auction: {
         select: {
           startAt: true,
@@ -447,6 +451,8 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
 
   const isActive = bid.auction.startAt <= now && bid.auction.endAt > now;
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
+
+  await withRetries(() => refundTransaction(bid.transactionId, 'Deleted bid.'));
 
   await dbWrite.bid.update({
     where: { id: bidId },

@@ -693,6 +693,7 @@ export interface ModelVersion {
   recommendedResources?: RecommendedResource[];
   recommendedTo?: RecommendedResource[];
   DonationGoal?: DonationGoal[];
+  featuredInfo?: FeaturedModelVersion[];
 }
 
 export interface ModelVersionEngagement {
@@ -2558,6 +2559,9 @@ export interface Auction {
   endAt: Date;
   quantity: number;
   minPrice: number;
+  validFrom: Date;
+  validTo: Date;
+  finalized: boolean;
   bids?: Bid[];
 }
 
@@ -2588,6 +2592,15 @@ export interface BidRecurring {
   startAt: Date;
   endAt: Date | null;
   isPaused: boolean;
+}
+
+export interface FeaturedModelVersion {
+  id: number;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  validFrom: Date;
+  validTo: Date;
+  position: number;
 }
 
 export interface QuestionRank {

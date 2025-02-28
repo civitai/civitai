@@ -4,13 +4,7 @@ import { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
-import {
-  BaseModel,
-  BaseModelType,
-  CacheTTL,
-  constants,
-  FEATURED_MODEL_COLLECTION_ID,
-} from '~/server/common/constants';
+import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -2730,23 +2724,27 @@ export async function ingestModel(data: IngestModelInput) {
   else return false;
 }
 
+export type GetFeaturedModels = AsyncReturnType<typeof getFeaturedModels>;
 export async function getFeaturedModels() {
-  const featuredModels = await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
-    const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
-      SELECT ci."modelId"
-      FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
-      AND EXISTS (
-        SELECT 1
-        FROM "GenerationCoverage" gc
-        WHERE gc."modelId" = ci."modelId"
-        AND gc.covered
-      )
-    `;
-    return query.map((row) => row.modelId);
-  });
+  return await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
+    const now = new Date();
 
-  return featuredModels;
+    // TODO we're featuring modelVersions, but showing models due to how collections and meili works
+
+    const data = await dbRead.featuredModelVersion.findMany({
+      where: {
+        validFrom: { lte: now },
+        validTo: { gt: now },
+      },
+      select: {
+        position: true,
+        modelVersion: {
+          select: { modelId: true },
+        },
+      },
+    });
+    return data.map((row) => ({ modelId: row.modelVersion.modelId, position: row.position }));
+  });
 }
 export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);

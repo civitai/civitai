@@ -802,6 +802,7 @@ model ModelVersion {
   recommendedResources    RecommendedResource[]     @relation("recommendedResources")
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
   DonationGoal            DonationGoal[]
+  featuredInfo            FeaturedModelVersion[]
 
   @@index([modelId], type: Hash)
 }
@@ -3400,6 +3401,9 @@ model Auction {
   endAt         DateTime
   quantity      Int
   minPrice      Int
+  validFrom     DateTime
+  validTo       DateTime
+  finalized     Boolean     @default(false)
   // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
   // sold Int
 
@@ -3439,6 +3443,17 @@ model BidRecurring {
   isPaused      Boolean     @default(false)
 
   @@unique([auctionBaseId, userId, entityId])
+}
+
+model FeaturedModelVersion {
+  id             Int          @id @default(autoincrement())
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  validFrom      DateTime
+  validTo        DateTime
+  position       Int
+
+  @@unique([modelVersionId])
 }
 
 /// @view

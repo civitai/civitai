@@ -7,6 +7,7 @@ import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import {
   getBaseModelResourceTypes,
@@ -167,6 +168,7 @@ export const BidModelButton = ({
 }) => {
   const { setSelectedModel } = useAuctionContext();
   const router = useRouter();
+  const features = useFeatureFlags();
 
   const { data: auctions = [] } = trpc.auction.getAll.useQuery();
 
@@ -175,7 +177,6 @@ export const BidModelButton = ({
       entityData.model.type === ModelType.Checkpoint
         ? null
         : getBaseModelSetType(entityData.baseModel);
-    console.log({ modelSet });
     return auctions.find(
       (a) => a.auctionBase.type === AuctionType.Model && a.auctionBase.ecosystem === modelSet
     );
@@ -198,19 +199,23 @@ export const BidModelButton = ({
     router.push(`/auctions/${destAuction.auctionBase.slug}`).catch();
   };
 
+  if (!features.auctions) return <></>;
+
   return (
     <Tooltip
       label={destAuction ? 'Bid to feature this model' : 'No auction available for this model'}
     >
-      <ActionIcon
-        onClick={handle}
-        disabled={!destAuction}
-        {...actionIconProps}
-        size="xl"
-        variant="light"
-      >
-        <IconGavel size={30} stroke={1.5} />
-      </ActionIcon>
+      <div>
+        <ActionIcon
+          onClick={handle}
+          disabled={!destAuction}
+          size="xl"
+          variant="light"
+          {...actionIconProps}
+        >
+          <IconGavel size={30} />
+        </ActionIcon>
+      </div>
     </Tooltip>
   );
 };

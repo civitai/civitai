@@ -188,8 +188,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
         category: {
-          id: category.id,
-          name: category.name!,
+          id: category?.id,
+          name: category?.name,
         },
         permissions: {
           allowNoCredit,

@@ -62,7 +62,7 @@ const IMAGE_HEIGHT = 100;
 const PositionData = ({ position }: { position: number }) => {
   const theme = useMantineTheme();
 
-  const isTop3 = position <= 3;
+  const isTop3 = !!position && position <= 3;
   const iconColor = [
     theme.colors.yellow[5], // Gold
     theme.colors.gray[5], // Silver
