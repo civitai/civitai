@@ -17,11 +17,12 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { withRetries } from '~/server/utils/errorHandling';
 import {
   CAPPED_BUZZ_VALUE,
+  EXTRACTION_PHASE_DURATION,
   FIRST_CREATOR_PROGRAM_MONTH,
   MIN_WITHDRAWAL_AMOUNT,
 } from '~/shared/constants/creator-program.constants';
 import { createJob } from './job';
-import { SignalMessages, SignalTopic } from '~/server/common/enums';
+import { OnboardingSteps, SignalMessages, SignalTopic } from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 
@@ -209,6 +210,18 @@ export const creatorsProgramSettleCash = createJob(
       target: SignalMessages.CashInvalidator,
       data: {},
     });
+  }
+);
+
+export const bakingPhaseNotification = createJob(
+  'creators-program-rollover',
+  `0 0 L-${EXTRACTION_PHASE_DURATION - 1} * *`,
+  async () => {
+    const users = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT "id" as "userId"
+      FROM "User"
+      WHERE "onboarding" & ${OnboardingSteps.CreatorProgram} != 0
+    `;
   }
 );
 
