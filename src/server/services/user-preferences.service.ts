@@ -1,5 +1,6 @@
 import { NsfwLevel } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { userFollowsCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
 import { ToggleHiddenSchemaOutput } from '~/server/schema/user-preferences.schema';
 import { getModeratedTags } from '~/server/services/system-cache';
@@ -583,6 +584,7 @@ async function toggleHideUser({
 
   // const toReturn = user ? ({ ...user, kind: 'user' } as HiddenPreferencesKind) : undefined;
 
+  await userFollowsCache.bust(userId);
   await HiddenUsers.refreshCache({ userId });
 
   return {
@@ -621,6 +623,7 @@ async function toggleBlockUser({
       data: { type: 'Block' },
     });
 
+  await userFollowsCache.bust(userId);
   await BlockedUsers.refreshCache({ userId });
   await BlockedByUsers.refreshCache({ userId: targetUserId });
 

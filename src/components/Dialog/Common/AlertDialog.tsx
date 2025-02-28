@@ -10,6 +10,7 @@ type Props = {
   children?: React.ReactNode | ((props: { handleClose: () => void }) => React.ReactNode);
   title?: string | React.ReactNode;
   icon?: React.ReactNode;
+  size?: 'sm' | 'md' | 'lg';
 };
 
 const DEFAULT_DIALOG_TEMPLATES: Record<DialogType, Omit<Props, 'type'>> = {
@@ -29,7 +30,7 @@ const DEFAULT_DIALOG_TEMPLATES: Record<DialogType, Omit<Props, 'type'>> = {
   },
 };
 
-export default function AlertDialog({ type, ...props }: Props) {
+export default function AlertDialog({ type, size, ...props }: Props) {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { children, icon, title } = {
@@ -38,7 +39,7 @@ export default function AlertDialog({ type, ...props }: Props) {
   };
 
   return (
-    <Modal {...dialog} size="sm" withCloseButton={false} radius="md">
+    <Modal {...dialog} size={size ?? 'sm'} withCloseButton={false} radius="md">
       {title ? (
         <Stack align="center">
           <Group spacing="xs">
