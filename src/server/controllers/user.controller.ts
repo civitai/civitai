@@ -1354,8 +1354,13 @@ export const setUserSettingHandler = async ({
 }) => {
   try {
     const { id } = ctx.user;
-    const { ...restSettings } = await getUserSettings(id);
-    const newSettings = { ...restSettings, ...input };
+    const { tour, ...restInput } = input;
+    const { tourSettings, ...restSettings } = await getUserSettings(id);
+    const newSettings = {
+      ...restSettings,
+      ...restInput,
+      tourSettings: tourSettings ? { ...tourSettings, ...tour } : { ...tour },
+    };
 
     await setUserSetting(id, newSettings);
     return newSettings;

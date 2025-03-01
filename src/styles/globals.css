@@ -14,12 +14,17 @@ html,
 body {
   padding: 0;
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell,
-    Fira Sans, Droid Sans, Helvetica Neue, sans-serif;
+  /* font-family: -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Oxygen, Ubuntu, Cantarell,
+    Fira Sans, Droid Sans, Helvetica Neue, sans-serif; */
   block-size: 100%;
   inline-size: 100%;
   overflow: hidden;
 }
+
+button, input, optgroup, select, textarea {
+  font-family: inherit !important;
+}
+
 
 #uniconsent-config {
   display: none;
@@ -136,6 +141,26 @@ a {
 .markdown-content a {
   color: #4dabf7;
   text-decoration: underline;
+}
+
+.markdown-content ol {
+  padding-left: 16px;
+}
+
+.markdown-content ul {
+  padding-left: 20px;
+}
+
+.markdown-content-spaced {
+  li p {
+    margin-bottom: 0.5em;
+    margin-top: 0.5em;
+  }
+
+  p {
+    margin-bottom: 0.75em;
+    margin-top: 0.75em;
+  }
 }
 
 .mantine-Alert-body .markdown-content a {
@@ -317,6 +342,20 @@ iframe {
 
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes shadowGlow {
+  0% {
+    box-shadow: 0 0 10px 0 #fff3bf;
+  }
+
+  50% {
+    box-shadow: 0 0 10px 5px #fff3bf;
+  }
+
+  100% {
+    box-shadow: 0 0 10px 0 #fff3bf;
   }
 }
 

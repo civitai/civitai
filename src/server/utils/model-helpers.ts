@@ -1,6 +1,6 @@
-import { ModelType } from '~/shared/utils/prisma/enums';
 import { startCase } from 'lodash-es';
 import { ModelFileType } from '~/server/common/constants';
+import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 
 type FileFormatType = {
@@ -65,4 +65,27 @@ export const getFileDisplayName = ({
     return getDisplayName(modelType);
   }
   return startCase(file.type);
+};
+
+export const getTrainingFileEpochNumberDetails = (
+  file: { type: string | ModelFileType; metadata: FileMetadata },
+  epochNumber?: number
+) => {
+  const epoch =
+    file.metadata.trainingResults?.epochs?.find((e) =>
+      'epoch_number' in e ? e.epoch_number === epochNumber : e.epochNumber === epochNumber
+    ) ?? file.metadata.trainingResults?.epochs?.pop();
+
+  if (!epoch) return null;
+
+  const downloadUrl = 'epoch_number' in epoch ? epoch.model_url : epoch.modelUrl;
+  const jobFileUrl = downloadUrl.split('/jobs/')[1]; // Leaves you with: ${jobId}/assets/${fileName}
+  const jobId = jobFileUrl.split('/assets/')[0];
+  const fileName = jobFileUrl.split('/assets/')[1];
+
+  return {
+    jobId,
+    fileName,
+    epochNumber: epochNumber ?? ('epoch_number' in epoch ? epoch.epoch_number : epoch.epochNumber),
+  };
 };

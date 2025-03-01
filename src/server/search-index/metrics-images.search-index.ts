@@ -8,6 +8,7 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -48,6 +49,7 @@ const filterableAttributes = [
   'existedAtUnix',
   'flags.promptNsfw',
   'remixOfId',
+  'availability',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -142,6 +144,7 @@ export type SearchBaseImage = {
   blockedFor: BlockedReason | null;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
+  availability?: Availability;
 };
 
 type Metrics = {
@@ -321,6 +324,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."blockedFor",
         i.minor,
         p."publishedAt",
+        p."availability",
         (
           CASE
             WHEN i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null' AND NOT i."hideMeta"

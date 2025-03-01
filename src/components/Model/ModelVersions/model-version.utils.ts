@@ -80,10 +80,11 @@ export const useModelVersionPermission = ({ modelVersionId }: { modelVersionId?:
       ? true
       : access?.hasAccess &&
         (access?.permissions & EntityAccessPermission.EarlyAccessDownload) !== 0,
-    canGenerate: !isEarlyAccess
-      ? true
-      : access?.hasAccess &&
-        (access?.permissions & EntityAccessPermission.EarlyAccessGeneration) != 0,
+    canGenerate:
+      !isEarlyAccess || earlyAccessConfig?.freeGeneration
+        ? true
+        : access?.hasAccess &&
+          (access?.permissions & EntityAccessPermission.EarlyAccessGeneration) != 0,
     earlyAccessEndsAt: modelVersion?.earlyAccessEndsAt,
     earlyAccessConfig: !isEarlyAccess ? undefined : earlyAccessConfig,
     modelVersion,

@@ -20,7 +20,7 @@ const parsers = {
   rfooocus: rfooocusMetadataProcessor,
 };
 
-export async function getMetadata(file: File) {
+export async function getMetadata(file: File | string) {
   try {
     const tags = await ExifReader.load(file, { includeUnknown: true });
     delete tags['MakerNote'];
@@ -46,6 +46,7 @@ export async function getMetadata(file: File) {
     const result = imageMetaSchema.safeParse(metadata);
     return result.success ? result.data : {};
   } catch (e) {
+    console.log(e);
     return {};
   }
 }

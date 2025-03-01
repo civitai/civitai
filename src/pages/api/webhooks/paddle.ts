@@ -1,9 +1,13 @@
-import { NextApiRequest, NextApiResponse } from 'next';
-import { env } from '~/env/server';
-import { Readable } from 'node:stream';
-import { getPaddle } from '~/server/paddle/client';
 import type { EventEntity } from '@paddle/paddle-node-sdk';
 import { EventName } from '@paddle/paddle-node-sdk';
+import { NextApiRequest, NextApiResponse } from 'next';
+import { Readable } from 'node:stream';
+import { env } from '~/env/server';
+import { dbWrite } from '~/server/db/client';
+import { updateServiceTier } from '~/server/integrations/freshdesk';
+import { getPaddle } from '~/server/paddle/client';
+import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { userCapCache } from '~/server/services/creator-program.service';
 import {
   getBuzzPurchaseItem,
   manageSubscriptionTransactionComplete,
@@ -12,8 +16,10 @@ import {
   upsertProductRecord,
   upsertSubscription,
 } from '~/server/services/paddle.service';
-import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { paddleTransactionContainsSubscriptionItem } from '~/server/services/subscriptions.service';
+import {
+  getUserSubscription,
+  paddleTransactionContainsSubscriptionItem,
+} from '~/server/services/subscriptions.service';
 
 // Stripe requires the raw body to construct the event.
 export const config = {
@@ -77,6 +83,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return res.status(400).send(`Webhook Error: ${error.message}`);
     }
 
+    let customerId: string | null = null;
+    let serviceTier: string | null = null;
+
     if (relevantEvents.has(event.eventType)) {
       try {
         switch (event.eventType) {
@@ -107,12 +116,14 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               });
             }
 
+            serviceTier = 'Buzz Purchaser';
+            customerId = data.customerId;
             break;
           case EventName.ProductCreated:
           case EventName.ProductUpdated: {
             const data = event.data;
             const meta = data.customData as SubscriptionProductMetadata;
-            if (!meta?.tier) {
+            if (!meta?.tier && !('one_time' in meta)) {
               break;
             }
 
@@ -129,11 +140,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case EventName.SubscriptionUpdated:
           case EventName.SubscriptionCanceled: {
             const data = event.data;
-            upsertSubscription(data, new Date(event.occurredAt), event.eventType);
+            await upsertSubscription(data, new Date(event.occurredAt), event.eventType);
+            customerId = data.customerId;
+
             break;
           }
           default:
             throw new Error('Unhandled relevant event!');
+        }
+
+        if (customerId) {
+          // This runs whenever there's a transaction or a subscription event.
+          const user = await dbWrite.user.findFirst({
+            where: { paddleCustomerId: customerId },
+            select: {
+              id: true,
+              paddleCustomerId: true,
+            },
+          });
+
+          if (user) {
+            const subscription = await getUserSubscription({ userId: user.id });
+            await updateServiceTier({
+              userId: user.id,
+              serviceTier: subscription?.tier ?? serviceTier ?? null,
+            });
+            await userCapCache.bust(user.id);
+          }
         }
 
         return res.status(200).json({ received: true });

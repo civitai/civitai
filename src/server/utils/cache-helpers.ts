@@ -59,6 +59,7 @@ type CachedLookupOptions<T extends object> = {
   debounceTime?: number;
   cacheNotFound?: boolean;
   dontCacheFn?: (data: T) => boolean;
+  staleWhileRevalidate?: boolean;
 };
 export function createCachedArray<T extends object>({
   key,
@@ -69,6 +70,7 @@ export function createCachedArray<T extends object>({
   debounceTime = 10,
   cacheNotFound = true,
   dontCacheFn,
+  staleWhileRevalidate = true,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
     if (!ids.length) return [];
@@ -81,16 +83,14 @@ export function createCachedArray<T extends object>({
       cacheResults.push(...batchResults.filter(isDefined));
     }
     const cacheArray = cacheResults.filter((x) => x !== null) as T[];
-    const cache = Object.fromEntries(
-      cacheArray.map((x) => {
-        if ('cachedAt' in x) delete x.cachedAt;
-        return [x[idKey], x];
-      })
-    );
+    const cache = Object.fromEntries(cacheArray.map((x) => [x[idKey], x]));
 
     const cacheDebounceCutoff = new Date(Date.now() - debounceTime * 1000);
     const cacheMisses = new Set<number>();
     const dontCache = new Set<number>();
+    const toRevalidate: Record<number, T> = {};
+    const ttlExpiry = new Date(Date.now() - ttl * 1000);
+    const locks = new Set<RedisKeyTemplateCache>();
     for (const id of [...new Set(ids)]) {
       const cached = cache[id];
       if (cached) {
@@ -100,8 +100,30 @@ export function createCachedArray<T extends object>({
           cacheMisses.add(id);
           continue;
         }
+        if (staleWhileRevalidate && cached.cachedAt < ttlExpiry) {
+          toRevalidate[id] = cached;
+          continue;
+        }
         results.add(cached);
       } else cacheMisses.add(id);
+    }
+
+    const toRevalidateIds = Object.keys(toRevalidate).map(Number);
+    if (toRevalidateIds.length > 0) {
+      const gotLocks = await Promise.all(
+        toRevalidateIds.map((id) =>
+          redis.setNxKeepTtlWithEx(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`, '1', 10)
+        )
+      );
+      for (let i = 0; i < toRevalidateIds.length; i++) {
+        const id = toRevalidateIds[i];
+        if (!gotLocks[i]) {
+          results.add(toRevalidate[id]);
+          continue;
+        }
+        cacheMisses.add(id);
+        locks.add(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`);
+      }
     }
 
     if (dontCache.size > 0)
@@ -131,10 +153,11 @@ export function createCachedArray<T extends object>({
       }
 
       // then cache the results
+      const EX = staleWhileRevalidate ? ttl * 2 : ttl;
       if (Object.keys(toCache).length > 0)
         await Promise.all(
           Object.entries(toCache).map(([id, cache]) =>
-            redis.packed.set(`${key}:${id}`, cache, { EX: ttl })
+            redis.packed.set(`${key}:${id}`, cache, { EX })
           )
         );
 
@@ -142,14 +165,21 @@ export function createCachedArray<T extends object>({
       if (Object.keys(toCacheNotFound).length > 0)
         await Promise.all(
           Object.entries(toCacheNotFound).map(([id, cache]) =>
-            redis.packed.set(`${key}:${id}`, cache, { EX: ttl, NX: true })
+            redis.packed.set(`${key}:${id}`, cache, { EX, NX: true })
           )
         );
     }
 
+    // Remove locks
+    if (locks.size > 0) await redis.del([...locks]);
+
     if (appendFn) await appendFn(results);
 
-    return [...results];
+    return [...results].map((x) => {
+      // Remove cachedAt from result since this is an internal value
+      if ('cachedAt' in x) delete x.cachedAt;
+      return x;
+    });
   }
 
   async function bust(id: number | number[], options: { debounceTime?: number } = {}) {
@@ -170,6 +200,32 @@ export function createCachedArray<T extends object>({
     log(`Busted ${ids.length} ${key} items: ${ids.join(', ')}`);
   }
 
+  async function invalidate(id: number | number[], options: { debounceTime?: number } = {}) {
+    const ids = Array.isArray(id) ? id : [id];
+    if (ids.length === 0) return;
+
+    const cacheResults: T[] = [];
+    for (const batch of chunk(ids, 200)) {
+      const batchResults = await redis.packed.mGet<T>(
+        batch.map((id) => `${key}:${id}` as RedisKeyTemplateCache)
+      );
+      cacheResults.push(...batchResults.filter(isDefined));
+    }
+
+    // Invalidate cache
+    const invaliDate = new Date(Date.now() + (options.debounceTime ?? debounceTime) * 1000);
+    const updates = cacheResults.filter(
+      (x) => x !== null && 'cachedAt' in x && x.cachedAt !== invaliDate
+    ) as T[];
+    if (updates.length === 0) return;
+    const toCache = Object.fromEntries(
+      updates.map((x) => [x[idKey], { ...x, cachedAt: invaliDate }])
+    );
+    await redis.packed.mSet(toCache);
+
+    log(`Invalidated ${ids.length} ${key} items: ${ids.join(', ')}`);
+  }
+
   async function refresh(id: number | number[]) {
     if (!Array.isArray(id)) id = [id];
 
@@ -188,7 +244,11 @@ export function createCachedArray<T extends object>({
     await Promise.all(toRemove.map((id) => redis.del(`${key}:${id}`)));
   }
 
-  return { fetch, bust, refresh };
+  async function flush() {
+    await clearCacheByPattern(`${key}:*`);
+  }
+
+  return { fetch, bust: staleWhileRevalidate ? invalidate : bust, refresh, flush };
 }
 export type CachedArray<T extends object> = ReturnType<typeof createCachedArray<T>>;
 
@@ -298,6 +358,12 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
 export async function clearCacheByPattern(pattern: string) {
   const cleared: string[] = [];
 
+  if (!pattern.includes('*')) {
+    await redis.del(pattern as RedisKeyTemplateCache);
+    cleared.push(pattern);
+    return cleared;
+  }
+
   if (!env.REDIS_URL_DIRECT || env.REDIS_URL_DIRECT.length === 0) {
     console.log('No redis url found, skipping cache clear');
     return cleared;
@@ -352,4 +418,53 @@ export async function clearCacheByPattern(pattern: string) {
   );
 
   return cleared;
+}
+
+export async function fetchCacheByPattern(pattern: string) {
+  const keysArr: string[] = [];
+  const redisUrls = [env.REDIS_SYS_URL, ...(env.REDIS_URL_DIRECT ?? [])].filter(isDefined);
+
+  if (redisUrls.length === 0) {
+    console.log('No redis url found, skipping cache clear');
+    return keysArr;
+  }
+
+  await Promise.all(
+    redisUrls.map(async (url) => {
+      let cursor: number | undefined;
+      const redis = createClient({
+        url,
+        socket: {
+          reconnectStrategy(retries) {
+            log(`Redis reconnecting, retry ${retries}`);
+            return Math.min(retries * 100, 3000);
+          },
+          connectTimeout: env.REDIS_TIMEOUT,
+        },
+        pingInterval: 4 * 60 * 1000,
+      });
+      console.log(`Connecting to redis: ${url}`);
+
+      try {
+        await redis.connect();
+        while (cursor !== 0) {
+          console.log('Scanning:', cursor);
+          const reply = await redis.scan(cursor ?? 0, {
+            MATCH: pattern,
+            COUNT: 10000000,
+          });
+
+          cursor = reply.cursor;
+          const keys = reply.keys as unknown as RedisKeyTemplateCache[];
+          keysArr.push(...keys);
+          console.log('Cursor:', cursor);
+        }
+        console.log('Done clearing cache');
+      } finally {
+        await redis.quit();
+      }
+    })
+  );
+
+  return keysArr;
 }

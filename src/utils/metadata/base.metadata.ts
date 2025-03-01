@@ -12,7 +12,7 @@ export function createMetadataProcessor(processor: MetadataProcessor) {
 }
 
 export function setGlobalValue(key: string, value: any) {
-  if (isProd) return;
+  if (isProd || typeof window === 'undefined') return;
   (window as Record<string, any>)[key] = value;
   window.dispatchEvent(new Event('globalValueChange'));
 }

@@ -41,5 +41,6 @@ export namespace Ncmec {
     locationOfFile?: string;
     fileAnnotations?: FileAnnotationsSchema;
     additionalInfo?: string;
+    fileViewedByEsp?: boolean;
   };
 }

@@ -692,7 +692,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
                         label="Max entries per hunter"
                         placeholder="How many entries can a hunter submit to your bounty"
                         min={1}
-                        max={100000}
+                        max={200}
                         withAsterisk
                       />
                       {mode === BountyMode.Split && (

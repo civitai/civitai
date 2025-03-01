@@ -130,14 +130,6 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
               </>
             )}
           </div>
-          {reviews.warnAdditionalResource && (
-            <DismissibleAlert
-              id="additional-resource-alert"
-              color="blue"
-              title="Rating base models vs additional resources"
-              content="When reviewing base models alongside additional resources like a LoRA or Textual Inversion, keep in mind that you are reviewing the base model itself and not compatability with the additional resources."
-            />
-          )}
 
           {missingResources && (
             <Alert color="yellow">

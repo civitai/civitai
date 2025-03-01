@@ -61,34 +61,18 @@ export function BuzzTransactionButton({
 
   if (!features.buzz) return null;
 
-  const onClick = (e?: React.MouseEvent) => {
+  const onClick = () => {
     if (!showPurchaseModal) return;
-
-    e?.preventDefault();
-    e?.stopPropagation();
-
-    if (!onPerformTransaction) {
-      return;
-    }
-
-    if (!features.buzz) {
-      // Just perform whatever it is we need
-      onPerformTransaction();
-      return;
-    }
+    if (!onPerformTransaction) return;
+    if (!features.buzz) return onPerformTransaction(); // Just perform whatever it is we need
 
     conditionalPerformTransaction(buzzAmount, onPerformTransaction);
   };
 
-  const blueColor = 'blue';
-  const yellowColor = 'yellow.7';
-
   const hasCost = buzzAmount > 0;
   const meetsTypeRequiredAmount = hasTypeRequiredAmount(buzzAmount);
-
   const takesBlue = transactionType === 'Generation';
-  const buttonColor = meetsTypeRequiredAmount && takesBlue ? blueColor : yellowColor;
-
+  const buttonColor = meetsTypeRequiredAmount && takesBlue ? 'blue.4' : 'yellow.7';
   const typeDistrib = getTypeDistribution(buzzAmount);
 
   return (
@@ -97,10 +81,13 @@ export function BuzzTransactionButton({
       {...buttonProps}
       onClick={loading ? undefined : onPerformTransaction ? onClick : undefined}
       pr={hasCost ? 8 : undefined}
+      styles={{
+        label: { width: '100%' },
+      }}
       size={size}
       disabled={buttonProps.disabled || !!error || isLoadingBalance || loading}
       className={clsx(
-        buttonColor !== 'blue' ? 'text-dark-8' : 'text-white',
+        !buttonColor.includes('blue') ? 'text-dark-8' : 'text-white',
         buttonProps?.className
       )}
       classNames={{ inner: 'flex gap-8 justify-between items-center', label: 'w-full gap-2' }}
@@ -110,6 +97,7 @@ export function BuzzTransactionButton({
       </Text>
       {(hasCost || loading) && (
         <CurrencyBadge
+          data-tour="gen:buzz"
           currency={Currency.BUZZ}
           unitAmount={buzzAmount}
           displayCurrency={false}

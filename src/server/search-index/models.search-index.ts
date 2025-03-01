@@ -4,7 +4,7 @@ import { TypoTolerance } from 'meilisearch';
 import { ModelFileType, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { imagesForModelVersionsCache } from '~/server/redis/caches';
+import { imagesForModelVersionsCache, modelTagCache } from '~/server/redis/caches';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
@@ -24,6 +24,7 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
 import { getUnavailableResources } from '../services/generation/generation.service';
+import { modelSearchIndexSelect } from '../selectors/model.selector';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -144,74 +145,16 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 };
 
-const modelSelect = Prisma.validator<Prisma.ModelSelect>()({
-  id: true,
-  name: true,
-  type: true,
-  nsfw: true,
-  nsfwLevel: true,
-  minor: true,
-  status: true,
-  createdAt: true,
-  lastVersionAt: true,
-  publishedAt: true,
-  locked: true,
-  earlyAccessDeadline: true,
-  mode: true,
-  checkpointType: true,
-  availability: true,
-  allowNoCredit: true,
-  allowCommercialUse: true,
-  allowDerivatives: true,
-  allowDifferentLicense: true,
-  // Joins:
-  user: {
-    select: userWithCosmeticsSelect,
-  },
-  modelVersions: {
-    select: getModelVersionsForSearchIndex,
-    orderBy: { index: 'asc' as const },
-    where: {
-      status: ModelStatus.Published,
-      availability: {
-        not: Availability.Unsearchable,
-      },
-    },
-  },
-  tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
-  hashes: {
-    select: modelHashSelect,
-    where: {
-      fileType: { in: ['Model', 'Pruned Model'] as ModelFileType[] },
-      hashType: { notIn: ['AutoV1'] as ModelHashType[] },
-    },
-  },
-  metrics: {
-    select: {
-      commentCount: true,
-      favoriteCount: true,
-      thumbsUpCount: true,
-      downloadCount: true,
-      rating: true,
-      ratingCount: true,
-      collectedCount: true,
-      tippedAmountCount: true,
-    },
-    where: {
-      timeframe: MetricTimeframe.AllTime,
-    },
-  },
-});
-
 type Model = Prisma.ModelGetPayload<{
-  select: typeof modelSelect;
+  select: typeof modelSearchIndexSelect;
 }>;
 type PullDataResult = {
   models: Model[];
+  tags: Awaited<ReturnType<typeof modelTagCache.fetch>>;
   cosmetics: Awaited<ReturnType<typeof getCosmeticsForEntity>>;
   images: ImagesForModelVersions[];
 };
-const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
+const transformData = async ({ models, tags, cosmetics, images }: PullDataResult) => {
   const modelCategories = await getCategoryTags('model');
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
@@ -222,7 +165,6 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
       const {
         user,
         modelVersions,
-        tagsOnModels,
         hashes,
         allowNoCredit,
         allowCommercialUse,
@@ -245,16 +187,17 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
         (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
       );
 
-      const category = tagsOnModels.find((tagOnModel) =>
-        modelCategoriesIds.includes(tagOnModel.tag.id)
-      );
+      const category = tags[model.id]?.tags.find(({ id }) => modelCategoriesIds.includes(id))!;
 
       return {
         ...model,
         nsfwLevel: parseBitwiseBrowsingLevel(model.nsfwLevel),
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
-        category: category?.tag,
+        category: {
+          id: category.id,
+          name: category.name!,
+        },
         permissions: {
           allowNoCredit,
           allowCommercialUse,
@@ -293,7 +236,11 @@ const transformData = async ({ models, cosmetics, images }: PullDataResult) => {
           ),
         ],
         hashes: hashes.map((hash) => hash.hash.toLowerCase()),
-        tags: tagsOnModels.map((tagOnModel) => tagOnModel.tag),
+        tags:
+          tags[model.id]?.tags.map((x) => ({
+            id: x.id,
+            name: x.name,
+          })) ?? [],
         metrics: {
           ...metrics,
           weightedRating,
@@ -409,7 +356,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
         : `${batch.startId} - ${batch.endId}`;
     logger(`PullData :: Pulling data for batch`, batchLogKey);
     const models = await db.model.findMany({
-      select: modelSelect,
+      select: modelSearchIndexSelect,
       where: {
         status: ModelStatus.Published,
         availability: {
@@ -431,6 +378,7 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
 
     const results: PullDataResult = {
       models,
+      tags: {},
       cosmetics: {},
       images: [],
     };
@@ -440,16 +388,22 @@ export const modelsSearchIndex = createSearchIndexUpdateProcessor({
     const pullBatches = chunk(models, 500);
     const tasks: Task[] = [];
     for (const batch of pullBatches) {
+      const batchIds = batch.map((m) => m.id);
       tasks.push(async () => {
         logger(`PullData :: Pull cosmetics`, batchLogKey);
-        const batchIds = batch.map((m) => m.id);
         const cosmetics = await getCosmeticsForEntity({
           ids: batchIds,
           entity: 'Model',
         });
         logger(`PullData :: Pulled cosmetics`, batchLogKey);
-
         Object.assign(results.cosmetics, cosmetics);
+      });
+
+      tasks.push(async () => {
+        logger(`PullData :: Pull tags`, batchLogKey);
+        const tags = await modelTagCache.fetch(batchIds);
+        logger(`PullData :: Pulled tags`, batchLogKey);
+        Object.assign(results.tags, tags);
       });
 
       const modelVersionIds = batch.flatMap((m) => m.modelVersions.map((m) => m.id));

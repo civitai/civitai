@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
+import { randomUUID } from 'crypto';
 import dayjs, { ManipulateType } from 'dayjs';
 import { chunk, lowerFirst, truncate } from 'lodash-es';
 import { SearchParams, SearchResponse } from 'meilisearch';
@@ -28,8 +29,10 @@ import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
+  getUserFollows,
   imageMetaCache,
   imageMetadataCache,
+  imageMetricsCache,
   imagesForModelVersionsCache,
   tagCache,
   tagIdsForImagesCache,
@@ -123,10 +126,13 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { ImageResource } from '~/shared/utils/prisma/models';
+import { fetchBlob, getBase64 } from '~/utils/file-utils';
 import { logToDb } from '~/utils/logging';
+import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
+import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
 import {
   GetImageInput,
@@ -135,6 +141,8 @@ import {
   IngestImageInput,
   ingestImageSchema,
 } from './../schema/image.schema';
+import { uniqBy } from 'lodash-es';
+import { withRetries } from '~/utils/errorHandling';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -219,11 +227,15 @@ export const deleteImageById = async ({
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
         // TODO Remove after fallback bucket is deprecated
         if (env.S3_IMAGE_UPLOAD_BUCKET_OLD)
-          await baseS3Client.deleteObject({
-            bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD,
-            key: image.url,
-          });
-        await imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+          await withRetries(() =>
+            baseS3Client.deleteObject({
+              bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD as string,
+              key: image.url,
+            })
+          );
+        await withRetries(() =>
+          imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url })
+        );
         await purgeResizeCache({ url: image.url });
       }
     } catch {
@@ -830,6 +842,10 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!pending) AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
+  if (!isModerator) {
+    AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+  }
+
   let from = 'FROM "Image" i';
   const joins: string[] = [];
   // Filter to specific model/review content
@@ -880,11 +896,7 @@ export const getAllImages = async (
   // Filter only followed users
   // [x]
   if (userId && followed) {
-    const followedUsers = await dbRead.userEngagement.findMany({
-      where: { userId, type: 'Follow' },
-      select: { targetUserId: true },
-    });
-    const userIds = followedUsers.map((x) => x.targetUserId);
+    const userIds = await getUserFollows(userId);
     if (userIds.length) {
       // cacheTime = 0;
       AND.push(Prisma.sql`i."userId" IN (${Prisma.join(userIds)})`);
@@ -1083,15 +1095,9 @@ export const getAllImages = async (
 
   if (userId && !!reactions?.length) {
     // cacheTime = 0;
-    AND.push(
-      Prisma.sql`EXISTS (
-        SELECT 1
-        FROM "ImageReaction" ir
-        WHERE ir."imageId" = i.id
-          AND ir.reaction::text IN (${Prisma.join(reactions)})
-          AND ir."userId" = ${userId}
-      )`
-    );
+    joins.push(`JOIN "ImageReaction" ir ON ir."imageId" = i.id`);
+    AND.push(Prisma.sql`ir.reaction IN (${Prisma.join(reactions)})`);
+    AND.push(Prisma.sql`ir."userId" = ${userId}`);
   }
 
   if (!!tools?.length) {
@@ -1668,6 +1674,13 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   const sorts: MeiliImageSort[] = [];
   const filters: string[] = [];
 
+  if (!isModerator) {
+    filters.push(
+      // Avoids exposing private resources to the public
+      `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
+    );
+  }
+
   if (postId) {
     postIds = [...(postIds ?? []), postId];
   }
@@ -2013,34 +2026,19 @@ const getImageMetricsObject = async (data: { id: number }[]) => {
 const getImageMetrics = async (ids: number[]) => {
   if (!ids.length) return {};
 
-  const pgData = await dbRead.entityMetricImage.findMany({
-    where: { imageId: { in: ids } },
-    select: {
-      imageId: true,
-      reactionLike: true,
-      reactionHeart: true,
-      reactionLaugh: true,
-      reactionCry: true,
-      // reactionTotal: true,
-      comment: true,
-      collection: true,
-      buzz: true,
-    },
-  });
-
-  type PgDataType = (typeof pgData)[number];
-
-  // - If missing data in postgres, get latest from clickhouse
+  const metricsData = await imageMetricsCache.fetch(ids);
+  type PgDataType = (typeof metricsData)[number];
 
   // - get images with no data at all
-  const missingIds = ids.filter((i) => !pgData.map((d) => d.imageId).includes(i));
+  const missingIds = ids.filter((i) => !metricsData[i]);
   // - get images where some of the properties are null
-  const missingData = pgData
+  const missingData = Object.values(metricsData)
     .filter((d) => Object.values(d).some((v) => !isDefined(v)))
     .map((x) => x.imageId);
   const missing = [...new Set([...missingIds, ...missingData])];
 
   let clickData: DeepNonNullable<PgDataType>[] = [];
+  // - If missing data in postgres, get latest from clickhouse
   if (missing.length > 0) {
     if (clickhouse) {
       // - find the missing IDs' data in clickhouse
@@ -2145,7 +2143,7 @@ const getImageMetrics = async (ids: number[]) => {
     }
   }
 
-  return [...pgData, ...clickData].reduce((acc, row) => {
+  return [...Object.values(metricsData), ...clickData].reduce((acc, row) => {
     const { imageId, ...rest } = row;
     acc[imageId] = Object.fromEntries(
       Object.entries(rest).map(([k, v]) => [k, isDefined(v) ? Math.max(0, v) : v])
@@ -2189,7 +2187,7 @@ export const getImage = async ({
   withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
   const AND = [Prisma.sql`i.id = ${id}`];
-  if (!isModerator)
+  if (!isModerator) {
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
@@ -2208,6 +2206,11 @@ export const getImage = async ({
         ' OR '
       )})`
     );
+
+    if (!withoutPost) {
+      AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
+    }
+  }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
@@ -2463,6 +2466,7 @@ export const getImagesForModelVersion = async ({
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const query = Prisma.sql`
+    -- getImagesForModelVersion
     WITH targets AS (
       SELECT
         id,
@@ -3455,7 +3459,7 @@ const imageReviewQueueJoinMap = {
     `,
     join: `
       LEFT JOIN LATERAL (
-        SELECT * FROM "Appeal" 
+        SELECT * FROM "Appeal"
         WHERE "entityId" = i.id AND "entityType" = 'Image'
         ORDER BY "createdAt" DESC
         LIMIT 1
@@ -4709,7 +4713,13 @@ export async function createImageResources({
   >`SELECT * FROM get_image_resources(${imageId}::int)`;
   if (!resources.length) return null;
 
-  const sql: Prisma.Sql[] = resources.map(
+  const resourcesWithModelVersions = uniqBy(
+    resources.filter((x) => x.modelversionid),
+    'modelversionid'
+  );
+  const resourcesWithoutModelVersions = resources.filter((x) => !x.modelversionid);
+
+  const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
     (r) => Prisma.sql`
         (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
       r.detected
@@ -4764,4 +4774,35 @@ export const getMyImages = async ({
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
   }
+};
+
+export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => {
+  const blob = await fetchBlob(imageUrl);
+
+  if (!blob) {
+    throw new Error('Failed to fetch image');
+  }
+
+  const imageKey = randomUUID();
+
+  const upload = await serverUploadImage({
+    file: blob,
+    key: imageKey,
+    bucket: env.S3_IMAGE_UPLOAD_BUCKET,
+  });
+
+  const data = await upload.done();
+  const meta = await getMetadata(imageUrl);
+
+  const response = {
+    meta: meta,
+    metadata: {
+      size: blob.size,
+      width: 512, //  This is mostly a safeguard to default.
+      height: 512, //  This is mostly a safeguard to default.
+    },
+    url: data.Key,
+  };
+
+  return response;
 };

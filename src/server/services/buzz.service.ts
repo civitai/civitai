@@ -1,19 +1,20 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { v4 as uuid } from 'uuid';
-import { isProd } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
+import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { eventEngine } from '~/server/events';
-import { logToAxiom } from '~/server/logging/client';
 import { userMultipliersCache } from '~/server/redis/caches';
+import { REDIS_KEYS } from '~/server/redis/client';
 import {
   BuzzAccountType,
   ClaimWatchedAdRewardInput,
   CompleteStripeBuzzPurchaseTransactionInput,
   CreateBuzzTransactionInput,
+  GetBuzzMovementsBetweenAccounts,
+  GetBuzzMovementsBetweenAccountsResponse,
   GetBuzzTransactionResponse,
   GetDailyBuzzCompensationInput,
   GetEarnPotentialSchema,
@@ -28,6 +29,7 @@ import {
 } from '~/server/schema/buzz.schema';
 import { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
+import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
   throwInsufficientFundsError,
@@ -37,10 +39,7 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
-import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { CacheTTL } from '~/server/common/constants';
-import { number } from 'zod';
+import { isDev } from '~/env/other';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';
@@ -50,7 +49,7 @@ export async function getUserBuzzAccount({ accountId, accountType }: GetUserBuzz
 
   return withRetries(
     async () => {
-      if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
+      // if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
       const response = await fetch(
         `${env.BUZZ_ENDPOINT}/account/${accountType ? `${accountType}/` : ''}${accountId}`
       );
@@ -207,7 +206,11 @@ export async function createBuzzTransaction({
   });
 
   // 0 is the bank so technically, it always has funding.
-  if (payload.fromAccountId !== 0 && (account.balance ?? 0) < amount) {
+  if (
+    payload.fromAccountId !== 0 &&
+    payload.fromAccountType !== 'creatorprogrambank' &&
+    (account.balance ?? 0) < amount
+  ) {
     throw throwInsufficientFundsError(insufficientFundsErrorMsg);
   }
 
@@ -229,6 +232,9 @@ export async function createBuzzTransaction({
   });
 
   if (!response.ok) {
+    if (isDev) {
+      console.error('Failed to create buzz transaction', response);
+    }
     switch (response.status) {
       case 400:
         throw throwBadRequestError('Invalid transaction');
@@ -836,7 +842,7 @@ const earnedCache = createCachedObject<{ id: number; earned: number }>({
         SUM(amount) as earned
       FROM buzzTransactions
       WHERE (
-        (type IN ('compensation', 'tip')) -- Generation
+        (type IN ('compensation')) -- Generation
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
       AND toAccountType = 'user'
@@ -869,7 +875,7 @@ export async function getPoolForecast({ userId, username }: GetEarnPotentialSche
         FROM buzzTransactions
         WHERE toAccountType = 'user'
         AND (
-          (type IN ('compensation', 'tip')) -- Generation
+          (type IN ('compensation')) -- Generation
           OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
         )
         AND toAccountId != 0
@@ -1052,4 +1058,49 @@ export async function getTransactionsReport({
     ...record,
     date: formatDate(record.date, 'YYYY-MM-DDTHH:mm:ss', true),
   }));
+}
+
+export async function getCounterPartyBuzzTransactions({
+  accountId,
+  accountType,
+  counterPartyAccountId,
+  counterPartyAccountType,
+}: GetBuzzMovementsBetweenAccounts) {
+  if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
+
+  return withRetries(
+    async () => {
+      // if (isProd) logToAxiom({ type: 'buzz', id: accountId }, 'connection-testing').catch();
+
+      const queryString = QS.stringify({
+        accountId: counterPartyAccountId,
+        accountType: counterPartyAccountType ?? 'user',
+      });
+
+      const response = await fetch(
+        `${env.BUZZ_ENDPOINT}/account/${
+          accountType ? `${accountType}/` : ''
+        }${accountId}/counterparties?${queryString}`,
+        {}
+      );
+      if (!response.ok) {
+        switch (response.status) {
+          case 400:
+            throw throwBadRequestError();
+          case 404:
+            throw new TRPCError({ code: 'NOT_FOUND', message: 'Account not found' });
+          default:
+            throw new TRPCError({
+              code: 'INTERNAL_SERVER_ERROR',
+              message: 'An unexpected error ocurred, please try again later',
+            });
+        }
+      }
+
+      const data: GetBuzzMovementsBetweenAccountsResponse = await response.json();
+      return data;
+    },
+    3,
+    1500
+  );
 }

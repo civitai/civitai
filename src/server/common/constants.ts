@@ -1,4 +1,10 @@
 import type { MantineTheme } from '@mantine/core';
+import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
+import { ForwardRefExoticComponent, RefAttributes } from 'react';
+import { env } from '~/env/client';
+import { BanReasonCode, ModelSort } from '~/server/common/enums';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,
   Currency,
@@ -8,14 +14,8 @@ import {
   ModelVersionSponsorshipSettingsType,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
-import { ForwardRefExoticComponent, RefAttributes } from 'react';
-import { env } from '~/env/client';
-import { BanReasonCode, ModelSort } from '~/server/common/enums';
-import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
-import { GenerationResource } from '~/server/services/generation/generation.service';
 
 export const constants = {
   modelFilterDefaults: {
@@ -341,6 +341,28 @@ export const constants = {
       discountPercent: 50,
       tier: 'founder',
     },
+    membershipDetailsAddons: {
+      free: {
+        maxPrivateModels: 0,
+        supportLevel: 'Basic',
+      },
+      founder: {
+        maxPrivateModels: 3,
+        supportLevel: 'Priority',
+      },
+      bronze: {
+        maxPrivateModels: 3,
+        supportLevel: 'Priority',
+      },
+      silver: {
+        maxPrivateModels: 10,
+        supportLevel: 'Premium',
+      },
+      gold: {
+        maxPrivateModels: 100,
+        supportLevel: 'VIP',
+      },
+    },
   },
   freeMembershipDetails: {
     name: 'Free',
@@ -352,6 +374,7 @@ export const constants = {
       quantityLimit: 4,
       queueLimit: 4,
       badgeType: 'none',
+      maxPrivateModels: 0,
     },
   },
   cosmeticShop: {
@@ -365,7 +388,7 @@ export const constants = {
     },
   },
   modelGallery: {
-    maxPinnedPosts: 10,
+    maxPinnedPosts: 20,
   },
   chat: {
     airRegex: /^civitai:(?<mId>\d+)@(?<mvId>\d+)$/i,
@@ -438,18 +461,22 @@ export type BaseModelType = (typeof constants.baseModelTypes)[number];
 
 export type BaseModel = (typeof constants.baseModels)[number];
 
-class BaseModelSet<TBaseModel, THidden extends TBaseModel> {
+class BaseModelSet<TBaseModel> {
   name: string;
   baseModels: StringLiteral<TBaseModel>[];
-  hidden?: StringLiteral<THidden>[];
+  hidden?: StringLiteral<TBaseModel>[];
+  generation: boolean;
+
   constructor(args: {
     name: string;
     baseModels: StringLiteral<TBaseModel>[];
-    hidden?: StringLiteral<THidden>[];
+    hidden?: StringLiteral<TBaseModel>[];
+    generation?: boolean;
   }) {
     this.name = args.name;
     this.baseModels = args.baseModels;
     this.hidden = args.hidden;
+    this.generation = args.generation ?? false;
   }
 }
 
@@ -457,6 +484,7 @@ export const baseModelSets = {
   SD1: new BaseModelSet({
     name: 'Stable Diffusion',
     baseModels: ['SD 1.4', 'SD 1.5', 'SD 1.5 LCM', 'SD 1.5 Hyper'],
+    generation: true,
   }),
   SD2: new BaseModelSet({
     name: 'Stable Diffusion',
@@ -466,12 +494,14 @@ export const baseModelSets = {
   SD3: new BaseModelSet({
     name: 'Stable Diffusion',
     baseModels: ['SD 3', 'SD 3.5', 'SD 3.5 Large', 'SD 3.5 Large Turbo'],
+    generation: true,
   }),
   SD3_5M: new BaseModelSet({
     name: 'Stable Diffusion',
     baseModels: ['SD 3.5 Medium'],
+    generation: true,
   }),
-  Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'] }),
+  Flux1: new BaseModelSet({ name: 'Flux', baseModels: ['Flux.1 S', 'Flux.1 D'], generation: true }),
   SDXL: new BaseModelSet({
     name: 'Stable Diffusion XL',
     baseModels: [
@@ -483,6 +513,7 @@ export const baseModelSets = {
       'SDXL Turbo',
     ],
     hidden: ['SDXL 0.9', 'SDXL Turbo', 'SDXL 1.0 LCM'],
+    generation: true,
   }),
   SDXLDistilled: new BaseModelSet({
     name: 'Stable Diffusion XL',
@@ -497,8 +528,12 @@ export const baseModelSets = {
   HyV1: new BaseModelSet({ name: 'Hunyuan Video', baseModels: ['Hunyuan Video'] }),
   SCascade: new BaseModelSet({ name: 'Stable Cascade', baseModels: ['Stable Cascade'] }),
   ODOR: new BaseModelSet({ name: 'ODOR', baseModels: ['Odor'], hidden: ['Odor'] }),
-  Pony: new BaseModelSet({ name: 'Stable Diffusion', baseModels: ['Pony'] }),
-  Illustrious: new BaseModelSet({ name: 'Illustrious', baseModels: ['Illustrious'] }),
+  Pony: new BaseModelSet({ name: 'Stable Diffusion', baseModels: ['Pony'], generation: true }),
+  Illustrious: new BaseModelSet({
+    name: 'Illustrious',
+    baseModels: ['Illustrious'],
+    generation: true,
+  }),
   Other: new BaseModelSet({ name: 'Other', baseModels: ['Other'] }),
   Mochi: new BaseModelSet({ name: 'Mochi', baseModels: ['Mochi'] }),
   LTXV: new BaseModelSet({ name: 'LTXV', baseModels: ['LTXV'] }),
@@ -904,6 +939,7 @@ export const generation = {
     fluxMode: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     model: generationConfig.Flux1.checkpoint,
     priority: 'low',
+    sourceImage: null,
   },
   maxValues: {
     seed: 4294967295,
@@ -911,6 +947,7 @@ export const generation = {
   },
 } as const;
 export const maxRandomSeed = 2147483647;
+export const maxUpscaleSize = 3840;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 

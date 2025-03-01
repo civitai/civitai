@@ -42,6 +42,7 @@ export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) =
 };
 
 export const auditPrompt = (prompt: string, negativePrompt?: string) => {
+  if (!prompt.trim().length) return { blockedFor: [], success: true };
   prompt = normalizeText(prompt); // Parse HTML Entities
   negativePrompt = normalizeText(negativePrompt);
   const { found, age } = includesMinorAge(prompt);

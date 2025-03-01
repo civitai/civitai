@@ -56,7 +56,7 @@ import {
   getMaxEarlyAccessDays,
   getMaxEarlyAccessModels,
 } from '~/server/utils/early-access-helpers';
-import { ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { MyRecentlyRecommended } from '~/types/router';
 import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -251,7 +251,10 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
         epochs: data.epochs ?? null,
         steps: data.steps ?? null,
         modelId: model?.id ?? -1,
-        earlyAccessConfig: !data.earlyAccessConfig ? null : data.earlyAccessConfig,
+        earlyAccessConfig:
+          model?.availability === Availability.Private || !data.earlyAccessConfig
+            ? null
+            : data.earlyAccessConfig,
         trainedWords: skipTrainedWords ? [] : trainedWords,
         baseModelType: hasBaseModelType ? data.baseModelType : undefined,
         vaeId: hasVAE ? data.vaeId : undefined,
@@ -314,12 +317,14 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
     .filter(isDefined);
   const atEarlyAccess = !!version?.earlyAccessEndsAt;
   const isPublished = version?.status === 'Published';
+  const isPrivateModel = model?.availability === Availability.Private;
   const showEarlyAccessInput =
-    currentUser?.isModerator ||
-    (maxEarlyAccessModels > 0 &&
-      features.earlyAccessModel &&
-      earlyAccessUnlockedDays.length > 0 &&
-      (!isPublished || atEarlyAccess));
+    !isPrivateModel &&
+    (currentUser?.isModerator ||
+      (maxEarlyAccessModels > 0 &&
+        features.earlyAccessModel &&
+        earlyAccessUnlockedDays.length > 0 &&
+        (!isPublished || atEarlyAccess)));
   const canIncreaseEarlyAccess = version?.status !== 'Published';
   const maxEarlyAccessValue = canIncreaseEarlyAccess
     ? MAX_EARLY_ACCCESS
@@ -339,7 +344,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
             maxLength={25}
           />
 
-          {features.generationOnlyModels && (
+          {features.generationOnlyModels && !isPrivateModel && (
             <>
               <InputSelect
                 name="usageControl"
@@ -376,13 +381,13 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                   )}
               />
 
-              <Alert color="blue" title="Usage Control">
+              <Alert color="blue">
                 {modelDownloadEnabled ? (
                   <Text>People will be able to download & generate with this model version.</Text>
                 ) : (
                   <Text>
-                    People will be able to generate with this model version, but will not be able to
-                    download it.
+                    People will be able to generate with this model version, but will{' '}
+                    <span className="underline">not</span> be able to download it.
                   </Text>
                 )}
               </Alert>

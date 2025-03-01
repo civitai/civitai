@@ -12,6 +12,7 @@ import {
   WorkflowStatus,
   WorkflowStep,
 } from '@civitai/client';
+import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
 import { z } from 'zod';
 import { env } from '~/env/server';
@@ -38,6 +39,7 @@ import {
   WorkflowDefinition,
 } from '~/server/services/orchestrator/types';
 import { queryWorkflows } from '~/server/services/orchestrator/workflows';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   allInjectableResourceIds,
@@ -49,14 +51,14 @@ import {
   getInjectablResources,
   getIsFlux,
   getIsSD3,
-  getRoundedUpscaleSize,
+  getRoundedWidthHeight,
   getSizeFromAspectRatio,
   InjectableResource,
   samplersToSchedulers,
   sanitizeParamsByWorkflowDefinition,
   sanitizeTextToImageParams,
 } from '~/shared/constants/generation.constants';
-import { ModelType } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
@@ -87,10 +89,15 @@ export async function getGenerationStatus() {
 export async function getResourceDataWithInjects<T extends GenerationResource>(args: {
   ids: number[];
   user?: SessionUser;
+  epochNumbers?: string[];
   cb?: (resource: GenerationResource) => T;
 }) {
   const ids = [...args.ids, ...allInjectableResourceIds];
-  const results = await getGenerationResourceData({ ids, user: args.user });
+  const results = await getGenerationResourceData({
+    ids,
+    user: args.user,
+    epochNumbers: args.epochNumbers,
+  });
   const allResources = (args.cb ? results.map(args.cb) : results) as T[];
 
   return {
@@ -110,8 +117,15 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
 }) {
+  if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
+  if (originalParams.sourceImage) {
+    originalParams.width = originalParams.sourceImage.width;
+    originalParams.height = originalParams.sourceImage.height;
+    originalParams.upscaleWidth = originalParams.sourceImage.upscaleWidth;
+    originalParams.upscaleHeight = originalParams.sourceImage.upscaleHeight;
+  }
 
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
@@ -159,12 +173,27 @@ export async function parseGenerateImageInput({
   const resourceData = await getResourceDataWithInjects({
     ids: originalResources.map((x) => x.id),
     user,
+    epochNumbers: originalResources
+      .filter((x) => !!x.epochNumber)
+      .map((x) => `${x.id}@${x.epochNumber}`),
     cb: (resource) => ({
       ...resource,
       ...originalResources.find((x) => x.id === resource.id),
       triggerWord: resource.trainedWords?.[0],
     }),
   });
+
+  if (
+    resourceData.resources.some(
+      (r) => r.availability === Availability.Private || !!r.epochDetails || !!r.epochNumber
+    ) &&
+    !user.isModerator
+  ) {
+    // Confirm the user has a subscription:
+    const subscription = await getUserSubscription({ userId: user.id });
+    if (!subscription)
+      throw throwBadRequestError('Using Private resources require an active subscription.');
+  }
 
   if (
     resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
@@ -205,12 +234,6 @@ export async function parseGenerateImageInput({
   ];
 
   // #region [together]
-  // TODO - should be able to remove this 30 days after orchestrator integration
-  if (params.aspectRatio && (!params.width || !params.height)) {
-    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params.baseModel);
-    params.width = size.width;
-    params.height = size.height;
-  }
 
   // this needs to come after updating the size from the aspect ratio that is done directly above
   params = sanitizeTextToImageParams(params, limits);
@@ -290,15 +313,25 @@ export async function parseGenerateImageInput({
     params.sampler = 'LCM';
   }
 
-  if (!params.upscaleHeight || !params.upscaleWidth) {
-    params.upscaleHeight = params.height * 1.5;
-    params.upscaleWidth = params.width * 1.5;
+  let upscaleWidth = params.upscaleHeight;
+  let upscaleHeight = params.upscaleWidth;
+  if (params.sourceImage?.upscaleWidth && params.sourceImage.upscaleHeight) {
+    upscaleWidth = params.sourceImage.upscaleWidth;
+    upscaleHeight = params.sourceImage.upscaleHeight;
+  } else if (!params.upscaleHeight || !params.upscaleWidth) {
+    upscaleWidth = params.width * 1.5;
+    upscaleHeight = params.height * 1.5;
   }
 
   const upscale =
-    params.upscaleHeight && params.upscaleWidth
-      ? getRoundedUpscaleSize({ width: params.upscaleWidth, height: params.upscaleHeight })
+    upscaleHeight && upscaleWidth
+      ? getRoundedWidthHeight({ width: upscaleWidth, height: upscaleHeight })
       : undefined;
+
+  const { sourceImage, width, height } = params;
+  const rest = sourceImage
+    ? { image: sourceImage.url, width: sourceImage.width, height: sourceImage.height }
+    : { width, height };
 
   return {
     resources: [...availableResources, ...resourcesToInject],
@@ -308,6 +341,7 @@ export async function parseGenerateImageInput({
       batchSize,
       prompt: positivePrompts.join(', '),
       negativePrompt: negativePrompts.join(', '),
+      ...rest,
       // temp?
       upscaleWidth: upscale?.width,
       upscaleHeight: upscale?.height,
@@ -317,11 +351,27 @@ export async function parseGenerateImageInput({
 }
 
 function getResources(step: WorkflowStep) {
-  if (step.$type === 'textToImage')
-    return getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
+  if (step.$type === 'textToImage') {
+    const inputResources = getTextToImageAirs([(step as TextToImageStep).input]).map((x) => ({
       id: x.version,
-      strength: x.networkParams.strength,
+      strength: x.networkParams.strength ?? 1,
+      epochNumber: undefined,
     }));
+
+    const metadataResources = (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
+
+    return uniqBy([...inputResources, ...metadataResources], 'id').map((ir) => {
+      const metadataResource = metadataResources.find((x) => x.id === ir.id);
+      // If removed, we re-add the epochInformation
+      if (metadataResource)
+        return {
+          ...ir,
+          epochNumber: metadataResource.epochNumber,
+        };
+
+      return ir;
+    });
+  }
   return (step as GeneratedImageWorkflowStep).metadata?.resources ?? [];
 }
 
@@ -349,12 +399,21 @@ function combineResourcesWithInputResource(
     .filter(isDefined);
 }
 
+export type WorkflowFormatted = AsyncReturnType<typeof formatGenerationResponse>[number];
 export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);
   // console.dir(allResources, { depth: null });
   const versionIds = allResources.map((x) => x.id);
-  const { resources, injectable } = await getResourceDataWithInjects({ ids: versionIds, user });
+  const epochNumbers = uniq(
+    allResources.filter((x) => !!x.epochNumber).map((x) => `${x.id}@${x.epochNumber}`)
+  );
+
+  const { resources, injectable } = await getResourceDataWithInjects({
+    ids: versionIds,
+    user,
+    epochNumbers,
+  });
 
   return workflows.map((workflow) => {
     return {
@@ -373,7 +432,19 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
           workflowId: workflow.id as string,
           // ensure that job status is set to 'succeeded' if workflow status is set to 'succeedeed'
           step: workflow.status === 'succeeded' ? { ...step, status: workflow.status } : step,
-          resources: [...resources, ...injectable],
+          resources: [...resources, ...injectable].filter((resource) => {
+            const metadataResources =
+              (step.metadata as GeneratedImageStepMetadata)?.resources ?? [];
+            const mr = metadataResources.find((x) => x.id === resource.id);
+
+            if (mr && mr.epochNumber) {
+              // Avoids attaching wrong epoch details to resources. The only source of truth we have for that
+              // is the metadata since it's pretty much impossible to tie air <-> modelVersion.
+              return resource.epochDetails?.epochNumber === mr.epochNumber;
+            }
+
+            return true; // Default behavior.
+          }),
         })
       ),
     };
@@ -416,14 +487,30 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   const videoMetadata = step.metadata as { params?: VideoGenerationSchema };
   const { params } = videoMetadata;
 
+  // handle legacy source image
+  let sourceImage = params && 'sourceImage' in params ? params.sourceImage : undefined;
+  if (
+    params &&
+    'width' in params &&
+    'height' in params &&
+    'sourceImage' in params &&
+    typeof params.sourceImage === 'string'
+  ) {
+    sourceImage = {
+      width: params.width as number,
+      height: params.height as number,
+      url: params.sourceImage,
+    };
+  }
+
   let width: number | undefined;
   let height: number | undefined;
   let aspectRatio = 1;
 
   if (params) {
     if (params.type === 'img2vid') {
-      width = params?.width;
-      height = params?.height;
+      width = sourceImage?.width;
+      height = sourceImage?.height;
       aspectRatio = width && height ? width / height : 16 / 9;
     } else if (params.type === 'txt2vid') {
       switch (params.engine) {
@@ -477,17 +564,6 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   );
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
-  // need to get sourceImage from original input due to orchestrator not always returning sourceImage in the step input - 01/18/2025
-  const sourceImage =
-    params && 'sourceImage' in params ? (params.sourceImage as string) : undefined;
-
-  // TODO - this should be temporary until Koen updates the orchestrator - 12/11/2024
-  if (
-    input.engine === 'kling' &&
-    (sourceImage || (input as any).sourceImage || (input as any).sourceImageUrl)
-  ) {
-    if ('aspectRatio' in input) delete input.aspectRatio;
-  }
 
   return {
     $type: 'videoGen' as const,
@@ -496,7 +572,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     // workflow and quantity are only here because they are required for other components to function
     params: {
       ...input,
-      sourceImage: sourceImage ?? (input as any).sourceImage ?? (input as any).sourceImageUrl,
+      sourceImage: sourceImage,
       workflow: videoMetadata.params?.workflow,
       quantity: 1,
     },
@@ -600,7 +676,9 @@ function formatTextToImageStep({
         }
       : {};
 
-  const params = {
+  const params = metadata?.params;
+
+  const data = {
     baseModel,
     prompt,
     negativePrompt,
@@ -616,22 +694,22 @@ function formatTextToImageStep({
     nsfw: isNsfw,
     workflow: 'txt2img',
     //support using metadata params first (one of the quirks of draft mode makes this necessary)
-    clipSkip: metadata?.params?.clipSkip ?? input.clipSkip,
-    steps: metadata?.params?.steps ?? input.steps,
-    cfgScale: metadata?.params?.cfgScale ?? input.cfgScale,
-    sampler: metadata?.params?.sampler ?? sampler,
+    clipSkip: params?.clipSkip ?? input.clipSkip,
+    steps: params?.steps ?? input.steps,
+    cfgScale: params?.cfgScale ?? input.cfgScale,
+    sampler: params?.sampler ?? sampler,
     ...upscale,
 
-    fluxMode: metadata?.params?.fluxMode ?? undefined,
+    fluxMode: params?.fluxMode ?? undefined,
     fluxUltraRaw: input.engine === 'flux-pro-raw' ? true : undefined,
   } as TextToImageParams;
 
   if (resources.some((x) => x.id === fluxUltraAirId)) {
-    delete params.steps;
-    delete params.cfgScale;
-    delete params.clipSkip;
-    delete (params as any).draft;
-    delete (params as any).nsfw;
+    delete data.steps;
+    delete data.cfgScale;
+    delete data.clipSkip;
+    delete (data as any).draft;
+    delete (data as any).nsfw;
   }
 
   return {
@@ -640,7 +718,7 @@ function formatTextToImageStep({
     name: step.name,
     // TODO - after a month from deployment(?), we should be able to start using `step.metadata.params`
     // at that point in time, we can also make params and resources required properties on metadata to ensure that it doesn't get removed by step metadata updates
-    params,
+    params: data,
     images,
     status: step.status,
     metadata: metadata,
@@ -660,11 +738,13 @@ export function formatComfyStep({
   const { output, jobs, metadata = {} } = step as ComfyStep;
   const { resources: stepResources = [], params } = metadata as GeneratedImageStepMetadata;
 
-  if (params?.aspectRatio) {
-    const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
-    params.width = size.width;
-    params.height = size.height;
-  }
+  // if (params?.aspectRatio) {
+  //   const size = getSizeFromAspectRatio(Number(params.aspectRatio), params?.baseModel);
+  //   params.width = size.width;
+  //   params.height = size.height;
+  // }
+
+  const { width = 512, height = 512 } = params?.sourceImage ?? params ?? {};
 
   const groupedImages = (jobs ?? []).reduce<Record<string, NormalizedGeneratedImage[]>>(
     (acc, job, i) => ({
@@ -683,8 +763,8 @@ export function formatComfyStep({
             seed: params?.seed ? params.seed + i : undefined,
             completed: job.completedAt ? new Date(job.completedAt) : undefined,
             url: image.url as string,
-            width: params?.width ?? 512,
-            height: params?.height ?? 512,
+            width,
+            height,
           })) ?? [],
     }),
     {}

@@ -29,6 +29,7 @@ import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
+import { UiState } from 'instantsearch.js';
 
 const SIDEBAR_SIZE = 377;
 
@@ -113,10 +114,12 @@ export function SearchLayout({
   children,
   indexName,
   leftSidebar,
+  initialUiState,
 }: {
   children: React.ReactNode;
   indexName: SearchIndex;
   leftSidebar?: React.ReactNode;
+  initialUiState?: UiState;
 }) {
   const isMobile = useIsMobile();
   const [sidebarOpenLocalStorage, setSidebarOpenLocalStorage] = useLocalStorage({
@@ -152,6 +155,7 @@ export function SearchLayout({
         indexName={indexName}
         routing={routing}
         future={{ preserveSharedStateOnUnmount: true }}
+        initialUiState={initialUiState}
       >
         <Configure hitsPerPage={50} attributesToHighlight={[]} />
         <AppLayout

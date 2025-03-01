@@ -94,14 +94,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           href: `/collections/${bookmarkedModelsCollection?.id}`,
           icon: IconThumbUp,
           color: theme.colors.green[theme.fn.primaryShade()],
-          label: 'Liked models',
+          label: 'Liked Models',
         },
         {
           href: `/collections/${bookmarkedArticlesCollection?.id}`,
           visible: !!bookmarkedArticlesCollection,
           icon: IconBookmarkEdit,
           color: theme.colors.pink[theme.fn.primaryShade()],
-          label: 'Bookmarked articles',
+          label: 'Bookmarked Articles',
         },
         {
           href: '/bounties?engagement=favorite',
@@ -109,7 +109,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.bounties,
           icon: IconMoneybag,
           color: theme.colors.pink[theme.fn.primaryShade()],
-          label: 'My bounties',
+          label: 'My Bounties',
         },
         {
           href: '/clubs?engagement=engaged',
@@ -117,21 +117,21 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.clubs,
           icon: IconClubs,
           color: theme.colors.pink[theme.fn.primaryShade()],
-          label: 'My clubs',
+          label: 'My Clubs',
         },
         {
           href: '/user/buzz-dashboard',
           visible: features.buzz,
           icon: IconProgressBolt,
           color: theme.colors.yellow[theme.fn.primaryShade()],
-          label: 'Buzz dashboard',
+          label: 'Buzz Dashboard',
         },
         {
           href: '/user/vault',
           visible: features.vault,
           icon: IconCloudLock,
           color: theme.colors.yellow[theme.fn.primaryShade()],
-          label: 'My vault',
+          label: 'My Vault',
         },
       ],
     },
@@ -152,12 +152,12 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           href: `/user/${currentUser?.username}/following`,
           icon: IconUsers,
-          label: 'Creators you follow',
+          label: 'Creators You Follow',
         },
         {
           href: '/user/downloads',
           icon: IconHistory,
-          label: 'Download history',
+          label: 'Download History',
         },
         {
           icon: IconPlayerPlayFilled,
@@ -221,7 +221,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       rel: 'nofollow',
       icon: IconPhotoUp,
       color: theme.colors.blue[theme.fn.primaryShade()],
-      label: 'Post images',
+      label: 'Post Images',
     },
     {
       href: '/posts/create?video=true',
@@ -230,7 +230,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       rel: 'nofollow',
       icon: IconVideoPlus,
       color: theme.colors.blue[theme.fn.primaryShade()],
-      label: 'Post videos',
+      label: 'Post Videos',
     },
     {
       href: '/models/create',
@@ -239,7 +239,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       rel: 'nofollow',
       icon: IconUpload,
       color: theme.colors.blue[theme.fn.primaryShade()],
-      label: ' Upload a model',
+      label: ' Upload a Model',
     },
     {
       href: '/models/train',
@@ -258,7 +258,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       rel: 'nofollow',
       icon: IconWriting,
       color: theme.colors.blue[theme.fn.primaryShade()],
-      label: 'Write an article',
+      label: 'Write an Article',
     },
     {
       href: '/bounties/create',
@@ -267,7 +267,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       rel: 'nofollow',
       icon: IconMoneybag,
       color: theme.colors.blue[theme.fn.primaryShade()],
-      label: 'Create a bounty',
+      label: 'Create a Bounty',
       currency: true,
     },
     {
@@ -277,7 +277,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       rel: 'nofollow',
       icon: IconClubs,
       color: theme.colors.blue[theme.fn.primaryShade()],
-      label: 'Create a club',
+      label: 'Create a Club',
     },
   ];
 }

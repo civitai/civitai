@@ -10,6 +10,7 @@ import { createNotification } from './notification.service';
 import { UserPaymentConfiguration } from '~/shared/utils/prisma/models';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-configuration.schema';
+import { CashWithdrawalMethod } from '~/shared/utils/prisma/enums';
 
 // Since these are stripe connect related, makes sense to log for issues for visibility.
 const log = (data: MixedObject) => {
@@ -280,11 +281,13 @@ export async function updateByTipaltiAccount({
   tipaltiAccountId,
   tipaltiAccountStatus,
   tipaltiPaymentsEnabled,
+  tipaltiWithdrawalMethod,
   userId,
 }: {
   tipaltiAccountId?: string;
   tipaltiAccountStatus: TipaltiStatus;
   tipaltiPaymentsEnabled: boolean;
+  tipaltiWithdrawalMethod?: CashWithdrawalMethod;
   userId?: number;
 }) {
   const userPaymentConfig = await dbWrite.userPaymentConfiguration.findUnique({
@@ -298,6 +301,7 @@ export async function updateByTipaltiAccount({
   const data = {
     tipaltiAccountStatus,
     tipaltiPaymentsEnabled,
+    tipaltiWithdrawalMethod,
   };
 
   updated = await dbWrite.userPaymentConfiguration.update({

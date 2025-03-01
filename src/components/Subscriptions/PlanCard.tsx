@@ -1,53 +1,55 @@
 import {
-  Stack,
+  Box,
+  Button,
+  ButtonProps,
   Card,
-  Title,
-  Text,
   Center,
   createStyles,
   Group,
   Select,
-  Button,
-  ButtonProps,
+  Stack,
+  Text,
   ThemeIconVariant,
-  Box,
+  Title,
 } from '@mantine/core';
 import {
   IconBolt,
+  IconCategory,
   IconChevronDown,
   IconChristmasTree,
   IconCloud,
+  IconHeartHandshake,
   IconHexagon,
   IconHexagonPlus,
   IconList,
   IconPhotoAi,
 } from '@tabler/icons-react';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import {
-  benefitIconSize,
-  BenefitItem,
-  PlanBenefitList,
-} from '~/components/Subscriptions/PlanBenefitList';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
 import { useState } from 'react';
-import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
-import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
-import { isDefined } from '~/utils/type-guards';
-import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
-import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
-import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
-import { FeatureAccess } from '~/server/services/feature-flags.service';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   DowngradeFeedbackModal,
   MembershipUpgradeModal,
 } from '~/components/Stripe/MembershipChangePrevention';
 import { appliesForFounderDiscount } from '~/components/Stripe/memberships.util';
+import { shortenPlanInterval } from '~/components/Stripe/stripe.utils';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
+import {
+  benefitIconSize,
+  BenefitItem,
+  PlanBenefitList,
+} from '~/components/Subscriptions/PlanBenefitList';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants, HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { FeatureAccess } from '~/server/services/feature-flags.service';
+import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
 import { isHolidaysTime } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
+import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -239,7 +241,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
               </>
             )}
           </Stack>
-          {benefits && <PlanBenefitList benefits={benefits} />}
+          {benefits && <PlanBenefitList benefits={benefits} tier={meta?.tier} />}
         </Stack>
       </Stack>
     </Card>
@@ -268,6 +270,7 @@ export const getPlanDetails: (
           </Text>
         ),
       },
+
       isHolidaysTime()
         ? {
             icon: <IconChristmasTree size={benefitIconSize} />,
@@ -284,6 +287,7 @@ export const getPlanDetails: (
             ),
           }
         : null,
+
       features.membershipsV2
         ? {
             icon: <IconBolt size={benefitIconSize} />,
@@ -324,6 +328,25 @@ export const getPlanDetails: (
               ),
           }
         : undefined,
+      features.privateModels
+        ? {
+            icon: <IconCategory size={benefitIconSize} />,
+            iconColor: 'blue',
+
+            iconVariant: 'light' as ThemeIconVariant,
+            content: (
+              <Text>
+                {numberWithCommas(
+                  metadata?.maxPrivateModels ??
+                    constants.memberships.membershipDetailsAddons[metadata.tier]
+                      ?.maxPrivateModels ??
+                    0
+                )}{' '}
+                Private Models
+              </Text>
+            ),
+          }
+        : null,
       {
         icon: <IconPhotoAi size={benefitIconSize} />,
         iconColor: 'blue',
@@ -359,6 +382,20 @@ export const getPlanDetails: (
             iconVariant: 'light' as ThemeIconVariant,
           }
         : undefined,
+      {
+        icon: <IconHeartHandshake size={benefitIconSize} />,
+        iconColor: !!metadata.tier && metadata.tier !== 'free' ? 'blue' : 'gray',
+
+        iconVariant: 'light' as ThemeIconVariant,
+        content: (
+          <Text>
+            {metadata?.supportLevel ??
+              constants.memberships.membershipDetailsAddons[metadata.tier]?.supportLevel ??
+              'Basic'}{' '}
+            Support
+          </Text>
+        ),
+      },
       {
         content:
           metadata.badgeType === 'animated' ? (

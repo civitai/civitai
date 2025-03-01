@@ -1,3 +1,4 @@
+import chunk from 'lodash-es/chunk';
 import { pack, unpack } from 'msgpackr';
 import type { RedisClientType, SetOptions } from 'redis';
 import { commandOptions, createClient } from 'redis';
@@ -288,11 +289,11 @@ function getClient<K extends RedisKeyTemplates>(type: 'cache' | 'system', legacy
   };
 
   client.setNxKeepTtlWithEx = async (key, value, ttl) => {
-    const script: string = `
+    const script = `
       if redis.call('SET', KEYS[1], ARGV[1], 'NX', 'KEEPTTL') then
-          return redis.call('EXPIRE', KEYS[1], ARGV[2])
+        return redis.call('EXPIRE', KEYS[1], ARGV[2])
       else
-          return 0
+        return 0
       end
     `;
     const result = await client.eval(script, {
@@ -312,15 +313,10 @@ function getCacheClient(legacyMode = false) {
     const tags = Array.isArray(tag) ? tag : [tag];
     for (const tag of tags) {
       const cacheKey = `${REDIS_KEYS.CACHES.TAGGED_CACHE}:${slugit(tag)}` as const;
-      const count = await client.sCard(cacheKey);
-      let processed = 0;
-      while (true) {
-        const keys: RedisKeyTemplateCache[] = await client.sPop(cacheKey, 1000);
-        const hasOverfetched = processed > count * 1.5;
-        if (!keys.length || hasOverfetched) break;
-        await client.del(keys);
-        processed += keys.length;
-      }
+      const keys: RedisKeyTemplateCache[] = await client.sMembers(cacheKey);
+      await client.del(cacheKey);
+      const keyBatches = chunk(keys, 1000);
+      for (const keys of keyBatches) await client.del(keys);
     }
   };
 
@@ -402,6 +398,9 @@ export const REDIS_SYS_KEYS = {
   BUZZ_WITHDRAWAL_REQUEST: {
     STATUS: 'buzz-withdrawal-request:status',
   },
+  CREATOR_PROGRAM: {
+    FLIP_PHASES: 'creator-program:flip-phases',
+  },
 } as const;
 
 // Cached data
@@ -413,6 +412,7 @@ export const REDIS_KEYS = {
     BASE: 'user',
     SESSION: 'session:data2',
     CACHE: 'packed:user',
+    SETTINGS: 'user:settings',
   },
   SESSION: {
     BASE: 'session',
@@ -459,6 +459,9 @@ export const REDIS_KEYS = {
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
     THUMBNAILS: 'packed:caches:thumbnails',
+    IMAGE_METRICS: 'packed:caches:image-metrics',
+    USER_FOLLOWS: 'packed:caches:user-follows',
+    MODEL_TAGS: 'packed:caches:model-tags',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',
@@ -514,6 +517,14 @@ export const REDIS_KEYS = {
     POTENTIAL_POOL: 'buzz:potential-pool',
     POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value',
     EARNED: 'buzz:earned',
+  },
+  CREATOR_PROGRAM: {
+    CAPS: 'packed:caches:creator-program:caps',
+    CASH: 'packed:caches:creator-program:cash',
+    BANKED: 'packed:caches:creator-program:banked',
+    POOL_VALUE: 'packed:caches:creator-program:pool-value',
+    POOL_SIZE: 'packed:caches:creator-program:pool-size',
+    POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
   },
 } as const;
 

@@ -1,11 +1,12 @@
 import {
-  List,
-  ThemeIcon,
+  Anchor,
   DefaultMantineColor,
-  Stack,
   Divider,
-  ThemeIconVariant,
+  List,
+  Stack,
   Text,
+  ThemeIcon,
+  ThemeIconVariant,
 } from '@mantine/core';
 import { IconAdCircleOff, IconCircleCheck, IconCircleX } from '@tabler/icons-react';
 
@@ -24,12 +25,26 @@ const defaultBenefits = [
   // { content: 'Can equip special cosmetics' },
   { content: 'Exclusive Discord channels' },
   { content: 'Early access to new features' },
+  {
+    tiers: ['bronze', 'silver', 'gold'], // Not available in supporter / founder.
+    content: (
+      <Text>
+        Access to the{' '}
+        <Anchor variant="link" td="underline" component="a" href="/creator-program" target="_blank">
+          Creator Program
+        </Anchor>{' '}
+        to get paid for earned Buzz
+      </Text>
+    ),
+  },
+  { content: 'Enhanced Model Creator controls', tiers: ['gold'] },
 ];
 
 export const PlanBenefitList = ({
   benefits,
   useDefaultBenefits = true,
   defaultBenefitsDisabled,
+  tier,
 }: Props) => {
   return (
     <Stack>
@@ -66,28 +81,32 @@ export const PlanBenefitList = ({
       {useDefaultBenefits && (
         <>
           <Divider mx="-md" />
-          <List
-            spacing="xs"
-            size="md"
-            center
-            icon={
-              <ThemeIcon
-                color={defaultBenefitsDisabled ? 'gray' : 'green'}
-                variant="light"
-                size={themeIconSize}
-                radius="xl"
-              >
-                {defaultBenefitsDisabled ? (
-                  <IconCircleX size={benefitIconSize} />
-                ) : (
-                  <IconCircleCheck size={benefitIconSize} />
-                )}
-              </ThemeIcon>
-            }
-          >
-            {defaultBenefits.map(({ content }, index) => (
-              <List.Item key={index}>{content}</List.Item>
-            ))}
+          <List spacing="xs" size="md" center>
+            {defaultBenefits.map(({ content, tiers }, index) => {
+              const isUnavailable =
+                defaultBenefitsDisabled || (tiers && (!tier || !tiers.includes(tier)));
+              return (
+                <List.Item
+                  icon={
+                    <ThemeIcon
+                      color={isUnavailable ? 'gray' : 'green'}
+                      variant="light"
+                      size={themeIconSize}
+                      radius="xl"
+                    >
+                      {isUnavailable ? (
+                        <IconCircleX size={benefitIconSize} />
+                      ) : (
+                        <IconCircleCheck size={benefitIconSize} />
+                      )}
+                    </ThemeIcon>
+                  }
+                  key={index}
+                >
+                  {content}
+                </List.Item>
+              );
+            })}
           </List>
         </>
       )}
@@ -99,6 +118,7 @@ type Props = {
   benefits: BenefitItem[];
   useDefaultBenefits?: boolean;
   defaultBenefitsDisabled?: boolean;
+  tier?: string;
 };
 
 export type BenefitItem = {

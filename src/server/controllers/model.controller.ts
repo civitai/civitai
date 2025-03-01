@@ -10,7 +10,7 @@ import {
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import { dataForModelsCache } from '~/server/redis/caches';
+import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -36,7 +36,9 @@ import {
   ModelGallerySettingsSchema,
   ModelMeta,
   ModelUpsertInput,
+  PrivateModelFromTrainingInput,
   PublishModelSchema,
+  PublishPrivateModelInput,
   ReorderModelVersionsSchema,
   SetModelCollectionShowcaseInput,
   ToggleCheckpointCoverageInput,
@@ -68,10 +70,13 @@ import {
   getModelsRaw,
   getModelsWithImagesAndModelVersions,
   getModelVersionsMicro,
+  getPrivateModelCount,
   getTrainingModelsByUserId,
   getVaeFiles,
   permaDeleteModelById,
+  privateModelFromTraining,
   publishModelById,
+  publishPrivateModel,
   restoreModelById,
   setModelShowcaseCollection,
   toggleCheckpointCoverage,
@@ -82,6 +87,7 @@ import {
   upsertModel,
 } from '~/server/services/model.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import {
   BlockedByUsers,
@@ -104,6 +110,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  Availability,
   BountyType,
   CollectionItemStatus,
   MetricTimeframe,
@@ -163,6 +170,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       select: { id: true, modelVersionId: true },
       orderBy: { id: 'asc' },
     });
+    const tagsOnModels = await modelTagCache.fetch(model.id);
 
     // recommended VAEs
     const vaeIds = filteredVersions.map((x) => x.vaeId).filter(isDefined);
@@ -215,15 +223,16 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       ),
       hasSuggestedResources: suggestedResources > 0,
       meta: model.meta as ModelMeta | null,
-      tagsOnModels: model.tagsOnModels
-        .filter(({ tag }) => !tag.unlisted)
-        .map(({ tag }) => ({
-          tag: {
-            id: tag.id,
-            name: tag.name,
-            isCategory: modelCategories.some((c) => c.id === tag.id),
-          },
-        })),
+      tagsOnModels:
+        tagsOnModels[model.id]?.tags
+          .filter(({ unlisted }) => !unlisted)
+          .map(({ id, name }) => ({
+            tag: {
+              id,
+              name: name!,
+              isCategory: modelCategories.some((c) => c.id === id),
+            },
+          })) ?? [],
       modelVersions: filteredVersions.map((version) => {
         let earlyAccessDeadline = features.earlyAccessModel ? version.earlyAccessEndsAt : undefined;
         if (earlyAccessDeadline && new Date() > earlyAccessDeadline)
@@ -620,13 +629,14 @@ export const getModelsWithVersionsHandler = async ({
       browsingLevel: input.browsingLevel,
       pending: input.pending,
     });
+    const modelIds = rawResults.items.map(({ id }) => id);
+    const tagsOnModels = await modelTagCache.fetch(modelIds);
 
     const vaeIds = rawResults.items
       .flatMap(({ modelVersions }) => modelVersions.map(({ vaeId }) => vaeId))
       .filter(isDefined);
     const vaeFiles = await getVaeFiles({ vaeIds });
 
-    const modelIds = rawResults.items.map(({ id }) => id);
     const metrics = await dbRead.modelMetric.findMany({
       where: { modelId: { in: modelIds }, timeframe: MetricTimeframe.AllTime },
     });
@@ -649,6 +659,7 @@ export const getModelsWithVersionsHandler = async ({
       count: rawResults.count,
       items: rawResults.items.map(({ modelVersions, ...model }) => ({
         ...model,
+        tags: tagsOnModels[model.id]?.tags.map((x) => x.name) ?? [],
         modelVersions: modelVersions.map(({ metrics, files, ...modelVersion }) => {
           const vaeFile = vaeFiles.filter((x) => x.modelVersionId === modelVersion.vaeId);
           files.push(...vaeFile);
@@ -1705,3 +1716,111 @@ export function setModelCollectionShowcaseHandler({
     throw throwDbError(error);
   }
 }
+
+export const privateModelFromTrainingHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PrivateModelFromTrainingInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const { nsfw, poi, minor } = input;
+
+    const membership = await getUserSubscription({ userId });
+    if (!membership && !ctx.user.isModerator)
+      throw throwAuthorizationError('You must have a subscription to create private models.');
+
+    const maxPrivateModels =
+      membership?.productMeta?.maxPrivateModels ??
+      constants.memberships.membershipDetailsAddons[
+        membership?.tier as keyof typeof constants.memberships.membershipDetailsAddons
+      ]?.maxPrivateModels;
+
+    if (!maxPrivateModels && !ctx.user.isModerator) {
+      throw throwAuthorizationError('You must have a subscription to create private models.');
+    }
+
+    const currentPrivateModels = await getPrivateModelCount({ userId });
+
+    if (currentPrivateModels >= maxPrivateModels && !ctx.user.isModerator) {
+      throw throwAuthorizationError(
+        `You have reached the limit of ${maxPrivateModels} private models. You may upgrade your subscription to create more.`
+      );
+    }
+
+    if (nsfw && poi)
+      throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+
+    if (nsfw && minor)
+      throw throwBadRequestError('Mature content depicting minors is not permitted.');
+
+    // Check tags for multiple categories
+    const { tagsOnModels } = input;
+    if (tagsOnModels?.length) {
+      const modelCategories = await getCategoryTags('model');
+      const matchedTags = tagsOnModels.filter((tag) =>
+        modelCategories.some((categoryTag) => categoryTag.name === tag.name)
+      );
+
+      if (matchedTags.length > 1)
+        throw throwBadRequestError(
+          `Model cannot have multiple categories. Please include only one from: ${matchedTags
+            .map((tag) => tag.name)
+            .join(', ')}`
+        );
+    }
+
+    const model = await privateModelFromTraining({
+      ...input,
+      user: ctx.user,
+    });
+    if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
+
+    if (input.id) await dataForModelsCache.bust(input.id);
+
+    return model;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};
+
+export const publishPrivateModelHandler = async ({
+  input,
+  ctx,
+}: {
+  input: PublishPrivateModelInput;
+  ctx: DeepNonNullable<Context>;
+}) => {
+  try {
+    const { id: userId } = ctx.user;
+    const model = await getModel({
+      id: input.modelId,
+      select: { id: true, userId: true, status: true, availability: true },
+    });
+
+    if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
+
+    if (model.availability !== Availability.Private) {
+      throw throwBadRequestError('Model is not private. Cannot publish.');
+    }
+
+    if (model.userId !== userId && !ctx.user.isModerator) {
+      throw throwAuthorizationError();
+    }
+
+    const { versionIds } = await publishPrivateModel(input);
+    await dataForModelsCache.bust(input.modelId);
+    await bustMvCache(versionIds);
+    await modelsSearchIndex.queueUpdate([
+      { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
+    ]);
+
+    return true;
+  } catch (error) {
+    if (error instanceof TRPCError) throw error;
+    else throw throwDbError(error);
+  }
+};

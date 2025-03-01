@@ -9,6 +9,7 @@ import {
   updateWorkflow as clientUpdateWorkflow,
   GetWorkflowData,
   SubmitWorkflowData,
+  NSFWLevel,
 } from '@civitai/client';
 import { z } from 'zod';
 import { isProd } from '~/env/other';
@@ -33,7 +34,7 @@ export async function queryWorkflows({
 }: z.output<typeof workflowQuerySchema> & { token: string }) {
   const client = createOrchestratorClient(token);
 
-  const { data, error } = await clientQueryWorkflows({
+  const { data, error, request } = await clientQueryWorkflows({
     client,
     query: { ...query, tags: ['civitai', ...(query.tags ?? [])] },
   }).catch((error) => {
@@ -87,11 +88,21 @@ export async function submitWorkflow({
   const client = createOrchestratorClient(token);
   if (!body) throw throwBadRequestError();
 
+  // const steps = body.steps;
+  // if (steps.length > 0) {
+  //   // At the moment, we mainly have 1 step, but in the future, we might wanna look at the minimum and maximum nsfw level.
+  //   const maxNsfwLevel: NSFWLevel | undefined = steps.find((step) => !!step.metadata?.maxNsfwLevel)
+  //     ?.metadata?.maxNsfwLevel as NSFWLevel;
+
+  //   body.nsfwLevel = maxNsfwLevel ?? 'xxx';
+  // }
+
   const { data, error } = await clientSubmitWorkflow({
     client,
     body: { ...body, tags: ['civitai', ...(body.tags ?? [])] },
     query,
   });
+
   if (!data) {
     const e = error as any;
     const message = e.errors ? e.errors.messages.join('\n') : e.detail;

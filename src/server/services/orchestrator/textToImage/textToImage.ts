@@ -18,6 +18,7 @@ import {
 import { TextToImageResponse } from '~/server/services/orchestrator/types';
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { WORKFLOW_TAGS, samplersToSchedulers } from '~/shared/constants/generation.constants';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { getRandomInt } from '~/utils/number-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 
@@ -40,8 +41,9 @@ export async function createTextToImageStep(
     air: stringifyAIR({
       baseModel: resource.baseModel,
       type: resource.model.type,
-      modelId: resource.model.id,
-      id: resource.id,
+      modelId: resource.epochDetails ? resource.epochDetails.jobId : resource.model.id,
+      id: resource.epochDetails ? resource.epochDetails.fileName : resource.id,
+      source: resource.epochDetails ? 'orchestrator' : 'civitai',
     }),
   }));
 
@@ -86,6 +88,11 @@ export async function createTextToImageStep(
       resources: input.resources,
       params: inputParams,
       remixOfId: input.remixOfId,
+      maxNsfwLevel: resources.some(
+        (r) => r.availability === Availability.Private || !!r.epochDetails
+      )
+        ? 'pG13'
+        : undefined,
     },
   } as TextToImageStepTemplate;
 }
@@ -115,6 +122,6 @@ export async function createTextToImage(
     },
   })) as TextToImageResponse;
 
-  const [formatted] = await formatGenerationResponse([workflow]);
+  const [formatted] = await formatGenerationResponse([workflow], user);
   return formatted;
 }

@@ -35,12 +35,14 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { useImageStore } from '~/store/image.store';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
   const { classes: sharedClasses } = useCardStyles({ aspectRatio: 1 });
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
+  const { running, helpers } = useTourContext();
 
   const image = useImageStore(data);
   const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
@@ -65,12 +67,16 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
     (e: React.MouseEvent) => {
       e.preventDefault();
       e.stopPropagation();
+
       generationPanel.open({
         type: image.type,
         id: image.id,
       });
+
+      // Go to next step in tour when clicking
+      if (running) helpers?.next();
     },
-    [image.type, image.id]
+    [image.type, image.id, running, helpers]
   );
 
   const twCardStyle = useMemo(() => {
@@ -157,6 +163,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                           color="white"
                           variant="filled"
                           data-activity="remix:image-card"
+                          data-tour={image.type === MediaType.image ? 'gen:remix' : undefined}
                           onClick={handleRemixClick}
                         >
                           <IconBrush stroke={2.5} size={16} />

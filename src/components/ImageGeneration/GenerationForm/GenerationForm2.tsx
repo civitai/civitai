@@ -1,6 +1,5 @@
 import {
   Accordion,
-  ActionIcon,
   Alert,
   Anchor,
   Badge,
@@ -23,7 +22,6 @@ import {
   IconAlertTriangle,
   IconArrowAutofitDown,
   IconCheck,
-  IconInfoCircle,
   IconPlus,
   IconRestore,
   IconX,
@@ -36,8 +34,8 @@ import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
 import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { GeneratorImageInput } from '~/components/Generate/Input/GeneratorImageInput';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   useGenerationStatus,
@@ -54,10 +52,11 @@ import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
 import InputResourceSelect from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
 import { useTextToImageWhatIfContext } from '~/components/ImageGeneration/GenerationForm/TextToImageWhatIfProvider';
+import { useGenerationContext } from '~/components/ImageGeneration/GenerationProvider';
 import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
 import {
-  useSubmitCreateImage,
   useInvalidateWhatIf,
+  useSubmitCreateImage,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
@@ -78,6 +77,7 @@ import {
 import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
@@ -95,15 +95,19 @@ import {
   sanitizeParamsByWorkflowDefinition,
 } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { generationFormStore, useGenerationFormStore } from '~/store/generation.store';
+import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
 import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
+import {
+  contentGenerationTour,
+  remixContentGenerationTour,
+} from '~/components/Tours/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 
 let total = 0;
 const tips = {
@@ -121,6 +125,13 @@ export function GenerationFormContent() {
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
   );
+  const { runTour, running, currentStep, helpers, setSteps, activeTour } = useTourContext();
+  const loadingGeneratorData = useGenerationStore((state) => state.loading);
+  const remixOfId = useRemixStore((state) => state.remixOfId);
+  const [loadingGenQueueRequests, hasGeneratedImages] = useGenerationContext((state) => [
+    state.requestsLoading,
+    state.hasGeneratedImages,
+  ]);
 
   const form = useGenerationForm();
   const invalidateWhatIf = useInvalidateWhatIf();
@@ -135,10 +146,10 @@ export function GenerationFormContent() {
   });
   const { subscription, meta: subscriptionMeta } = useActiveSubscription();
 
-  const { data: workflowDefinitions, isLoading: loadingWorkflows } =
+  const { data: workflowDefinitions = [], isLoading: loadingWorkflows } =
     trpc.generation.getWorkflowDefinitions.useQuery();
 
-  const [workflow, image] = form.watch(['workflow', 'image']) ?? 'txt2img';
+  const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -148,8 +159,8 @@ export function GenerationFormContent() {
   const { errors } = form.formState;
 
   const { filters, setFilters } = useFiltersContext((state) => ({
-    filters: state.markers,
-    setFilters: state.setMarkerFilters,
+    filters: state.generation,
+    setFilters: state.setGenerationFilters,
   }));
 
   function clearWarning() {
@@ -158,6 +169,12 @@ export function GenerationFormContent() {
 
   function handleReset() {
     form.reset();
+    useRemixStore.setState({
+      remixOf: undefined,
+      params: undefined,
+      resources: undefined,
+      remixOfId: undefined,
+    });
     clearWarning();
   }
 
@@ -199,7 +216,7 @@ export function GenerationFormContent() {
 
     const {
       model,
-      resources: additionalResources,
+      resources: additionalResources = [],
       vae,
       remixOfId,
       remixSimilarity,
@@ -210,16 +227,6 @@ export function GenerationFormContent() {
     } = data;
     sanitizeParamsByWorkflowDefinition(params, workflowDefinition);
     const modelClone = clone(model);
-
-    // const {
-    //   sourceImage,
-    //   width = params.width,
-    //   height = params.height,
-    // } = useGenerationFormStore.getState();
-
-    // const imageDetails = data.workflow.includes('img2img')
-    //   ? { image: sourceImage, width, height }
-    //   : { width, height };
 
     const isFlux = getIsFlux(params.baseModel);
     if (isFlux) {
@@ -239,7 +246,11 @@ export function GenerationFormContent() {
 
     const resources = [modelClone, ...additionalResources, vae]
       .filter(isDefined)
-      .filter((x) => x.canGenerate !== false);
+      .filter((x) => x.canGenerate !== false)
+      .map((r) => ({
+        ...r,
+        epochNumber: r.epochDetails?.epochNumber,
+      }));
 
     async function performTransaction() {
       if (!params.baseModel) throw new Error('could not find base model');
@@ -250,7 +261,6 @@ export function GenerationFormContent() {
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-            // ...imageDetails,
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -278,7 +288,7 @@ export function GenerationFormContent() {
   const { mutateAsync: reportProhibitedRequest } = trpc.user.reportProhibitedRequest.useMutation();
   const handleError = async (e: unknown) => {
     const promptError = (e as any)?.prompt as any;
-    if (promptError?.type === 'custom') {
+    if (promptError?.type === 'custom' && promptError.message.startsWith('Blocked for')) {
       const status = blockedRequest.status();
       setPromptWarning(promptError.message);
       if (status === 'notified' || status === 'muted') {
@@ -306,10 +316,47 @@ export function GenerationFormContent() {
     };
   }, []);
 
-  const workflowOptions =
-    workflowDefinitions
-      ?.filter((x) => x.selectable !== false && x.key !== undefined)
-      .map(({ key, label }) => ({ label, value: key })) ?? [];
+  const workflowOptions = workflowDefinitions
+    .filter((x) => x.selectable !== false)
+    .map(({ key, label }) => ({ label, value: key }));
+
+  useEffect(() => {
+    if (!status.available || status.isLoading || loadingGeneratorData) return;
+    if (!running) runTour({ key: remixOfId ? 'remix-content-generation' : 'content-generation' });
+  }, [
+    status.isLoading,
+    status.available,
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    loadingGeneratorData,
+  ]); // These are the dependencies that make it work, please only update if you know what you're doing
+
+  useEffect(() => {
+    if (!running || currentStep > 0 || loadingGeneratorData) return;
+    const isRemix = remixOfId && activeTour === 'remix-content-generation';
+    let genSteps = isRemix ? remixContentGenerationTour : contentGenerationTour;
+
+    // Remove last two steps if user has not generated any images
+    if (!loadingGenQueueRequests && !hasGeneratedImages) genSteps = genSteps.slice(0, -2);
+    // Only show first few steps if user is not logged in
+    if (!currentUser) genSteps = isRemix ? genSteps.slice(0, 4) : genSteps.slice(0, 6);
+
+    const alreadyReviewedTerms =
+      window?.localStorage?.getItem('review-generation-terms') === 'true';
+    if (alreadyReviewedTerms)
+      genSteps = genSteps.filter((x) => x.target !== '[data-tour="gen:terms"]');
+
+    setSteps(genSteps);
+  }, [
+    loadingGenQueueRequests,
+    hasGeneratedImages,
+    remixOfId,
+    currentUser,
+    running,
+    activeTour,
+    loadingGeneratorData,
+  ]); // These are the dependencies that make it work, please only update if you know what you're doing
 
   return (
     <Form
@@ -318,8 +365,9 @@ export function GenerationFormContent() {
       onError={handleError}
       className="relative flex flex-1 flex-col justify-between gap-2"
     >
-      <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model']}>
-        {({ baseModel, fluxMode, draft, model }) => {
+      <Watch {...form} fields={['baseModel', 'fluxMode', 'draft', 'model', 'workflow']}>
+        {({ baseModel, fluxMode, draft, model, workflow }) => {
+          const isTxt2Img = workflow.startsWith('txt');
           const isSDXL = getIsSdxl(baseModel);
           const isFlux = getIsFlux(baseModel);
           const isSD3 = getIsSD3(baseModel);
@@ -354,26 +402,6 @@ export function GenerationFormContent() {
                 {!isFlux && !isSD3 && (
                   <>
                     <div className="flex items-start justify-start gap-3">
-                      {features.image && image && (
-                        <div className="relative mt-3">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          <img
-                            src={image}
-                            alt="image to refine"
-                            className="max-w-16 rounded-md shadow-sm shadow-black"
-                          />
-                          <ActionIcon
-                            variant="light"
-                            size="sm"
-                            color="red"
-                            radius="xl"
-                            className="absolute -right-2 -top-2"
-                            onClick={() => form.setValue('image', undefined)}
-                          >
-                            <IconX size={16} strokeWidth={2.5} />
-                          </ActionIcon>
-                        </div>
-                      )}
                       <div className="flex-1">
                         <InputSelect
                           label={
@@ -389,17 +417,11 @@ export function GenerationFormContent() {
                               </Badge>
                             </div>
                           }
-                          // label={workflowDefinition?.type === 'img2img' ? 'Image-to-image workflow' : 'Workflow'}
                           className="flex-1"
                           name="workflow"
                           data={[
-                            // ...workflowOptions.filter((x) => x.value.startsWith('txt')),
-                            // ...workflowOptions.filter((x) => x.value.startsWith('img')),
-                            ...(workflowDefinitions
-                              ?.filter(
-                                (x) => x.type === workflowDefinition?.type && x.selectable !== false
-                              )
-                              .map(({ key, label }) => ({ label, value: key })) ?? []),
+                            ...workflowOptions.filter((x) => x.value.startsWith('txt')),
+                            ...workflowOptions.filter((x) => x.value.startsWith('img')),
                           ]}
                           loading={loadingWorkflows}
                         />
@@ -410,7 +432,7 @@ export function GenerationFormContent() {
                         )}
                       </div>
                     </div>
-                    {/* {features.image && <GenerationImage />} */}
+                    {features.image && <InputSourceImageUpload name="sourceImage" />}
                   </>
                 )}
 
@@ -758,6 +780,7 @@ export function GenerationFormContent() {
                           >
                             <InputPrompt
                               name="prompt"
+                              data-tour="gen:prompt"
                               placeholder="Your prompt goes here..."
                               autosize
                               unstyled
@@ -850,7 +873,7 @@ export function GenerationFormContent() {
                   />
                 )}
 
-                {!isFluxUltra && (
+                {!isFluxUltra && isTxt2Img && (
                   <div className="flex flex-col gap-0.5">
                     <Input.Label>Aspect Ratio</Input.Label>
                     <InputSegmentedControl
@@ -1085,7 +1108,7 @@ export function GenerationFormContent() {
                               name="denoise"
                               label="Denoise"
                               min={0}
-                              max={0.75}
+                              max={isTxt2Img ? 0.75 : 1}
                               step={0.05}
                             />
                           )}
@@ -1178,7 +1201,7 @@ export function GenerationFormContent() {
                 ) : (
                   <>
                     {!reviewed && (
-                      <Alert color="yellow" title="Image Generation Terms">
+                      <Alert color="yellow" title="Image Generation Terms" data-tour="gen:terms">
                         <Text size="xs">
                           By using the image generator you confirm that you have read and agree to
                           our{' '}
@@ -1186,7 +1209,7 @@ export function GenerationFormContent() {
                             Terms of Service
                           </Text>{' '}
                           presented during onboarding. Failure to abide by{' '}
-                          <Text component={Link} href="/content/tos" td="underline">
+                          <Text component={Link} href="/safety#content-policies" td="underline">
                             our content policies
                           </Text>{' '}
                           will result in the loss of your access to the image generator.
@@ -1194,7 +1217,10 @@ export function GenerationFormContent() {
                         <Button
                           color="yellow"
                           variant="light"
-                          onClick={() => setReviewed(true)}
+                          onClick={() => {
+                            setReviewed(true);
+                            if (running) helpers?.next();
+                          }}
                           style={{ marginTop: 10 }}
                           leftIcon={<IconCheck />}
                           fullWidth
@@ -1286,9 +1312,10 @@ function WhatIfAlert() {
 
 // #region [submit button]
 function SubmitButton(props: { isLoading?: boolean }) {
-  const { data, isError, isInitialLoading, error } = useTextToImageWhatIfContext();
+  const { data, isError, isInitialLoading } = useTextToImageWhatIfContext();
   const form = useGenerationForm();
   const features = useFeatureFlags();
+  const { running, helpers } = useTourContext();
   const [baseModel, resources = [], vae] = form.watch(['baseModel', 'resources', 'vae']);
   const isFlux = getIsFlux(baseModel);
   const isSD3 = getIsSD3(baseModel);
@@ -1312,10 +1339,14 @@ function SubmitButton(props: { isLoading?: boolean }) {
   const generateButton = (
     <GenerateButton
       type="submit"
+      data-tour="gen:submit"
       className="h-full flex-1"
       loading={isInitialLoading || props.isLoading}
       cost={total}
       disabled={isError}
+      onClick={() => {
+        if (running) helpers?.next();
+      }}
     />
   );
 
@@ -1437,8 +1468,3 @@ const clipSkipMarks = Array(10)
   .fill(0)
   .map((_, index) => ({ value: index + 1 }));
 // #endregion
-
-function GenerationImage() {
-  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-  return <GeneratorImageInput value={sourceImage} onChange={generationFormStore.setsourceImage} />;
-}

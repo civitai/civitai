@@ -2,24 +2,23 @@ import {
   Button,
   ButtonProps,
   Chip,
-  ChipProps,
   Divider,
   Drawer,
-  Group,
   Indicator,
   Popover,
   Stack,
   useMantineTheme,
 } from '@mantine/core';
 import { ToolType } from '~/shared/utils/prisma/enums';
-import { IconChevronDown, IconFilter } from '@tabler/icons-react';
+import { IconFilter } from '@tabler/icons-react';
 import { useCallback, useState } from 'react';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { GetAllToolsSchema } from '~/server/schema/tool.schema';
-import classes from './ToolFiltersDropdown.module.scss';
-import cx from 'clsx';
+
 import { useIsClient } from '~/providers/IsClientProvider';
+import { FilterButton } from '~/components/Buttons/FilterButton';
+import { FilterChip } from '~/components/Filters/FilterChip';
 
 const toolTypes = Object.keys(ToolType);
 
@@ -47,14 +46,6 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
     else setFilters(reset);
   }, [onChange, setFilters]);
 
-  const chipProps: Partial<ChipProps> = {
-    size: 'sm',
-    radius: 'xl',
-    variant: 'filled',
-    classNames: classes,
-    tt: 'capitalize',
-  };
-
   const handleChange: Props['onChange'] = (value) => {
     onChange ? onChange(value) : setFilters(value);
   };
@@ -70,26 +61,9 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
       classNames={{ root: 'leading-none', indicator: 'leading-relaxed	' }}
       inline
     >
-      <Button
-        className="@max-sm:w-full"
-        color="gray"
-        radius="xl"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        {...buttonProps}
-        rightIcon={
-          <IconChevronDown
-            className={cx({ ['rotate-180 transition-transform']: opened })}
-            size={16}
-          />
-        }
-        onClick={() => setOpened((o) => !o)}
-        data-expanded={opened}
-      >
-        <Group spacing={4} noWrap>
-          <IconFilter size={16} />
-          Filters
-        </Group>
-      </Button>
+      <FilterButton icon={IconFilter} onClick={() => setOpened((o) => !o)} active={opened}>
+        Filters
+      </FilterButton>
     </Indicator>
   );
 
@@ -106,9 +80,9 @@ export function ToolFiltersDropdown({ query, onChange, ...buttonProps }: Props) 
           my={4}
         >
           {toolTypes.map((tool, index) => (
-            <Chip key={index} value={tool} {...chipProps}>
+            <FilterChip key={index} value={tool}>
               <span>{tool}</span>
-            </Chip>
+            </FilterChip>
           ))}
         </Chip.Group>
       </Stack>

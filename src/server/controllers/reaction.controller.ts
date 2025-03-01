@@ -20,6 +20,7 @@ import { isDefined } from '~/utils/type-guards';
 import { ReactionType } from '../clickhouse/client';
 import { dbRead } from '../db/client';
 import { toggleReaction } from './../services/reaction.service';
+import { hasEntityAccess } from '~/server/services/common.service';
 
 async function getTrackerEvent(input: ToggleReactionInput, result: 'removed' | 'created') {
   const shared = {
@@ -198,6 +199,32 @@ export const toggleReactionHandler = async ({
       }
     }
 
+    // I worry a bit this may increase DB load, but it's a necessary check now that we opened
+    // the door for private models.
+    const checkAccess = ['image', 'post', 'model'];
+    if (checkAccess.includes(input.entityType)) {
+      const entityType = input.entityType === 'model' ? 'Model' : 'Post';
+      const entityId =
+        input.entityType === 'model' || input.entityType === 'post'
+          ? input.entityId
+          : await dbRead.image
+              .findUniqueOrThrow({ where: { id: input.entityId } })
+              .then((image) => image?.postId);
+
+      if (entityId) {
+        const [access] = await hasEntityAccess({
+          userId: ctx.user.id,
+          isModerator: ctx.user.isModerator,
+          entityType: entityType,
+          entityIds: [entityId],
+        });
+
+        if (!access.hasAccess) {
+          throw throwBadRequestError('You cannot react to this entity.');
+        }
+      }
+    }
+
     const result = await toggleReaction({ ...input, userId: ctx.user.id });
     const trackerEvent = await getTrackerEvent(input, result);
     if (trackerEvent) {
@@ -222,7 +249,7 @@ export const toggleReactionHandler = async ({
       }
     }
 
-    if (result == 'created') {
+    if (result === 'created') {
       await Promise.all([
         encouragementReward
           .apply(

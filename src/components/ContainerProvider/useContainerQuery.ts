@@ -1,20 +1,19 @@
 import { MantineNumberSize } from '@mantine/core';
-import { useCallback, useEffect, useState } from 'react';
+import { useMediaQuery as useMantineMediaQuery } from '@mantine/hooks';
+import { useCallback } from 'react';
 import {
   useContainerProviderStore,
   useContainerContext,
 } from '~/components/ContainerProvider/ContainerProvider';
 import { mantineContainerSizes } from '~/utils/mantine-css-helpers';
 
-export const useContainerQuery = ({
+export function useContainerQuery({
   type,
   width,
-  containerName,
 }: {
   type: 'min-width' | 'max-width';
   width: MantineNumberSize;
-  containerName?: string;
-}) => {
+}) {
   const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
   const { nodeRef, ...context } = useContainerContext();
 
@@ -22,14 +21,27 @@ export const useContainerQuery = ({
     useCallback(
       (state) => {
         const { inlineSize = nodeRef.current?.offsetWidth ?? 0 } =
-          state[containerName ?? context.containerName] ?? {};
+          state[context.containerName] ?? {};
 
         if (type === 'max-width') return size > inlineSize;
         else return size <= inlineSize;
       },
-      [size, type, containerName]
+      [size, type]
     )
   );
 
   return value;
-};
+}
+
+export function useMediaQuery({
+  type,
+  width,
+}: {
+  type: 'min-width' | 'max-width';
+  width: MantineNumberSize;
+}) {
+  const size = typeof width === 'string' ? mantineContainerSizes[width] : width;
+  const queryString =
+    type === 'min-width' ? `(min-width: ${size}px)` : `(max-width: ${size - 1}px)`;
+  return useMantineMediaQuery(queryString, false, { getInitialValueInEffect: false });
+}

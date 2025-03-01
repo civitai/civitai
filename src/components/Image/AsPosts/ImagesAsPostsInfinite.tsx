@@ -176,7 +176,9 @@ export default function ImagesAsPostsInfinite({
         <MasonryContainer>
           <Stack spacing="md">
             <Group spacing="xs">
-              <Title order={2}>Gallery</Title>
+              <Title order={2} data-tour="model:gallery">
+                Gallery
+              </Title>
               {!isMuted && (
                 <Group>
                   <LoginRedirect reason="post-images">
@@ -204,7 +206,7 @@ export default function ImagesAsPostsInfinite({
                 </Group>
               )}
               <Group ml="auto" spacing={8}>
-                <SortFilter type="modelImages" variant="button" />
+                <SortFilter type="modelImages" />
                 <MediaFiltersDropdown size="sm" filterType="modelImages" compact hideBaseModels />
                 {showModerationOptions && (
                   <>

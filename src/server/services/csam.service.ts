@@ -238,7 +238,7 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
       type,
       time
     FROM userActivities
-    WHERE userId = ${report.userId} AND type = 'Registration' OR type = 'Login'
+    WHERE userId = ${report.userId} AND (type = 'Registration' OR type = 'Login')
   `);
 
   switch (report.type) {
@@ -525,6 +525,7 @@ export async function processCsamReport(report: CsamReportProps) {
             fileDetails: {
               originalFileName: image.name ?? undefined,
               locationOfFile: imageUrl,
+              fileViewedByEsp: true,
               fileAnnotations,
               additionalInfo: additionalInfo.length
                 ? `${additionalInfo.map((info) => `  - ${info}`).join('\n')}`

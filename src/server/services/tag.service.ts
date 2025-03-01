@@ -191,23 +191,23 @@ export const getTags = async ({
            ${isCategory}
            ${isNsfwLevel}
     FROM "Tag" t
-      ${Prisma.raw(orderBy.includes('r.') ? `LEFT JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
+      ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
   `;
 
   const models: Record<number, number[]> = {};
-  if (withModels) {
-    const modelTags = await dbRead.tagsOnModels.findMany({
-      where: { tagId: { in: tagsRaw.map((t) => t.id) } },
-      select: { tagId: true, modelId: true },
-    });
-    for (const { tagId, modelId } of modelTags) {
-      if (!models[tagId]) models[tagId] = [];
-      models[tagId].push(modelId);
-    }
-  }
+  // if (withModels) {
+  //   const modelTags = await dbRead.tagsOnModels.findMany({
+  //     where: { tagId: { in: tagsRaw.map((t) => t.id) } },
+  //     select: { tagId: true, modelId: true },
+  //   });
+  //   for (const { tagId, modelId } of modelTags) {
+  //     if (!models[tagId]) models[tagId] = [];
+  //     models[tagId].push(modelId);
+  //   }
+  // }
 
   const items = tagsRaw.map((t) =>
     removeEmpty({
@@ -488,9 +488,10 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
     `);
   } else if (entityType === 'image') {
     await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId")
+      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
       SELECT i."id",
-             t."id"
+             t."id",
+              ${0}
       FROM "Image" i
              JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
       WHERE i."id" IN (${entityIds.join(', ')})

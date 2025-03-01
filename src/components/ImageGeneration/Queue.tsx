@@ -1,4 +1,4 @@
-import { Alert, Center, Loader, Stack, Text, Code } from '@mantine/core';
+import { Alert, Center, Loader, Stack, Text } from '@mantine/core';
 import { IconCalendar, IconInbox } from '@tabler/icons-react';
 
 import { QueueItem } from '~/components/ImageGeneration/QueueItem';
@@ -6,8 +6,9 @@ import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/ge
 import { generationPanel } from '~/store/generation.store';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { useFiltersContext } from '~/providers/FiltersProvider';
+
 export function Queue() {
-  const filters = useFiltersContext((state) => state.markers);
+  const filters = useFiltersContext((state) => state.generation);
 
   const { data, isLoading, fetchNextPage, hasNextPage, isFetching, isRefetching, isError, error } =
     useGetTextToImageRequests();
@@ -71,7 +72,8 @@ export function Queue() {
     <div className="flex flex-col gap-2 px-3">
       <Text size="xs" color="dimmed" mt="xs">
         <IconCalendar size={14} style={{ display: 'inline', marginTop: -3 }} strokeWidth={2} />{' '}
-        Creations are kept in the Generator for 30 days. Download or Post them to your Profile to save them!
+        Creations are kept in the Generator for 30 days. Download or Post them to your Profile to
+        save them!
       </Text>
       <div className="flex flex-col gap-2">
         {data.map((request) =>

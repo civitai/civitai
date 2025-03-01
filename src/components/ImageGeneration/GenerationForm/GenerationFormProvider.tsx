@@ -45,42 +45,22 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
-const formSchema = textToImageParamsSchema
-  .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true })
+const baseSchema = textToImageParamsSchema
+  .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
     resources: generationResourceSchema.array().min(0).default([]),
     vae: generationResourceSchema.optional(),
-    prompt: z
-      .string()
-      .nonempty('Prompt cannot be empty')
-      .max(1500, 'Prompt cannot be longer than 1500 characters')
-      .superRefine((val, ctx) => {
-        const { blockedFor, success } = auditPrompt(val);
-        if (!success) {
-          let message = `Blocked for: ${blockedFor.join(', ')}`;
-          const count = blockedRequest.increment();
-          const status = blockedRequest.status();
-          if (status === 'warned') {
-            message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-          } else if (status === 'notified') {
-            message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
-          }
-
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message,
-            params: { count },
-          });
-        }
-      }),
+    prompt: z.string().default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     remixPrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
     fluxUltraRaw: z.boolean().optional(),
-  })
+  });
+const partialSchema = baseSchema.partial();
+const formSchema = baseSchema
   .transform(({ fluxUltraRaw, ...data }) => {
     const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
@@ -90,11 +70,60 @@ const formSchema = textToImageParamsSchema
     if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
     if (fluxUltraRaw) data.engine = 'flux-pro-raw';
     else data.engine = undefined;
-    return {
+
+    return removeEmpty({
       ...data,
       height,
       width,
-    };
+    });
+  })
+  .superRefine((data, ctx) => {
+    if (data.workflow.startsWith('txt2img')) {
+      if (!data.prompt || data.prompt.length === 0) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Prompt cannot be empty',
+          path: ['prompt'],
+        });
+      }
+    }
+
+    if (data.prompt.length > 1500) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt cannot be longer than 1500 characters',
+        path: ['prompt'],
+      });
+    }
+
+    if (data.prompt.length > 0) {
+      const { blockedFor, success } = auditPrompt(data.prompt);
+      if (!success) {
+        let message = `Blocked for: ${blockedFor.join(', ')}`;
+        const count = blockedRequest.increment();
+        const status = blockedRequest.status();
+        if (status === 'warned') {
+          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+        } else if (status === 'notified') {
+          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+        }
+
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message,
+          params: { count },
+          path: ['prompt'],
+        });
+      }
+    }
+
+    if (data.workflow.startsWith('img2img') && !data.sourceImage) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Image is required',
+        path: ['sourceImage'],
+      });
+    }
   });
 export const blockedRequest = (() => {
   let instances: number[] = [];
@@ -213,7 +242,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const type = useGenerationFormStore((state) => state.type);
 
   const getValues = useCallback(
-    (storageValues: DeepPartialFormData) => {
+    (storageValues: any): any => {
       // Ensure we always get similarity accordingly.
       if (storageValues.remixOfId && storageValues.prompt) {
         checkSimilarity(storageValues.remixOfId, storageValues.prompt);
@@ -229,7 +258,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
-    version: 1.1,
+    partialSchema,
+    version: 1.3,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
@@ -253,10 +283,10 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (type === 'image' && storeData) {
       const { runType, remixOfId, resources, params } = storeData;
+      if (!params.sourceImage && !params.workflow) form.setValue('workflow', 'txt2img');
       switch (runType) {
         case 'replay':
           setValues(formatGenerationData(storeData));
-          // useGenerationFormStore.setState({ sourceImage: storeData.params.image });
           break;
         case 'remix':
         case 'run':
@@ -278,7 +308,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
           const values =
             runType === 'remix' ? data : { ...removeEmpty(data), resources: data.resources };
-          // if (values.image) useGenerationFormStore.setState({ sourceImage: values.image });
           setValues(values);
           break;
       }
@@ -323,13 +352,6 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
           form.setValue('sampler', 'Euler a');
         }
         prevBaseModelRef.current = watchedValues.baseModel;
-      }
-
-      // handle selected `workflow` based on presence of `image` value
-      if (name === 'image') {
-        if (!watchedValues.image && watchedValues.workflow?.startsWith('img2img')) {
-          form.setValue('workflow', 'txt2img');
-        }
       }
 
       if (name === 'prompt') {

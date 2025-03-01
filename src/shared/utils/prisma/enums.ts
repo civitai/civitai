@@ -18,6 +18,40 @@ export const UserPaymentConfigurationProvider = {
 
 export type UserPaymentConfigurationProvider = (typeof UserPaymentConfigurationProvider)[keyof typeof UserPaymentConfigurationProvider];
 
+export const CashWithdrawalStatus = {
+  Paid: 'Paid',
+  Rejected: 'Rejected',
+  Scheduled: 'Scheduled',
+  Submitted: 'Submitted',
+  Deferred: 'Deferred',
+  DeferredInternal: 'DeferredInternal',
+  Canceled: 'Canceled',
+  Cleared: 'Cleared',
+  FraudReview: 'FraudReview',
+  PendingPayerFunds: 'PendingPayerFunds',
+  InternalValue: 'InternalValue',
+  FailedFee: 'FailedFee',
+} as const;
+
+export type CashWithdrawalStatus = (typeof CashWithdrawalStatus)[keyof typeof CashWithdrawalStatus];
+
+export const CashWithdrawalMethod = {
+  NoPM: 'NoPM',
+  WireTransfer: 'WireTransfer',
+  Payoneer: 'Payoneer',
+  PayPal: 'PayPal',
+  ACH: 'ACH',
+  Check: 'Check',
+  eCheck: 'eCheck',
+  HoldMyPayments: 'HoldMyPayments',
+  Custom: 'Custom',
+  Intercash: 'Intercash',
+  Card: 'Card',
+  TipaltiInternalValue: 'TipaltiInternalValue',
+} as const;
+
+export type CashWithdrawalMethod = (typeof CashWithdrawalMethod)[keyof typeof CashWithdrawalMethod];
+
 export const RewardsEligibility = {
   Eligible: 'Eligible',
   Ineligible: 'Ineligible',

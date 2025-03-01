@@ -66,7 +66,7 @@ async function processBatch(batch: ImageViewCount[], i: number) {
               AS int) as views
           FROM json_array_elements(${batchJson}::json) mvs
           CROSS JOIN (
-              SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe
+              SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe"
           ) tf
       ) im
       WHERE im.views IS NOT NULL

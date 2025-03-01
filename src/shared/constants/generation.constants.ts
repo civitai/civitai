@@ -7,12 +7,14 @@ import {
   generationConfig,
   getGenerationConfig,
   Sampler,
+  maxUpscaleSize,
 } from '~/server/common/constants';
 import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { ModelType } from '~/shared/utils/prisma/enums';
+import { getImageData } from '~/utils/media-preprocessors';
 import { findClosest } from '~/utils/number-helpers';
 
 export const WORKFLOW_TAGS = {
@@ -32,8 +34,7 @@ export const generationServiceCookie = {
   maxAge: 3600,
 };
 
-export const maxUpscaleSize = 8192;
-export function getRoundedUpscaleSize({ width, height }: { width: number; height: number }) {
+export function getRoundedWidthHeight({ width, height }: { width: number; height: number }) {
   const maxWidth = width < maxUpscaleSize ? width : maxUpscaleSize;
   const maxHeight = height < maxUpscaleSize ? height : maxUpscaleSize;
   const ratio = Math.min(maxWidth / width, maxHeight / height);
@@ -41,6 +42,19 @@ export function getRoundedUpscaleSize({ width, height }: { width: number; height
     width: Math.ceil((width * ratio) / 64) * 64,
     height: Math.ceil((height * ratio) / 64) * 64,
   };
+}
+
+export async function getSourceImageFromUrl({ url, upscale }: { url: string; upscale?: boolean }) {
+  return getImageData(url).then(({ width, height }) => {
+    let upscaleWidth: number | undefined;
+    let upscaleHeight: number | undefined;
+    if (upscale) {
+      const upscaled = getRoundedWidthHeight({ width: width * 1.5, height: height * 1.5 });
+      upscaleWidth = upscaled.width;
+      upscaleHeight = upscaled.height;
+    }
+    return { url, upscaleWidth, upscaleHeight, ...getRoundedWidthHeight({ width, height }) };
+  });
 }
 
 // #region [statuses]
@@ -374,7 +388,7 @@ export function sanitizeParamsByWorkflowDefinition(
 ) {
   const features = getWorkflowDefinitionFeatures(workflow);
   for (const key in features) {
-    if (!features[key as keyof typeof features]) delete params[key as keyof typeof features];
+    if (!features[key as keyof typeof features]) delete (params as any)[key];
   }
 }
 
@@ -394,35 +408,57 @@ export const baseModelResourceTypes = {
   ],
   SDXL: [
     { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SDXL.baseModels] },
-    { type: ModelType.TextualInversion, baseModels: [...baseModelSets.SDXL.baseModels, 'SD 1.5'] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SDXL.baseModels] },
-    { type: ModelType.DoRA, baseModels: [...baseModelSets.SDXL.baseModels] },
-    { type: ModelType.LoCon, baseModels: [...baseModelSets.SDXL.baseModels] },
-    { type: ModelType.VAE, baseModels: [...baseModelSets.SDXL.baseModels] },
-  ],
-  Pony: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Pony.baseModels] },
     {
       type: ModelType.TextualInversion,
-      baseModels: [
-        ...baseModelSets.Pony.baseModels,
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [
         'SD 1.5',
+        ...baseModelSets.Pony.baseModels,
+        ...baseModelSets.Illustrious.baseModels,
       ],
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Pony.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
+    },
+    {
+      type: ModelType.VAE,
+      baseModels: [...baseModelSets.SDXL.baseModels],
+      partialSupport: [...baseModelSets.Pony.baseModels, ...baseModelSets.Illustrious.baseModels],
+    },
+  ],
+  Pony: [
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.Pony.baseModels },
+    {
+      type: ModelType.TextualInversion,
+      baseModels: baseModelSets.Pony.baseModels,
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
+    },
+    {
+      type: ModelType.LORA,
+      baseModels: baseModelSets.Pony.baseModels,
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.DoRA,
+      baseModels: baseModelSets.Pony.baseModels,
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+    },
+    {
+      type: ModelType.LoCon,
+      baseModels: baseModelSets.Pony.baseModels,
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
@@ -430,28 +466,26 @@ export const baseModelResourceTypes = {
     },
   ],
   Illustrious: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Illustrious.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.Illustrious.baseModels },
     {
       type: ModelType.TextualInversion,
-      baseModels: [
-        ...baseModelSets.Illustrious.baseModels,
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
-        'SD 1.5',
-      ],
+      baseModels: baseModelSets.Illustrious.baseModels,
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
     },
     {
       type: ModelType.LORA,
-      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: baseModelSets.Illustrious.baseModels,
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.DoRA,
-      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: baseModelSets.Illustrious.baseModels,
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.LoCon,
-      baseModels: [...baseModelSets.Illustrious.baseModels, 'SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      baseModels: baseModelSets.Illustrious.baseModels,
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
     },
     {
       type: ModelType.VAE,
@@ -459,22 +493,21 @@ export const baseModelResourceTypes = {
     },
   ],
   Flux1: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.Flux1.baseModels] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.Flux1.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.Flux1.baseModels },
+    { type: ModelType.LORA, baseModels: baseModelSets.Flux1.baseModels },
   ],
   SD3: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3.baseModels] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3.baseModels },
+    { type: ModelType.LORA, baseModels: baseModelSets.SD3.baseModels },
   ],
   SD3_5M: [
-    { type: ModelType.Checkpoint, baseModels: [...baseModelSets.SD3_5M.baseModels] },
-    { type: ModelType.LORA, baseModels: [...baseModelSets.SD3_5M.baseModels] },
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
+    { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
     return baseModelResourceTypes[baseModel as SupportedBaseModel];
-  // throw new Error(`unsupported baseModel: ${baseModel} in getBaseModelResourceTypes`);
 }
 
 export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
@@ -501,8 +534,11 @@ export function getBaseModelSetTypes({
   return Object.entries(baseModelResourceTypes)
     .filter(([key, config]) => {
       if (key === baseModel) return true;
-      const baseModels = (config.find((x) => x.type === modelType)?.baseModels ?? []) as string[];
-      return baseModels.includes(baseModel);
+      const match = config.find((x) => x.type === modelType);
+      const baseModels = match?.baseModels ?? [];
+      const partialSupport = (match as any)?.partialSupport ?? [];
+      const combined = [...baseModels, ...partialSupport];
+      return combined.includes(baseModel);
     })
     .map(([key]) => key) as SupportedBaseModel[];
 }

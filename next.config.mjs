@@ -3,8 +3,13 @@ import { withAxiom } from '@civitai/next-axiom';
 import bundlAnalyzer from '@next/bundle-analyzer';
 import packageJson from './package.json' assert { type: 'json' };
 
+const isProd = process.env.NODE_ENV === 'production';
+const isDev = process.env.NODE_ENV === 'development';
+const analyze = process.env.ANALYZE === 'true';
+const shouldOptimizeImports = (isDev && analyze) || isProd;
+
 const withBundleAnalyzer = bundlAnalyzer({
-  enabled: process.env.ANALYZE === 'true',
+  enabled: analyze,
 });
 
 /**
@@ -224,6 +229,11 @@ export default defineNextConfig(
           permanent: true,
         },
         {
+          source: '/air/confirm',
+          destination: '/studio/confirm',
+          permanent: true,
+        },
+        {
           source: '/blocked-by-octoml',
           destination: '/articles/3307',
           permanent: true,
@@ -268,6 +278,13 @@ export default defineNextConfig(
           destination: '/collections/6503138',
           permanent: true,
         },
+        
+        {
+          source: '/creators-program',
+          destination: '/creator-program',
+          permanent: true,
+        },
+        
       ];
     },
     output: 'standalone',

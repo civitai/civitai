@@ -53,7 +53,7 @@ export function ImageDropzone({
 
   const handleDropCapture = async (e: DragEvent) => {
     const url = e.dataTransfer.getData('text/uri-list');
-    if (!allowExternalImageDrop && !isOrchestratorUrl(url)) return;
+    if (!url.length || (!allowExternalImageDrop && !isOrchestratorUrl(url))) return;
     onDropCapture ? onDropCapture(url) : handleDropCaptureUrl(url);
   };
 

@@ -19,6 +19,7 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
 import {
   IconBrush,
   IconClock,
@@ -64,6 +65,7 @@ import { CollectionShowcase } from '~/components/Model/CollectionShowcase/Collec
 import { EarlyAccessAlert } from '~/components/Model/EarlyAccessAlert/EarlyAccessAlert';
 import { HowToButton, HowToUseModel } from '~/components/Model/HowToUseModel/HowToUseModel';
 import { useModelShowcaseCollection } from '~/components/Model/model.utils';
+import { ModelAvailabilityUpdate } from '~/components/Model/ModelAvailabilityUpdate/ModelAvailabilityUpdate';
 import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 import { ModelFileAlert } from '~/components/Model/ModelFileAlert/ModelFileAlert';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
@@ -88,7 +90,6 @@ import {
 import { useQueryUserResourceReview } from '~/components/ResourceReview/resourceReview.utils';
 import { ResourceReviewThumbActions } from '~/components/ResourceReview/ResourceReviewThumbActions';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
-import { RunButton } from '~/components/RunStrategy/RunButton';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { IconCivitai } from '~/components/SVG/IconCivitai';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
@@ -97,6 +98,7 @@ import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { ToggleVaultButton } from '~/components/Vault/ToggleVaultButton';
 import { VerifiedText } from '~/components/VerifiedText/VerifiedText';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   baseModelLicenses,
@@ -108,6 +110,7 @@ import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import {
+  Availability,
   CollectionType,
   ModelFileVisibility,
   ModelModifier,
@@ -159,10 +162,12 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
   } = useModelVersionPermission({
     modelVersionId: version.id,
   });
+  const mobile = useIsMobile();
 
   // We'll use this flag mainly to let the owner know of the status, but the `isDownloadable` flag determines whether this user can download or not.
   const downloadsDisabled =
     !!version?.usageControl && version?.usageControl !== ModelUsageControl.Download;
+  const hideDownload = !isDownloadable || downloadsDisabled;
 
   const { collection, setShowcaseCollection, settingShowcase } = useModelShowcaseCollection({
     modelId: model.id,
@@ -196,11 +201,23 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     isSelectableInGenerator &&
     features.imageGeneration &&
     version.canGenerate &&
-    (!isEarlyAccess || !!earlyAccessConfig?.chargeForGeneration || hasGeneratePermissions);
+    (!isEarlyAccess ||
+      !!earlyAccessConfig?.chargeForGeneration ||
+      !!earlyAccessConfig?.freeGeneration ||
+      hasGeneratePermissions);
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
   const requestVersionReviewMutation = trpc.modelVersion.requestReview.useMutation();
+  const isPrivateModel = model.availability === Availability.Private;
+
+  const handlePublishPrivateModel = async () => {
+    dialogStore.trigger({
+      component: ModelAvailabilityUpdate,
+      props: { modelId: model.id },
+    });
+  };
+
   const onPurchase = (reason?: 'generation' | 'download') => {
     if (!features.earlyAccessModel) {
       showErrorNotification({
@@ -520,7 +537,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       </Group>
     </Group>
   );
-  const primaryFileDetails = primaryFile && getFileDetails(primaryFile);
+  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile);
 
   const downloadMenuItems = filesVisible.map((file) =>
     !archived ? (
@@ -592,7 +609,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     isOwnerOrMod &&
     (version.status !== ModelStatus.Published || model.status !== ModelStatus.Published) &&
     hasFiles &&
-    hasPosts;
+    hasPosts &&
+    !isPrivateModel;
   const scheduledPublishDate =
     version.status === ModelStatus.Scheduled ? version.publishedAt : undefined;
   const publishing = publishModelMutation.isLoading || publishVersionMutation.isLoading;
@@ -625,7 +643,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       <TrackView entityId={version.id} entityType="ModelVersion" type="ModelVersionView" />
       <ContainerGrid.Col xs={12} sm={5} md={4} orderSm={2} ref={adContainerRef}>
         <Stack>
-          {model.mode !== ModelModifier.TakenDown && (
+          {model.mode !== ModelModifier.TakenDown && mobile && (
             <ModelCarousel
               modelId={model.id}
               modelVersionId={version.id}
@@ -647,7 +665,12 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
           ) : showPublishButton ? (
             <Stack spacing={4}>
               {version.canGenerate && isOwnerOrMod && (
-                <GenerateButton modelVersionId={version.id} data-activity="create:model" py={8} />
+                <GenerateButton
+                  data-tour="model:create"
+                  modelVersionId={version.id}
+                  data-activity="create:model"
+                  py={8}
+                />
               )}
               <Button.Group>
                 <Button
@@ -689,6 +712,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
                   {canGenerate && (
                     <GenerateButton
+                      data-tour="model:create"
                       modelVersionId={version.id}
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
@@ -743,9 +767,10 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       }
                     </CivitaiLinkManageButton>
                   )}
-                  {displayCivitaiLink || canGenerate ? (
+                  {hideDownload ? null : displayCivitaiLink || canGenerate ? (
                     filesCount === 1 ? (
                       <DownloadButton
+                        data-tour="model:download"
                         canDownload={canDownload}
                         downloadPrice={
                           !hasDownloadPermissions &&
@@ -765,6 +790,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       <Menu position="bottom-end">
                         <Menu.Target>
                           <DownloadButton
+                            data-tour="model:download"
                             canDownload={canDownload}
                             downloadPrice={
                               !hasDownloadPermissions &&
@@ -783,6 +809,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                     )
                   ) : (
                     <DownloadButton
+                      data-tour="model:download"
                       component="a"
                       {...getDownloadProps(primaryFile)}
                       canDownload={canDownload}
@@ -811,13 +838,6 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                   )}
                 </Group>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
-                  {!displayCivitaiLink && !isEarlyAccess && isDownloadable && (
-                    <RunButton
-                      variant="light"
-                      modelVersionId={version.id}
-                      disabled={!!model.mode}
-                    />
-                  )}
                   <Tooltip label="Share" position="top" withArrow>
                     <div>
                       <ShareButton
@@ -834,7 +854,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 
                   {onFavoriteClick && (
                     <Tooltip label={isFavorite ? 'Unlike' : 'Like'} position="top" withArrow>
-                      <div>
+                      <div data-tour="model:like">
                         <LoginRedirect reason="favorite-model">
                           <Button
                             onClick={() =>
@@ -850,7 +870,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                       </div>
                     </Tooltip>
                   )}
-                  {hasDownloadPermissions && !downloadsDisabled && (
+                  {hasDownloadPermissions && !downloadsDisabled && !isPrivateModel && (
                     <ToggleVaultButton modelVersionId={version.id}>
                       {({ isLoading, isInVault, toggleVaultItem }) => (
                         <Tooltip
@@ -902,6 +922,19 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               </Text>
             </AlertWithIcon>
           )}
+          {isPrivateModel && isOwnerOrMod && (
+            <AlertWithIcon
+              color="yellow"
+              iconColor="yellow"
+              icon={<IconLock />}
+              title="Private Model"
+            >
+              <Text>
+                Want to start earning Buzz?{' '}
+                <Anchor onClick={handlePublishPrivateModel}>Publish this model</Anchor>
+              </Text>
+            </AlertWithIcon>
+          )}
           {version.status === ModelStatus.UnpublishedViolation && version.meta?.needsReview && (
             <AlertWithIcon color="yellow" iconColor="yellow" icon={<IconExclamationMark />}>
               This version is currently being reviewed by our moderators. It will be visible to the
@@ -922,25 +955,31 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             baseModel={version.baseModel}
           />
 
-          {(!isDownloadable || downloadsDisabled) && (
-            <Alert title="Download disabled" color="yellow" icon={<IconDownload />}>
-              {isDownloadable ? (
+          {hideDownload && (
+            <AlertWithIcon color="blue" iconColor="blue" icon={<IconBrush size={16} />} size="sm">
+              {isDownloadable && !isLoadingAccess ? (
                 <Text>
-                  As the owner, you can still download this model. Other users will not be able to.
-                  Click{' '}
-                  <Link href={`/models/${version.modelId}/model-versions/${version.id}/edit`}>
+                  You've set this model to Generation-Only. Other users will not be able to download
+                  this model. Click{' '}
+                  <Text
+                    component={Link}
+                    variant="link"
+                    td="underline"
+                    href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
+                  >
                     here
-                  </Link>{' '}
-                  to change this behavior
+                  </Text>{' '}
+                  to change this behavior.
                 </Text>
               ) : (
                 <Text>
-                  The owner of this model has disabled downloads for this model.{' '}
-                  {canGenerate &&
-                    'You can still generate images using this model in our generator, but will not be able to download the model files.'}
+                  The creator has set this model to Generation-Only.{' '}
+                  <Text variant="link" td="underline" component={Link} href="/articles/11494">
+                    Learn more
+                  </Text>
                 </Text>
               )}
-            </Alert>
+            </AlertWithIcon>
           )}
 
           {!model.locked && alreadyDownloaded && (
@@ -1365,7 +1404,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
         })}
       >
         <Stack>
-          {model.mode !== ModelModifier.TakenDown && (
+          {model.mode !== ModelModifier.TakenDown && !mobile && (
             <ModelCarousel
               modelId={model.id}
               modelVersionId={version.id}
