@@ -359,8 +359,9 @@ export async function clearCacheByPattern(pattern: string) {
   const cleared: string[] = [];
 
   if (!pattern.includes('*')) {
-    const deleted = await redis.del(pattern as RedisKeyTemplateCache);
-    return deleted;
+    await redis.del(pattern as RedisKeyTemplateCache);
+    cleared.push(pattern);
+    return cleared;
   }
 
   if (!env.REDIS_URL_DIRECT || env.REDIS_URL_DIRECT.length === 0) {
