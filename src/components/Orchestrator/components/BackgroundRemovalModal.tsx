@@ -38,11 +38,12 @@ export function BackgroundRemovalModal({
     }
   );
 
-  function handleSubmit(data: z.infer<typeof schema>) {
-    generate.mutate({
+  async function handleSubmit(data: z.infer<typeof schema>) {
+    await generate.mutateAsync({
       type: 'image',
       data: { workflow, type: 'img2img', ...data },
     });
+    dialog.onClose();
   }
 
   return (
