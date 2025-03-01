@@ -248,7 +248,7 @@ async function getPoolForecast(month?: Date) {
     FROM buzzTransactions
     WHERE toAccountType = 'user'
     AND (
-      (type IN ('compensation')) -- Generation
+      (type IN ('compensation','tip')) -- Generation
       OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
     )
     AND toAccountId != 0
