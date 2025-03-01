@@ -60,7 +60,7 @@ export const postMetrics = createMetricProcessor({
           NOW() as "updatedAt",
           ${metricValues}
         FROM data d
-        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS "timeframe") tf
+        CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
         LEFT JOIN "PostMetric" im ON im."postId" = d."postId" AND im."timeframe" = tf.timeframe
         WHERE EXISTS (SELECT 1 FROM "Post" WHERE id = d."postId") -- ensure the post exists
         ON CONFLICT ("postId", "timeframe") DO UPDATE
@@ -166,7 +166,7 @@ async function getReactionTasks(ctx: MetricContext) {
         ${snippets.reactionTimeframes()}
       FROM "ImageReaction" r
       JOIN "Image" i ON i.id = r."imageId"
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE i."postId" IN (${ids})
       GROUP BY i."postId", tf.timeframe
     `;
@@ -197,7 +197,7 @@ async function getCommentTasks(ctx: MetricContext) {
         ${snippets.timeframeSum('c."createdAt"')} "commentCount"
       FROM "Thread" t
       JOIN "CommentV2" c ON c."threadId" = t.id
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE t."postId" IN (${ids})
       GROUP BY t."postId", tf.timeframe
     `;
@@ -226,7 +226,7 @@ async function getCollectionTasks(ctx: MetricContext) {
         tf.timeframe,
         ${snippets.timeframeSum('ci."createdAt"')} "collectedCount"
       FROM "CollectionItem" ci
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE ci."postId" IN (${ids})
       GROUP BY ci."postId", tf.timeframe
     `;
