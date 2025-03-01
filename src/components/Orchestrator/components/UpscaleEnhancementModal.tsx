@@ -27,17 +27,16 @@ export function UpscaleEnhancementModal({
 }) {
   const dialog = useDialogContext();
 
-  const form = useForm({ defaultValues: { sourceImage, steps: 2 }, schema });
+  const defaultValues = { sourceImage, steps: 2 };
+  const form = useForm({ defaultValues, schema });
   const watched = form.watch();
 
   const generate = useGenerate();
 
-  const whatIf = trpc.orchestrator.whatIf.useQuery(
-    { type: 'image', data: { workflow, type: 'img2img', ...watched } },
-    {
-      enabled: Object.keys(watched).length > 0,
-    }
-  );
+  const whatIf = trpc.orchestrator.whatIf.useQuery({
+    type: 'image',
+    data: { workflow, type: 'img2img', ...defaultValues, ...watched },
+  });
 
   async function handleSubmit(data: z.infer<typeof schema>) {
     await generate.mutate({
