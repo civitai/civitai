@@ -1,4 +1,16 @@
 import { Prisma } from '@prisma/client';
+import dayjs from 'dayjs';
+import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
+import { NsfwLevel } from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import { REDIS_KEYS } from '~/server/redis/client';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
+import { ProfileImage } from '~/server/selectors/image.selector';
+import type { EntityAccessDataType } from '~/server/services/common.service';
+import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
+import { CachedObject, createCachedObject } from '~/server/utils/cache-helpers';
 import {
   Availability,
   CollectionReadConfiguration,
@@ -9,19 +21,7 @@ import {
   TagSource,
   TagType,
 } from '~/shared/utils/prisma/enums';
-import dayjs from 'dayjs';
-import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
-import { ProfileImage } from '~/server/selectors/image.selector';
-import type { EntityAccessDataType } from '~/server/services/common.service';
-import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
-import { CachedObject, createCachedObject } from '~/server/utils/cache-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 export const tagIdsForImagesCache = createCachedObject<{
@@ -84,6 +84,7 @@ type UserCosmeticLookup = {
 export const userCosmeticCache = createCachedObject<UserCosmeticLookup>({
   key: REDIS_KEYS.CACHES.USER_COSMETICS,
   idKey: 'userId',
+  staleWhileRevalidate: false, // To avoid delay in creator seeing new cosmetics
   lookupFn: async (ids) => {
     const userCosmeticsRaw = await dbRead.userCosmetic.findMany({
       where: { userId: { in: ids }, equippedAt: { not: null }, equippedToId: null },
@@ -126,6 +127,7 @@ export const cosmeticCache = createCachedObject<CosmeticLookup>({
 export const profilePictureCache = createCachedObject<ProfileImage>({
   key: REDIS_KEYS.CACHES.PROFILE_PICTURES,
   idKey: 'userId',
+  staleWhileRevalidate: false, // To avoid delay in creator seeing their new profile picture
   lookupFn: async (ids) => {
     const profilePictures = await dbRead.$queryRaw<ProfileImage[]>`
       SELECT
@@ -157,6 +159,7 @@ export const imagesForModelVersionsCache = createCachedObject<CachedImagesForMod
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
   ttl: CacheTTL.sm,
+  // staleWhileRevalidate: false, // We might want to enable this later otherwise there will be a delay after a creator updates their showcase images...
   lookupFn: async (ids) => {
     const images = await getImagesForModelVersion({ modelVersionIds: ids, imagesPerVersion: 20 });
 
@@ -193,6 +196,7 @@ export const cosmeticEntityCaches = Object.fromEntries(
       key: `${REDIS_KEYS.CACHES.COSMETICS}:${entity}`,
       idKey: 'equippedToId',
       cacheNotFound: false,
+      staleWhileRevalidate: false,
       lookupFn: async (ids) => {
         const entityCosmetics = await dbWrite.$queryRaw<EntityCosmeticLookupRaw[]>`
           SELECT uc."cosmeticId", uc."equippedToId", uc."claimKey", uc."data" as "userData"
@@ -303,6 +307,7 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
   key: REDIS_KEYS.CACHES.ENTITY_AVAILABILITY.MODEL_VERSIONS,
   idKey: 'entityId',
   ttl: CacheTTL.day,
+  cacheNotFound: false,
   dontCacheFn: (data) => {
     // We only wanna cache public models. Otherwise, we better confirm every time. It's a safer bet.
     // Also, only cache it if it's been published for more than an hour.
@@ -325,8 +330,8 @@ export const modelVersionAccessCache = createCachedObject<ModelVersionAccessCach
         mv.id AS "entityId",
         mmv."userId" AS "userId",
         -- Model availability prevails if it's private
-        CASE 
-          WHEN mmv.availability = 'Private' 
+        CASE
+          WHEN mmv.availability = 'Private'
             THEN mmv."availability"
           ELSE mv."availability"
         END AS "availability",
@@ -346,6 +351,7 @@ type TagLookup = {
   name: string | null;
   type: TagType;
   nsfwLevel: NsfwLevel;
+  unlisted?: true;
 };
 export const tagCache = createCachedObject<TagLookup>({
   key: REDIS_KEYS.CACHES.BASIC_TAGS,
@@ -358,9 +364,12 @@ export const tagCache = createCachedObject<TagLookup>({
         name: true,
         nsfwLevel: true,
         type: true,
+        unlisted: true,
       },
     });
-    return Object.fromEntries(tagBasicData.map((x) => [x.id, x]));
+    return Object.fromEntries(
+      tagBasicData.map(({ unlisted, ...x }) => [x.id, { ...x, unlisted: unlisted || undefined }])
+    );
   },
   ttl: CacheTTL.day,
 });
@@ -431,22 +440,23 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
         AND "fileType" IN ('Model', 'Pruned Model');
     `;
 
-    const tags = await db.$queryRaw<{ modelId: number; tagId: number; name: string }[]>`
-      SELECT "modelId", "tagId", t."name"
-      FROM "TagsOnModels"
-      JOIN "Tag" t ON "tagId" = t."id"
-      WHERE "modelId" IN (${Prisma.join(ids)})
-      AND "tagId" IS NOT NULL;
-    `;
-
     const results = versions.reduce((acc, { modelId, ...version }) => {
       acc[modelId] ??= { modelId, hashes: [], tags: [], versions: [] };
       acc[modelId].versions.push(version);
       return acc;
     }, {} as Record<number, ModelDataCache>);
     for (const { modelId, hash } of hashes) results[modelId]?.hashes.push(hash);
-    for (const { modelId, ...tag } of tags) results[modelId]?.tags.push(tag);
     return results;
+  },
+  appendFn: async (records) => {
+    const modelIds = [...records].map((x) => x.modelId);
+    const modelTags = await modelTagCache.fetch(modelIds);
+
+    for (const record of records) {
+      const modelTagsData = modelTags[record.modelId];
+      if (!modelTagsData) continue;
+      record.tags = modelTagsData.tags.map((x) => ({ tagId: x.id, name: x.name! }));
+    }
   },
 });
 
@@ -578,5 +588,97 @@ export const thumbnailCache = createCachedObject<{
     return Object.fromEntries(thumbnails.filter((x) => !!x.parentId).map((x) => [x.parentId, x]));
   },
   dontCacheFn: (data) => !data.nsfwLevel,
+  ttl: CacheTTL.day,
+});
+
+type ImageMetricLookup = {
+  imageId: number;
+  reactionLike: number | null;
+  reactionHeart: number | null;
+  reactionLaugh: number | null;
+  reactionCry: number | null;
+  comment: number | null;
+  collection: number | null;
+  buzz: number | null;
+};
+export const imageMetricsCache = createCachedObject<ImageMetricLookup>({
+  key: REDIS_KEYS.CACHES.IMAGE_METRICS,
+  idKey: 'imageId',
+  lookupFn: async (ids) => {
+    const imageMetric = await dbRead.entityMetricImage.findMany({
+      where: { imageId: { in: ids } },
+      select: {
+        imageId: true,
+        reactionLike: true,
+        reactionHeart: true,
+        reactionLaugh: true,
+        reactionCry: true,
+        // reactionTotal: true,
+        comment: true,
+        collection: true,
+        buzz: true,
+      },
+    });
+    return Object.fromEntries(imageMetric.map((x) => [x.imageId, x]));
+  },
+  ttl: CacheTTL.sm,
+});
+
+type UserFollowsCacheItem = {
+  userId: number;
+  follows: number[];
+};
+export const userFollowsCache = createCachedObject<UserFollowsCacheItem>({
+  key: REDIS_KEYS.CACHES.USER_FOLLOWS,
+  idKey: 'userId',
+  lookupFn: async (ids) => {
+    const userFollows = await dbRead.userEngagement.findMany({
+      where: { userId: { in: ids }, type: 'Follow' },
+      select: { userId: true, targetUserId: true },
+    });
+    const result = userFollows.reduce((acc, { userId, targetUserId }) => {
+      acc[userId] ??= { userId, follows: [] };
+      acc[userId].follows.push(targetUserId);
+      return acc;
+    }, {} as Record<number, UserFollowsCacheItem>);
+    return result;
+  },
+  ttl: CacheTTL.day,
+  staleWhileRevalidate: false,
+});
+export async function getUserFollows(userId: number) {
+  const userFollows = await userFollowsCache.fetch(userId);
+  return userFollows[userId]?.follows ?? [];
+}
+
+type ModelTagCacheItem = {
+  modelId: number;
+  tagIds: number[];
+  tags: TagLookup[];
+};
+export const modelTagCache = createCachedObject<ModelTagCacheItem>({
+  key: REDIS_KEYS.CACHES.MODEL_TAGS,
+  idKey: 'modelId',
+  staleWhileRevalidate: false, // To avoid delay in creator seeing their new tags
+  lookupFn: async (ids) => {
+    const modelTags = await dbRead.tagsOnModels.findMany({
+      where: { modelId: { in: ids } },
+      select: { modelId: true, tagId: true },
+    });
+    const result = modelTags.reduce((acc, { modelId, tagId }) => {
+      acc[modelId] ??= { modelId, tagIds: [] } as unknown as ModelTagCacheItem; // Hack so we don't need to store empty tags array
+      acc[modelId].tagIds.push(tagId);
+      return acc;
+    }, {} as Record<number, ModelTagCacheItem>);
+    return result;
+  },
+  appendFn: async (records) => {
+    const tagIds = [...records].flatMap((x) => x.tagIds);
+    const tags = await tagCache.fetch(tagIds);
+
+    for (const record of records) {
+      record.tags = record.tagIds.map((tagId) => tags[tagId]).filter(isDefined);
+    }
+  },
   ttl: CacheTTL.day,
 });

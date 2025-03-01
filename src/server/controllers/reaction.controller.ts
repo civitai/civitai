@@ -249,7 +249,7 @@ export const toggleReactionHandler = async ({
       }
     }
 
-    if (result == 'created') {
+    if (result === 'created') {
       await Promise.all([
         encouragementReward
           .apply(

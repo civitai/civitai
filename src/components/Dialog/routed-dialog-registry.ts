@@ -3,7 +3,6 @@ import { ComponentProps, ComponentType } from 'react';
 import { UrlObject } from 'url';
 
 const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDetailModal'));
-const PostDetailModal = dynamic(() => import('~/components/Post/Detail/PostDetailModal'));
 const CollectionEditModal = dynamic(() => import('~/components/Collections/CollectionEditModal'));
 const HiddenCommentsModal = dynamic(() => import('~/components/CommentsV2/HiddenCommentsModal'));
 const ResourceReviewModal = dynamic(
@@ -46,14 +45,6 @@ export const dialogs = createDialogDictionary({
       query: { ...query, imageId },
       asPath: `/images/${imageId}`,
       state,
-    }),
-  },
-  postDetail: {
-    component: PostDetailModal,
-    target: '#main',
-    resolve: (query, { postId }) => ({
-      query: { ...query, postId },
-      asPath: `/posts/${postId}`,
     }),
   },
   collectionEdit: {

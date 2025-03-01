@@ -1,4 +1,6 @@
 import React, { createContext, useContext } from 'react';
+import { UserSettingsSchema } from '~/server/schema/user.schema';
+import { trpc } from '~/utils/trpc';
 
 type AppContext = { seed: number; canIndex: boolean };
 const Context = createContext<AppContext | null>(null);
@@ -9,7 +11,10 @@ export function useAppContext() {
 }
 export function AppProvider({
   children,
+  settings,
   ...appContext
-}: { children: React.ReactNode } & AppContext) {
+}: { children: React.ReactNode; settings: UserSettingsSchema } & AppContext) {
+  trpc.user.getSettings.useQuery(undefined, { initialData: settings });
+
   return <Context.Provider value={appContext}>{children}</Context.Provider>;
 }
