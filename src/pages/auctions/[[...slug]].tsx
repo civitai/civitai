@@ -24,7 +24,9 @@ import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { env } from '~/env/client';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
@@ -94,6 +96,8 @@ export default function Auctions({
     drawerIsOpen,
   } = useAuctionContext();
   const pathname = usePathname();
+  const { runTour, running } = useTourContext();
+  const isMobile = useIsMobile();
 
   const {
     data: auctions = [],
@@ -119,6 +123,10 @@ export default function Auctions({
     }
   }, [valid]);
 
+  useEffect(() => {
+    if (!running) runTour({ key: 'auction', step: 0 });
+  }, []);
+
   const navLinks = (itemSize?: MantineSize) => (
     <Stack>
       <NavLink
@@ -133,7 +141,7 @@ export default function Auctions({
         }
       />
       <Divider />
-      <Skeleton visible={isLoadingAuctions} animate>
+      <Skeleton visible={isLoadingAuctions} animate data-tour="auction:nav">
         {isErrorAuctions ? (
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">
             <Text>There was an error fetching auctions.</Text>
@@ -186,20 +194,22 @@ export default function Auctions({
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
         deIndex={slug === MY_BIDS}
       />
-      <Container size="lg" h="100%">
+      <Container size="lg" h="100%" data-tour="auction:start">
         <ContainerGrid gutter="xl" my="sm" h="100%">
-          <ContainerGrid.Col xs={12} sm={4} className="max-sm:hidden">
-            <Box
-              maw={300}
-              w="100%"
-              h="100%"
-              mah="calc(100dvh - var(--header-height) - var(--footer-height) - 24px)"
-              className="sticky top-4 overflow-auto border-r border-r-gray-3 dark:border-r-dark-4"
-              pt="lg"
-            >
-              {navLinks()}
-            </Box>
-          </ContainerGrid.Col>
+          {!isMobile && (
+            <ContainerGrid.Col xs={12} sm={4} className="max-sm:hidden">
+              <Box
+                maw={300}
+                w="100%"
+                h="100%"
+                mah="calc(100dvh - var(--header-height) - var(--footer-height) - 24px)"
+                className="sticky top-4 overflow-auto border-r border-r-gray-3 dark:border-r-dark-4"
+                pt="lg"
+              >
+                {navLinks()}
+              </Box>
+            </ContainerGrid.Col>
+          )}
 
           <ContainerGrid.Col xs={12} sm={8} display="flex" sx={{ justifyContent: 'center' }}>
             {slug !== MY_BIDS ? <AuctionInfo /> : <AuctionMyBids />}

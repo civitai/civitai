@@ -28,9 +28,12 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { Currency } from '~/shared/utils/prisma/enums';
@@ -67,10 +70,11 @@ const QuickBid = ({
 export const AuctionInfo = () => {
   const mobile = useIsMobile();
   const theme = useMantineTheme();
-  // const placeBidRef = useRef<HTMLDivElement>(null);
   const { ref: placeBidRef, inView: placeBidInView } = useInView();
   const { selectedAuction, selectedModel, validAuction, setSelectedModel, drawerToggle } =
     useAuctionContext();
+  const features = useFeatureFlags();
+  const { runTour } = useTourContext();
 
   const {
     data: auctionData,
@@ -129,7 +133,25 @@ export const AuctionInfo = () => {
     <Stack w="100%" spacing="sm">
       {/*<Group className="sticky top-0 right-0">*/}
       <Group position="right">
-        <Button className="sm:hidden" onClick={drawerToggle} variant="default">
+        {features.appTour && (
+          <HelpButton
+            data-tour="auction:reset"
+            tooltip="Need help? Start the tour!"
+            onClick={() => {
+              runTour({
+                key: 'auction',
+                step: 0,
+                forceRun: true,
+              });
+            }}
+          />
+        )}
+        <Button
+          className="sm:hidden"
+          onClick={drawerToggle}
+          variant="default"
+          data-tour="auction:nav"
+        >
           <Group spacing={4}>
             <IconLayoutSidebarLeftExpand />
             All Auctions
@@ -159,7 +181,8 @@ export const AuctionInfo = () => {
             w="fit-content"
             px="md"
             py="xs"
-            className="cursor-default bg-gray-0 dark:bg-dark-6"
+            className="w-full cursor-default bg-gray-0 dark:bg-dark-6"
+            data-tour="auction:info"
           >
             <Group spacing="sm" className="max-sm:justify-between max-sm:gap-1">
               <Tooltip label={`Maximum # of entities that can win.`}>
@@ -227,7 +250,7 @@ export const AuctionInfo = () => {
           {/* Place Bid */}
           <Stack>
             <Title order={5}>Place Bid</Title>
-            <CosmeticCard>
+            <CosmeticCard data-tour="auction:bid">
               <Group m="sm" className="max-sm:flex-col">
                 {/* TODO handle other auction types */}
                 <ResourceSelect
@@ -396,7 +419,9 @@ export const AuctionInfo = () => {
           <Divider />
 
           {/* View bids */}
-          <Title order={5}>Active Bids</Title>
+          <Title order={5} data-tour="auction:bid-results">
+            Active Bids
+          </Title>
           {isLoadingAuctionData ? (
             <Center my="lg">
               <Loader />

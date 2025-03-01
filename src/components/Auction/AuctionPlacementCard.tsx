@@ -239,12 +239,12 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
     </Stack>
   );
 
-  if (hideText) return <div className="flex h-full flex-[10] py-2">{El}</div>;
+  if (hideText) return <div className="flex flex-[10] py-2">{El}</div>;
 
   return (
     <Link
       href={!!entityData ? `/models/${entityData.model.id}?modelVersionId=${entityData.id}` : '/'}
-      className="flex h-full flex-[10] py-2"
+      className="flex flex-[10] py-2"
     >
       {El}
     </Link>
