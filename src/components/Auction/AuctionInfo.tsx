@@ -23,7 +23,7 @@ import { useInView } from 'react-intersection-observer';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ModelPlacementCard } from '~/components/Auction/AuctionPlacementCard';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
-import { geModelTypesForAuction, usePurchaseBid } from '~/components/Auction/AuctionUtils';
+import { getModelTypesForAuction, usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -162,13 +162,15 @@ export const AuctionInfo = () => {
             className="cursor-default bg-gray-0 dark:bg-dark-6"
           >
             <Group spacing="sm" className="max-sm:justify-between max-sm:gap-1">
-              <Group spacing="sm" className="max-sm:w-full">
-                <Badge w={70}>
-                  <Text>Spots</Text>
-                </Badge>
+              <Tooltip label={`Maximum # of entities that can win.`}>
+                <Group spacing="sm" className="max-sm:w-full">
+                  <Badge w={70}>
+                    <Text>Spots</Text>
+                  </Badge>
 
-                {auctionData ? <Text>{auctionData.quantity}</Text> : <Loader variant="dots" />}
-              </Group>
+                  {auctionData ? <Text>{auctionData.quantity}</Text> : <Loader variant="dots" />}
+                </Group>
+              </Tooltip>
 
               <Divider orientation="vertical" />
 
@@ -231,7 +233,7 @@ export const AuctionInfo = () => {
                 <ResourceSelect
                   buttonLabel="Select model"
                   options={{
-                    resources: geModelTypesForAuction(auctionData?.auctionBase),
+                    resources: getModelTypesForAuction(auctionData?.auctionBase),
                   }}
                   allowRemove={false}
                   selectSource="auction"
@@ -249,6 +251,7 @@ export const AuctionInfo = () => {
                     fullWidth: mobile,
                   }}
                   groupPosition={!mobile ? 'left' : 'apart'}
+                  showAsCheckpoint={true}
                 />
 
                 {!mobile && <Divider orientation="vertical" />}
@@ -330,6 +333,7 @@ export const AuctionInfo = () => {
                       recurUntil,
                     })
                   }
+                  data-testid="place-bid-button"
                   // error={hasIssue ? 'Error computing cost' : undefined}
                   className={clsx('sm:h-full', {
                     'animate-[wiggle_1.5s_ease-in-out_4.5]': validBid,

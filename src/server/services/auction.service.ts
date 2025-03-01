@@ -21,6 +21,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { BuzzAccountType } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 
 export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
@@ -114,6 +115,7 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
       id: true,
       name: true,
       baseModel: true,
+      nsfwLevel: true,
       model: {
         select: {
           id: true,
@@ -210,8 +212,13 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
         aboveThreshold = match.totalAmount >= b.auction.minPrice;
 
         const bidsAbove = sortedBids.filter((sb) => sb.totalAmount >= b.auction.minPrice);
+
         const lowestPrice =
-          (bidsAbove?.[(bidsAbove?.length ?? 1) - 1]?.totalAmount ?? b.auction.minPrice - 1) + 1;
+          bidsAbove.length > 0
+            ? bidsAbove.length >= b.auction.quantity
+              ? bidsAbove[bidsAbove.length - 1].totalAmount + 1
+              : b.auction.minPrice ?? 1
+            : b.auction.minPrice ?? 1;
         additionalPriceNeeded = aboveThreshold ? 0 : lowestPrice - match.totalAmount;
 
         totalAmount = match.totalAmount;
@@ -335,6 +342,7 @@ export const createBid = async ({
 
   const { transactionId } = await createBuzzTransaction({
     type: TransactionType.Bid,
+    fromAccountType: BuzzAccountType.user,
     fromAccountId: userId,
     toAccountId: 0,
     amount,

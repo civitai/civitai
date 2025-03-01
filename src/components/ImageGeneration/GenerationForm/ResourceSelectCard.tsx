@@ -39,6 +39,7 @@ type Props = {
   disabled?: boolean;
   hideVersion?: boolean;
   groupPosition?: GroupPosition;
+  showAsCheckpoint?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
@@ -55,7 +56,11 @@ export const ResourceSelectCard = (props: Props) => {
           opacity={0.8}
         />
       )}
-      {isCheckpoint ? <CheckpointInfo {...props} /> : <ResourceInfo {...props} />}
+      {isCheckpoint || props.showAsCheckpoint ? (
+        <CheckpointInfo {...props} />
+      ) : (
+        <ResourceInfo {...props} />
+      )}
     </div>
   );
 };

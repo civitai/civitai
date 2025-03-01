@@ -2739,7 +2739,7 @@ const genAuctionBases = () => {
     [
       4, // id
       'Model', // type
-      'Flux.1 D', // ecosystem
+      'Flux1', // ecosystem
       'Featured Resources - Flux', // name
       10, // quantity
       200, // minPrice
@@ -2784,13 +2784,13 @@ const genAuctions = (auctionBaseIds: number[]) => {
       ],
       [
         step + 2, // id
-        now.add(2, 'day').startOf('day').format(), // startAt
-        now.add(3, 'day').startOf('day').format(), // endAt
+        now.add(1, 'day').startOf('day').format(), // startAt
+        now.add(2, 'day').startOf('day').format(), // endAt
         rand([20, 30, 40]), // quantity
         rand([200, 500, 1000]), // minPrice
         abi, // auctionBaseId
-        now.add(3, 'day').startOf('day').format(), // validFrom
-        now.add(4, 'day').startOf('day').format(), // validTo
+        now.add(2, 'day').startOf('day').format(), // validFrom
+        now.add(3, 'day').startOf('day').format(), // validTo
         false, // finalized
       ]
     );

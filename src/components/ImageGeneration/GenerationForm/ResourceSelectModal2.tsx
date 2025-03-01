@@ -480,7 +480,7 @@ function ResourceHitList({
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
-  const { classes } = useSearchLayoutStyles();
+  const { classes, cx } = useSearchLayoutStyles();
   const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const {
     items: models,
@@ -578,7 +578,7 @@ function ResourceHitList({
       )}
 
       {topItems.length > 0 && (
-        <Group align="center" position="center">
+        <div className={cx(classes.grid, 'p-3 grid-cols-[repeat(auto-fit,minmax(250px,1fr))]')}>
           <ResourceSelectCard
             data={topItems[0]}
             isFavorite={!!likes && likes.includes(topItems[0].id)}
@@ -601,7 +601,7 @@ function ResourceHitList({
               position={3}
             />
           )}
-        </Group>
+        </div>
       )}
       <div className={classes.grid}>
         {restItems.map((model) => (
@@ -974,7 +974,7 @@ function ResourceSelectCard({
     // Visually hide card if there are no versions
     <TwCard
       className={clsx(classes.root, 'justify-between', {
-        '!shadow-[0_0_10px]': !!position && position < 3,
+        '!shadow-[0_0_10px]': !!position && position <= 3,
         '!shadow-yellow-5': position === 1,
         '!shadow-gray-5': position === 2,
         '!shadow-orange-5': position === 3,

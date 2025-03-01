@@ -4,6 +4,7 @@ import { constants, FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constan
 import { dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
+import { modelVersionResourceCache } from '~/server/redis/caches';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { auctionBaseSelect, auctionSelect, prepareBids } from '~/server/services/auction.service';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
@@ -11,11 +12,14 @@ import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { bustFeaturedModelsCache } from '~/server/services/model.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { AuctionType, HomeBlockType } from '~/shared/utils/prisma/enums';
+import { AuctionType, BuzzAccountType, HomeBlockType } from '~/shared/utils/prisma/enums';
+import { createLogger } from '~/utils/logging';
 
 const jobName = 'handle-auctions';
 const collectionNote = 'from auction';
 const modelsToAddToCollection = 3;
+
+const log = createLogger(jobName, 'magenta');
 
 export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
   const [, setLastRun] = await getJobDate(jobName);
@@ -23,12 +27,14 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
 
   try {
     // Remove old auction winners from collection
-    await dbWrite.collectionItem.deleteMany({
+    const deletedFromCollection = await dbWrite.collectionItem.deleteMany({
       where: {
         collectionId: FEATURED_MODEL_COLLECTION_ID,
         note: collectionNote,
       },
     });
+    log(deletedFromCollection.count, 'removed from collection');
+    log('-----------');
 
     // Get the bids from previous auctions
     const allAuctionsWithBids = await dbWrite.auction.findMany({
@@ -55,6 +61,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
     //   Refund people who didn't make the cutoff
     //   Mark auctions as finalized
     for (const auctionRow of allAuctionsWithBids) {
+      log('====== processing auction', auctionRow.id);
       if (auctionRow.bids.length === 0) continue;
 
       const sortedBids = prepareBids(auctionRow);
@@ -71,11 +78,15 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
         { winners: [] as typeof sortedBids, losers: [] as typeof sortedBids }
       );
 
+      log('winners', winners.length, 'losers', losers.length);
+
       // Feature the winners
       if (winners.length > 0) {
+        const winnerIds = winners.map((w) => w.entityId);
+
         const thisAuctionType = auctionRow.auctionBase.type;
         if (thisAuctionType === AuctionType.Model) {
-          await dbWrite.featuredModelVersion.createMany({
+          const createdFeatured = await dbWrite.featuredModelVersion.createMany({
             data: winners.map((w) => {
               return {
                 modelVersionId: w.entityId,
@@ -86,11 +97,12 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
             }),
             skipDuplicates: true,
           });
+          log(createdFeatured.count, 'featured models');
 
           // insert winners into collection
           const modelData = await dbWrite.modelVersion.findMany({
             where: {
-              id: { in: winners.map((w) => w.entityId) },
+              id: { in: winnerIds },
             },
             select: {
               id: true,
@@ -115,7 +127,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
               .slice(0, modelsToAddToCollection)
           );
           if (modelIds.length > 0) {
-            await dbWrite.collectionItem.createMany({
+            const createdCollection = await dbWrite.collectionItem.createMany({
               data: modelIds.map((m) => {
                 return {
                   collectionId: FEATURED_MODEL_COLLECTION_ID,
@@ -125,10 +137,12 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
                 };
               }),
             });
+            log(createdCollection.count, 'featured models in collection');
           }
 
           await homeBlockCacheBust(HomeBlockType.Collection, FEATURED_MODEL_COLLECTION_ID);
           await bustFeaturedModelsCache();
+          await modelVersionResourceCache.bust(winnerIds);
         }
       }
 
@@ -157,6 +171,8 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
           }
         }
 
+        log(refundedBidIds.length, 'refunded bids');
+
         await dbWrite.bid.updateMany({
           where: { id: { in: refundedBidIds } },
           data: {
@@ -171,6 +187,8 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
           finalized: true,
         },
       });
+
+      log('finalized auction', auctionRow.id);
     }
 
     // Create new auctions for tomorrow
@@ -199,6 +217,9 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
       select: { id: true, auctionBaseId: true },
     });
 
+    log('-----------');
+    log(newAuctions.length, 'new auctions');
+
     // Insert recurring bids into those auctions
     const recurringBids = await dbWrite.bidRecurring.findMany({
       where: {
@@ -220,6 +241,8 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
       },
     });
 
+    log(recurringBids.length, 'recurring bids');
+
     for (const recurringBid of recurringBids) {
       try {
         const auctionMatch = newAuctions.find(
@@ -239,6 +262,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
         const { transactionId } = await withRetries(() =>
           createBuzzTransaction({
             type: TransactionType.Bid,
+            fromAccountType: BuzzAccountType.user,
             fromAccountId: recurringBid.userId,
             toAccountId: 0,
             amount: recurringBid.amount,

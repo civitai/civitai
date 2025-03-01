@@ -1,6 +1,5 @@
 import {
   Accordion,
-  Alert,
   Anchor,
   Badge,
   Box,
@@ -19,7 +18,6 @@ import {
   Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
-import { openConfirmModal } from '@mantine/modals';
 import {
   IconBrush,
   IconClock,
@@ -77,6 +75,7 @@ import {
 } from '~/components/Model/ModelVersions/model-version.utils';
 import ModelVersionDonationGoals from '~/components/Model/ModelVersions/ModelVersionDonationGoals';
 import { ModelVersionEarlyAccessPurchase } from '~/components/Model/ModelVersions/ModelVersionEarlyAccessPurchase';
+import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { ScheduleModal } from '~/components/Model/ScheduleModal/ScheduleModal';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -115,6 +114,7 @@ import {
   ModelFileVisibility,
   ModelModifier,
   ModelStatus,
+  ModelType,
   ModelUsageControl,
 } from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
@@ -525,19 +525,29 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     },
   ];
 
-  const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
-    <Group position="apart" noWrap spacing={0}>
-      <VerifiedText file={file} />
-      <Group spacing={4}>
-        <Text size="xs" color="dimmed">
-          {file.type === 'Pruned Model' ? 'Pruned ' : ''}
-          {file.metadata.format}
-        </Text>
-        <FileInfo file={file} />
+  const getFileDetails = (
+    file: ModelById['modelVersions'][number]['files'][number],
+    showPop = false
+  ) => (
+    <Group position="apart" noWrap spacing={0} className="cursor-default">
+      <ModelVersionPopularity
+        isFeatured={version.isFeatured}
+        popularity={version.popularityRank}
+        viewable={showPop && model.type === ModelType.Checkpoint && version.canGenerate}
+      />
+      <Group>
+        <VerifiedText file={file} />
+        <Group spacing={4}>
+          <Text size="xs" color="dimmed">
+            {file.type === 'Pruned Model' ? 'Pruned ' : ''}
+            {file.metadata.format}
+          </Text>
+          <FileInfo file={file} />
+        </Group>
       </Group>
     </Group>
   );
-  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile);
+  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile, true);
 
   const downloadMenuItems = filesVisible.map((file) =>
     !archived ? (

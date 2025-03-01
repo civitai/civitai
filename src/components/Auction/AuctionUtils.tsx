@@ -20,7 +20,7 @@ import { trpc } from '~/utils/trpc';
 
 type ResourceOptions = Exclude<ResourceSelectOptions['resources'], undefined>;
 
-export const geModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'] | undefined) => {
+export const getModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'] | undefined) => {
   if (!ab) return [] as ResourceOptions;
 
   if (ab.ecosystem === null) {
@@ -73,7 +73,6 @@ export function usePurchaseBid() {
       });
     },
     onSuccess: async (res, { auctionId, entityId }) => {
-      console.log('first onsuccess');
       setJustBid({ auctionId, entityId });
 
       const notificationId = `submit-bid-${auctionId}-${entityId}`;

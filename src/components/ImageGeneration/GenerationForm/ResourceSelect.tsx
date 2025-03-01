@@ -22,6 +22,7 @@ export const ResourceSelect = ({
   disabled,
   hideVersion,
   groupPosition,
+  showAsCheckpoint,
   ...inputWrapperProps
 }: {
   value?: GenerationResource;
@@ -34,6 +35,7 @@ export const ResourceSelect = ({
   selectSource?: ResourceSelectSource;
   hideVersion?: boolean;
   groupPosition?: GroupPosition;
+  showAsCheckpoint?: boolean;
 } & Omit<InputWrapperProps, 'children' | 'onChange'> & { disabled?: boolean }) => {
   const types = options.resources?.map((x) => x.type);
   const _value = types && value && !types.includes(value.model.type) ? undefined : value;
@@ -93,6 +95,7 @@ export const ResourceSelect = ({
           onSwap={handleOpenResourceSearch}
           hideVersion={hideVersion}
           groupPosition={groupPosition}
+          showAsCheckpoint={showAsCheckpoint}
         />
       )}
     </Input.Wrapper>

@@ -4,7 +4,11 @@ import { TypoTolerance } from 'meilisearch';
 import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
-import { imagesForModelVersionsCache, modelTagCache } from '~/server/redis/caches';
+import {
+  imagesForModelVersionsCache,
+  modelTagCache,
+  modelVersionResourceCache,
+} from '~/server/redis/caches';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
@@ -153,6 +157,10 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
 
   const unavailableGenResources = await getUnavailableResources();
 
+  const allMvIds = [...new Set(models.flatMap((m) => m.modelVersions.map((mv) => mv.id)))];
+  // TODO how to update this every 10 minutes?
+  const versionResourceInfo = await modelVersionResourceCache.fetch(allMvIds);
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -180,7 +188,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
       );
 
-      const category = tags[model.id]?.tags.find(({ id }) => modelCategoriesIds.includes(id))!;
+      const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
 
       return {
         ...model,
@@ -204,6 +212,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           hashes: restVersion.hashes.map((hash) => hash.hash),
           hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
           settings: restVersion.settings as RecommendedSettingsSchema,
+          popularityRank: versionResourceInfo[restVersion.id]?.popularityRank ?? 0,
+          isFeatured: versionResourceInfo[restVersion.id]?.isFeatured ?? false,
         },
         versions: modelVersions.map(
           ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
@@ -214,6 +224,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             canGenerate:
               generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
             settings: settings as RecommendedSettingsSchema,
+            popularityRank: versionResourceInfo[x.id]?.popularityRank ?? 0,
+            isFeatured: versionResourceInfo[x.id]?.isFeatured ?? false,
           })
         ),
         triggerWords: [

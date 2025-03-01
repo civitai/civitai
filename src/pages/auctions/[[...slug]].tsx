@@ -101,6 +101,7 @@ export default function Auctions({
     isError: isErrorAuctions,
   } = trpc.auction.getAll.useQuery();
 
+  // TODO fix hitting /auctions when none are available
   useEffect(() => {
     const selected = !!slug
       ? slug === MY_BIDS

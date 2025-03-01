@@ -26,34 +26,47 @@ ADD COLUMN IF NOT EXISTS     "meta" JSONB DEFAULT '{}';
 ALTER TABLE "UserPaymentConfiguration" ALTER COLUMN "tipaltiAccountStatus" SET DEFAULT 'PendingOnboarding';
 
 -- AlterTable
+ALTER TABLE "_LicenseToModel" DROP CONSTRAINT IF EXISTS "_LicenseToModel_pkey";
 ALTER TABLE "_LicenseToModel" ADD CONSTRAINT "_LicenseToModel_AB_pkey" PRIMARY KEY ("A", "B");
 
 -- DropTable
-DROP TABLE "ArticleRank";
+DROP TABLE IF EXISTS "ArticleRank";
+CREATE TABLE IF NOT EXISTS "ArticleRank"
+  AS SELECT * FROM "ArticleRank_Live";
 
 -- DropTable
-DROP TABLE "ImageRank";
+DROP TABLE IF EXISTS "ImageRank";
+CREATE TABLE IF NOT EXISTS "ImageRank"
+  AS SELECT * FROM "ImageRank_Live";
 
 -- DropTable
-DROP TABLE "ModelRank";
+DROP TABLE IF EXISTS "ModelRank";
 
 -- DropTable
-DROP TABLE "ModelVersionRank";
+DROP TABLE IF EXISTS "ModelVersionRank";
+CREATE TABLE IF NOT EXISTS "ModelVersionRank"
+  AS SELECT * FROM "ModelVersionRank_Live";
 
 -- DropTable
-DROP TABLE "Notification";
+DROP TABLE IF EXISTS "Notification";
 
 -- DropTable
-DROP TABLE "NotificationViewed";
+DROP TABLE IF EXISTS "NotificationViewed";
 
 -- DropTable
-DROP TABLE "PostRank";
+DROP TABLE IF EXISTS "PostRank";
+CREATE TABLE IF NOT EXISTS "PostRank"
+  AS SELECT * FROM "PostRank_Live";
 
 -- DropTable
-DROP TABLE "TagRank";
+DROP TABLE IF EXISTS "TagRank";
+CREATE TABLE IF NOT EXISTS "TagRank"
+  AS SELECT * FROM "TagRank_Live";
 
 -- DropTable
-DROP TABLE "UserRank";
+DROP TABLE IF EXISTS "UserRank";
+CREATE TABLE IF NOT EXISTS "UserRank"
+    AS SELECT * FROM "UserRank_Live";
 
 -- DropEnum
 DROP TYPE "NotificationCategory";

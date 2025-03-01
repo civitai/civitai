@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Badge,
+  Button,
   Divider,
   Group,
   GroupProps,
@@ -15,6 +16,7 @@ import { openConfirmModal } from '@mantine/modals';
 import {
   IconCircle,
   IconCrown,
+  IconEye,
   IconPlayerPauseFilled,
   IconPlayerPlayFilled,
   IconPlus,
@@ -25,9 +27,10 @@ import {
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import produce from 'immer';
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
+import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -46,6 +49,7 @@ import type {
 } from '~/server/services/auction.service';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { ImagesForModelVersions } from '~/server/services/image.service';
+import { Flags } from '~/shared/utils';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
@@ -175,49 +179,74 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
 };
 
 const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] }) => {
+  const { blurLevels } = useBrowsingLevelContext();
+  const blurNsfw = !!entityData ? Flags.hasFlag(blurLevels, entityData.nsfwLevel) : false;
+  const [hideText, setHideText] = useState(blurNsfw);
+
+  const El = (
+    <Stack spacing={8} justify="space-around">
+      <Stack spacing={0}>
+        {!hideText ? (
+          <>
+            <Text
+              size="lg"
+              fw={500}
+              sx={{
+                textOverflow: 'ellipsis',
+                maxWidth: 'min(400px, 80vw)',
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+            >
+              {entityData?.model?.name ?? '(Unknown Model)'}
+            </Text>
+            <Text
+              size="sm"
+              color="dimmed"
+              sx={{
+                textOverflow: 'ellipsis',
+                maxWidth: 'min(400px, 80vw)',
+                overflow: 'hidden',
+                whiteSpace: 'nowrap',
+                minWidth: 0,
+              }}
+            >
+              {entityData?.name ?? '(Unknown Version)'}
+            </Text>
+          </>
+        ) : (
+          <div className="flex flex-[10]">
+            <Button
+              leftIcon={<IconEye size={14} strokeWidth={2.5} />}
+              onClick={() => setHideText(false)}
+              size="xs"
+              variant="outline"
+            >
+              Show model info
+            </Button>
+          </div>
+        )}
+      </Stack>
+      {!!entityData?.model?.user && (
+        <UserAvatar
+          withUsername
+          size="sm"
+          user={entityData.model.user}
+          avatarProps={{ size: 18 }}
+        />
+      )}
+    </Stack>
+  );
+
+  if (hideText) return <div className="flex h-full flex-[10] py-2">{El}</div>;
+
   return (
     <Link
       href={!!entityData ? `/models/${entityData.model.id}?modelVersionId=${entityData.id}` : '/'}
-      className="flex flex-[10]"
+      className="flex h-full flex-[10] py-2"
     >
-      <Stack spacing={8}>
-        <Stack spacing={0}>
-          <Text
-            size="lg"
-            fw={500}
-            sx={{
-              textOverflow: 'ellipsis',
-              maxWidth: 'min(400px, 80vw)',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              minWidth: 0,
-            }}
-          >
-            {entityData?.model?.name ?? '(Unknown Model)'}
-          </Text>
-          <Text
-            size="sm"
-            color="dimmed"
-            sx={{
-              textOverflow: 'ellipsis',
-              maxWidth: 'min(400px, 80vw)',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              minWidth: 0,
-            }}
-          >
-            {entityData?.name ?? '(Unknown Version)'}
-          </Text>
-        </Stack>
-        {!!entityData?.model?.user && (
-          <UserAvatar
-            withUsername
-            size="sm"
-            user={entityData.model.user}
-            avatarProps={{ size: 18 }}
-          />
-        )}
-      </Stack>
+      {El}
     </Link>
   );
 };
@@ -304,13 +333,23 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
           const ob = old.bids.find((o) => o.entityId === data.entityId);
           if (ob) {
             ob.totalAmount -= data.amount;
-            old.bids.sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count);
+            ob.count -= 1;
+            old.bids = old.bids
+              .filter((b) => b.totalAmount > 0)
+              .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count);
+            ob.position = old.bids.findIndex((o) => o.entityId === data.entityId) + 1;
           }
         })
       );
       queryUtils.auction.getMyBids.setData(undefined, (old) => {
         if (!old) return old;
         return old.filter((o) => o.id !== data.id);
+      });
+    },
+    onError(error) {
+      showErrorNotification({
+        title: 'Failed to delete bid',
+        error: new Error(error.message),
       });
     },
   });
