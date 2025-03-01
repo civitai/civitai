@@ -82,7 +82,8 @@ export const userCapCache = createCachedObject<UserCapCacheItem>({
         SUM(amount) as earned
       FROM buzzTransactions
       WHERE (
-        (type IN ('compensation')) -- Generation
+        (type IN ('compensation')) -- Generation Comp
+        OR (type = 'tip' AND fromAccountId = 0) -- Generation Tip
         OR (type = 'purchase' AND fromAccountId != 0) -- Early Access
       )
       AND toAccountType = 'user'
