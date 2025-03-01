@@ -10,7 +10,8 @@ export function getForecastedValue(
   toBank: number,
   pool: { size: { forecasted: number }; value: number }
 ) {
-  return (toBank / pool.size.forecasted) * pool.value;
+  // toBank / 1000 ensures we cap at $1 per 1000 buzz
+  return Math.min((toBank / pool.size.forecasted) * pool.value, toBank / 1000);
 }
 
 export function getCurrentValue(
