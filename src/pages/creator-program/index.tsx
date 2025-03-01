@@ -323,7 +323,12 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 component="a"
                 href={applyFormUrl}
                 target="_blank"
-                disabled={!availability.isAvailable || isBanned}
+                disabled={
+                  !availability.isAvailable ||
+                  isBanned ||
+                  !hasValidMembership ||
+                  !hasEnoughCreatorScore
+                }
               >
                 {availability.isAvailable
                   ? isJoined && !isBanned
