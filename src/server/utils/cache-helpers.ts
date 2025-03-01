@@ -358,6 +358,11 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
 export async function clearCacheByPattern(pattern: string) {
   const cleared: string[] = [];
 
+  if (!pattern.includes('*')) {
+    const deleted = await redis.del(pattern as RedisKeyTemplateCache);
+    return deleted;
+  }
+
   if (!env.REDIS_URL_DIRECT || env.REDIS_URL_DIRECT.length === 0) {
     console.log('No redis url found, skipping cache clear');
     return cleared;
