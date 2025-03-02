@@ -51,7 +51,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
             ...auctionSelect.bids.select,
             id: true,
             userId: true,
-            transactionId: true,
+            transactionIds: true,
           },
         },
       },
@@ -155,10 +155,12 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
         const refundedBidIds: number[] = [];
 
         for (const lostBid of lostBids) {
-          const refundResp = await withRetries(() =>
-            refundTransaction(lostBid.transactionId, 'Lost bid.')
+          const refundResps = await Promise.all(
+            lostBid.transactionIds.map((tid) =>
+              withRetries(() => refundTransaction(tid, 'Lost bid.'))
+            )
           );
-          if (!refundResp.transactionId) {
+          if (refundResps.some((t) => !t.transactionId)) {
             logToAxiom({
               name: 'handle-auctions',
               type: 'warning',
@@ -294,7 +296,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
             userId: recurringBid.userId,
             entityId: recurringBid.entityId,
             amount: recurringBid.amount,
-            transactionId,
+            transactionIds: [transactionId],
             fromRecurring: true,
           },
         });

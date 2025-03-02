@@ -12,16 +12,9 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelType,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
 
 import { logToAxiom } from '~/server/logging/client';
+import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
 import { REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -49,8 +42,10 @@ import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
+import { uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
@@ -58,11 +53,16 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
+import {
+  Availability,
+  CommercialUse,
+  ModelStatus,
+  ModelType,
+  ModelVersionEngagementType,
+} from '~/shared/utils/prisma/enums';
 import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { uploadImageFromUrl } from '~/server/services/image.service';
-import { addPostImage, createPost } from '~/server/services/post.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -1198,6 +1198,8 @@ export const earlyAccessPurchase = async ({
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
     });
+    if (!buzzTransaction.transactionId)
+      throw throwBadRequestError('Failed to create buzz transaction.');
 
     buzzTransactionId = buzzTransaction.transactionId;
     const accessRecord = await dbWrite.entityAccess.findFirst({

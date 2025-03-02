@@ -172,7 +172,6 @@ const genUsers = (num: number, includeCiv = false) => {
       false,
       'civitai',
       true,
-      true,
       '2022-11-13 00:00:00.000',
       null,
       null,
@@ -181,7 +180,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true,
       '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
       null,
-      '{Buzz}',
       null,
       '{"scores": {"total": 39079263, "users": 223000, "images": 2043471, "models": 36812792, "reportsAgainst": -8000, "reportsActioned": null}, "firstImage": "2022-11-09T17:39:48.137"}',
       '{"newsletterSubscriber": true}',
@@ -210,7 +208,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true, // shownsfw
       'test-mod', // username
       true, // isMod
-      false,
       '2022-11-13 00:00:00.000',
       null, // deletedAt
       null, // bannedAt
@@ -219,7 +216,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true,
       '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
       null,
-      '{Moderation,Buzz}', // onboardingSteps
       null,
       '{}', // meta
       '{}', // settings
@@ -246,7 +242,6 @@ const genUsers = (num: number, includeCiv = false) => {
       false, // shownsfw
       'test-newbie', // username
       false, // isMod
-      false,
       '2024-11-13 00:00:00.000',
       null, // deletedAt
       null, // bannedAt
@@ -255,7 +250,6 @@ const genUsers = (num: number, includeCiv = false) => {
       false,
       '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
       null,
-      '{Moderation,Buzz}',
       null,
       '{}', // meta
       '{}', // settings
@@ -282,7 +276,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true, // shownsfw
       'test-degen', // username
       false, // isMod
-      false,
       '2023-11-13 00:00:00.000',
       null, // deletedAt
       null, // bannedAt
@@ -291,7 +284,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true,
       '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
       null,
-      '{}',
       null,
       '{"scores": {"total": 374, "users": 300, "images": 70, "models": 4, "reportsActioned": 50}}', // meta
       '{}', // settings
@@ -318,7 +310,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true, // shownsfw
       'test-banned', // username
       false, // isMod
-      false,
       '2023-11-13 00:00:00.000',
       null, // deletedAt
       '2023-11-17 00:00:00.000', // bannedAt
@@ -327,7 +318,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true,
       '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
       null,
-      '{}',
       null,
       '{}', // meta
       '{}', // settings
@@ -354,7 +344,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true, // shownsfw
       'test-deleted', // username
       false, // isMod
-      false,
       '2023-11-13 00:00:00.000',
       '2023-11-17 00:00:00.000', // deletedAt
       null, // bannedAt
@@ -363,7 +352,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true,
       '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
       null,
-      '{}',
       null,
       '{}', // meta
       '{}', // settings
@@ -390,7 +378,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true, // shownsfw
       'test-muted', // username
       false, // isMod
-      false,
       '2023-11-13 00:00:00.000',
       null, // deletedAt
       null, // bannedAt
@@ -399,7 +386,6 @@ const genUsers = (num: number, includeCiv = false) => {
       true,
       '{"fp": "fp16", "size": "pruned", "format": "SafeTensor"}',
       null,
-      '{}',
       null,
       '{}', // meta
       '{}', // settings
@@ -457,7 +443,6 @@ const genUsers = (num: number, includeCiv = false) => {
         { value: username, weight: 20 },
       ]), // username
       fbool(0.01), // "isModerator"
-      fbool(0.01), // tos
       created, // "createdAt"
       randw([
         { value: null, weight: 100 },
@@ -482,11 +467,6 @@ const genUsers = (num: number, includeCiv = false) => {
         { value: 'overall', weight: 2 },
         { value: 'new_creators', weight: 1 },
       ]), // "leaderboardShowcase"
-      randw([
-        { value: null, weight: 2 },
-        { value: '{Buzz}', weight: 3 },
-        { value: '{Moderation,Buzz}', weight: 1 },
-      ]), // "onboardingSteps"
       null, // "profilePictureId" // TODO link with Image ID
       randw([
         { value: '{}', weight: 5 },
@@ -2817,9 +2797,9 @@ const genBids = (num: number, auctionIds: number[], userIds: number[], modelIds:
       faker.number.int({ min: 1, max: 5_000 }), // amount
       created, // createdAt
       fbool(0.05), // deleted
-      faker.string.uuid(), // transactionId
       fbool(0.1), // fromRecurring
       fbool(0.05), // isRefunded
+      `{}`, // transactionIds, ${faker.string.uuid()}, probably dont want these since we can't refund them
     ];
 
     ret.push(row);

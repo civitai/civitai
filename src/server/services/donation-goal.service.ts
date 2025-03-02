@@ -73,6 +73,9 @@ export const donateToGoal = async ({
       description: `Donation to ${goal.title}`,
       type: TransactionType.Donation,
     });
+    if (!transaction.transactionId) {
+      throw new Error('There was an error creating the transaction.');
+    }
 
     buzzTransactionId = transaction.transactionId;
 

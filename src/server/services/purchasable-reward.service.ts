@@ -1,5 +1,4 @@
 import { Prisma } from '@prisma/client';
-import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
 import {
   PurchasableRewardModeratorViewMode,
   PurchasableRewardViewMode,
@@ -22,6 +21,7 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { createEntityImages } from '~/server/services/image.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
 
 export const getPaginatedPurchasableRewards = async (
   input: GetPaginatedPurchasableRewardsSchema & { userId?: number }
@@ -285,6 +285,9 @@ export const purchasableRewardPurchase = async ({
     // Safeguard in case the above check fails :shrug:
     externalTransactionId: `purchasable-reward-purchase-${userId}-${purchasableRewardId}`,
   });
+  if (!transaction.transactionId) {
+    throw throwBadRequestError('Failed to create transaction');
+  }
 
   // Create record:
   const record = await dbWrite.userPurchasedRewards.create({

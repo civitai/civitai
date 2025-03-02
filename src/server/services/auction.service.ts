@@ -320,6 +320,7 @@ export const createBid = async ({
         select: {
           id: true,
           amount: true,
+          transactionIds: true,
           deleted: true,
         },
       },
@@ -366,6 +367,7 @@ export const createBid = async ({
         where: { id: previousBid.id },
         data: {
           amount: { increment: amount },
+          transactionIds: [...previousBid.transactionIds, transactionId],
         },
       });
     } else {
@@ -374,7 +376,9 @@ export const createBid = async ({
         data: {
           amount,
           deleted: false,
+          isRefunded: false,
           createdAt: now,
+          transactionIds: [transactionId],
         },
       });
     }
@@ -387,7 +391,7 @@ export const createBid = async ({
           auctionId,
           entityId,
           amount,
-          transactionId,
+          transactionIds: [transactionId],
         },
       });
     } catch (e) {
@@ -446,7 +450,7 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
     where: { id: bidId },
     select: {
       userId: true,
-      transactionId: true,
+      transactionIds: true,
       auction: {
         select: {
           startAt: true,
@@ -460,7 +464,9 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   const isActive = bid.auction.startAt <= now && bid.auction.endAt > now;
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
 
-  await withRetries(() => refundTransaction(bid.transactionId, 'Deleted bid.'));
+  for (const transactionId of bid.transactionIds) {
+    await withRetries(() => refundTransaction(transactionId, 'Deleted bid.'));
+  }
 
   await dbWrite.bid.update({
     where: { id: bidId },

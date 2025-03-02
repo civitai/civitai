@@ -3413,18 +3413,18 @@ model Auction {
 }
 
 model Bid {
-  id            Int      @id @default(autoincrement())
-  auctionId     Int
-  auction       Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
-  userId        Int
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  entityId      Int
-  amount        Int
-  createdAt     DateTime @default(now())
-  deleted       Boolean  @default(false)
-  transactionId String
-  isRefunded    Boolean  @default(false)
-  fromRecurring Boolean  @default(false)
+  id             Int      @id @default(autoincrement())
+  auctionId      Int
+  auction        Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityId       Int
+  amount         Int
+  createdAt      DateTime @default(now())
+  deleted        Boolean  @default(false)
+  transactionIds String[] @default([])
+  isRefunded     Boolean  @default(false)
+  fromRecurring  Boolean  @default(false)
 
   @@unique([auctionId, userId, entityId])
 }

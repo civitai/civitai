@@ -2575,7 +2575,7 @@ export interface Bid {
   amount: number;
   createdAt: Date;
   deleted: boolean;
-  transactionId: string;
+  transactionIds: string[];
   isRefunded: boolean;
   fromRecurring: boolean;
 }
