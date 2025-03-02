@@ -363,9 +363,9 @@ async function handleSuccess({
               `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(
                 x.tag,
                 x.source ?? source
-              )}, '${x.source ?? source}'), ${
-                shouldIgnore(x.tag, x.source ?? source) ? 'NOW()' : 'null'
-              }`
+              )}, '${x.source ?? source}', ${
+                shouldIgnore(x.tag, x.source ?? source) ? 'NOW()' : null
+              })`
           )
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
