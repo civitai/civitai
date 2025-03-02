@@ -270,4 +270,8 @@ function TwSlide({ children, ...props }: SlideProps) {
   );
 }
 
+function TwIndicators({ children }: { children?: React.ReactNode }) {
+  return <>{children}</>;
+}
+
 TwCarousel.Slide = TwSlide;

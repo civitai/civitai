@@ -4683,7 +4683,7 @@ const imagesAsPostsInfiniteProps = {
   canReview: true,
 };
 
-export default function Test() {
+function Test() {
   const [count, setCount] = useState(0);
 
   // // useEffect(() => {
@@ -5037,6 +5037,7 @@ function ExampleSelect() {
 }
 
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { Page } from '~/components/AppLayout/Page';
 
 function ExamplePopover() {
   return (
@@ -5079,3 +5080,6 @@ function ExamplePopover() {
     </div>
   );
 }
+
+export default Test;
+// export default Page(Test, { getLayout: (page) => <main className="size-full">{page}</main> });
