@@ -67,6 +67,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
+import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -1051,6 +1052,15 @@ function ResourceSelectCard({
                       )}
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
+                    <Group className="absolute bottom-2 left-2 flex items-center gap-1">
+                      <Badge variant="light" radius="xl" size="sm">
+                        <ModelVersionPopularity
+                          popularity={selectedVersion.popularityRank}
+                          isFeatured={selectedVersion.isFeatured}
+                          viewable={selectSource === 'generation'}
+                        />
+                      </Badge>
+                    </Group>
                     <Group className="absolute bottom-2 right-2 flex items-center gap-1">
                       {data.availability === Availability.Private && (
                         <Tooltip

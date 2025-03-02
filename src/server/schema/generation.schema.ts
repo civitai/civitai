@@ -61,6 +61,8 @@ const generationResourceSchemaBase = z.object({
       fileName: z.string(),
     })
     .optional(),
+  popularityRank: z.number().optional(),
+  isFeatured: z.boolean().optional(),
 });
 export type GenerationResourceSchema = z.infer<typeof generationResourceSchema>;
 export const generationResourceSchema = generationResourceSchemaBase.extend({

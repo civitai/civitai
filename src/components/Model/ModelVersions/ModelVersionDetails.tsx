@@ -529,7 +529,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     file: ModelById['modelVersions'][number]['files'][number],
     showPop = false
   ) => (
-    <Group position="apart" noWrap spacing={0} className="cursor-default">
+    <Group position="apart" noWrap spacing={0}>
       <ModelVersionPopularity
         isFeatured={version.isFeatured}
         popularity={version.popularityRank}
