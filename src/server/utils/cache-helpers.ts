@@ -358,6 +358,12 @@ export async function bustFetchThroughCache(key: RedisKeyTemplateCache) {
 export async function clearCacheByPattern(pattern: string) {
   const cleared: string[] = [];
 
+  if (!pattern.includes('*')) {
+    await redis.del(pattern as RedisKeyTemplateCache);
+    cleared.push(pattern);
+    return cleared;
+  }
+
   if (!env.REDIS_URL_DIRECT || env.REDIS_URL_DIRECT.length === 0) {
     console.log('No redis url found, skipping cache clear');
     return cleared;
@@ -412,4 +418,53 @@ export async function clearCacheByPattern(pattern: string) {
   );
 
   return cleared;
+}
+
+export async function fetchCacheByPattern(pattern: string) {
+  const keysArr: string[] = [];
+  const redisUrls = [env.REDIS_SYS_URL, ...(env.REDIS_URL_DIRECT ?? [])].filter(isDefined);
+
+  if (redisUrls.length === 0) {
+    console.log('No redis url found, skipping cache clear');
+    return keysArr;
+  }
+
+  await Promise.all(
+    redisUrls.map(async (url) => {
+      let cursor: number | undefined;
+      const redis = createClient({
+        url,
+        socket: {
+          reconnectStrategy(retries) {
+            log(`Redis reconnecting, retry ${retries}`);
+            return Math.min(retries * 100, 3000);
+          },
+          connectTimeout: env.REDIS_TIMEOUT,
+        },
+        pingInterval: 4 * 60 * 1000,
+      });
+      console.log(`Connecting to redis: ${url}`);
+
+      try {
+        await redis.connect();
+        while (cursor !== 0) {
+          console.log('Scanning:', cursor);
+          const reply = await redis.scan(cursor ?? 0, {
+            MATCH: pattern,
+            COUNT: 10000000,
+          });
+
+          cursor = reply.cursor;
+          const keys = reply.keys as unknown as RedisKeyTemplateCache[];
+          keysArr.push(...keys);
+          console.log('Cursor:', cursor);
+        }
+        console.log('Done clearing cache');
+      } finally {
+        await redis.quit();
+      }
+    })
+  );
+
+  return keysArr;
 }

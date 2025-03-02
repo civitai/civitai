@@ -110,7 +110,7 @@ function CreatorsClubV1() {
                       Turn your Buzz into earnings!{' '}
                       {!availability.isAvailable && (
                         <>
-                          Launching on <Countdown endTime={availability.availableDate} />
+                          Launching in <Countdown endTime={availability.availableDate} />
                         </>
                       )}
                     </Title>
@@ -138,6 +138,7 @@ function CreatorsClubV1() {
           </Grid>
           <HowItWorksSection />
           <JoinSection applyFormUrl={applyFormUrl} />
+          <FAQ />
         </Stack>
       </Container>
     </>
@@ -146,15 +147,15 @@ function CreatorsClubV1() {
 
 const HowItWorks: { text: string; icon: React.ReactNode }[] = [
   {
-    text: 'Earn Buzz!',
+    text: 'Earn Buzz',
     icon: <IconBolt size={sizing.HowItWorks.icons} />,
   },
   {
-    text: 'Bank Your Buzz!',
+    text: 'Bank your Buzz',
     icon: <IconPig size={sizing.HowItWorks.icons} />,
   },
   {
-    text: 'Share the Pool',
+    text: 'Claim your Share',
     icon: <IconPercentage10 size={sizing.HowItWorks.icons} />,
   },
 ];
@@ -195,23 +196,32 @@ const HowItWorksSection = () => {
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
+                  <IconPercentage10 size={24} />
+                  <Text>
+                    Each month Civitai allocates a Creator Compensation Pool from a portion of our
+                    revenue
+                  </Text>
+                </Group>
+                <Divider />
+                <Group noWrap w="100%">
                   <IconPig size={24} />
                   <Text>
-                    During the Banking Phase, deposit Buzz to the Bank to secure a share of the
-                    Compensation Pool!
+                    During the Banking Phase, you Bank Buzz to secure your share of the Compensation
+                    Pool
                   </Text>
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
                   <IconLogout size={24} />
                   <Text>
-                    During the Extraction Phase, choose to keep Buzz in for payout or extract it!
+                    During the Extraction Phase, you can choose to keep Buzz in the Bank to get paid
+                    or Extract it to save it for the future
                   </Text>
                 </Group>
                 <Divider />
                 <Group noWrap w="100%">
                   <IconMoneybag size={24} />
-                  <Text>Get paid!</Text>
+                  <Text fw={700}>Get paid!</Text>
                 </Group>
               </Stack>
             </Group>
@@ -313,7 +323,12 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
                 component="a"
                 href={applyFormUrl}
                 target="_blank"
-                disabled={!availability.isAvailable || isBanned}
+                disabled={
+                  !availability.isAvailable ||
+                  isBanned ||
+                  !hasValidMembership ||
+                  !hasEnoughCreatorScore
+                }
               >
                 {availability.isAvailable
                   ? isJoined && !isBanned
@@ -348,6 +363,65 @@ const JoinSection = ({ applyFormUrl }: { applyFormUrl: string }) => {
           </Paper>
         </Grid.Col>
       </Grid>
+    </Stack>
+  );
+};
+
+const faq: { q: string; a: string | React.ReactNode }[] = [
+  {
+    q: 'Is this voluntary?',
+    a: 'Yes! If you’re eligible for the program, but don’t want to participate, nobody’s forcing you! Even if you do join the program, but don’t want to contribute Buzz, that’s fine – there’s no requirement to Bank anything.',
+  },
+  {
+    q: 'Would buying a higher Membership Tier (Silver or Gold) increase my earnings?',
+    a: 'Not your earnings, as such, but it does increase the maximum you can Bank each month.',
+  },
+  {
+    q: 'Will I get my Banked Buzz back?',
+    a: 'No, your Banked Buzz will be consumed each month, unless you choose to Extract it during the Extraction Phase!',
+  },
+  {
+    q: 'What types of Buzz can be Banked?',
+    a: 'Any earned Yellow Buzz can be Banked, up to your cap. This includes Buzz from sources such as Early Access, Tips, and Generator Compensation.',
+  },
+  {
+    q: 'What happens if cancel my Civitai Membership?',
+    a: 'If you deactivate your Subscription you’ll remain in the Program until the end of the month, allowing you to Bank your Buzz and withdraw through the end of the period.',
+  },
+  {
+    q: 'When, and how, do I sign up with your Payment Partner to withdraw my cash?',
+    a: 'When you have at least $50 in Ready to Withdraw status, you’ll be invited to set up your account with our Payment Partner, via the email tied to your Civitai account, and a link on the Creator Program interface.',
+  },
+  {
+    q: 'Must I withdraw my “Ready to Withdraw” funds each month?',
+    a: 'No, funds can accumulate in your account until you’re ready to pay out! There’s no requirement to pay out each month.',
+  },
+];
+
+const FAQ = () => {
+  const { cx, classes, theme } = useStyles();
+
+  return (
+    <Stack className={classes.section}>
+      <Stack>
+        <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+          Frequently asked questions
+        </Title>
+        <Accordion variant="default">
+          {faq.map(({ q, a }, index) => (
+            <Accordion.Item key={index} value={`q${index}`}>
+              <Accordion.Control>
+                <Group spacing={8}>
+                  <Text size="lg" weight={700}>
+                    {q}
+                  </Text>
+                </Group>
+              </Accordion.Control>
+              <Accordion.Panel>{typeof a === 'string' ? <Text>{a}</Text> : a}</Accordion.Panel>
+            </Accordion.Item>
+          ))}
+        </Accordion>
+      </Stack>
     </Stack>
   );
 };

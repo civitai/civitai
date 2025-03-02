@@ -125,7 +125,8 @@ export function isHolidaysTime() {
   return today.month() === 11;
 }
 
-export function roundMinutes(date: Date) {
+export function roundMinutes(d: Date | string) {
+  const date = dayjs(d).toDate();
   date.setHours(date.getHours() + Math.round(date.getMinutes() / 60));
   date.setMinutes(0, 0, 0); // Resets also seconds and milliseconds
 
