@@ -1,15 +1,36 @@
-import { Button, Center, Divider, Group, Loader, Stack, Text, Title } from '@mantine/core';
-import { IconAlertCircle, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
-import React, { useMemo } from 'react';
+import {
+  ActionIcon,
+  Button,
+  Center,
+  Divider,
+  Group,
+  Loader,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from '@mantine/core';
+import {
+  IconAlertCircle,
+  IconLayoutSidebarLeftExpand,
+  IconSearch,
+  IconX,
+} from '@tabler/icons-react';
+import React, { useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ModelMyBidCard, ModelMyRecurringBidCard } from '~/components/Auction/AuctionPlacementCard';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import type { GetMyBidsReturn, GetMyRecurringBidsReturn } from '~/server/services/auction.service';
+import { AuctionType } from '~/shared/utils/prisma/enums';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 export const AuctionMyBids = () => {
   const currentUser = useCurrentUser();
   const { drawerToggle } = useAuctionContext();
+  const [searchText, setSearchText] = useState<string>('');
+  const searchLower = searchText.toLowerCase();
 
   const {
     data: bidData = [],
@@ -31,8 +52,36 @@ export const AuctionMyBids = () => {
   const isLoadingBidRecurringData =
     isInitialLoadingBidRecurringData || isRefetchingBidRecurringData;
 
-  const activeBids = useMemo(() => bidData.filter((bd) => bd.isActive), [bidData]);
-  const pastBids = useMemo(() => bidData.filter((bd) => !bd.isActive), [bidData]);
+  const hasSearchText = (
+    base: GetMyRecurringBidsReturn[number]['auctionBase'],
+    d: GetMyBidsReturn[number]['entityData']
+  ) => {
+    if (!searchText || !searchText.length) return true;
+    if (base.type === AuctionType.Model) {
+      return (
+        (d?.name?.toLowerCase() ?? '').includes(searchLower) ||
+        (d?.model?.name?.toLowerCase() ?? '').includes(searchLower)
+      );
+    }
+    return true;
+  };
+
+  const activeBids = useMemo(
+    () =>
+      bidData
+        .filter((bd) => bd.isActive && hasSearchText(bd.auction.auctionBase, bd.entityData))
+        .filter(isDefined),
+    [bidData, searchText]
+  );
+  const pastBids = useMemo(
+    () =>
+      bidData.filter((bd) => !bd.isActive && hasSearchText(bd.auction.auctionBase, bd.entityData)),
+    [bidData, searchText]
+  );
+  const recurringBids = useMemo(
+    () => bidRecurringData.filter((bd) => hasSearchText(bd.auctionBase, bd.entityData)),
+    [bidRecurringData, searchText]
+  );
 
   return (
     <Stack w="100%" spacing="sm">
@@ -47,6 +96,20 @@ export const AuctionMyBids = () => {
       </Group>
 
       <Title order={3}>My Bids</Title>
+      <TextInput
+        icon={<IconSearch size={16} />}
+        placeholder="Filter by model..."
+        value={searchText}
+        maxLength={150}
+        disabled={!bidData.length && !bidRecurringData.length}
+        onChange={(event) => setSearchText(event.currentTarget.value)}
+        rightSection={
+          <ActionIcon onClick={() => setSearchText('')} disabled={!searchText.length}>
+            <IconX size={16} />
+          </ActionIcon>
+        }
+      />
+
       <Divider my="sm" />
 
       <Title order={5}>Active Bids</Title>
@@ -62,7 +125,7 @@ export const AuctionMyBids = () => {
         </Center>
       ) : !activeBids.length ? (
         <Center my="lg">
-          <Stack>
+          <Stack spacing="xs">
             <Text>No active bids.</Text>
             <Text>Choose an auction in the list to get started.</Text>
           </Stack>
@@ -88,7 +151,7 @@ export const AuctionMyBids = () => {
             <Text>There was an error fetching your bid data. Please try again.</Text>
           </AlertWithIcon>
         </Center>
-      ) : !bidRecurringData.length ? (
+      ) : !recurringBids.length ? (
         <Center my="lg">
           <Stack>
             <Text>No recurring bids.</Text>
@@ -96,7 +159,7 @@ export const AuctionMyBids = () => {
         </Center>
       ) : (
         <Stack>
-          {bidRecurringData.map((ab) => (
+          {recurringBids.map((ab) => (
             <ModelMyRecurringBidCard key={`${ab.auctionBase.id}-${ab.entityId}`} data={ab} />
           ))}
         </Stack>

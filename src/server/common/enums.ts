@@ -267,6 +267,7 @@ export enum EntityAccessPermission {
   All = 1 + 2, // Sum of all prev. permissions.
 }
 
+// nb: when updating this, similar updates must be made to the notification DB
 export enum NotificationCategory {
   Comment = 'Comment',
   Update = 'Update',
