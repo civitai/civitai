@@ -1,15 +1,23 @@
 import dayjs from 'dayjs';
 import { uniq } from 'lodash-es';
 import { constants, FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
+import type { DetailsWonAuction } from '~/server/notifications/auction.notifications';
 import { modelVersionResourceCache } from '~/server/redis/caches';
 import { TransactionType } from '~/server/schema/buzz.schema';
-import { auctionBaseSelect, auctionSelect, prepareBids } from '~/server/services/auction.service';
+import {
+  auctionBaseSelect,
+  auctionSelect,
+  prepareBids,
+  type PrepareBidsReturn,
+} from '~/server/services/auction.service';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { bustFeaturedModelsCache } from '~/server/services/model.service';
+import { createNotification } from '~/server/services/notification.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { AuctionType, BuzzAccountType, HomeBlockType } from '~/shared/utils/prisma/enums';
@@ -20,6 +28,11 @@ const collectionNote = 'from auction';
 const modelsToAddToCollection = 3;
 
 const log = createLogger(jobName, 'magenta');
+
+type WinnerType = PrepareBidsReturn[number] & {
+  userIds: number[];
+  auctionId: number;
+};
 
 export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
   const [, setLastRun] = await getJobDate(jobName);
@@ -68,14 +81,25 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
 
       const { winners, losers } = sortedBids.reduce(
         (result, r) => {
+          const matchUserIds = auctionRow.bids
+            .filter((b) => b.entityId === r.entityId)
+            .map((b) => b.userId);
+          const d = {
+            ...r,
+            userIds: matchUserIds,
+            auctionId: auctionRow.id,
+          };
           if (r.totalAmount >= auctionRow.minPrice) {
-            result.winners.push(r);
+            result.winners.push(d);
           } else {
-            result.losers.push(r);
+            result.losers.push(d);
           }
           return result;
         },
-        { winners: [] as typeof sortedBids, losers: [] as typeof sortedBids }
+        {
+          winners: [] as WinnerType[],
+          losers: [] as WinnerType[],
+        }
       );
 
       log('winners', winners.length, 'losers', losers.length);
@@ -83,6 +107,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
       // Feature the winners
       if (winners.length > 0) {
         const winnerIds = winners.map((w) => w.entityId);
+        const entityNames = Object.fromEntries(winnerIds.map((w) => [w, null as string | null]));
 
         const thisAuctionType = auctionRow.auctionBase.type;
         if (thisAuctionType === AuctionType.Model) {
@@ -108,8 +133,14 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
               id: true,
               nsfwLevel: true,
               modelId: true,
+              model: {
+                select: { name: true },
+              },
             },
           });
+
+          modelData.forEach((md) => (entityNames[md.id] = md.model.name));
+
           // get top matching models
           const modelIds = uniq(
             modelData
@@ -143,6 +174,21 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
           await homeBlockCacheBust(HomeBlockType.Collection, FEATURED_MODEL_COLLECTION_ID);
           await bustFeaturedModelsCache();
           await modelVersionResourceCache.bust(winnerIds);
+        }
+
+        // for each auction that won, make a notification for all the contributing winners
+        for (const winner of winners) {
+          await createNotification({
+            userIds: winner.userIds,
+            category: NotificationCategory.System,
+            type: 'won-auction',
+            key: `won-auction:${winner.auctionId}:${winner.entityId}`,
+            details: {
+              name: entityNames[winner.entityId],
+              position: winner.position,
+              until: 'tomorrow', // TODO hardcoded for now
+            } as DetailsWonAuction,
+          });
         }
       }
 
@@ -183,7 +229,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
         });
       }
 
-      dbWrite.auction.update({
+      await dbWrite.auction.update({
         where: { id: auctionRow.id },
         data: {
           finalized: true,

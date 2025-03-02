@@ -83,6 +83,7 @@ export async function getAllAuctions() {
   });
 }
 
+export type PrepareBidsReturn = ReturnType<typeof prepareBids>;
 export const prepareBids = (a: AuctionType) => {
   return Object.values(
     a.bids
@@ -360,7 +361,6 @@ export const createBid = async ({
 
   if (auctionData.bids?.length > 0) {
     // if there already exists a bid, either add to it or remove the deleted status
-
     const previousBid = auctionData.bids[0];
     if (!previousBid.deleted) {
       await dbWrite.bid.update({
@@ -436,8 +436,20 @@ export const createBid = async ({
     });
   }
 
-  // TODO improve return
+  // TODO fetch the entity that was knocked out (if any)
+  //  get all the bids userIds
 
+  // await createNotification({
+  //   userIds: loser.userIds,
+  //   category: NotificationCategory.System,
+  //   type: 'dropped-out-auction',
+  //   key: `dropped-out-auction:${auctionId}:${loser.entityId}`,
+  //   details: {
+  //     name: loser.entityName,
+  //   } as DetailsDroppedOutAuction,
+  // });
+
+  // improve return?
   return {
     slug: auctionData.auctionBase.slug,
   };
