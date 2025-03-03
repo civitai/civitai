@@ -1,35 +1,12 @@
-import { Box, Button, CloseButton, Table, Text, useMantineTheme } from '@mantine/core';
-import { useLocalStorage, useSessionStorage } from '@mantine/hooks';
+import { CloseButton, Table, Text, useMantineTheme } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import React, {
-  FC,
-  Key,
-  createContext,
-  useCallback,
-  useContext,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
-import { TypeOf, ZodAny, ZodArray, ZodEffects, ZodObject, ZodString, ZodTypeAny, z } from 'zod';
-import { StoreApi, create, createStore } from 'zustand';
+import React, { useCallback, useState } from 'react';
+import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
-import { Announcement } from '~/components/Announcements/Announcement';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { IntersectionObserverProvider } from '~/components/IntersectionObserver/IntersectionObserverProvider';
-import { IsClient } from '~/components/IsClient/IsClient';
-import OnboardingWizard from '~/components/Onboarding/OnboardingWizard';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { Form } from '~/libs/form';
-import { Watch } from '~/libs/form/components/Watch';
-import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
+
 import createSlots from '~/libs/slots/create-slots';
 import { getRandomInt } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
-import LoginModal from '~/components/Login/LoginModal';
-import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 
 const array = new Array(100).fill(0).map(() => getRandomInt(100, 400));
 
@@ -4699,7 +4676,7 @@ function Test() {
   // }, []);
 
   return (
-    <IsClient>
+    <div>
       {/* <div className="container flex items-center gap-2 pb-2">
         <span>{count}</span>
         <Button
@@ -4744,7 +4721,7 @@ function Test() {
         <ExamplePopover />
       </div> */}
       <ImagesAsPostsInfinite {...imagesAsPostsInfiniteProps} />
-    </IsClient>
+    </div>
   );
 }
 

@@ -72,7 +72,6 @@
     "@headlessui/react": "2.2",
     "@hookform/resolvers": "^2.9.10",
     "@mailchimp/mailchimp_marketing": "^3.0.80",
-    "@mantine/carousel": "^5.10.4",
     "@mantine/core": "^5.10.4",
     "@mantine/dates": "^5.10.4",
     "@mantine/dropzone": "^5.10.4",

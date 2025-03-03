@@ -185,6 +185,9 @@ module.exports = {
           },
           '.scrollbar-thin': {
             scrollbarWidth: 'thin'
+          },
+          '.transform-3d': {
+            transform: 'translate3d(0, 0, 0)'
           }
         }),
         addVariant('not-first', ({modifySelectors, separator}) => {
