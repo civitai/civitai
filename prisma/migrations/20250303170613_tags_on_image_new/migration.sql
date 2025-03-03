@@ -52,8 +52,7 @@ $$
 LANGUAGE plpgsql;
 
 
-CREATE VIEW "TagsOnImageDetails"
-AS
+CREATE OR REPLACE VIEW "TagsOnImageDetails" AS
 SELECT
   "imageId",
   "tagId",
@@ -68,7 +67,7 @@ SELECT
   END AS sourceId,
   CASE WHEN ("attributes" >> 11) & 1 = 1 THEN TRUE ELSE FALSE END AS automated,
   CASE WHEN ("attributes" >> 10) & 1 = 1 THEN TRUE ELSE FALSE END AS disabled,
-  CASE WHEN ("attributes" >> 9) & 1 = 1 THEN TRUE ELSE FALSE END AS needs_review,
+  CASE WHEN ("attributes" >> 9) & 1 = 1 THEN TRUE ELSE FALSE END AS needsReview,
   CASE WHEN ("attributes" >> 8) & 1 = 1 THEN TRUE ELSE FALSE END AS reserved_1,
   CASE WHEN ("attributes" >> 7) & 1 = 1 THEN TRUE ELSE FALSE END AS reserved_2,
   ("attributes" & 127) AS confidence
