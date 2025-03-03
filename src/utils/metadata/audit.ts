@@ -20,10 +20,13 @@ const blockedRegex = blocked.map((word) => ({
   word,
   regex: tokenRegex(word),
 }));
-const blockedNSFWRegex = blockedNSFW.map((word) => ({
-  word,
-  regex: tokenRegex(word),
-}));
+const blockedNSFWRegex = [
+  ...blockedRegex,
+  ...blockedNSFW.map((word) => ({
+    word,
+    regex: tokenRegex(word),
+  })),
+];
 export const auditMetaData = (meta: ImageMetaProps | undefined, nsfw: boolean) => {
   if (!meta) return { blockedFor: [], success: true };
   const prompt = normalizeText(meta.prompt);
@@ -54,7 +57,9 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
   else if (inappropriate === 'poi')
     return { blockedFor: ['Inappropriate real person content'], success: false };
 
-  for (const { word, regex } of blockedNSFWRegex) {
+  const nsfw = includesNsfw(prompt);
+  const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
+  for (const { word, regex } of blockList) {
     if (regex.test(prompt)) return { blockedFor: [word], success: false };
   }
 
@@ -378,6 +383,21 @@ export function includesInappropriate(
   return false;
 }
 
+export function includesBlocked(
+  input: { prompt?: string; negativePrompt?: string },
+  nsfw?: boolean
+) {
+  if (!input.prompt) return false;
+  const prompt = normalizeText(input.prompt); // Parse HTML Entities
+  nsfw ??= !!includesNsfw(prompt);
+  const blockList = nsfw ? blockedNSFWRegex : blockedRegex;
+
+  for (const { regex } of blockList) {
+    if (regex.test(prompt)) return true;
+  }
+  return false;
+}
+
 // #endregion [inappropriate]
 
 // #region [highlight]
@@ -485,13 +505,15 @@ export function cleanPrompt({
   prompt = normalizeText(prompt); // Parse HTML Entities
   negativePrompt = normalizeText(negativePrompt);
 
+  // Determine if the prompt is nsfw
+  const nsfw = includesNsfw(prompt);
+
   // Remove blocked nsfw words
-  for (const { word } of blockedNSFWRegex) {
+  const blocked = nsfw ? blockedNSFWRegex : blockedRegex;
+  for (const { word } of blocked) {
     prompt = promptWordReplace(prompt, word);
   }
 
-  // Determine if the prompt is nsfw
-  const nsfw = includesNsfw(prompt);
   if (nsfw) {
     // Remove minor references
     prompt = highlightMinor(prompt, () => '');

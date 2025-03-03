@@ -18,6 +18,7 @@ import {
   highlightInappropriate,
   includesInappropriate,
   cleanPrompt,
+  includesBlocked,
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 
@@ -64,10 +65,11 @@ export default function MetadataTester() {
       prompt = normalizeText(prompt);
       negativePrompt = normalizeText(negativePrompt);
       const isInappropriate = includesInappropriate({ prompt, negativePrompt }) !== false;
+      const isBlocked = includesBlocked({ prompt, negativePrompt });
       const tags = getTagsFromPrompt(prompt) || [];
       const highlighted = highlightInappropriate({ prompt, negativePrompt }) ?? prompt;
       const replaced = cleanPrompt({ prompt, negativePrompt });
-      if (isInappropriate) {
+      if (isInappropriate || isBlocked) {
         failed.add({ highlighted, replaced, tags });
       } else {
         passed.add({ highlighted, replaced, tags });
