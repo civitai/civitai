@@ -571,11 +571,11 @@ function ResourceHitList({
     selectedTab === 'featured'
       ? filtered.sort((a, b) => {
           if (!featured) return 0;
-          const aIndex = featured.findIndex((fm) => fm.modelId === a.id);
-          const bIndex = featured.findIndex((fm) => fm.modelId === b.id);
-          if (aIndex === -1) return 1;
-          if (bIndex === -1) return -1;
-          return aIndex - bIndex;
+          const aPos = featured.find((fm) => fm.modelId === a.id)?.position;
+          const bPos = featured.find((fm) => fm.modelId === b.id)?.position;
+          if (!aPos) return 1;
+          if (!bPos) return -1;
+          return aPos - bPos;
         })
       : filtered;
   const topItems = selectedTab === 'featured' ? filteredSorted.slice(0, 3) : [];
