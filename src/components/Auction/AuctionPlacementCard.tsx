@@ -126,9 +126,6 @@ const SectionPosition = ({
 };
 
 const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefined }) => {
-  const { userBrowsingLevel } = useBrowsingLevelContext();
-  const blurNsfw = !!image ? !Flags.hasFlag(userBrowsingLevel, image.nsfwLevel) : false;
-
   return (
     <div className="relative h-[100px]">
       {image ? (
@@ -136,7 +133,7 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
           {(safe) => (
             <>
               <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-              {!safe || blurNsfw ? (
+              {!safe ? (
                 !image.hash ? (
                   <Skeleton
                     animate={false}
@@ -187,8 +184,13 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
 
 const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] }) => {
   const { blurLevels } = useBrowsingLevelContext();
-  const blurNsfw = !!entityData ? Flags.hasFlag(blurLevels, entityData.nsfwLevel) : false;
+  const blurNsfw = !!entityData ? Flags.intersects(blurLevels, entityData.nsfwLevel) : false;
   const [hideText, setHideText] = useState(blurNsfw);
+
+  // state isn't being updated if entityData is initially undefined or the blurLevels change
+  useEffect(() => {
+    setHideText(blurNsfw);
+  }, [blurNsfw]);
 
   const El = (
     <Stack spacing={8} justify="space-around">
