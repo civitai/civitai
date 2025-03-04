@@ -3911,8 +3911,18 @@ async function removeNameReference(images: number[]) {
     `;
 
     // Remove tags
+    // TODO.TagsOnImage - remove this after the migration
     await dbWrite.$executeRaw`
       DELETE FROM "TagsOnImage" toi
+      USING "TagsOnTags" tot
+      WHERE toi."imageId" IN (${Prisma.join(images)})
+        AND toi."tagId" = tot."toTagId"
+        AND tot."fromTagId" IN (SELECT id FROM "Tag" WHERE name = 'real person');
+    `;
+
+    // Remove tags
+    await dbWrite.$executeRaw`
+      DELETE FROM "TagsOnImageNew" toi
       USING "TagsOnTags" tot
       WHERE toi."imageId" IN (${Prisma.join(images)})
         AND toi."tagId" = tot."toTagId"

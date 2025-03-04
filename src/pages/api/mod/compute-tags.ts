@@ -46,6 +46,8 @@ export default ModEndpoint(
         `Adding batch ${i} to ${Math.min(i + batchSize, toAdd.length)} of ${toAdd.length} tags`
       );
       const json = JSON.stringify(batch);
+
+      // TODO.TagsOnImage - remove this after the migration
       await dbWrite.$executeRaw`
         WITH image_tags AS (
           SELECT
@@ -63,6 +65,18 @@ export default ModEndpoint(
         FROM image_tags it
         JOIN "Tag" t ON t.name = it.tag
         ON CONFLICT ("imageId", "tagId") DO NOTHING;
+      `;
+
+      await dbWrite.$executeRaw`
+        WITH image_tags AS (
+          SELECT
+            (value ->> 'imageId')::int AS id,
+            value ->> 'tag' AS tag
+          FROM json_array_elements(${json}::json)
+        )
+        SELECT upsert_tag_on_image(it.id, t.id, 'Computed',  70, true)
+        FROM image_tags it
+        JOIN "Tag" t ON t.name = it.tag;
       `;
 
       // Recompute the nsfw level

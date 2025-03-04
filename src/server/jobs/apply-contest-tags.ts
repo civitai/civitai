@@ -26,6 +26,7 @@ export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', a
   const postTagIds = Prisma.join(postTags.map((t) => t.id));
   // Apply tags to images
   // --------------------------------------------
+  // TODO.TagsOnImage - remove this after the migration
   await dbWrite.$executeRaw`
     -- Apply contest tags
     WITH affected AS (
@@ -50,6 +51,26 @@ export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', a
     FROM affected a
     JOIN "Tag" t ON t.id IN (${postTagIds})
     ON CONFLICT ("tagId", "imageId") DO NOTHING;
+  `;
+
+  await dbWrite.$executeRaw`
+    -- Apply contest tags
+    WITH affected AS (
+      SELECT DISTINCT i.id
+      FROM "Image" i
+      JOIN "TagsOnPost" top ON top."postId" = i."postId"
+      WHERE top."tagId" IN (${postTagIds}) AND i."createdAt" > ${lastApplied}
+
+      UNION
+
+      SELECT DISTINCT i.id
+      FROM "TagsOnPost" top
+      JOIN "Image" i ON i."postId" = top."postId"
+      WHERE top."tagId" IN (${postTagIds}) AND top."createdAt" > ${lastApplied}
+    )
+    SELECT upsert_tag_on_image(a.id, t.id, 'User', 100, true)
+    FROM affected a
+    JOIN "Tag" t ON t.id IN (${postTagIds});
   `;
 
   // Update the last sent time
