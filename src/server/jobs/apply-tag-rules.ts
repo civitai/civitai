@@ -85,6 +85,7 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
     const end = cursor;
     log(`Updating images ${start} - ${end}`);
     return async () => {
+      // TODO.TagsOnImage - remove this after the migration
       await dbWrite.$executeRaw`
         INSERT INTO "TagsOnImage"("imageId", "tagId", automated, confidence, "needsReview", source)
         SELECT "imageId", ${fromId}, automated, confidence, toi."needsReview", source
@@ -96,6 +97,17 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
           AND EXISTS (SELECT 1 FROM "Image" WHERE id = toi."imageId") -- Ensure image exists
           ${sinceClause}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET confidence = excluded.confidence, source = excluded.source;
+      `;
+
+      await dbWrite.$executeRaw`
+        SELECT upsert_tag_on_image(toi."imageId",  ${fromId}, toi."source", toi."confidence", toi."automated", null, "needsReview")
+        FROM "TagsOnImage" toi
+        WHERE "tagId" = ${toId}
+          AND "disabledAt" IS NULL
+          AND "imageId" >= ${start}
+          AND "imageId" < ${end}
+          AND EXISTS (SELECT 1 FROM "Image" WHERE id = toi."imageId") -- Ensure image exists
+          ${sinceClause}
       `;
     };
   }, 3);
@@ -142,8 +154,18 @@ async function deleteTag({ toId }: TagRule, maxImageId: number, since?: Date) {
     const end = cursor;
     log(`Updating images ${start} - ${end}`);
     return async () => {
+      // TODO.TagsOnImage - remove this after the migration
       await dbWrite.$executeRaw`
         UPDATE "TagsOnImage" SET disabled = true, "disabledAt" = now(), "disabledReason" = 'Replaced'
+        WHERE "tagId" = ${toId} AND "disabledAt" IS NULL
+          AND "imageId" >= ${start}
+          AND "imageId" < ${end}
+          ${sinceClause}
+      `;
+
+      await dbWrite.$executeRaw`
+        SELECT upsert_tag_on_image("imageId",  ${toId}, null, null, null, true, null)
+        FROM "TagsOnImage"
         WHERE "tagId" = ${toId} AND "disabledAt" IS NULL
           AND "imageId" >= ${start}
           AND "imageId" < ${end}

@@ -484,6 +484,7 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       ON CONFLICT DO NOTHING
     `);
   } else if (entityType === 'image') {
+    // TODO.TagsOnImage - remove this after the migration
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
       SELECT i."id",
@@ -495,6 +496,12 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled"    = false,
                                                      "needsReview" = false,
                                                      automated     = false
+    `);
+    await dbWrite.$executeRawUnsafe(`
+      SELECT upsert_tag_on_image(i.id, t.id, 'User', 0, false, false, false)
+      FROM "Image" i
+      JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
+      WHERE i."id" IN (${entityIds.join(', ')});
     `);
     updateImageNSFWLevels(entityIds);
   } else if (entityType === 'article') {
@@ -601,11 +608,22 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
         }
     `);
   } else if (entityType === 'image') {
+    // TODO.TagsOnImage - remove this after the migration
     await dbWrite.$executeRawUnsafe(`
       UPDATE "TagsOnImage"
       SET "disabled"    = true,
           "needsReview" = false,
           "disabledAt"  = NOW()
+      WHERE "imageId" IN (${entityIds.join(', ')})
+        ${
+          isTagIds
+            ? `AND "tagId" IN (${tagIn})`
+            : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
+        }
+    `);
+    await dbWrite.$executeRawUnsafe(`
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+      FROM "TagsOnImageDetails"
       WHERE "imageId" IN (${entityIds.join(', ')})
         ${
           isTagIds
@@ -639,6 +657,7 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
     //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
     // `);
   } else if (entityType === 'image') {
+    // TODO.TagsOnImage - remove this after the migration
     await dbWrite.$executeRawUnsafe(`
       UPDATE "TagsOnImage"
       SET "disabled"    = ${disable},
@@ -647,6 +666,12 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
           "disabledAt"  = ${disable ? 'NOW()' : 'null'}
       WHERE "needsReview" = true
         AND "imageId" IN (${entityIds.join(', ')})
+    `);
+
+    await dbWrite.$executeRawUnsafe(`
+      SELECT upsert_tag_on_image(i.id, t.id, null, null, false, ${disable}, false)
+      FROM "TagsOnImageDetails"
+      WHERE "imageId" IN (${entityIds.join(', ')}) AND "needsReview" = true;
     `);
 
     // Update nsfw baseline
