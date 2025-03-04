@@ -81,7 +81,7 @@ export const postMetrics = createMetricProcessor({
     //---------------------------------------
     // Keep track of the last time the age group job was run
     const [ageGroupLastRun, setAgeGroupLastRun] = await getJobDate(
-      'metrics:post:ageGroup',
+      'metric:post:ageGroup',
       new Date()
     );
     await setAgeGroupLastRun();
@@ -110,14 +110,14 @@ export const postMetrics = createMetricProcessor({
 
       // Roll over affected posts to next ageGroup period
       const periodIndex = timePeriods.indexOf(timePeriod);
+      if (periodIndex === -1) continue;
+
       const ageGroupTasks = chunk(affectedIds, 10000).map((ids, i) => async () => {
         log('update ageGroups', timePeriod, i + 1, 'of', ageGroupTasks.length);
         await executeRefresh(ctx)`
           UPDATE "PostMetric" pm
           SET "ageGroup" = '${capitalize(timePeriods[periodIndex + 1])}'::"MetricTimeframe"
-          FROM "Post" p
-          WHERE pm."postId" = p.id
-            AND pm."postId" IN (${ids})
+          WHERE pm."postId" IN (${ids})
             AND pm."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         `;
         log('update ageGroups', timePeriod, i + 1, 'of', ageGroupTasks.length, 'done');
