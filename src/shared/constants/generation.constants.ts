@@ -443,22 +443,43 @@ export const baseModelResourceTypes = {
     {
       type: ModelType.TextualInversion,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
+      partialSupport: [
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        'SD 1.5',
+        ...baseModelSets.Illustrious.baseModels,
+      ],
     },
     {
       type: ModelType.LORA,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: [
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        ...baseModelSets.Illustrious.baseModels,
+      ],
     },
     {
       type: ModelType.DoRA,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: [
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        ...baseModelSets.Illustrious.baseModels,
+      ],
     },
     {
       type: ModelType.LoCon,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: [
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        ...baseModelSets.Illustrious.baseModels,
+      ],
     },
     {
       type: ModelType.VAE,
@@ -470,22 +491,28 @@ export const baseModelResourceTypes = {
     {
       type: ModelType.TextualInversion,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
+      partialSupport: [
+        'SDXL 0.9',
+        'SDXL 1.0',
+        'SDXL 1.0 LCM',
+        'SD 1.5',
+        ...baseModelSets.Pony.baseModels,
+      ],
     },
     {
       type: ModelType.LORA,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', ...baseModelSets.Pony.baseModels],
     },
     {
       type: ModelType.DoRA,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', ...baseModelSets.Pony.baseModels],
     },
     {
       type: ModelType.LoCon,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', ...baseModelSets.Pony.baseModels],
     },
     {
       type: ModelType.VAE,
