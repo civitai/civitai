@@ -87,6 +87,8 @@ export const constants = {
     'Mochi',
     'LTXV',
     'CogVideoX',
+    'NoobAI',
+    'Wan Video',
     'Other',
   ],
   hiddenBaseModels: [
@@ -538,6 +540,8 @@ export const baseModelSets = {
   Mochi: new BaseModelSet({ name: 'Mochi', baseModels: ['Mochi'] }),
   LTXV: new BaseModelSet({ name: 'LTXV', baseModels: ['LTXV'] }),
   CogVideoX: new BaseModelSet({ name: 'CogVideoX', baseModels: ['CogVideoX'] }),
+  NoobAI: new BaseModelSet({ name: 'NoobAI', baseModels: ['NoobAI'] }),
+  WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
 };
 
 type BaseModelSets = typeof baseModelSets;
@@ -636,6 +640,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE',
     name: 'CogVideoX License',
   },
+  noobAi: {
+    url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
+    name: 'NoobAI License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -680,6 +688,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
   CogVideoX: baseLicenses['cogvideox license'],
+  NoobAI: baseLicenses['noobAi'],
+  'Wan Video': baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

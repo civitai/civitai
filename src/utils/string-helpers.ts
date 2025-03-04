@@ -59,6 +59,7 @@ const nameOverrides: Record<string, string> = {
   ProfileDecoration: 'Avatar Decoration',
   CogVideoX: 'CogVideoX',
   minimax: 'Hailou by MiniMax',
+  NoobAI: 'NoobAI',
 };
 
 export function getDisplayName(
