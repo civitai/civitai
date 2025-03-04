@@ -148,7 +148,7 @@ export const processBuzzOrder = async (orderId: string) => {
       return true;
     } else {
       log({
-        message: 'Paypal order was not approved and buzz was attempted to be collected',
+        message: 'Paypal order was not approved and Buzz was attempted to be collected',
         response: await response.text(),
         orderId,
       });

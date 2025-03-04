@@ -125,7 +125,7 @@ export const AuctionMyBids = () => {
         </Center>
       ) : !activeBids.length ? (
         <Center my="lg">
-          <Stack spacing="xs">
+          <Stack spacing="xs" className="text-center">
             <Text>No active bids.</Text>
             <Text>Choose an auction in the list to get started.</Text>
           </Stack>

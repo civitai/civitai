@@ -49,7 +49,7 @@ export function usePurchaseBid() {
     message: (requiredBalance: number) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>
         <Text>Thank you for your purchase!</Text>
@@ -94,6 +94,8 @@ export function usePurchaseBid() {
       await queryUtils.auction.getBySlug.invalidate({ slug: res.slug });
       await queryUtils.auction.getMyBids.invalidate();
       await queryUtils.auction.getMyRecurringBids.invalidate();
+      await queryUtils.model.getRecentlyBid.invalidate();
+      // TODO possibly update getAll for the minprice
     },
     onError(error, { auctionId, entityId }) {
       const notificationId = `submit-bid-${auctionId}-${entityId}`;

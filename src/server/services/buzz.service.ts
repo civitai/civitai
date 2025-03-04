@@ -193,7 +193,7 @@ export async function createBuzzTransaction({
   }
 
   if (toAccountId === payload.fromAccountId) {
-    throw throwBadRequestError('You cannot send buzz to the same account');
+    throw throwBadRequestError('You cannot send Buzz to the same account');
   }
 
   if (amount <= 0) {
@@ -233,7 +233,7 @@ export async function createBuzzTransaction({
 
   if (!response.ok) {
     if (isDev) {
-      console.error('Failed to create buzz transaction', response);
+      console.error('Failed to create Buzz transaction', response);
     }
     switch (response.status) {
       case 400:
@@ -415,11 +415,11 @@ export async function completeStripeBuzzTransaction({
       fromAccountId: 0,
       toAccountId: userId,
       type: TransactionType.Purchase,
-      description: `Purchase of ${amount} buzz. ${
+      description: `Purchase of ${amount} Buzz. ${
         purchasesMultiplier && purchasesMultiplier > 1
           ? 'Multiplier applied due to membership. '
           : ''
-      }A total of ${buzzAmount} buzz was added to your account.`,
+      }A total of ${buzzAmount} Buzz was added to your account.`,
       details: { ...(details ?? {}), stripePaymentIntentId },
       externalTransactionId: paymentIntent.id,
     });
@@ -615,7 +615,7 @@ export async function pingBuzzService() {
     const response = await fetch(`${env.BUZZ_ENDPOINT}`, { signal: AbortSignal.timeout(1000) });
     return response.ok;
   } catch (error) {
-    console.log('Failed to ping buzz service');
+    console.log('Failed to ping Buzz service');
     console.error(error);
     return false;
   }

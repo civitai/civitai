@@ -34,7 +34,7 @@ export function BuzzTransactionButton({
   buzzAmount,
   onPerformTransaction,
   purchaseSuccessMessage,
-  message = "You don't have enough funds. Buy or earn more buzz to perform this action",
+  message = "You don't have enough funds. Buy or earn more Buzz to perform this action",
   performTransactionOnPurchase = true,
   label,
   size,
@@ -117,7 +117,7 @@ export function BuzzTransactionButton({
         >
           {!hasRequiredAmount(buzzAmount) && (
             <Tooltip
-              label="Insufficient buzz. Click to buy more"
+              label="Insufficient Buzz. Click to buy more"
               style={{ textTransform: 'capitalize' }}
               maw={250}
               multiline

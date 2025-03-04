@@ -1204,7 +1204,7 @@ export const earlyAccessPurchase = async ({
       details: { modelVersionId, type, earlyAccessPurchase: true },
     });
     if (!buzzTransaction.transactionId)
-      throw throwBadRequestError('Failed to create buzz transaction.');
+      throw throwBadRequestError('Failed to create Buzz transaction.');
 
     buzzTransactionId = buzzTransaction.transactionId;
     const accessRecord = await dbWrite.entityAccess.findFirst({

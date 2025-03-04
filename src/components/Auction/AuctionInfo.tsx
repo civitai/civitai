@@ -202,7 +202,7 @@ export const AuctionInfo = () => {
 
               <Divider orientation="vertical" />
 
-              <Tooltip label={`Minimum buzz cost to place.`}>
+              <Tooltip label={`Minimum Buzz cost to place.`}>
                 <Group spacing="sm" className="max-md:w-full">
                   <Badge w={70}>
                     <Text>Min ⚡</Text>

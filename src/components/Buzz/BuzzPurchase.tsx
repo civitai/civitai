@@ -74,7 +74,7 @@ const BuzzPurchasePaymentButton = ({
       ) : (
         <Stack>
           <Text>Thank you for your purchase!</Text>
-          <Text>Purchased buzz has been credited to your account.</Text>
+          <Text>Purchased Buzz has been credited to your account.</Text>
         </Stack>
       ),
     [buzzAmount, purchaseSuccessMessage]
@@ -248,7 +248,7 @@ export const BuzzPurchase = ({
           <>
             <Stack>
               <Text>Thank you for your purchase!</Text>
-              <Text>Purchased buzz has been credited to your account.</Text>
+              <Text>Purchased Buzz has been credited to your account.</Text>
             </Stack>
             <Button
               onClick={() => {
@@ -292,7 +292,7 @@ export const BuzzPurchase = ({
             </AlertWithIcon>
           )}
           <Stack spacing={0}>
-            <Text>Buy buzz as a one-off purchase. No commitment, no strings attached.</Text>
+            <Text>Buy Buzz as a one-off purchase. No commitment, no strings attached.</Text>
           </Stack>
           {isLoading || processing ? (
             <Center py="xl">

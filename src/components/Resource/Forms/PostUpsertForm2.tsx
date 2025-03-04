@@ -1,5 +1,4 @@
-import { Center, Loader, Text, Container, Title } from '@mantine/core';
-import { ModelStatus } from '~/shared/utils/prisma/enums';
+import { Center, Loader, Text, Title } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
@@ -7,6 +6,7 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { PostEdit } from '~/components/Post/EditV2/PostEdit';
 import { PostEditProvider } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageDropzone } from '~/components/Post/EditV2/PostImageDropzone';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -46,7 +46,7 @@ export function PostUpsertForm2({
 
   function onError(error: any) {
     const reason = error?.message?.includes('Insufficient funds')
-      ? 'You do not have enough funds to publish this model. You can remove early access or purchase more buzz in order to publish.'
+      ? 'You do not have enough funds to publish this model. You can remove early access or purchase more Buzz in order to publish.'
       : 'Something went wrong while publishing your model. Please try again later.';
 
     showErrorNotification({

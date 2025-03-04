@@ -1,16 +1,10 @@
-import {
-  Button,
-  Group,
-  Stack,
-  Text,
-  Tooltip,
-  TooltipProps,
-  ActionIcon,
-  Grid,
-  Avatar,
-} from '@mantine/core';
+import { ActionIcon, Avatar, Button, Grid, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { IconTrash } from '@tabler/icons-react';
-import React, { useState } from 'react';
+import React from 'react';
+import { z } from 'zod';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { useMutateClub } from '~/components/Club/club.utils';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
 import {
   Form,
@@ -21,13 +15,9 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { z } from 'zod';
-import { upsertClubTierInput } from '~/server/schema/club.schema';
-import { useMutateClub } from '~/components/Club/club.utils';
 import { constants } from '~/server/common/constants';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { upsertClubTierInput } from '~/server/schema/club.schema';
 import { ClubTier } from '~/types/router';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 
 const formSchema = upsertClubTierInput;
 
@@ -79,9 +69,9 @@ export function ClubTierUpsertForm({
                 <InputText name="name" label="Title" placeholder="e.g.: Gold Tier" withAsterisk />
                 <InputNumber
                   name="unitAmount"
-                  placeholder={`Min. ${constants.clubs.minMonthlyBuzz} BUZZ. 0 for free tier`}
-                  label="Monthly buzz"
-                  description="The amount of BUZZ that will be charged to users every month. Updating this value will not affect existing members, and they will keep paying the same amount they were paying when they joined the tier."
+                  placeholder={`Min. ${constants.clubs.minMonthlyBuzz} Buzz. 0 for free tier`}
+                  label="Monthly Buzz"
+                  description="The amount of Buzz that will be charged to users every month. Updating this value will not affect existing members, and they will keep paying the same amount they were paying when they joined the tier."
                   variant="filled"
                   icon={<CurrencyIcon currency="BUZZ" size={16} />}
                   withAsterisk

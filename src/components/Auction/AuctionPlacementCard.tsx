@@ -34,7 +34,7 @@ import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLeve
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -141,22 +141,29 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
                     height={`${IMAGE_HEIGHT}px`}
                   />
                 ) : (
-                  <MediaHash
-                    {...image}
-                    // style={{
-                    //   height: `${IMAGE_HEIGHT}px`,
-                    //   width: `${IMAGE_HEIGHT}px`,
-                    // }}
-                  />
+                  <div
+                    style={{
+                      height: `${IMAGE_HEIGHT}px`,
+                      width: `${IMAGE_HEIGHT}px`,
+                    }}
+                  >
+                    <MediaHash
+                      {...image}
+                      // style={{
+                      //   height: `${IMAGE_HEIGHT}px`,
+                      //   width: `${IMAGE_HEIGHT}px`,
+                      // }}
+                    />
+                  </div>
                 )
               ) : (
-                <EdgeMedia
+                <EdgeMedia2
                   src={image.url}
                   name={image.name ?? image.id.toString()}
                   alt={image.name ?? undefined}
                   type={image.type}
                   width={IMAGE_HEIGHT}
-                  height={IMAGE_HEIGHT}
+                  // height={IMAGE_HEIGHT}
                   placeholder="empty"
                   style={{
                     objectFit: 'cover',
@@ -370,7 +377,7 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
           {!mobile && (
             <SectionPosition position={data.position} slugHref={data.auction.auctionBase} />
           )}
-          <Group className="flex gap-y-2 py-2 max-md:w-full md:flex-[10]">
+          <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
             <SectionModelInfo entityData={data.entityData} />
           </Group>
@@ -534,7 +541,7 @@ export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidDat
     <CosmeticCard className="group hover:bg-gray-2 dark:hover:bg-dark-5">
       <Stack spacing={0}>
         <Group className="gap-y-2 max-md:flex-col">
-          <Group className="flex gap-y-2 py-2 max-md:w-full md:flex-[10]">
+          <Group className="flex gap-y-2 p-2 max-md:w-full md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
             <SectionModelInfo entityData={data.entityData} />
           </Group>
@@ -649,7 +656,7 @@ export const ModelPlacementCard = ({
     >
       <Group className="gap-y-2 max-md:flex-col">
         {!mobile && <SectionPosition position={data.position} />}
-        <Group className="flex gap-y-2 py-2 max-md:w-full md:flex-[10]">
+        <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
           <SectionModelImage image={data.entityData?.image} />
           <SectionModelInfo entityData={data.entityData} />
         </Group>
