@@ -371,10 +371,17 @@ export const moderateImages = async ({
       tagIds.push(...blockedTags.map((x) => x.id));
     }
 
+    // TODO.TagsOnImage - remove this after the migration
     await dbWrite.tagsOnImage.updateMany({
       where: { imageId: { in: ids }, tagId: { in: tagIds } },
       data: { disabled: true, disabledAt: new Date(), needsReview: false },
     });
+
+    await dbWrite.$executeRaw`
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+      FROM "TagsOnImageDetails"
+      WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
+    `;
 
     // Resolve any pending appeals
     await resolveEntityAppeal({
@@ -470,6 +477,13 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
     where: { imageId: images[0].id, disabledAt: { not: null } },
     data: { disabled: false, disabledAt: null },
   });
+
+  // TODO.TagsOnImage - remove this after the migration
+  await dbWrite.$executeRaw`
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, false, null)
+      FROM "TagsOnImageDetails"
+      WHERE "imageId" = ${images[0].id}) AND "disabled"
+    `;
 
   return await ingestImage({ image: images[0] });
 };
