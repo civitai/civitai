@@ -156,7 +156,7 @@ export async function flushBankedCache() {
 }
 
 export async function getCreatorRequirements(userId: number) {
-  const [status] = await dbRead.$queryRaw<{ score: number; membership: UserTier }[]>`
+  const [status] = await dbWrite.$queryRaw<{ score: number; membership: UserTier }[]>`
     SELECT
     COALESCE(cast((meta->'scores'->'total') as int), 0) as score,
     (
