@@ -4,7 +4,13 @@ import dayjs, { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
-import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
+import {
+  BaseModel,
+  BaseModelType,
+  CacheTTL,
+  constants,
+  FEATURED_MODEL_COLLECTION_ID,
+} from '~/server/common/constants';
 import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -2740,6 +2746,7 @@ export async function getFeaturedModels() {
             select: { modelId: true },
           },
         },
+        orderBy: { position: 'asc' },
       });
       if (data.length === 0) {
         retries++;
@@ -2748,7 +2755,13 @@ export async function getFeaturedModels() {
       }
     }
 
-    return [];
+    // if nothing found, get from the collection
+    const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
+      SELECT ci."modelId"
+      FROM "CollectionItem" ci
+      WHERE ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
+    `;
+    return query.map((row) => ({ modelId: row.modelId, position: 0 }));
   });
 }
 

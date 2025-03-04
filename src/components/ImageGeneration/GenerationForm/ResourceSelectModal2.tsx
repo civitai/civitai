@@ -118,7 +118,8 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-const tabs = ['featured', 'all', 'recent', 'liked', 'mine'] as const;
+// TODO eventually move featured to first
+const tabs = ['all', 'featured', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
 
 const take = 20;
@@ -219,7 +220,7 @@ function ResourceSelectModalContent() {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const [selectedTab, setSelectedTab] = useState<Tabs>('featured');
+  const [selectedTab, setSelectedTab] = useState<Tabs>('all');
   // const availableBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
   // const _selectedFilters = selectedFilters.filter((x) => availableBaseModels.includes)
 
@@ -532,8 +533,7 @@ function ResourceHitList({
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
   }, [status]);
 
-  // TODO should these checks be off "filtered" or "items"?
-  if (loading && !items.length)
+  if (loading && !filtered.length)
     return (
       <div className="p-3 py-5">
         <Center mt="md">
