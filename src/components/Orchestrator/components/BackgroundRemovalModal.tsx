@@ -1,4 +1,4 @@
-import { Modal } from '@mantine/core';
+import { Modal, Text, Alert } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
@@ -49,6 +49,11 @@ export function BackgroundRemovalModal({
     <Modal {...dialog} title="Background Removal">
       <GenerationProvider>
         <Form form={form} onSubmit={handleSubmit} className="flex flex-col gap-3">
+          <Alert>
+            Background Removal works best with images that have a well-defined subject, preferably
+            on a distinct background with sharp outlines. For the best results, use images where the
+            subject stands out clearly. This feature is especially effective for ‘sticker’ prompts!
+          </Alert>
           <InputSourceImageUpload name="sourceImage" removable={false} />
           <WhatIfAlert error={whatIf.error} />
           <GenerateButton
