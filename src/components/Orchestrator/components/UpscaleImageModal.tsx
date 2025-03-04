@@ -1,4 +1,4 @@
-import { Modal, Divider } from '@mantine/core';
+import { Divider, Modal } from '@mantine/core';
 import { z } from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -78,7 +78,7 @@ function UpscalImageForm({
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
     type: 'Generation',
   });

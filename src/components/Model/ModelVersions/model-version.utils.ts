@@ -1,6 +1,8 @@
+import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { EntityAccessPermission } from '~/server/common/enums';
-import {
+import { EntityAccessPermission, SignalMessages, SignalTopic } from '~/server/common/enums';
+import type { ModelVersionResourceCacheItem } from '~/server/redis/caches';
+import type {
   ModelVersionEarlyAccessConfig,
   ModelVersionEarlyAccessPurchase,
 } from '~/server/schema/model-version.schema';
@@ -139,4 +141,26 @@ export const useQueryModelVersionDonationGoals = (
     donationGoals: donationGoals ?? [],
     ...other,
   };
+};
+
+export const useModelVersionTopicListener = (modelVersionId?: number) => {
+  const utils = trpc.useUtils();
+
+  useSignalTopic(
+    modelVersionId ? `${SignalTopic.ModelVersionPopularity}:${modelVersionId}` : undefined
+  );
+
+  useSignalConnection(
+    SignalMessages.ModelVersionPopularityUpdate,
+    (data: ModelVersionResourceCacheItem) => {
+      console.log('pop update', data);
+      utils.modelVersion.getPopularity.setData({ id: data.versionId }, () => {
+        return {
+          versionId: data.versionId,
+          isFeatured: data.isFeatured,
+          popularityRank: data.popularityRank,
+        };
+      });
+    }
+  );
 };

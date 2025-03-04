@@ -1,9 +1,8 @@
 import type JSZip from 'jszip';
-import { BaseModel } from '~/server/common/constants';
+import type { BaseModel } from '~/server/common/constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
 import { getMimeTypeFromExt, IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import {
-  EngineTypes,
+import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
@@ -12,6 +11,15 @@ import { isDefined } from '~/utils/type-guards';
 
 export const trainingBaseModelType = ['sd15', 'sdxl', 'sd35', 'flux'] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
+
+export const engineTypes = ['kohya', 'x-flux', 'rapid'] as const;
+export type EngineTypes = (typeof engineTypes)[number];
+
+export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
+export type OptimizerTypes = (typeof optimizerTypes)[number];
+
+export const loraTypes = ['lora'] as const; // LoCon Lycoris", "LoHa Lycoris
+export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
 
 export const trainingModelInfo: {
   [key in TrainingDetailsBaseModelList]: {

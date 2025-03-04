@@ -1,4 +1,5 @@
 import {
+  Anchor,
   Button,
   Card,
   Center,
@@ -10,23 +11,22 @@ import {
   Loader,
   NumberInput,
   Paper,
+  Popover,
   Stack,
   Text,
   ThemeIcon,
   Title,
-  Popover,
-  Anchor,
 } from '@mantine/core';
 import { IconBolt, IconBulb, IconChevronRight } from '@tabler/icons-react';
 import {
   CategoryScale,
   Chart as ChartJS,
   ChartOptions,
-  Tooltip as ChartTooltip,
   LinearScale,
   LineElement,
   PointElement,
   TimeScale,
+  Tooltip as ChartTooltip,
 } from 'chart.js';
 import 'chartjs-adapter-dayjs-4/dist/chartjs-adapter-dayjs-4.esm';
 import dayjs from 'dayjs';
@@ -576,7 +576,7 @@ const DonateInput = forwardRef<HTMLInputElement, { event: string }>(({ event }, 
     message: (requiredBalance: number) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>
         <Text>Thank you for your purchase!</Text>

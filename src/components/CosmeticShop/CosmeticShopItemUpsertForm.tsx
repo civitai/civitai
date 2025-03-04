@@ -1,17 +1,26 @@
 import {
-  Button,
-  Group,
-  Stack,
-  Text,
   ActionIcon,
-  Divider,
   Box,
+  Button,
+  Divider,
+  Group,
   Input,
+  Paper,
   Select,
   SelectItemProps,
-  Paper,
+  Stack,
+  Text,
 } from '@mantine/core';
+import { useDebouncedValue } from '@mantine/hooks';
+import { IconCalendar, IconCalendarDue, IconX } from '@tabler/icons-react';
 import React, { forwardRef, useEffect, useMemo, useState } from 'react';
+import { z } from 'zod';
+import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
+import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
+import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
 import {
   Form,
@@ -22,23 +31,13 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { z } from 'zod';
-import { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
-import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
-import { useQueryCosmetic, useQueryCosmeticsPaged } from '~/components/Cosmetics/cosmetics.util';
-import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
-import { useDebouncedValue } from '@mantine/hooks';
 import {
   CosmeticShopItemMeta,
   upsertCosmeticShopItemInput,
 } from '~/server/schema/cosmetic-shop.schema';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { IconCalendar, IconX } from '@tabler/icons-react';
-import { IconCalendarDue } from '@tabler/icons-react';
+import { GetPaginatedCosmeticsInput } from '~/server/schema/cosmetic.schema';
+import { CosmeticGetById, CosmeticShopItemGetById } from '~/types/router';
 import { isDefined } from '~/utils/type-guards';
-import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
-import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
-import { CosmeticSample } from '~/components/Shop/CosmeticSample';
 
 const formSchema = upsertCosmeticShopItemInput;
 
@@ -231,7 +230,7 @@ export const CosmeticShopItemUpsertForm = ({ shopItem, onSuccess, onCancel }: Pr
             <InputNumber
               name="unitAmount"
               label="Price"
-              description="The amount of buzz required to purchase 1 instance of this item"
+              description="The amount of Buzz required to purchase 1 instance of this item"
               min={500}
               step={100}
               icon={<CurrencyIcon currency="BUZZ" size={16} />}

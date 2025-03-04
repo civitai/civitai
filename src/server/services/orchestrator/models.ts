@@ -10,12 +10,11 @@ import {
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { stringifyAIR } from '~/utils/string-helpers';
 
-export async function getModel({
+export async function getModelClient({
   token,
   air,
 }: z.output<typeof getModelByAirSchema> & { token: string }) {
   const client = createOrchestratorClient(token);
-
   return await getResource({ client, path: { air } });
 }
 

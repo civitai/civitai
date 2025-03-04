@@ -1,6 +1,6 @@
-import { Box, useMantineTheme } from '@mantine/core';
-import { PayPalButtons, FUNDING } from '@paypal/react-paypal-js';
-import { useCallback, useRef } from 'react';
+import { Box } from '@mantine/core';
+import { FUNDING, PayPalButtons } from '@paypal/react-paypal-js';
+import { useCallback } from 'react';
 import { env } from '~/env/client';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -41,7 +41,7 @@ export const BuzzPaddleButton = ({
       showSuccessNotification({
         title: 'Payment successful',
         message:
-          'Your payment has been processed successfully and buzz has been added to your account',
+          'Your payment has been processed successfully and Buzz has been added to your account',
       });
       onSuccess?.({
         ...data,

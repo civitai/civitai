@@ -131,10 +131,14 @@ export enum SignalMessages {
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
+  ModelVersionPopularityUpdate = 'mvPopularity:update',
   Pong = 'pong',
   // Creator Program:
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
   CashInvalidator = 'creators-program:cash-invalidator',
+  // Auction
+  AuctionUpdate = 'auction:update',
+  AuctionBidChange = 'auction:bid-change',
 }
 
 export enum BountySort {
@@ -267,6 +271,7 @@ export enum EntityAccessPermission {
   All = 1 + 2, // Sum of all prev. permissions.
 }
 
+// nb: when updating this, similar updates must be made to the notification DB
 export enum NotificationCategory {
   Comment = 'Comment',
   Update = 'Update',
@@ -340,4 +345,6 @@ export enum BuzzWithdrawalRequestSort {
 
 export enum SignalTopic {
   CreatorProgram = 'creators-program',
+  Auction = 'auction', // with :auctionId
+  ModelVersionPopularity = 'mvPopularity', // with :modelVersionId
 }

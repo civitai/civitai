@@ -1,30 +1,22 @@
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import { TypoTolerance } from 'meilisearch';
-import { ModelFileType, MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { imagesForModelVersionsCache, modelTagCache } from '~/server/redis/caches';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import {
-  Availability,
-  MetricTimeframe,
-  ModelHashType,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
-import { getUnavailableResources } from '../services/generation/generation.service';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
+import { getUnavailableResources } from '../services/generation/generation.service';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -110,6 +102,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'versions.hashes',
     'versions.baseModel',
     'versions.id',
+    'availability',
   ];
 
   if (
@@ -159,7 +152,6 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
   const unavailableGenResources = await getUnavailableResources();
-
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -187,7 +179,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
       );
 
-      const category = tags[model.id]?.tags.find(({ id }) => modelCategoriesIds.includes(id))!;
+      const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
 
       return {
         ...model,
@@ -195,8 +187,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
         category: {
-          id: category.id,
-          name: category.name!,
+          id: category?.id,
+          name: category?.name,
         },
         permissions: {
           allowNoCredit,
