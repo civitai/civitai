@@ -570,9 +570,8 @@ function ResourceHitList({
   const filteredSorted =
     selectedTab === 'featured'
       ? filtered.sort((a, b) => {
-          if (!featured) return 0;
-          const aPos = featured.find((fm) => fm.modelId === a.id)?.position;
-          const bPos = featured.find((fm) => fm.modelId === b.id)?.position;
+          const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
+          const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
           if (!aPos) return 1;
           if (!bPos) return -1;
           return aPos - bPos;
