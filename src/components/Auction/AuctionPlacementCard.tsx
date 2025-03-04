@@ -126,6 +126,9 @@ const SectionPosition = ({
 };
 
 const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefined }) => {
+  const { userBrowsingLevel } = useBrowsingLevelContext();
+  const blurNsfw = !!image ? !Flags.hasFlag(userBrowsingLevel, image.nsfwLevel) : false;
+
   return (
     <div className="relative h-[100px]">
       {image ? (
@@ -133,7 +136,7 @@ const SectionModelImage = ({ image }: { image: ImagesForModelVersions | undefine
           {(safe) => (
             <>
               <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-              {!safe ? (
+              {!safe || blurNsfw ? (
                 !image.hash ? (
                   <Skeleton
                     animate={false}
