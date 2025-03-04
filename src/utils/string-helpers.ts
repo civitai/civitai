@@ -302,3 +302,7 @@ export function toPascalCase(str: string) {
   // Join the words back together with a space
   return pascalCaseWords.join(' ');
 }
+
+export function capitalize(str: string) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
