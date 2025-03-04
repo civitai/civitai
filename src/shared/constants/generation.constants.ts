@@ -395,6 +395,14 @@ export function sanitizeParamsByWorkflowDefinition(
 // #endregion
 
 // #region [config]
+const sdxlEcosystemPartialSupport = [
+  'SDXL 0.9',
+  'SDXL 1.0',
+  'SDXL 1.0 LCM',
+  ...baseModelSets.Pony.baseModels,
+  ...baseModelSets.Illustrious.baseModels,
+  ...baseModelSets.NoobAI.baseModels,
+];
 export type BaseModelResourceTypes = typeof baseModelResourceTypes;
 export type SupportedBaseModel = keyof BaseModelResourceTypes;
 export const baseModelResourceTypes = {
@@ -443,43 +451,22 @@ export const baseModelResourceTypes = {
     {
       type: ModelType.TextualInversion,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: [
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
-        'SD 1.5',
-        ...baseModelSets.Illustrious.baseModels,
-      ],
+      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
     },
     {
       type: ModelType.LORA,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: [
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
-        ...baseModelSets.Illustrious.baseModels,
-      ],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.DoRA,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: [
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
-        ...baseModelSets.Illustrious.baseModels,
-      ],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.LoCon,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: [
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
-        ...baseModelSets.Illustrious.baseModels,
-      ],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.VAE,
@@ -491,28 +478,49 @@ export const baseModelResourceTypes = {
     {
       type: ModelType.TextualInversion,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: [
-        'SDXL 0.9',
-        'SDXL 1.0',
-        'SDXL 1.0 LCM',
-        'SD 1.5',
-        ...baseModelSets.Pony.baseModels,
-      ],
+      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
     },
     {
       type: ModelType.LORA,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', ...baseModelSets.Pony.baseModels],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.DoRA,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', ...baseModelSets.Pony.baseModels],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.LoCon,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', ...baseModelSets.Pony.baseModels],
+      partialSupport: sdxlEcosystemPartialSupport,
+    },
+    {
+      type: ModelType.VAE,
+      baseModels: [...baseModelSets.SDXL.baseModels],
+    },
+  ],
+  NoobAI: [
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.NoobAI.baseModels },
+    {
+      type: ModelType.TextualInversion,
+      baseModels: baseModelSets.NoobAI.baseModels,
+      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
+    },
+    {
+      type: ModelType.LORA,
+      baseModels: baseModelSets.NoobAI.baseModels,
+      partialSupport: sdxlEcosystemPartialSupport,
+    },
+    {
+      type: ModelType.DoRA,
+      baseModels: baseModelSets.NoobAI.baseModels,
+      partialSupport: sdxlEcosystemPartialSupport,
+    },
+    {
+      type: ModelType.LoCon,
+      baseModels: baseModelSets.NoobAI.baseModels,
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.VAE,
