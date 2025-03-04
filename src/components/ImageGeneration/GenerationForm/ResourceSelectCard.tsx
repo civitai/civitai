@@ -97,8 +97,8 @@ function CheckpointInfo({
             h={64}
           >
             <EdgeMedia
-              type="image"
-              src={resource.image?.url}
+              type={resource.image.type ?? 'image'}
+              src={resource.image.url}
               width={64}
               className="h-full object-cover"
             />
