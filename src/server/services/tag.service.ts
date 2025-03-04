@@ -29,17 +29,14 @@ import { removeEmpty } from '~/utils/object-helpers';
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
+  // No longer include count since we just have too many now...
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
-    SELECT "public"."Tag"."id",
-           "public"."Tag"."name",
-           CAST(COUNT("public"."TagsOnModels"."tagId") AS INTEGER) as count
-    FROM "public"."Tag"
-           LEFT JOIN "public"."TagsOnModels" ON "public"."Tag"."id" = "public"."TagsOnModels"."tagId"
-           LEFT JOIN "public"."Model" ON "public"."TagsOnModels"."modelId" = "public"."Model"."id"
-    WHERE "public"."Tag"."name" = ${name}
-      AND "public"."Model"."status" = 'Published'
-      AND "public"."TagsOnModels"."modelId" IS NOT NULL
-    GROUP BY "public"."Tag"."id", "public"."Tag"."name"
+    SELECT "id",
+           "name",
+           0 as count
+    FROM "Tag"
+    WHERE "name" = ${name}
+    GROUP BY "id", "name"
     LIMIT 1 OFFSET 0;
   `;
 };

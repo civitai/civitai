@@ -843,11 +843,11 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (excludedUserIds && excludedUserIds.length && !username) {
     AND.push({ userId: { notIn: excludedUserIds } });
   }
-  if (excludedTagIds && excludedTagIds.length && !username) {
-    AND.push({
-      tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
-    });
-  }
+  // if (excludedTagIds && excludedTagIds.length && !username) {
+  //   AND.push({
+  //     tagsOnModels: { none: { tagId: { in: excludedTagIds } } },
+  //   });
+  // }
   if (excludedModelIds && !hidden && !username) {
     AND.push({ id: { notIn: excludedModelIds } });
   }
@@ -938,7 +938,7 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
 
   // TODO - filter by browsingLevel
   const where: Prisma.ModelWhereInput = {
-    tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
+    // tagsOnModels: tagname ?? tag ? { some: { tag: { name: tagname ?? tag } } } : undefined,
     user: username || user ? { username: username ?? user } : undefined,
     type: types?.length ? { in: types } : undefined,
     engagements: favorites
@@ -2031,22 +2031,16 @@ export const getAllModelsWithCategories = async ({
         select: {
           id: true,
           name: true,
-          tagsOnModels: {
-            where: { tagId: { in: categoryIds } },
-            select: {
-              tag: {
-                select: { id: true, name: true },
-              },
-            },
-          },
         },
         orderBy: { name: 'asc' },
       }),
       dbRead.model.count({ where }),
     ]);
-    const items = models.map(({ tagsOnModels, ...model }) => ({
+    const modelIds = models.map((m) => m.id);
+    const modelTags = await modelTagCache.fetch(modelIds);
+    const items = models.map((model) => ({
       ...model,
-      tags: tagsOnModels.map(({ tag }) => tag),
+      tags: modelTags[model.id]?.tags.filter((x) => categoryIds.includes(x.id)) ?? [],
     }));
 
     return getPagingData({ items, count }, take, page);
