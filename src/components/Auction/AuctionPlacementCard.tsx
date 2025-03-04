@@ -103,13 +103,13 @@ const SectionPosition = ({
   position: number;
   slugHref?: AuctionBaseData;
 }) => {
-  const mobile = useIsMobile({ breakpoint: 'xs' });
+  const mobile = useIsMobile({ breakpoint: 'md' });
 
   const px = mobile ? 16 : 40;
   const mr = mobile ? -8 : -16;
 
   const el = (
-    <Stack align="center" spacing={0} className="relative" px={px} mr={mr}>
+    <Stack align="center" spacing={0} className="relative md:w-[100px]" px={px} mr={mr}>
       <PositionData position={position} />
     </Stack>
   );
@@ -117,10 +117,7 @@ const SectionPosition = ({
   if (!slugHref) return el;
 
   return (
-    <Link
-      href={`/auctions/${slugHref.slug}`}
-      // className="flex flex-[10]"
-    >
+    <Link href={`/auctions/${slugHref.slug}`}>
       <Tooltip label={`Go to ${slugHref.name}`} withinPortal>
         {el}
       </Tooltip>
@@ -216,7 +213,7 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
             </Text>
           </>
         ) : (
-          <div className="flex flex-[10]">
+          <div className="flex">
             <Button
               leftIcon={<IconEye size={14} strokeWidth={2.5} />}
               onClick={() => setHideText(false)}
@@ -239,12 +236,11 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
     </Stack>
   );
 
-  if (hideText) return <div className="flex flex-[10] py-2">{El}</div>;
+  if (hideText) return <div>{El}</div>;
 
   return (
     <Link
       href={!!entityData ? `/models/${entityData.model.id}?modelVersionId=${entityData.id}` : '/'}
-      className="flex flex-[10] py-2"
     >
       {El}
     </Link>
@@ -270,7 +266,7 @@ const SectionBidInfo = ({
   rightProps?: GroupProps;
   slugHref?: AuctionBaseData;
 }) => {
-  const mobile = useIsMobile({ breakpoint: 'xs' });
+  const mobile = useIsMobile({ breakpoint: 'md' });
 
   return (
     <Stack
@@ -280,7 +276,7 @@ const SectionBidInfo = ({
       align="center"
       spacing="sm"
       className={
-        mobile ? 'border-t border-solid border-t-gray-4 dark:border-t-dark-4' : 'ml-[-16px]'
+        mobile ? 'w-full border-t border-solid border-t-gray-4 dark:border-t-dark-4' : 'ml-[-16px]'
       }
       sx={{
         flexGrow: 1,
@@ -316,7 +312,7 @@ const SectionBidInfo = ({
 };
 
 export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
-  const mobile = useIsMobile({ breakpoint: 'xs' });
+  const mobile = useIsMobile({ breakpoint: 'md' });
   const { handleBuy, createLoading } = usePurchaseBid();
   const queryUtils = trpc.useUtils();
 
@@ -370,12 +366,14 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
   return (
     <CosmeticCard className="group hover:bg-gray-2 dark:hover:bg-dark-5">
       <Stack spacing={0}>
-        <Group className="gap-y-2">
+        <Group className="gap-y-2 max-md:flex-col">
           {!mobile && (
             <SectionPosition position={data.position} slugHref={data.auction.auctionBase} />
           )}
-          <SectionModelImage image={data.entityData?.image} />
-          <SectionModelInfo entityData={data.entityData} />
+          <Group className="flex gap-y-2 py-2 max-md:w-full md:flex-[10]">
+            <SectionModelImage image={data.entityData?.image} />
+            <SectionModelInfo entityData={data.entityData} />
+          </Group>
 
           {!mobile && <Divider orientation="vertical" />}
 
@@ -389,9 +387,11 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
             )} (${Math.floor((data.amount / data.totalAmount) * 100)}%)`}
             top={
               <>
-                <Text size="xs" color="dimmed" title={data.createdAt.toISOString()}>
-                  {formatDate(data.createdAt)}
-                </Text>
+                {!mobile && (
+                  <Text size="xs" color="dimmed" title={data.createdAt.toISOString()}>
+                    {formatDate(data.createdAt)}
+                  </Text>
+                )}
 
                 {data.isActive && (
                   <Group className="absolute right-1 top-1">
@@ -407,8 +407,18 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
                 )}
               </>
             }
-            bottom={!data.isActive && data.isRefunded && <Badge>Refunded</Badge>}
-            // rightProps={{ className: 'max-sm:-order-1' }}
+            bottom={!data.isActive && data.isRefunded && !mobile && <Badge>Refunded</Badge>}
+            right={
+              mobile && (
+                <Group>
+                  {!data.isActive && data.isRefunded && <Badge>Refunded</Badge>}
+                  <Text size="xs" color="dimmed" title={data.createdAt.toISOString()}>
+                    {formatDate(data.createdAt)}
+                  </Text>
+                </Group>
+              )
+            }
+            rightProps={{ className: 'max-md:flex-row-reverse' }}
           />
         </Group>
         {!!data.additionalPriceNeeded && data.isActive && (
@@ -431,7 +441,7 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
                     auctionId: data.auction.id,
                     modelId: data.entityId,
                     // onSuccess: () => {
-                    //   // redirect
+                    //   // redirect TODO
                     // },
                   })
                 }
@@ -446,7 +456,7 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
 };
 
 export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidData }) => {
-  const mobile = useIsMobile({ breakpoint: 'xs' });
+  const mobile = useIsMobile({ breakpoint: 'md' });
   const queryUtils = trpc.useUtils();
 
   const { mutate: deleteRecurringBid } = trpc.auction.deleteRecurringBid.useMutation({
@@ -523,9 +533,11 @@ export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidDat
   return (
     <CosmeticCard className="group hover:bg-gray-2 dark:hover:bg-dark-5">
       <Stack spacing={0}>
-        <Group className="gap-y-2">
-          <SectionModelImage image={data.entityData?.image} />
-          <SectionModelInfo entityData={data.entityData} />
+        <Group className="gap-y-2 max-md:flex-col">
+          <Group className="flex gap-y-2 py-2 max-md:w-full md:flex-[10]">
+            <SectionModelImage image={data.entityData?.image} />
+            <SectionModelInfo entityData={data.entityData} />
+          </Group>
 
           {!mobile && <Divider orientation="vertical" />}
 
@@ -592,7 +604,7 @@ export const ModelPlacementCard = ({
   data: ModelData;
   addBidFn: (r: GenerationResource) => void;
 }) => {
-  const mobile = useIsMobile({ breakpoint: 'xs' });
+  const mobile = useIsMobile({ breakpoint: 'md' });
   const currentUser = useCurrentUser();
   const { selectedAuction, justBid, setJustBid } = useAuctionContext();
   const animatedRef = useRef<HTMLDivElement>(null);
@@ -635,10 +647,12 @@ export const ModelPlacementCard = ({
       })}
       ref={animatedRef}
     >
-      <Group className="gap-y-2">
+      <Group className="gap-y-2 max-md:flex-col">
         {!mobile && <SectionPosition position={data.position} />}
-        <SectionModelImage image={data.entityData?.image} />
-        <SectionModelInfo entityData={data.entityData} />
+        <Group className="flex gap-y-2 py-2 max-md:w-full md:flex-[10]">
+          <SectionModelImage image={data.entityData?.image} />
+          <SectionModelInfo entityData={data.entityData} />
+        </Group>
 
         {!mobile && <Divider orientation="vertical" />}
 

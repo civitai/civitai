@@ -7,7 +7,10 @@ import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import {
   getBaseModelResourceTypes,
@@ -217,4 +220,19 @@ export const BidModelButton = ({
       </div>
     </Tooltip>
   );
+};
+
+export const useAuctionTopicListener = (auctionId?: number) => {
+  const utils = trpc.useUtils();
+  const currentUser = useCurrentUser();
+
+  useSignalTopic(auctionId ? `${SignalTopic.Auction}:${auctionId}` : undefined);
+
+  // TODO
+  useSignalConnection(SignalMessages.AuctionUpdate, (data: any) => {
+    console.log('auction update', data);
+  });
+  useSignalConnection(SignalMessages.AuctionBidChange, (data: any) => {
+    console.log('auction bid change', data);
+  });
 };

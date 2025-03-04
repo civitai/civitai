@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { v4 as uuid } from 'uuid';
+import { isDev } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -39,7 +40,6 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
-import { isDev } from '~/env/other';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';
@@ -83,7 +83,7 @@ export async function getMultipliersForUser(userId: number, refresh = false) {
   if (refresh) await deleteMultipliersForUserCache(userId);
 
   const multipliers = await getMultipliersForUserCache([userId]);
-  return multipliers[userId];
+  return multipliers[userId] ?? { purchasesMultiplier: 1, rewardsMultiplier: 1, userId };
 }
 
 export function deleteMultipliersForUserCache(userId: number) {

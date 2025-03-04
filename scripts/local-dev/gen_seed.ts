@@ -2726,6 +2726,26 @@ const genAuctionBases = () => {
       true, // active
       'featured-resources-flux', // slug
     ],
+    [
+      5, // id
+      'Model', // type
+      'SDXL', // ecosystem
+      'Featured Resources - SDXL', // name
+      40, // quantity
+      500, // minPrice
+      true, // active
+      'featured-resources-sdxl', // slug
+    ],
+    [
+      6, // id
+      'Model', // type
+      'SD1', // ecosystem
+      'Featured Resources - SD1', // name
+      40, // quantity
+      500, // minPrice
+      true, // active
+      'featured-resources-sd1', // slug
+    ],
   ];
 };
 

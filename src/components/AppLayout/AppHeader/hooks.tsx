@@ -148,6 +148,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         {
           href: '/auctions',
+          visible: features.auctions,
           icon: IconGavel,
           color: theme.colors.yellow[theme.fn.primaryShade()],
           label: 'Auctions',
@@ -194,6 +195,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         },
         {
           href: '/auctions',
+          visible: features.auctions,
           icon: IconGavel,
           color: theme.colors.yellow[theme.fn.primaryShade()],
           label: 'Auctions',

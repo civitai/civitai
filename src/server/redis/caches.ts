@@ -686,7 +686,7 @@ export const modelTagCache = createCachedObject<ModelTagCacheItem>({
   ttl: CacheTTL.day,
 });
 
-type ModelVersionResourceCacheItem = {
+export type ModelVersionResourceCacheItem = {
   versionId: number;
   popularityRank: number;
   isFeatured: boolean;
@@ -725,6 +725,7 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
             id: v.id,
           };
         } catch (e) {
+          console.error(e);
           return {
             popularityRank: 0,
             isFeatured: false,

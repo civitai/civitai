@@ -1,5 +1,7 @@
-import { Badge, Group, Stack, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Badge, Group, Loader, Stack, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconTemperature } from '@tabler/icons-react';
+import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/model-version.utils';
+import { trpc } from '~/utils/trpc';
 
 const featureInfo = {
   name: 'Featured',
@@ -45,19 +47,19 @@ const popularityInfoMap = {
 } as const;
 
 export const ModelVersionPopularity = ({
-  isFeatured,
-  popularity,
-  viewable,
+  versionId,
+  listenForUpdates,
 }: {
-  isFeatured: boolean;
-  popularity: number;
-  viewable: boolean;
+  versionId: number;
+  listenForUpdates: boolean;
 }) => {
   const theme = useMantineTheme();
+  useModelVersionTopicListener(listenForUpdates ? versionId : undefined);
 
-  if (!viewable) {
-    return <></>;
-  }
+  const { data, isLoading } = trpc.modelVersion.getPopularity.useQuery({ id: versionId });
+
+  const popularity = data?.popularityRank ?? 0;
+  const isFeatured = data?.isFeatured ?? false;
 
   const isDark = theme.colorScheme === 'dark';
 
@@ -71,6 +73,8 @@ export const ModelVersionPopularity = ({
 
   const markup = Math.trunc(closestPopularityInfo.markup * 100);
   const isMarkup = markup >= 0;
+
+  if (isLoading) return <Loader size="xs" variant="bars" />;
 
   return (
     <Tooltip

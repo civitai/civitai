@@ -530,11 +530,9 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     showPop = false
   ) => (
     <Group position="apart" noWrap spacing={0}>
-      <ModelVersionPopularity
-        isFeatured={version.isFeatured}
-        popularity={version.popularityRank}
-        viewable={showPop && model.type === ModelType.Checkpoint && version.canGenerate}
-      />
+      {showPop && model.type === ModelType.Checkpoint && version.canGenerate && (
+        <ModelVersionPopularity versionId={version.id} listenForUpdates={true} />
+      )}
       <Group>
         <VerifiedText file={file} />
         <Group spacing={4}>

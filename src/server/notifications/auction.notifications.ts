@@ -11,6 +11,9 @@ export type DetailsWonAuction = {
 export type DetailsDroppedOutAuction = {
   name: string | null;
 };
+export type DetailsFailedRecurringBid = {
+  auctionName: string | null;
+};
 
 export const auctionNotifications = createNotificationProcessor({
   'won-auction': {
@@ -39,6 +42,20 @@ export const auctionNotifications = createNotificationProcessor({
         message: `Your bid on ${
           details.name ?? 'your item'
         } has fallen out of its winning position. Increase your bid to win!`,
+        url: `/auctions/${MY_BIDS}`,
+      };
+    },
+  },
+  'failed-recurring-bid-auction': {
+    displayName: 'Failed Recurring Bid',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: (notification) => {
+      const details = notification.details as DetailsFailedRecurringBid;
+      return {
+        message: `Your recurring bid for ${
+          details.auctionName ?? 'an auction'
+        } failed. Please try adding more Buzz to your account, or contact us.`,
         url: `/auctions/${MY_BIDS}`,
       };
     },

@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { ManipulateType } from 'dayjs';
+import dayjs, { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { env } from '~/env/server';
@@ -2727,25 +2727,37 @@ export async function ingestModel(data: IngestModelInput) {
 export type GetFeaturedModels = AsyncReturnType<typeof getFeaturedModels>;
 export async function getFeaturedModels() {
   return await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
-    const now = new Date();
+    // subtract 2 minutes for the job to finish
+    const now = dayjs().subtract(2, 'minute');
 
     // TODO we're featuring modelVersions, but showing models due to how collections and meili works
 
-    const data = await dbRead.featuredModelVersion.findMany({
-      where: {
-        validFrom: { lte: now },
-        validTo: { gt: now },
-      },
-      select: {
-        position: true,
-        modelVersion: {
-          select: { modelId: true },
+    let retries = 0;
+    while (retries < 3) {
+      const nowDate = now.subtract(retries, 'day').toDate();
+      const data = await dbRead.featuredModelVersion.findMany({
+        where: {
+          validFrom: { lte: nowDate },
+          validTo: { gt: nowDate },
         },
-      },
-    });
-    return data.map((row) => ({ modelId: row.modelVersion.modelId, position: row.position }));
+        select: {
+          position: true,
+          modelVersion: {
+            select: { modelId: true },
+          },
+        },
+      });
+      if (data.length === 0) {
+        retries++;
+      } else {
+        return data.map((row) => ({ modelId: row.modelVersion.modelId, position: row.position }));
+      }
+    }
+
+    return [];
   });
 }
+
 export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }

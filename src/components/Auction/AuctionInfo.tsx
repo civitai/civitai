@@ -68,7 +68,7 @@ const QuickBid = ({
 };
 
 export const AuctionInfo = () => {
-  const mobile = useIsMobile();
+  const mobile = useIsMobile({ breakpoint: 'md' });
   const theme = useMantineTheme();
   const { ref: placeBidRef, inView: placeBidInView } = useInView();
   const { selectedAuction, selectedModel, validAuction, setSelectedModel, drawerToggle } =
@@ -104,9 +104,14 @@ export const AuctionInfo = () => {
     : [];
 
   const getPosFromBid = (n: number) => {
-    return !auctionData?.bids?.length
-      ? 1
-      : auctionData.bids.find((b) => n > b.totalAmount)?.position ?? -1;
+    if (!auctionData) return -1;
+    if (n < auctionData.minPrice) return -1;
+    if (!bidsAbove.length) return 1;
+
+    const bidAbove = bidsAbove.find((b) => n > b.totalAmount);
+    if (bidAbove) return bidAbove.position;
+
+    return bidsAbove.length + 1;
   };
   const getPosStringFromBid = (n: number) => {
     const spot = getPosFromBid(n);
@@ -147,7 +152,7 @@ export const AuctionInfo = () => {
           />
         )}
         <Button
-          className="sm:hidden"
+          className="md:hidden"
           onClick={drawerToggle}
           variant="default"
           data-tour="auction:nav"
@@ -184,9 +189,9 @@ export const AuctionInfo = () => {
             className="w-full cursor-default bg-gray-0 dark:bg-dark-6"
             data-tour="auction:info"
           >
-            <Group spacing="sm" className="max-sm:justify-between max-sm:gap-1">
+            <Group spacing="sm" className="max-md:justify-between max-md:gap-1">
               <Tooltip label={`Maximum # of entities that can win.`}>
-                <Group spacing="sm" className="max-sm:w-full">
+                <Group spacing="sm" className="max-md:w-full">
                   <Badge w={70}>
                     <Text>Spots</Text>
                   </Badge>
@@ -198,7 +203,7 @@ export const AuctionInfo = () => {
               <Divider orientation="vertical" />
 
               <Tooltip label={`Minimum buzz cost to place.`}>
-                <Group spacing="sm" className="max-sm:w-full">
+                <Group spacing="sm" className="max-md:w-full">
                   <Badge w={70}>
                     <Text>Min ⚡</Text>
                   </Badge>
@@ -225,7 +230,7 @@ export const AuctionInfo = () => {
                   ) : undefined
                 }
               >
-                <Group spacing="sm" className="max-sm:w-full">
+                <Group spacing="sm" className="max-md:w-full">
                   <Badge w={70}>
                     <Text>Ends In</Text>
                     {/* todo does this say ended when its over? */}
@@ -251,7 +256,7 @@ export const AuctionInfo = () => {
           <Stack>
             <Title order={5}>Place Bid</Title>
             <CosmeticCard data-tour="auction:bid">
-              <Group m="sm" className="max-sm:flex-col">
+              <Group m="sm" className="max-md:flex-col md:flex-nowrap">
                 {/* TODO handle other auction types */}
                 <ResourceSelect
                   buttonLabel="Select model"
@@ -279,7 +284,7 @@ export const AuctionInfo = () => {
 
                 {!mobile && <Divider orientation="vertical" />}
 
-                <Stack spacing={4} className="max-sm:w-full">
+                <Stack spacing={4} className="max-md:w-full">
                   <Group position="apart">
                     <Text size="xs">Bid:</Text>
                     <Group spacing={4} position="right">
@@ -303,6 +308,10 @@ export const AuctionInfo = () => {
                       </QuickBid>
                       <QuickBid
                         label="Bid for the last spot"
+                        disabled={
+                          !!selectedModel?.id &&
+                          bidsAbove.map((b) => b.entityId).includes(selectedModel.id)
+                        }
                         onClick={() => {
                           const topBid =
                             bidsAbove.length > 0
@@ -358,35 +367,39 @@ export const AuctionInfo = () => {
                   }
                   data-testid="place-bid-button"
                   // error={hasIssue ? 'Error computing cost' : undefined}
-                  className={clsx('sm:h-full', {
+                  className={clsx('text-center max-md:w-full md:h-full md:w-[160px]', {
                     'animate-[wiggle_1.5s_ease-in-out_4.5]': validBid,
                   })}
                   size="md"
                   priceReplacement={
-                    <Tooltip
-                      label={
-                        validBid
-                          ? `Bidding ${bidPrice.toLocaleString()} ⚡ will currently feature this model in the ~${getPosStringFromBid(
-                              selectedModelBid + bidPrice
-                            )} spot.`
-                          : undefined
-                      }
-                      withinPortal
-                    >
-                      <Badge
-                        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                        color={
-                          validBid ? (theme.colorScheme === 'dark' ? 'gray' : 'gray.8') : 'dark'
+                    bidPrice && getPosFromBid(selectedModelBid + bidPrice) !== -1 ? (
+                      <Tooltip
+                        label={
+                          validBid
+                            ? `Bidding ${bidPrice.toLocaleString()} ⚡ will currently feature this model in the ~${getPosStringFromBid(
+                                selectedModelBid + bidPrice
+                              )} spot.`
+                            : undefined
                         }
-                        radius="xl"
-                        pl={8}
-                        pr={12}
+                        withinPortal
                       >
-                        <Text>{`Est: ${
-                          bidPrice ? getPosStringFromBid(selectedModelBid + bidPrice) : '?'
-                        }`}</Text>
-                      </Badge>
-                    </Tooltip>
+                        <Badge
+                          variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
+                          color={
+                            validBid ? (theme.colorScheme === 'dark' ? 'gray' : 'gray.8') : 'dark'
+                          }
+                          radius="xl"
+                          pl={8}
+                          pr={12}
+                        >
+                          <Text>{`Est: ${
+                            bidPrice ? getPosStringFromBid(selectedModelBid + bidPrice) : '?'
+                          }`}</Text>
+                        </Badge>
+                      </Tooltip>
+                    ) : (
+                      <></>
+                    )
                   }
                 />
               </Group>

@@ -110,6 +110,7 @@ function CheckpointInfo({
             sx={(theme) => ({
               cursor: 'pointer',
               color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+              overflowWrap: 'anywhere',
             })}
             href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
@@ -124,11 +125,9 @@ function CheckpointInfo({
               {resource.name}
             </Text>
           )}
-          <ModelVersionPopularity
-            isFeatured={resource.isFeatured ?? false}
-            popularity={resource.popularityRank ?? 0}
-            viewable={selectSource === 'generation'}
-          />
+          {selectSource === 'generation' && (
+            <ModelVersionPopularity versionId={resource.id} listenForUpdates={true} />
+          )}
         </Stack>
       </Group>
       {onRemove ? (

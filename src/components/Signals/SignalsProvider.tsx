@@ -8,7 +8,7 @@ import { useDebouncer } from '~/utils/debouncer';
 import { getRandomInt } from '~/utils/number-helpers';
 import { SignalStatus } from '~/utils/signals/types';
 // import { createSignalWorker, SignalWorker } from '~/utils/signals';
-import { useSignalsWorker, SignalWorker } from '~/utils/signals/useSignalsWorker';
+import { SignalWorker, useSignalsWorker } from '~/utils/signals/useSignalsWorker';
 import { trpc } from '~/utils/trpc';
 
 type SignalState = {
@@ -49,13 +49,13 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
   }, [worker, message]);
 };
 
-export const useSignalTopic = (topic: SignalTopic) => {
+export const useSignalTopic = (topic: `${SignalTopic}${'' | `:${number}`}` | undefined) => {
   const { worker } = useSignalContext();
- 
-  const interval = useInterval(() => { 
-    worker?.topicRegister(topic);
 
-   }, 30000);
+  const interval = useInterval(() => {
+    if (!topic) return;
+    worker?.topicRegister(topic);
+  }, 30000);
 
   useEffect(() => {
     interval.start();

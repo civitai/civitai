@@ -66,7 +66,7 @@ CREATE TABLE IF NOT EXISTS "TagRank"
 -- DropTable
 DROP TABLE IF EXISTS "UserRank";
 CREATE TABLE IF NOT EXISTS "UserRank"
-    AS SELECT * FROM "UserRank_Live";
+  AS SELECT * FROM "UserRank_Live";
 
 -- DropEnum
 DROP TYPE "NotificationCategory";

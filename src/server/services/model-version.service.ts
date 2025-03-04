@@ -12,17 +12,22 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-
 import { logToAxiom } from '~/server/logging/client';
-import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
+  dataForModelsCache,
+  modelVersionAccessCache,
+  modelVersionResourceCache,
+} from '~/server/redis/caches';
+import { REDIS_KEYS } from '~/server/redis/client';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import type {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
+  GetModelVersionPopularityInput,
+  GetModelVersionsPopularityInput,
   ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -1577,4 +1582,13 @@ export const createModelVersionPostFromTraining = async ({
       })
     )
   );
+};
+
+export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
+  const resp = await modelVersionResourceCache.fetch([id]);
+  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false };
+};
+
+export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
+  return await modelVersionResourceCache.fetch(ids);
 };

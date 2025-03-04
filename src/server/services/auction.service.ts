@@ -84,7 +84,11 @@ export async function getAllAuctions() {
 }
 
 export type PrepareBidsReturn = ReturnType<typeof prepareBids>;
-export const prepareBids = (a: AuctionType) => {
+export const prepareBids = (
+  a: Pick<AuctionType, 'bids' | 'quantity'> & {
+    bids: Pick<AuctionType['bids'][number], 'deleted' | 'entityId' | 'amount'>[];
+  }
+) => {
   return Object.values(
     a.bids
       .filter((bid) => !bid.deleted)
@@ -303,26 +307,16 @@ export const createBid = async ({
   const auctionData = await dbRead.auction.findFirst({
     where: { id: auctionId },
     select: {
-      startAt: true,
-      endAt: true,
-      auctionBase: {
-        select: {
-          id: true,
-          type: true,
-          ecosystem: true,
-          slug: true,
-        },
-      },
+      ...auctionSelect,
       bids: {
         where: {
           userId,
           entityId,
         },
         select: {
+          ...auctionSelect.bids.select,
           id: true,
-          amount: true,
           transactionIds: true,
-          deleted: true,
         },
       },
     },
@@ -358,6 +352,19 @@ export const createBid = async ({
   if (transactionId === null) {
     throw throwBadRequestError('Could not complete transaction');
   }
+
+  // // For notifications...
+  // const allBids = await dbRead.bid.findMany({
+  //   where: {
+  //     auctionId,
+  //     deleted: false,
+  //   },
+  //   select: auctionSelect.bids.select,
+  // });
+  // const previousWinners = prepareBids({
+  //   quantity: auctionData.quantity,
+  //   bids: allBids,
+  // }).filter((w) => w.totalAmount >= auctionData.minPrice)
 
   if (auctionData.bids?.length > 0) {
     // if there already exists a bid, either add to it or remove the deleted status

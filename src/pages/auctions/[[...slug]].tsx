@@ -20,6 +20,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AuctionInfo } from '~/components/Auction/AuctionInfo';
 import { AuctionMyBids } from '~/components/Auction/AuctionMyBids';
 import { MY_BIDS, useAuctionContext } from '~/components/Auction/AuctionProvider';
+import { useAuctionTopicListener } from '~/components/Auction/AuctionUtils';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Meta } from '~/components/Meta/Meta';
@@ -97,7 +98,8 @@ export default function Auctions({
   } = useAuctionContext();
   const pathname = usePathname();
   const { runTour, running } = useTourContext();
-  const isMobile = useIsMobile();
+  const isMobile = useIsMobile({ breakpoint: 'md' });
+  useAuctionTopicListener(selectedAuction?.id);
 
   const {
     data: auctions = [],
@@ -194,10 +196,10 @@ export default function Auctions({
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
         deIndex={slug === MY_BIDS}
       />
-      <Container size="lg" h="100%" data-tour="auction:start">
+      <Container size="xl" h="100%" data-tour="auction:start">
         <ContainerGrid gutter="xl" my="sm" h="100%">
           {!isMobile && (
-            <ContainerGrid.Col xs={12} sm={4} className="max-sm:hidden">
+            <ContainerGrid.Col xs={12} md={4}>
               <Box
                 maw={300}
                 w="100%"
@@ -211,7 +213,7 @@ export default function Auctions({
             </ContainerGrid.Col>
           )}
 
-          <ContainerGrid.Col xs={12} sm={8} display="flex" sx={{ justifyContent: 'center' }}>
+          <ContainerGrid.Col xs={12} md={8} display="flex" sx={{ justifyContent: 'center' }}>
             {slug !== MY_BIDS ? <AuctionInfo /> : <AuctionMyBids />}
           </ContainerGrid.Col>
         </ContainerGrid>

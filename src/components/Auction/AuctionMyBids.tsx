@@ -87,7 +87,7 @@ export const AuctionMyBids = () => {
     <Stack w="100%" spacing="sm">
       {/*<Group className="sticky top-0 right-0">*/}
       <Group position="right">
-        <Button className="sm:hidden" onClick={drawerToggle} variant="default">
+        <Button className="md:hidden" onClick={drawerToggle} variant="default">
           <Group spacing={4}>
             <IconLayoutSidebarLeftExpand />
             All Auctions

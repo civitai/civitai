@@ -8,9 +8,9 @@ import { rewardFailedCounter, rewardGivenCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
+import { Fingerprint } from '~/server/utils/fingerprint';
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
-import { Fingerprint } from '~/server/utils/fingerprint';
 
 const log = (event: BuzzEventLog, data: MixedObject) => {
   logToAxiom({

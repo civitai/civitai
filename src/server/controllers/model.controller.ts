@@ -10,11 +10,7 @@ import {
 import { Context } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
-import {
-  dataForModelsCache,
-  modelTagCache,
-  modelVersionResourceCache,
-} from '~/server/redis/caches';
+import { dataForModelsCache, modelTagCache } from '~/server/redis/caches';
 import { getInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { GetAllSchema, GetByIdInput, UserPreferencesInput } from '~/server/schema/base.schema';
 import {
@@ -204,8 +200,6 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
       user: ctx?.user,
     });
 
-    const versionInfo = await modelVersionResourceCache.fetch(filteredVersions.map((x) => x.id));
-
     return {
       ...model,
       metrics: undefined,
@@ -286,11 +280,6 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
 
         const versionMetrics = version.metrics[0];
 
-        const { popularityRank, isFeatured } = versionInfo[version.id] ?? {
-          popularityRank: 0,
-          isFeatured: false,
-        };
-
         return {
           ...version,
           metrics: undefined,
@@ -323,8 +312,6 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
               return { ...match, ...removeNulls(item.settings as RecommendedSettingsSchema) };
             })
             .filter(isDefined),
-          popularityRank,
-          isFeatured,
         };
       }),
     };

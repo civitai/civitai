@@ -153,7 +153,17 @@ function ResourceSelectProvider({
   const resources = (props.options?.resources ?? []).map(
     ({ type, baseModels = [], partialSupport = [] }) => ({
       type,
-      baseModels: generation?.advancedMode ? [...baseModels, ...partialSupport] : baseModels,
+      // if generation, check toggle
+      // if modelVersion or addResource, always include all
+      // otherwise (training, auction, etc.), only include baseModels
+      baseModels:
+        props.selectSource === 'generation'
+          ? generation?.advancedMode
+            ? [...baseModels, ...partialSupport]
+            : baseModels
+          : props.selectSource === 'modelVersion' || props.selectSource === 'addResource'
+          ? [...baseModels, ...partialSupport]
+          : baseModels,
       partialSupport,
     })
   );
@@ -1053,13 +1063,14 @@ function ResourceSelectCard({
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                     <Group className="absolute bottom-2 left-2 flex items-center gap-1">
-                      <Badge variant="light" radius="xl" size="sm">
-                        <ModelVersionPopularity
-                          popularity={selectedVersion.popularityRank}
-                          isFeatured={selectedVersion.isFeatured}
-                          viewable={selectSource === 'generation'}
-                        />
-                      </Badge>
+                      {selectSource === 'generation' && (
+                        <Badge variant="light" radius="xl" size="sm">
+                          <ModelVersionPopularity
+                            versionId={selectedVersion.id}
+                            listenForUpdates={false}
+                          />
+                        </Badge>
+                      )}
                     </Group>
                     <Group className="absolute bottom-2 right-2 flex items-center gap-1">
                       {data.availability === Availability.Private && (
