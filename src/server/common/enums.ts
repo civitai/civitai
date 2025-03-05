@@ -131,7 +131,7 @@ export enum SignalMessages {
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
-  ModelVersionPopularityUpdate = 'mvPopularity:update',
+  ModelVersionPopularityUpdate = 'model-version:popularity:update',
   Pong = 'pong',
   // Creator Program:
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
@@ -346,5 +346,5 @@ export enum BuzzWithdrawalRequestSort {
 export enum SignalTopic {
   CreatorProgram = 'creators-program',
   Auction = 'auction', // with :auctionId
-  ModelVersionPopularity = 'mvPopularity', // with :modelVersionId
+  ModelVersion = 'model-version', // with :modelVersionId
 }

@@ -229,7 +229,7 @@ export default function Auctions({
             overflowY: 'auto',
           },
           body: { padding: 16, paddingTop: 0, overflowY: 'auto' },
-          header: { padding: '4px 8px' },
+          header: { padding: '6px 16px' },
           closeButton: { height: 32, width: 32, '& > svg': { width: 24, height: 24 } },
         }}
         title={

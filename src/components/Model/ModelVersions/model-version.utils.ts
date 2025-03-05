@@ -146,9 +146,7 @@ export const useQueryModelVersionDonationGoals = (
 export const useModelVersionTopicListener = (modelVersionId?: number) => {
   const utils = trpc.useUtils();
 
-  useSignalTopic(
-    modelVersionId ? `${SignalTopic.ModelVersionPopularity}:${modelVersionId}` : undefined
-  );
+  useSignalTopic(modelVersionId ? `${SignalTopic.ModelVersion}:${modelVersionId}` : undefined);
 
   useSignalConnection(
     SignalMessages.ModelVersionPopularityUpdate,
@@ -157,8 +155,8 @@ export const useModelVersionTopicListener = (modelVersionId?: number) => {
       utils.modelVersion.getPopularity.setData({ id: data.versionId }, () => {
         return {
           versionId: data.versionId,
-          isFeatured: data.isFeatured,
-          popularityRank: data.popularityRank,
+          popularityRank: data.popularityRank ?? 0,
+          isFeatured: data.isFeatured ?? false,
         };
       });
     }

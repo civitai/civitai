@@ -1,25 +1,9 @@
-import {
-  ActionIcon,
-  Button,
-  Center,
-  Divider,
-  Group,
-  Loader,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
-import {
-  IconAlertCircle,
-  IconLayoutSidebarLeftExpand,
-  IconSearch,
-  IconX,
-} from '@tabler/icons-react';
+import { ActionIcon, Center, Divider, Loader, Stack, Text, TextInput, Title } from '@mantine/core';
+import { IconAlertCircle, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useMemo, useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { AuctionTopSection } from '~/components/Auction/AuctionInfo';
 import { ModelMyBidCard, ModelMyRecurringBidCard } from '~/components/Auction/AuctionPlacementCard';
-import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { GetMyBidsReturn, GetMyRecurringBidsReturn } from '~/server/services/auction.service';
 import { AuctionType } from '~/shared/utils/prisma/enums';
@@ -28,7 +12,6 @@ import { isDefined } from '~/utils/type-guards';
 
 export const AuctionMyBids = () => {
   const currentUser = useCurrentUser();
-  const { drawerToggle } = useAuctionContext();
   const [searchText, setSearchText] = useState<string>('');
   const searchLower = searchText.toLowerCase();
 
@@ -85,15 +68,7 @@ export const AuctionMyBids = () => {
 
   return (
     <Stack w="100%" spacing="sm">
-      {/*<Group className="sticky top-0 right-0">*/}
-      <Group position="right">
-        <Button className="md:hidden" onClick={drawerToggle} variant="default">
-          <Group spacing={4}>
-            <IconLayoutSidebarLeftExpand />
-            All Auctions
-          </Group>
-        </Button>
-      </Group>
+      <AuctionTopSection />
 
       <Title order={3}>My Bids</Title>
       <TextInput

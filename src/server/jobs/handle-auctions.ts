@@ -3,6 +3,7 @@ import { uniq } from 'lodash-es';
 import { constants, FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
+import { dbKV } from '~/server/db/db-helpers';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import type {
@@ -36,21 +37,6 @@ const log = createLogger(jobName, 'magenta');
 type WinnerType = PrepareBidsReturn[number] & {
   userIds: number[];
   auctionId: number;
-};
-
-// TODO (Justin) the set in the other function doesn't work with strings
-const dbKV = {
-  get: async function <T>(key: string, defaultValue?: T) {
-    const stored = await dbWrite.keyValue.findUnique({ where: { key } });
-    return stored ? (stored.value as T) : defaultValue;
-  },
-  set: async function (key: string, value: number) {
-    await dbWrite.keyValue.upsert({
-      where: { key },
-      create: { key, value },
-      update: { value },
-    });
-  },
 };
 
 // TODO allow setting dates for chunks
@@ -125,37 +111,39 @@ const handlePreviousAuctions = async (now: Dayjs) => {
   // Mark auctions as finalized
   for (const auctionRow of allAuctionsWithBids) {
     log('====== processing auction', auctionRow.id);
-    if (auctionRow.bids.length === 0) continue;
+    if (auctionRow.bids.length > 0) {
+      const sortedBids = prepareBids(auctionRow);
 
-    const sortedBids = prepareBids(auctionRow);
+      const { winners, losers } = sortedBids.reduce(
+        (result, r) => {
+          const matchUserIds = auctionRow.bids
+            .filter((b) => b.entityId === r.entityId)
+            .map((b) => b.userId);
+          const bidDetails = { ...r, userIds: matchUserIds, auctionId: auctionRow.id };
 
-    const { winners, losers } = sortedBids.reduce(
-      (result, r) => {
-        const matchUserIds = auctionRow.bids
-          .filter((b) => b.entityId === r.entityId)
-          .map((b) => b.userId);
-        const bidDetails = { ...r, userIds: matchUserIds, auctionId: auctionRow.id };
+          if (r.totalAmount >= auctionRow.minPrice) {
+            result.winners.push(bidDetails);
+          } else {
+            result.losers.push(bidDetails);
+          }
+          return result;
+        },
+        { winners: [] as WinnerType[], losers: [] as WinnerType[] }
+      );
 
-        if (r.totalAmount >= auctionRow.minPrice) {
-          result.winners.push(bidDetails);
-        } else {
-          result.losers.push(bidDetails);
-        }
-        return result;
-      },
-      { winners: [] as WinnerType[], losers: [] as WinnerType[] }
-    );
+      log('winners', winners.length, 'losers', losers.length);
 
-    log('winners', winners.length, 'losers', losers.length);
+      // Feature the winners
+      if (winners.length > 0) {
+        await _handleWinnersForAuction(auctionRow, winners);
+      }
 
-    // Feature the winners
-    if (winners.length > 0) {
-      await _handleWinnersForAuction(auctionRow, winners);
-    }
-
-    // Refund the losers
-    if (losers.length > 0) {
-      await _refundLosersForAuction(auctionRow, losers);
+      // Refund the losers
+      if (losers.length > 0) {
+        await _refundLosersForAuction(auctionRow, losers);
+      }
+    } else {
+      log('No bids, skipping.');
     }
 
     // Mark the auction as finalized
@@ -455,6 +443,7 @@ const createNewAuctions = async (now: Dayjs) => {
       };
     }),
     select: { id: true, auctionBaseId: true },
+    skipDuplicates: true,
   });
 
   log(newAuctions.length, 'new auctions');

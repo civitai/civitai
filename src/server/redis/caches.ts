@@ -688,7 +688,7 @@ export const modelTagCache = createCachedObject<ModelTagCacheItem>({
 
 export type ModelVersionResourceCacheItem = {
   versionId: number;
-  popularityRank: number;
+  popularityRank: number | null;
   isFeatured: boolean;
 };
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({

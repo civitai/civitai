@@ -3,44 +3,44 @@ import { IconTemperature } from '@tabler/icons-react';
 import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/model-version.utils';
 import { trpc } from '~/utils/trpc';
 
-const featureInfo = {
+export const featureInfo = {
   name: 'Featured',
   description: 'Featured by the community',
   markup: -0.2,
 } as const;
 const popularityInfoMap = {
   '0.0': {
-    name: 'Inactive',
+    name: 'Dormant',
     description: 'Not being used',
     markup: 0.4,
   },
   '0.1': {
-    name: 'Minimal Use',
+    name: 'Quiet',
     description: 'Very low engagement',
     markup: 0.3,
   },
   '0.2': {
-    name: 'Low Use',
+    name: 'Underground Hit',
     description: 'Some activity, but not frequent',
     markup: 0.2,
   },
   '0.3': {
-    name: 'Steady Use',
+    name: 'Getting Hype',
     description: 'Consistently used at a moderate level',
     markup: 0.1,
   },
   '0.4': {
-    name: 'High Use',
+    name: 'Taking Off',
     description: 'Frequently used, growing demand',
     markup: 0.0,
   },
   '0.6': {
-    name: 'Heavy Use',
+    name: 'Crushing It',
     description: 'Strong demand, many users',
     markup: -0.1,
   },
   '0.8': {
-    name: 'Max Use',
+    name: 'Buzzing!',
     description: 'Extremely high usage, peak demand',
     markup: -0.2,
   },

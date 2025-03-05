@@ -6,6 +6,7 @@ import {
   Checkbox,
   Divider,
   Group,
+  HoverCard,
   Loader,
   Paper,
   Stack,
@@ -15,7 +16,12 @@ import {
   useMantineTheme,
 } from '@mantine/core';
 import { DatePicker } from '@mantine/dates';
-import { IconAlertCircle, IconCalendar, IconLayoutSidebarLeftExpand } from '@tabler/icons-react';
+import {
+  IconAlertCircle,
+  IconCalendar,
+  IconLayoutSidebarLeftExpand,
+  IconMoodSmile,
+} from '@tabler/icons-react';
 import { clsx } from 'clsx';
 import dayjs from 'dayjs';
 import React, { useMemo, useState } from 'react';
@@ -30,6 +36,7 @@ import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import { featureInfo } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -67,14 +74,79 @@ const QuickBid = ({
   );
 };
 
+export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => any }) => {
+  const features = useFeatureFlags();
+  const { runTour } = useTourContext();
+  const { drawerToggle } = useAuctionContext();
+
+  // {/*<Group className="sticky top-0 right-0">*/}
+
+  return (
+    <Group position="right">
+      {features.appTour && (
+        <HelpButton
+          data-tour="auction:reset"
+          tooltip="Need help? Start the tour!"
+          onClick={() => {
+            runTour({
+              key: 'auction',
+              step: 0,
+              forceRun: true,
+            });
+          }}
+        />
+      )}
+      <HoverCard withArrow width={380}>
+        <HoverCard.Target>
+          <Text color="dimmed">
+            <IconMoodSmile />
+          </Text>
+        </HoverCard.Target>
+        <HoverCard.Dropdown maw="100%">
+          <Stack spacing="xs">
+            <Text size="sm" align="center">
+              Perks of Winning
+            </Text>
+            <Divider />
+            {/* TODO change wording if more than just models */}
+            <Stack>
+              <Text size="sm">
+                <Badge mr="xs">Visibility</Badge>The model will be featured in all valid resource
+                selectors (generation, resource editing, etc.), and has a chance to be on the front
+                page (SFW only).
+              </Text>
+              <Text size="sm">
+                <Badge color="green" mr="xs">
+                  Discount
+                </Badge>
+                Generations with this model will have a {Math.abs(featureInfo.markup) * 100}%
+                discount applied to them.
+              </Text>
+            </Stack>
+          </Stack>
+        </HoverCard.Dropdown>
+      </HoverCard>
+      <Button
+        className="md:hidden"
+        onClick={drawerToggle}
+        variant="default"
+        data-tour="auction:nav"
+      >
+        <Group spacing={4}>
+          <IconLayoutSidebarLeftExpand />
+          <Text>Auctions</Text>
+        </Group>
+      </Button>
+      {!!refreshFunc && <Button onClick={() => refreshFunc()}>Refresh</Button>}
+    </Group>
+  );
+};
+
 export const AuctionInfo = () => {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const theme = useMantineTheme();
   const { ref: placeBidRef, inView: placeBidInView } = useInView();
-  const { selectedAuction, selectedModel, validAuction, setSelectedModel, drawerToggle } =
-    useAuctionContext();
-  const features = useFeatureFlags();
-  const { runTour } = useTourContext();
+  const { selectedAuction, selectedModel, validAuction, setSelectedModel } = useAuctionContext();
 
   const {
     data: auctionData,
@@ -136,34 +208,7 @@ export const AuctionInfo = () => {
 
   return (
     <Stack w="100%" spacing="sm">
-      {/*<Group className="sticky top-0 right-0">*/}
-      <Group position="right">
-        {features.appTour && (
-          <HelpButton
-            data-tour="auction:reset"
-            tooltip="Need help? Start the tour!"
-            onClick={() => {
-              runTour({
-                key: 'auction',
-                step: 0,
-                forceRun: true,
-              });
-            }}
-          />
-        )}
-        <Button
-          className="md:hidden"
-          onClick={drawerToggle}
-          variant="default"
-          data-tour="auction:nav"
-        >
-          <Group spacing={4}>
-            <IconLayoutSidebarLeftExpand />
-            All Auctions
-          </Group>
-        </Button>
-        <Button onClick={() => refetchAuction()}>Refresh</Button>
-      </Group>
+      <AuctionTopSection refreshFunc={refetchAuction} />
       {isErrorAuctionData ? (
         <Center>
           <AlertWithIcon icon={<IconAlertCircle />} color="red" iconColor="red">

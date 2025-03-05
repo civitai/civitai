@@ -300,7 +300,9 @@ function ResourceSelectModalContent() {
 
   const meiliFilters: string[] = [
     // Default filter for visibility:
-    `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
+    selectSource === 'auction'
+      ? `availability != ${Availability.Private}`
+      : `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
   ];
 
   const or: string[] = [];
