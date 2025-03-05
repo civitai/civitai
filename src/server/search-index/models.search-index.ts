@@ -110,6 +110,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'versions.hashes',
     'versions.baseModel',
     'versions.id',
+    'availability',
   ];
 
   if (

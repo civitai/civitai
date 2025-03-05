@@ -123,7 +123,9 @@ export const openWithdrawalFreeModal = () => {
       icon: null,
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-1">
-          <p className="mb-2">Withdrawl fees vary depending on the Payout Method you choose.</p>
+          <p className="mb-2">
+            Withdrawal fees vary depending on the Withdrawal Method you choose.
+          </p>
           {keys.map((key) => {
             if (!WITHDRAWAL_FEES[key]) {
               return null;
