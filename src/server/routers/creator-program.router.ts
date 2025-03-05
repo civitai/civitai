@@ -21,7 +21,7 @@ export const creatorProgramRouter = router({
     getCreatorRequirements(ctx.user.id)
   ),
   joinCreatorsProgram: protectedProcedure.mutation(({ ctx }) => {
-    joinCreatorsProgram(ctx.user.id);
+    return joinCreatorsProgram(ctx.user.id);
   }),
   getCompensationPool: protectedProcedure
     .input(compensationPoolInputSchema)

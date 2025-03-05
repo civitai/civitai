@@ -80,6 +80,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     displayName: 'Baking phase ending',
     category: NotificationCategory.Creator,
     toggleable: false,
+    showCategory: true,
     prepareMessage: () => ({
       message: `This is the last day to Bank Buzz before the Extraction Phase begins.`,
       url: `/user/buzz-dashboard#get-paid`,
@@ -89,6 +90,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     displayName: 'Extraction phase started',
     category: NotificationCategory.Creator,
     toggleable: false,
+    showCategory: true,
     prepareMessage: () => ({
       message: `The Extraction Phase has begun. Check the value of your Banked Buzz and decide what to do.`,
       url: `/user/buzz-dashboard#get-paid`,
@@ -98,6 +100,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     displayName: 'Extraction phase ending',
     category: NotificationCategory.Creator,
     toggleable: false,
+    showCategory: true,
     prepareMessage: () => ({
       message: `This is the last day to Extract Buzz before the Creator Compensation Pool is distributed. Check the value of your Banked Buzz and decide what to do.`,
       url: `/user/buzz-dashboard#get-paid`,

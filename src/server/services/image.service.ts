@@ -3991,7 +3991,9 @@ export async function updateImageNsfwLevel({
   if (!nsfwLevel) throw throwBadRequestError();
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
-    await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
+    // Commenting this out should solve the problem.
+    // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     if (status) {
       await dbWrite.imageRatingRequest.updateMany({
         where: { imageId: id, status: 'Pending' },
