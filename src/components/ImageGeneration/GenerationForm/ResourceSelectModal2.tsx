@@ -91,7 +91,7 @@ import { ReportEntity } from '~/server/schema/report.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { GetFeaturedModels } from '~/server/services/model.service';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -1068,6 +1068,7 @@ function ResourceSelectCard({
                         <Badge variant="light" radius="xl" size="sm">
                           <ModelVersionPopularity
                             versionId={selectedVersion.id}
+                            isCheckpoint={data.type === ModelType.Checkpoint}
                             listenForUpdates={false}
                           />
                         </Badge>

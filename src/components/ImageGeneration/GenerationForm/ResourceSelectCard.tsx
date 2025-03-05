@@ -126,7 +126,11 @@ function CheckpointInfo({
             </Text>
           )}
           {selectSource === 'generation' && (
-            <ModelVersionPopularity versionId={resource.id} listenForUpdates={true} />
+            <ModelVersionPopularity
+              versionId={resource.id}
+              isCheckpoint={resource.model.type === ModelType.Checkpoint}
+              listenForUpdates={true}
+            />
           )}
         </Stack>
       </Group>
