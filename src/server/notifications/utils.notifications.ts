@@ -74,10 +74,11 @@ function getNotificationTypes() {
     string,
     { displayName: string; type: string; defaultDisabled: boolean }[]
   > = {};
-  for (const [type, { displayName, toggleable, category, defaultDisabled }] of Object.entries(
-    notificationProcessors
-  )) {
-    if (toggleable === false) continue;
+  for (const [
+    type,
+    { displayName, toggleable, category, defaultDisabled, showCategory },
+  ] of Object.entries(notificationProcessors)) {
+    if (toggleable === false && !showCategory) continue;
     notificationCategoryTypes[category] ??= [];
     notificationCategoryTypes[category]!.push({
       type,

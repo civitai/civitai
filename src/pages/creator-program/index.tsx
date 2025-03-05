@@ -46,7 +46,10 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { capitalize } from 'lodash-es';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
-import { openCreatorScoreModal } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
+import {
+  CreatorProgramCapsInfo,
+  openCreatorScoreModal,
+} from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { formatDate } from '~/utils/date-helpers';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { Flags } from '~/shared/utils';
@@ -138,6 +141,7 @@ function CreatorsClubV1() {
           </Grid>
           <HowItWorksSection />
           <JoinSection applyFormUrl={applyFormUrl} />
+          <CreatorCapsSection />
           <FAQ />
         </Stack>
       </Container>
@@ -422,6 +426,23 @@ const FAQ = () => {
           ))}
         </Accordion>
       </Stack>
+    </Stack>
+  );
+};
+
+const CreatorCapsSection = () => {
+  const { cx, classes, theme } = useStyles();
+
+  return (
+    <Stack className={classes.section}>
+      <Stack spacing={0} mb="sm">
+        <Title order={2} className={classes.highlightColor} size={sizing.sections.title}>
+          Creator Banking Caps
+        </Title>
+      </Stack>
+      <Paper withBorder className={cx(classes.card)} h="100%">
+        <CreatorProgramCapsInfo />
+      </Paper>
     </Stack>
   );
 };

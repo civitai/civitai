@@ -41,7 +41,8 @@ export const useBankedBuzz = () => {
 
   return {
     banked: data,
-    isLoading,
+    // No loading without a user.
+    isLoading: isLoading && currentUser,
   };
 };
 
