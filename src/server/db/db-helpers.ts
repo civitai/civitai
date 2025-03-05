@@ -286,11 +286,11 @@ export const dbKV = {
   },
   set: async function <T>(key: string, value: T) {
     const json = JSON.stringify(value);
-    await dbWrite.$executeRaw`
+    await dbWrite.$executeRawUnsafe(`
       INSERT INTO "KeyValue" ("key", "value")
-      VALUES (${key}, ${json})
+      VALUES ('${key}', '${json}'::jsonb)
       ON CONFLICT ("key")
-      DO UPDATE SET "value" = ${json}
-    `;
+      DO UPDATE SET "value" = '${json}'::jsonb
+    `);
   },
 };
