@@ -320,7 +320,7 @@ const words = {
     }),
   },
   poi: checkable(poiWords, {
-    preprocessor: (word) => word.replace(/[^\w\s\|\:\[\]]/g, ''),
+    preprocessor: (word) => word.replace(/[^\w\s\|\:\[\],]/g, ''),
   }),
   tags: Object.entries(promptTags).map(([tag, words]) => ({ tag, words: checkable(words) })),
 };
