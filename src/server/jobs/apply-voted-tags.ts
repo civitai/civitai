@@ -317,6 +317,7 @@ async function applyDownvotes() {
     ...new Set([...disabledImageTags, ...deletedImageTags].map((x) => x.imageId)),
   ];
 
+  // TODO.TagsOnImage - add to action queue when TagsOnImageNew.disabled is set to true
   // Update votes
   await dbWrite.$executeRaw`
     -- Update image tag votes (unapply)
@@ -341,6 +342,7 @@ async function applyDownvotes() {
   );
   // - no need to update imagesMetricsSearchIndex here
 
+  // TODO.TagsOnImage - add to action queue when TagsOnImageNew.disabled is set to true
   // Update NSFW baseline
   // --------------------------------------------
   const toUpdate = (

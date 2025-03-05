@@ -1643,6 +1643,7 @@ model TagsOnImageNew {
   attributes Int @db.SmallInt()
 
   @@id([imageId, tagId])
+  @@index([imageId])
 }
 
 model TagsOnImageVote {

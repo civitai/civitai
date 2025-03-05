@@ -8,15 +8,20 @@ CREATE TABLE "TagsOnImageNew" (
   PRIMARY KEY ("imageId", "tagId")
 );
 
-CREATE OR REPLACE FUNCTION manipulate_bits_boolean(attributes integer, offset integer, value boolean default null)
+-- CreateIndex
+CREATE INDEX "TagsOnImageNew_imageId_idx" ON "TagsOnImageNew"("imageId");
+CREATE INDEX "TagsOnImageNew_needsReview_idx" ON "TagsOnImageNew" ("attributes") WHERE ("attributes" & 1 << 09) != 0;
+CREATE INDEX "TagsOnImageNew_disabled_idx" ON "TagsOnImageNew" ("attributes") WHERE ("attributes" & 1 << 10) != 0;
+
+CREATE OR REPLACE FUNCTION manipulate_bits_boolean(attributes integer, "offset" integer, value boolean default null)
 RETURNS INTEGER AS $$
 BEGIN
   RETURN CASE
     WHEN value IS NULL
       THEN attributes
     WHEN value IS TRUE
-      THEN attributes | (1 << offset)
-      ELSE attributes & ~ (1 << offset)
+      THEN attributes | (1 << "offset")
+      ELSE attributes & ~ (1 << "offset")
   END;
 END;
 $$ LANGUAGE plpgsql;
