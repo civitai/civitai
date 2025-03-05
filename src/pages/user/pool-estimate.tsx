@@ -18,10 +18,6 @@ import { trpc } from '~/utils/trpc';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, session, ctx }) => {
-    if (!features?.buzz) {
-      return { notFound: true };
-    }
-
     if (!session)
       return {
         redirect: {
@@ -29,10 +25,12 @@ export const getServerSideProps = createServerSideProps({
           permanent: false,
         },
       };
+
+    if (true) {
+      return { notFound: true };
+    }
   },
 });
-
-
 
 export default function EarnPotential() {
   const [bankPortion, setBankPortion] = useState<number>(50);
@@ -48,10 +46,9 @@ export default function EarnPotential() {
   const poolSize = potential?.poolSize ?? 0;
   const earned = potential?.earned ?? 0;
 
-
-  const bankedBuzz = poolSize * bankPortion/100;
-  const creatorBankedBuzz = earned * creatorBankPortion/100;
-  const rewardRate = Math.min(poolValue/bankedBuzz, 1/1000);
+  const bankedBuzz = (poolSize * bankPortion) / 100;
+  const creatorBankedBuzz = (earned * creatorBankPortion) / 100;
+  const rewardRate = Math.min(poolValue / bankedBuzz, 1 / 1000);
   const forecastedEarning = rewardRate * creatorBankedBuzz;
 
   const buzzCurrencyProps = {
@@ -69,20 +66,12 @@ export default function EarnPotential() {
     {
       label: 'Pool Value',
       info: 'The total $ value of the Creator Compensation Pool for this month, based on a % of platform revenue. Amount varies monthly.',
-      value: <CurrencyBadge
-          unitAmount={poolValue}
-          size="lg"
-          {...dollarCurrencyProps}
-        />,
+      value: <CurrencyBadge unitAmount={poolValue} size="lg" {...dollarCurrencyProps} />,
     },
     {
       label: 'Buzz Earned by All Creators',
       info: 'The total amount of Buzz earned by all Creators last month.',
-      value: <CurrencyBadge
-          unitAmount={poolSize}
-          size="lg"
-          {...buzzCurrencyProps}
-        />,
+      value: <CurrencyBadge unitAmount={poolSize} size="lg" {...buzzCurrencyProps} />,
     },
     {
       label: 'Portion of All Earned-Buzz Banked',
@@ -101,20 +90,12 @@ export default function EarnPotential() {
     {
       label: 'Pool Size',
       info: 'The total amount of Buzz in the pool.',
-      value: <CurrencyBadge
-          unitAmount={bankedBuzz}
-          size="lg"
-          {...buzzCurrencyProps}
-        />,
+      value: <CurrencyBadge unitAmount={bankedBuzz} size="lg" {...buzzCurrencyProps} />,
     },
     {
       label: 'Your Buzz Earned',
       info: 'The total amount of Buzz you earned last month, including Creator Compensation, Generation Tips, Early Access.',
-      value: <CurrencyBadge
-          unitAmount={earned}
-          size="lg"
-          {...buzzCurrencyProps}
-        />,
+      value: <CurrencyBadge unitAmount={earned} size="lg" {...buzzCurrencyProps} />,
     },
     {
       label: 'Your Bank Portion',
@@ -132,12 +113,8 @@ export default function EarnPotential() {
     },
     {
       label: 'Your Banked Buzz',
-      info: 'The total Earned-Buzz you\'re choosing to contribute to the pool.',
-      value: <CurrencyBadge
-          unitAmount={creatorBankedBuzz}
-          size="lg"
-          {...buzzCurrencyProps}
-        />,
+      info: "The total Earned-Buzz you're choosing to contribute to the pool.",
+      value: <CurrencyBadge unitAmount={creatorBankedBuzz} size="lg" {...buzzCurrencyProps} />,
     },
   ];
 
@@ -149,7 +126,9 @@ export default function EarnPotential() {
           <Stack spacing={0}>
             <Title mb={0}>Estimated Creator Compensation Pool Earnings</Title>
             <Text color="dimmed">
-              This is an estimate of your potential earnings from the Creator Compensation Pool based on your earnings last month as well as the total earnings of all creators on the platform.
+              This is an estimate of your potential earnings from the Creator Compensation Pool
+              based on your earnings last month as well as the total earnings of all creators on the
+              platform.
             </Text>
           </Stack>
           <Card p={0} withBorder shadow="xs">
@@ -182,9 +161,13 @@ export default function EarnPotential() {
               sx={{ fontWeight: 900, fontSize: 24 }}
             />
           </Group>
-          <Text size="xs" c="dimmed">About ${(rewardRate * 1000).toFixed(2)} per ⚡1,000 Buzz Banked</Text>
-          {rewardRate >= (1/1000) && (
-            <Text mt={-16} size="xs" c="dimmed">The Buzz earning rate is capped at $1.00 per ⚡1,000 Buzz Banked</Text>
+          <Text size="xs" c="dimmed">
+            About ${(rewardRate * 1000).toFixed(2)} per ⚡1,000 Buzz Banked
+          </Text>
+          {rewardRate >= 1 / 1000 && (
+            <Text mt={-16} size="xs" c="dimmed">
+              The Buzz earning rate is capped at $1.00 per ⚡1,000 Buzz Banked
+            </Text>
           )}
         </Stack>
       </Container>

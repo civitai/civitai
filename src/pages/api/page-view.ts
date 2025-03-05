@@ -63,7 +63,7 @@ const pathnamesTokens = [
   '/404',
   '/air/confirm',
   '/collections/[collectionId]/review',
-  '/creators-program',
+  '/creator-program',
   '/dmca/counter-notice',
   '/dmca/notice',
   '/games/chopped',

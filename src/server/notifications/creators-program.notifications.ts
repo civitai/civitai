@@ -17,7 +17,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: () => ({
       message: `Your account has been verified and approved for payments! You can now start earning money from your content!`,
-      url: `/creators-program`,
+      url: `/creator-program`,
     }),
   },
   'creators-program-rejected-stripe': {
@@ -26,7 +26,7 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     toggleable: false,
     prepareMessage: () => ({
       message: `We're sorry, but it looks like your stripe account has been rejected for payments. If you need more information, you can contact support.`,
-      url: `/creators-program`,
+      url: `/creator-program`,
     }),
   },
   'creators-program-withdrawal-approved': {
@@ -72,6 +72,38 @@ export const creatorsProgramNotifications = createNotificationProcessor({
     prepareMessage: () => ({
       message: `We have decided to revert money that was transfered to your  account. Please contact us for more information on why we came to this desicion.`,
       url: `/user/buzz-dashboard#buzz-withdrawals`,
+    }),
+  },
+
+  // Creator Program V2:
+  'creator-program-banking-phase-ending': {
+    displayName: 'Baking phase ending',
+    category: NotificationCategory.Creator,
+    toggleable: false,
+    showCategory: true,
+    prepareMessage: () => ({
+      message: `This is the last day to Bank Buzz before the Extraction Phase begins.`,
+      url: `/user/buzz-dashboard#get-paid`,
+    }),
+  },
+  'creator-program-extraction-phase-started': {
+    displayName: 'Extraction phase started',
+    category: NotificationCategory.Creator,
+    toggleable: false,
+    showCategory: true,
+    prepareMessage: () => ({
+      message: `The Extraction Phase has begun. Check the value of your Banked Buzz and decide what to do.`,
+      url: `/user/buzz-dashboard#get-paid`,
+    }),
+  },
+  'creator-program-extraction-phase-ending': {
+    displayName: 'Extraction phase ending',
+    category: NotificationCategory.Creator,
+    toggleable: false,
+    showCategory: true,
+    prepareMessage: () => ({
+      message: `This is the last day to Extract Buzz before the Creator Compensation Pool is distributed. Check the value of your Banked Buzz and decide what to do.`,
+      url: `/user/buzz-dashboard#get-paid`,
     }),
   },
 });

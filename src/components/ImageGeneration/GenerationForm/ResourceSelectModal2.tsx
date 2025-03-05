@@ -155,16 +155,17 @@ function ResourceSelectProvider({
       partialSupport,
     })
   );
+  const resourceTypes = resources.map((x) => x.type);
   const types =
     resources.length > 0
-      ? filters.types.filter((type) => resources.some((x) => x.type === type))
+      ? filters.types.filter((type) => resourceTypes.includes(type))
       : filters.types;
 
+  const resourceBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
+  console.log({ resourceBaseModels });
   const baseModels =
-    resources.length > 0
-      ? filters.baseModels.filter((baseModel) =>
-          resources.some((x) => x.baseModels.includes(baseModel))
-        )
+    resourceBaseModels.length > 0
+      ? filters.baseModels.filter((baseModel) => resourceBaseModels.includes(baseModel))
       : filters.baseModels;
 
   function handleSelect(value: GenerationResourceWithImage) {
@@ -202,7 +203,7 @@ export default function ResourceSelectModal(props: ResourceSelectModalProps) {
 }
 
 function ResourceSelectModalContent() {
-  const { title, onSelect, onClose, canGenerate, resources, selectSource, filters, setFilters } =
+  const { title, onClose, canGenerate, resources, selectSource, filters } =
     useResourceSelectContext();
   const dialog = useDialogContext();
   const isMobile = useIsMobile();

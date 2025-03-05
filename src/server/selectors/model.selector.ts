@@ -6,7 +6,12 @@ import {
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { profileImageSelect } from './image.selector';
 import { modelFileSelect } from './modelFile.selector';
-import { Availability, MetricTimeframe, ModelHashType, ModelStatus } from '~/shared/utils/prisma/enums';
+import {
+  Availability,
+  MetricTimeframe,
+  ModelHashType,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { modelHashSelect } from './modelHash.selector';
 import { ModelFileType } from '../common/constants';
 
@@ -32,13 +37,6 @@ export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelec
   modelVersions: {
     select: getModelVersionDetailsSelect,
     orderBy: { index: 'asc' },
-  },
-  tagsOnModels: {
-    select: {
-      tag: {
-        select: { name: true },
-      },
-    },
   },
 });
 
@@ -181,13 +179,6 @@ export const modelWithDetailsSelect = Prisma.validator<Prisma.ModelSelect>()({
       commentCount: true,
     },
   },
-  tagsOnModels: {
-    select: {
-      tag: {
-        select: { id: true, name: true, unlisted: true },
-      },
-    },
-  },
 });
 
 export const associatedResourceSelect = Prisma.validator<Prisma.ModelSelect>()({
@@ -236,7 +227,6 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
       },
     },
   },
-  tagsOnModels: { select: { tag: { select: { id: true, name: true } } } },
   hashes: {
     select: modelHashSelect,
     where: {

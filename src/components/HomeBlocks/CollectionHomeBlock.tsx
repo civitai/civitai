@@ -255,6 +255,16 @@ const CollectionHomeBlockContent = ({ homeBlockId, metadata }: Props) => {
           </ImagesProvider>
         </div>
       )}
+
+      {metadata.footer && (
+        <Stack mt="md">
+          <Text size="sm" mb="xs">
+            <CustomMarkdown allowedElements={['a']} unwrapDisallowed>
+              {metadata.footer}
+            </CustomMarkdown>
+          </Text>
+        </Stack>
+      )}
     </>
   );
 };

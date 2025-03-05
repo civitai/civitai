@@ -37,18 +37,12 @@ export default MixedAuthEndpoint(async function handler(
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const status = user?.isModerator ? undefined : 'Published';
 
-  console.time('get-version-details');
-
   const modelVersion = await dbRead.modelVersion.findFirst({
     where: { id, status },
     select: getModelVersionApiSelect,
   });
 
-  console.timeEnd('get-version-details');
-
-  console.time('res-model-version-details');
   await resModelVersionDetails(req, res, modelVersion);
-  console.timeEnd('res-model-version-details');
 });
 
 export async function prepareModelVersionResponse(
@@ -57,9 +51,7 @@ export async function prepareModelVersionResponse(
   images?: AsyncReturnType<typeof getImagesForModelVersion>
 ) {
   const { files, model, metrics, vaeId, ...version } = modelVersion;
-  console.time('get-vae-files');
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
-  console.timeEnd('get-vae-files');
   files.push(...vae);
   const castedFiles = files as Array<
     Omit<(typeof files)[number], 'metadata'> & { metadata: FileMetadata }
@@ -67,13 +59,11 @@ export async function prepareModelVersionResponse(
   const primaryFile = getPrimaryFile(castedFiles);
   if (!primaryFile) return null;
 
-  console.time('images');
   images ??= await getImagesForModelVersion({
     modelVersionIds: [version.id],
     include: ['meta'],
     imagesPerVersion: 10,
   });
-  console.timeEnd('images');
   const includeDownloadUrl = model.mode !== ModelModifier.Archived;
   const includeImages = model.mode !== ModelModifier.TakenDown;
 
@@ -109,7 +99,11 @@ export async function prepareModelVersionResponse(
       : [],
     images: includeImages
       ? images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
-          url: getEdgeUrl(url, { width: 450, name: id.toString() }),
+          url: getEdgeUrl(url, {
+            width: image.width ?? 450,
+            name: id.toString(),
+            type: image.type,
+          }),
           ...image,
         }))
       : [],

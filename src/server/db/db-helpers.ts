@@ -51,6 +51,7 @@ export function getClient(
   const pool = new Pool({
     connectionString,
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
+    min: 0,
     max: env.DATABASE_POOL_MAX,
     idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
@@ -278,3 +279,19 @@ export function combineSqlWithParams(sql: string, params: readonly unknown[]) {
   }
   return query;
 }
+
+export const dbKV = {
+  get: async function <T>(key: string, defaultValue?: T) {
+    const stored = await dbWrite.keyValue.findUnique({ where: { key } });
+    return stored ? (stored.value as T) : defaultValue;
+  },
+  set: async function <T>(key: string, value: T) {
+    const json = JSON.stringify(value);
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "KeyValue" ("key", "value")
+      VALUES ('${key}', '${json}'::jsonb)
+      ON CONFLICT ("key")
+      DO UPDATE SET "value" = '${json}'::jsonb
+    `);
+  },
+};

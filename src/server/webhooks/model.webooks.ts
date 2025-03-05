@@ -1,5 +1,6 @@
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import { modelTagCache } from '~/server/redis/caches';
 import { getAllModelsWithVersionsSelect } from '~/server/selectors/model.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
@@ -35,16 +36,18 @@ export const modelWebhooks = createWebhookProcessor({
       });
       if (!models.length) return [];
 
+      const modelIds = models.map((x) => x.id);
       const modelVersionIds = models.flatMap((model) => model.modelVersions.map((v) => v.id));
       const images = await getImagesForModelVersion({ modelVersionIds });
+      const tagsOnModels = await modelTagCache.fetch(modelIds);
 
-      const results = models?.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
+      const results = models?.map(({ modelVersions, user, ...model }) => ({
         ...model,
         creator: {
           username: user.username,
           image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
         },
-        tags: tagsOnModels.map(({ tag }) => tag.name),
+        tags: tagsOnModels[model.id]?.tags.map((x) => x.name) ?? [],
         modelVersions: modelVersions
           .map(({ files, ...version }) => {
             const castedFiles = files as Array<
@@ -99,16 +102,18 @@ export const modelWebhooks = createWebhookProcessor({
       });
       if (!models.length) return [];
 
+      const modelIds = models.map((x) => x.id);
       const modelVersionIds = models.flatMap((model) => model.modelVersions.map((v) => v.id));
       const images = await getImagesForModelVersion({ modelVersionIds });
+      const tagsOnModels = await modelTagCache.fetch(modelIds);
 
-      const results = models.map(({ modelVersions, tagsOnModels, user, ...model }) => ({
+      const results = models.map(({ modelVersions, user, ...model }) => ({
         ...model,
         creator: {
           username: user.username,
           image: user.image ? getEdgeUrl(user.image, { width: 96 }) : null,
         },
-        tags: tagsOnModels.map(({ tag }) => tag.name),
+        tags: tagsOnModels[model.id]?.tags.map((x) => x.name) ?? [],
         modelVersions: modelVersions
           .map(({ files, ...version }) => {
             const castedFiles = files as Array<

@@ -56,7 +56,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
     }
 
     await updateUserSettings.mutate({
-      creatorsProgramCodeOfConductAccepted: true,
+      creatorsProgramCodeOfConductAccepted: new Date(),
     });
 
     handleClose();
@@ -256,8 +256,7 @@ const StripeConnectConfigurationCard = () => {
       ) : !userPaymentConfiguration ? (
         <Stack>
           <Alert color="red">
-            It looks like you are not authorized to receive payments or setup your account. Please
-            contact support.
+            It looks like you are not authorized to receive payments or setup your account yet.
           </Alert>
         </Stack>
       ) : (
@@ -365,13 +364,19 @@ const TipaltiConfigurationCard = () => {
 };
 
 export function UserPaymentConfigurationCard() {
-  const features = useFeatureFlags();
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
 
-  if (!features.creatorsProgram || !userPaymentConfiguration) return null;
+  if (!isLoading && !userPaymentConfiguration) {
+    return null;
+  }
 
   return (
     <Card withBorder id="payments">
+      {isLoading && (
+        <Stack>
+          <Loader />
+        </Stack>
+      )}
       {userPaymentConfiguration?.stripeAccountId && <StripeConnectConfigurationCard />}
       {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
         <Divider my="xl" />

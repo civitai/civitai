@@ -355,7 +355,7 @@ async function handleSuccess({
     if (tags.length > 0) {
       const uniqTags = uniqBy(tags, (x) => x.id);
       await dbWrite.$executeRawUnsafe(`
-        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source")
+        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source", "disabledAt")
         VALUES ${uniqTags
           .filter((x) => x.id)
           .map(
@@ -363,7 +363,9 @@ async function handleSuccess({
               `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(
                 x.tag,
                 x.source ?? source
-              )}, '${x.source ?? source}')`
+              )}, '${x.source ?? source}', ${
+                shouldIgnore(x.tag, x.source ?? source) ? 'NOW()' : null
+              })`
           )
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";

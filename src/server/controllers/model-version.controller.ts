@@ -727,7 +727,7 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
   const version = await getVersionById({
     ...input,
     select: {
-      model: { select: { user: { select: userWithCosmeticsSelect } } },
+      model: { select: { id: true, user: { select: userWithCosmeticsSelect } } },
       files: {
         select: {
           metadata: true,
@@ -745,6 +745,7 @@ export async function getModelVersionForTrainingReviewHandler({ input }: { input
     ?.trainingResults as TrainingResultsV2;
 
   return {
+    modelId: version.model.id,
     user: version.model.user,
     workflowId: trainingResults?.workflowId,
     jobId: trainingResults?.jobId as string | null,

@@ -85,7 +85,7 @@ const schema = modelVersionUpsertSchema2
       .array()
       .optional(),
   })
-  .refine((data) => (!data.skipTrainedWords ? data.trainedWords.length > 0 : true), {
+  .refine((data) => (!data.skipTrainedWords ? (data.trainedWords ?? []).length > 0 : true), {
     message: 'You need to specify at least one trained word',
     path: ['trainedWords'],
   })

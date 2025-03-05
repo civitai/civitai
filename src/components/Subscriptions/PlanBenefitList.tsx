@@ -1,4 +1,5 @@
 import {
+  Anchor,
   DefaultMantineColor,
   Divider,
   List,
@@ -24,6 +25,18 @@ const defaultBenefits = [
   // { content: 'Can equip special cosmetics' },
   { content: 'Exclusive Discord channels' },
   { content: 'Early access to new features' },
+  {
+    tiers: ['bronze', 'silver', 'gold'], // Not available in supporter / founder.
+    content: (
+      <Text>
+        Access to the{' '}
+        <Anchor variant="link" td="underline" component="a" href="/creator-program" target="_blank">
+          Creator Program
+        </Anchor>{' '}
+        to get paid for earned Buzz
+      </Text>
+    ),
+  },
   { content: 'Enhanced Model Creator controls', tiers: ['gold'] },
 ];
 

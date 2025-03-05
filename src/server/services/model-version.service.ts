@@ -975,10 +975,7 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   if (!clickhouse || modelVersions.length === 0) return [];
 
-  const date = maxDate(
-    dayjs().startOf('day').subtract(timeframe, 'day').toDate(),
-    dayjs().startOf('month').subtract(1, 'day').toDate()
-  ).toISOString();
+  const date = dayjs().startOf('day').subtract(timeframe, 'day').toDate();
 
   const generationData = await clickhouse.$query<Row>`
     SELECT
