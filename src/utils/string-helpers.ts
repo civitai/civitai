@@ -60,6 +60,8 @@ const nameOverrides: Record<string, string> = {
   CogVideoX: 'CogVideoX',
   minimax: 'Hailou by MiniMax',
   NoobAI: 'NoobAI',
+  InternalValue: 'Internal Value',
+  ACH: 'ACH',
 };
 
 export function getDisplayName(

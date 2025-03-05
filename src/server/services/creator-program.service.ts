@@ -562,6 +562,10 @@ export async function withdrawCash(userId: number, amount: number) {
     );
   }
 
+  if (!WITHDRAWAL_FEES[userPaymentConfiguration.tipaltiWithdrawalMethod]) {
+    throw new Error('Selected withdrawal method is not supported');
+  }
+
   // Determine withdrawal amount
   const fee = getWithdrawalFee(amount, cash.paymentMethod);
   const toWithdraw = amount - fee;

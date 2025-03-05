@@ -18,6 +18,7 @@ import {
   formatCurrencyForDisplay,
   numberWithCommas,
 } from '~/utils/number-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export const openPhasesModal = () => {
   dialogStore.trigger({
@@ -113,7 +114,7 @@ export const openSettlementModal = () => {
   });
 };
 
-export const openWithdrawalFreeModal = () => {
+export const openWithdrawalFeeModal = () => {
   const keys = Object.keys(WITHDRAWAL_FEES) as CashWithdrawalMethod[];
   dialogStore.trigger({
     component: AlertDialog,
@@ -133,7 +134,7 @@ export const openWithdrawalFreeModal = () => {
 
             return (
               <div className="flex gap-4" key={key}>
-                <p className="font-bold">{capitalize(key)}</p>
+                <p className="font-bold">{getDisplayName(key)}</p>
                 <p>
                   {WITHDRAWAL_FEES[key].type === 'percent'
                     ? `${WITHDRAWAL_FEES[key].amount * 100}%`

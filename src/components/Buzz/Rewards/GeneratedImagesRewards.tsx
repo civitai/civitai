@@ -83,9 +83,7 @@ export const GeneratedImagesReward = () => {
   const labels = useMemo(() => {
     const data = [];
     const today = dayjs().startOf('day');
-    let day = dayjs(
-      maxDate(today.subtract(DEFAULT_TIMEFRAME, 'day').toDate(), today.startOf('month').toDate())
-    );
+    let day = today.subtract(DEFAULT_TIMEFRAME, 'day');
     while (day.isBefore(today)) {
       data.push(day.format('YYYY-MM-DD'));
       day = day.add(1, 'day');
