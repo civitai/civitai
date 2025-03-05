@@ -1,9 +1,22 @@
 import { z } from 'zod';
-import { haiperVideoGenerationConfig } from '~/server/orchestrator/haiper/haiper.schema';
-import { klingVideoGenerationConfig } from '~/server/orchestrator/kling/kling.schema';
-import { lightricksVideoGenerationConfig } from '~/server/orchestrator/lightricks/lightricks.schema';
-import { minimaxVideoGenerationConfig } from '~/server/orchestrator/minimax/minimax.schema';
-import { mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
+import {
+  HaiperInput,
+  haiperVideoGenerationConfig,
+} from '~/server/orchestrator/haiper/haiper.schema';
+import {
+  HunyuanInput,
+  hunyuanVideoGenerationConfig,
+} from '~/server/orchestrator/hunyuan/hunyuan.schema';
+import { KlingInput, klingVideoGenerationConfig } from '~/server/orchestrator/kling/kling.schema';
+import {
+  LightricksInput,
+  lightricksVideoGenerationConfig,
+} from '~/server/orchestrator/lightricks/lightricks.schema';
+import {
+  MinimaxInput,
+  minimaxVideoGenerationConfig,
+} from '~/server/orchestrator/minimax/minimax.schema';
+import { MochiInput, mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
 
 export type VideoGenerationSchema = z.infer<(typeof videoGenerationConfig)[number]['schema']>;
 export const videoGenerationConfig = [
@@ -12,4 +25,14 @@ export const videoGenerationConfig = [
   ...haiperVideoGenerationConfig,
   ...mochiVideoGenerationConfig,
   ...lightricksVideoGenerationConfig,
+  ...hunyuanVideoGenerationConfig,
 ] as const;
+
+export const videoGenerationInput = {
+  kling: KlingInput,
+  minimax: MinimaxInput,
+  haiper: HaiperInput,
+  mochi: MochiInput,
+  lightricks: LightricksInput,
+  hunyuan: HunyuanInput,
+} as const;

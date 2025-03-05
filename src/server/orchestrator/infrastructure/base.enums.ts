@@ -12,6 +12,7 @@ export const OrchestratorEngine = {
   Haiper: 'haiper',
   Minimax: 'minimax',
   Lightricks: 'lightricks',
+  Hunyuan: 'hunyuan',
 } as const;
 export type OrchestratorEngine = (typeof orchestratorEngines)[number];
 const orchestratorEngines = Object.values(OrchestratorEngine);
