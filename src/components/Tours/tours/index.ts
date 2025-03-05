@@ -1,6 +1,9 @@
-import { contentGenerationTour, remixContentGenerationTour } from '~/utils/tours/content-gen.tour';
-import { modelPageTour, welcomeTour } from '~/utils/tours/model-page.tour';
-import { postGenerationTour } from '~/utils/tours/post-image-gen.tour';
+import {
+  contentGenerationTour,
+  remixContentGenerationTour,
+} from '~/components/Tours/tours/content-gen.tour';
+import { modelPageTour, welcomeTour } from '~/components/Tours/tours/model-page.tour';
+import { postGenerationTour } from '~/components/Tours/tours/post-image-gen.tour';
 
 export const tourSteps = {
   'content-generation': contentGenerationTour,

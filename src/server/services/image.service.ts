@@ -29,8 +29,10 @@ import { metricsSearchClient } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import { leakingContentCounter } from '~/server/prom/client';
 import {
+  getUserFollows,
   imageMetaCache,
   imageMetadataCache,
+  imageMetricsCache,
   imagesForModelVersionsCache,
   tagCache,
   tagIdsForImagesCache,
@@ -140,6 +142,7 @@ import {
   ingestImageSchema,
 } from './../schema/image.schema';
 import { uniqBy } from 'lodash-es';
+import { withRetries } from '~/utils/errorHandling';
 // TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
@@ -224,11 +227,15 @@ export const deleteImageById = async ({
       if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
         // TODO Remove after fallback bucket is deprecated
         if (env.S3_IMAGE_UPLOAD_BUCKET_OLD)
-          await baseS3Client.deleteObject({
-            bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD,
-            key: image.url,
-          });
-        await imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url });
+          await withRetries(() =>
+            baseS3Client.deleteObject({
+              bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD as string,
+              key: image.url,
+            })
+          );
+        await withRetries(() =>
+          imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url })
+        );
         await purgeResizeCache({ url: image.url });
       }
     } catch {
@@ -835,6 +842,10 @@ export const getAllImages = async (
     AND.push(Prisma.sql`(p."publishedAt" IS NULL)`);
   } else if (!pending) AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
+  if (!isModerator) {
+    AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+  }
+
   let from = 'FROM "Image" i';
   const joins: string[] = [];
   // Filter to specific model/review content
@@ -885,11 +896,7 @@ export const getAllImages = async (
   // Filter only followed users
   // [x]
   if (userId && followed) {
-    const followedUsers = await dbRead.userEngagement.findMany({
-      where: { userId, type: 'Follow' },
-      select: { targetUserId: true },
-    });
-    const userIds = followedUsers.map((x) => x.targetUserId);
+    const userIds = await getUserFollows(userId);
     if (userIds.length) {
       // cacheTime = 0;
       AND.push(Prisma.sql`i."userId" IN (${Prisma.join(userIds)})`);
@@ -2019,34 +2026,19 @@ const getImageMetricsObject = async (data: { id: number }[]) => {
 const getImageMetrics = async (ids: number[]) => {
   if (!ids.length) return {};
 
-  const pgData = await dbRead.entityMetricImage.findMany({
-    where: { imageId: { in: ids } },
-    select: {
-      imageId: true,
-      reactionLike: true,
-      reactionHeart: true,
-      reactionLaugh: true,
-      reactionCry: true,
-      // reactionTotal: true,
-      comment: true,
-      collection: true,
-      buzz: true,
-    },
-  });
-
-  type PgDataType = (typeof pgData)[number];
-
-  // - If missing data in postgres, get latest from clickhouse
+  const metricsData = await imageMetricsCache.fetch(ids);
+  type PgDataType = (typeof metricsData)[number];
 
   // - get images with no data at all
-  const missingIds = ids.filter((i) => !pgData.map((d) => d.imageId).includes(i));
+  const missingIds = ids.filter((i) => !metricsData[i]);
   // - get images where some of the properties are null
-  const missingData = pgData
+  const missingData = Object.values(metricsData)
     .filter((d) => Object.values(d).some((v) => !isDefined(v)))
     .map((x) => x.imageId);
   const missing = [...new Set([...missingIds, ...missingData])];
 
   let clickData: DeepNonNullable<PgDataType>[] = [];
+  // - If missing data in postgres, get latest from clickhouse
   if (missing.length > 0) {
     if (clickhouse) {
       // - find the missing IDs' data in clickhouse
@@ -2151,7 +2143,7 @@ const getImageMetrics = async (ids: number[]) => {
     }
   }
 
-  return [...pgData, ...clickData].reduce((acc, row) => {
+  return [...Object.values(metricsData), ...clickData].reduce((acc, row) => {
     const { imageId, ...rest } = row;
     acc[imageId] = Object.fromEntries(
       Object.entries(rest).map(([k, v]) => [k, isDefined(v) ? Math.max(0, v) : v])
@@ -2195,7 +2187,7 @@ export const getImage = async ({
   withoutPost,
 }: GetImageInput & { userId?: number; isModerator?: boolean }) => {
   const AND = [Prisma.sql`i.id = ${id}`];
-  if (!isModerator)
+  if (!isModerator) {
     AND.push(
       Prisma.sql`(${Prisma.join(
         [
@@ -2214,6 +2206,11 @@ export const getImage = async ({
         ' OR '
       )})`
     );
+
+    if (!withoutPost) {
+      AND.push(Prisma.sql`(p."availability" != 'Private' OR p."userId" = ${userId})`);
+    }
+  }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const rawImages = await dbRead.$queryRaw<GetImageRaw[]>`
@@ -2469,6 +2466,7 @@ export const getImagesForModelVersion = async ({
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
   const query = Prisma.sql`
+    -- getImagesForModelVersion
     WITH targets AS (
       SELECT
         id,
@@ -3969,7 +3967,9 @@ export async function updateImageNsfwLevel({
   if (!nsfwLevel) throw throwBadRequestError();
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
-    await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
+    // Commenting this out should solve the problem.
+    // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     if (status) {
       await dbWrite.imageRatingRequest.updateMany({
         where: { imageId: id, status: 'Pending' },
@@ -4720,7 +4720,6 @@ export async function createImageResources({
     'modelversionid'
   );
   const resourcesWithoutModelVersions = resources.filter((x) => !x.modelversionid);
-  console.dir({ resourcesWithModelVersions, resourcesWithoutModelVersions }, { depth: null });
 
   const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
     (r) => Prisma.sql`

@@ -1,13 +1,18 @@
 import { chunk } from 'lodash-es';
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { executeRefresh, getAffected, snippets } from '~/server/metrics/metric-helpers';
-import { limitConcurrency, sleep, Task } from '~/server/utils/concurrency-helpers';
+import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { PostMetric } from '~/shared/utils/prisma/models';
 import dayjs from 'dayjs';
 import { templateHandler } from '~/server/db/db-helpers';
+import { isDefined } from '~/utils/type-guards';
+import { capitalize } from '~/utils/string-helpers';
+import { getJobDate } from '~/server/jobs/job';
 
 const log = createLogger('metrics:post');
+
+const timePeriods = ['day', 'week', 'month', 'year', 'allTime'] as const;
 
 export const postMetrics = createMetricProcessor({
   name: 'Post',
@@ -38,14 +43,14 @@ export const postMetrics = createMetricProcessor({
       const metricValues = metrics
         .map(
           (key) => `
-        CASE
-          WHEN tf.timeframe = 'Day' THEN COALESCE(d."${key}"[1], im."${key}", 0)
-          WHEN tf.timeframe = 'Month' THEN COALESCE(d."${key}"[2], im."${key}", 0)
-          WHEN tf.timeframe = 'Week' THEN COALESCE(d."${key}"[3], im."${key}", 0)
-          WHEN tf.timeframe = 'Year' THEN COALESCE(d."${key}"[4], im."${key}", 0)
-          WHEN tf.timeframe = 'AllTime' THEN COALESCE(d."${key}"[5], im."${key}", 0)
-        END as "${key}"
-      `
+            CASE
+              WHEN tf.timeframe = 'Day' THEN COALESCE(d."${key}"[1], im."${key}", 0)
+              WHEN tf.timeframe = 'Month' THEN COALESCE(d."${key}"[2], im."${key}", 0)
+              WHEN tf.timeframe = 'Week' THEN COALESCE(d."${key}"[3], im."${key}", 0)
+              WHEN tf.timeframe = 'Year' THEN COALESCE(d."${key}"[4], im."${key}", 0)
+              WHEN tf.timeframe = 'AllTime' THEN COALESCE(d."${key}"[5], im."${key}", 0)
+            END as "${key}"
+          `
         )
         .join(',\n');
       const metricOverrides = metrics.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
@@ -60,7 +65,7 @@ export const postMetrics = createMetricProcessor({
           NOW() as "updatedAt",
           ${metricValues}
         FROM data d
-        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS "timeframe") tf
+        CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
         LEFT JOIN "PostMetric" im ON im."postId" = d."postId" AND im."timeframe" = tf.timeframe
         WHERE EXISTS (SELECT 1 FROM "Post" WHERE id = d."postId") -- ensure the post exists
         ON CONFLICT ("postId", "timeframe") DO UPDATE
@@ -68,52 +73,60 @@ export const postMetrics = createMetricProcessor({
             ${metricOverrides},
             "updatedAt" = NOW()
       `;
-      await sleep(1000);
       log('update metrics', i + 1, 'of', updateTasks.length, 'done');
     });
-    await limitConcurrency(updateTasks, 3);
+    await limitConcurrency(updateTasks, 10);
 
     // Update the age groups
     //---------------------------------------
-    const ageGroupUpdatesQuery = await ctx.pg.cancellableQuery<{ postId: number }>(`
-      SELECT "postId"
-      FROM "PostMetric" pm
-      JOIN "Post" p ON p.id = pm."postId"
-      WHERE
-        (p."publishedAt" IS NULL AND "ageGroup" IS NOT NULL) OR
-        ("ageGroup" IS NULL AND p."publishedAt" IS NOT NULL) OR
-        ("ageGroup" IS NOT NULL AND p."publishedAt" > now()) OR
-        ("ageGroup" = 'Year' AND p."publishedAt" < now() - interval '1 year') OR
-        ("ageGroup" = 'Month' AND p."publishedAt" < now() - interval '1 month') OR
-        ("ageGroup" = 'Week' AND p."publishedAt" < now() - interval '1 week') OR
-        ("ageGroup" = 'Day' AND p."publishedAt" < now() - interval '1 day')
-    `);
-    ctx.jobContext.on('cancel', ageGroupUpdatesQuery.cancel);
-    const ageGroupUpdates = await ageGroupUpdatesQuery.result();
-    const affectedIds = ageGroupUpdates.map((x) => x.postId);
-    if (affectedIds.length) {
-      const ageGroupTasks = chunk(affectedIds, 500).map((ids, i) => async () => {
-        log('update ageGroups', i + 1, 'of', ageGroupTasks.length);
+    // Keep track of the last time the age group job was run
+    const [ageGroupLastRun, setAgeGroupLastRun] = await getJobDate(
+      'metric:post:ageGroup',
+      new Date()
+    );
+    await setAgeGroupLastRun();
+    const lastRunStart = ageGroupLastRun.valueOf();
+
+    for (const timePeriod of timePeriods) {
+      if (timePeriod === 'allTime') continue;
+
+      const windowDuration = lastRunStart - ctx.lastUpdate.valueOf();
+      const windowEnd = dayjs(lastRunStart).subtract(1, timePeriod).valueOf();
+      const windowStart = windowEnd - windowDuration;
+
+      // Fetch affected posts between the timeframe
+      const affectedPostIdsQuery = await ctx.pg.cancellableQuery<{ id: number }>(`
+        SELECT
+          id
+        FROM "Post" WHERE "publishedAt" BETWEEN '${new Date(
+          windowStart
+        ).toISOString()}' AND '${new Date(windowEnd).toISOString()}'
+        ORDER BY id;
+      `);
+
+      const affectedPostIds = await affectedPostIdsQuery.result();
+      const affectedIds = affectedPostIds.map((x) => x.id);
+      if (!affectedIds.length) continue;
+
+      // Roll over affected posts to next ageGroup period
+      const periodIndex = timePeriods.indexOf(timePeriod);
+      if (periodIndex === -1) continue;
+
+      const ageGroupTasks = chunk(affectedIds, 10000).map((ids, i) => async () => {
+        log('update ageGroups', timePeriod, i + 1, 'of', ageGroupTasks.length);
         await executeRefresh(ctx)`
           UPDATE "PostMetric" pm
-          SET "ageGroup" = CASE
-              WHEN p."publishedAt" IS NULL THEN NULL
-              WHEN p."publishedAt" > now() THEN NULL -- future posts
-              WHEN p."publishedAt" >= now() - interval '1 day' THEN 'Day'::"MetricTimeframe"
-              WHEN p."publishedAt" >= now() - interval '1 week' THEN 'Week'::"MetricTimeframe"
-              WHEN p."publishedAt" >= now() - interval '1 month' THEN 'Month'::"MetricTimeframe"
-              WHEN p."publishedAt" >= now() - interval '1 year' THEN 'Year'::"MetricTimeframe"
-              ELSE 'AllTime'::"MetricTimeframe"
-          END
-          FROM "Post" p
-          WHERE pm."postId" = p.id AND pm."postId" IN (${ids});
+          SET "ageGroup" = '${capitalize(timePeriods[periodIndex + 1])}'::"MetricTimeframe"
+          WHERE pm."postId" IN (${ids})
+            AND pm."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         `;
-        log('update ageGroups', i + 1, 'of', ageGroupTasks.length, 'done');
+        log('update ageGroups', timePeriod, i + 1, 'of', ageGroupTasks.length, 'done');
       });
+
       await limitConcurrency(ageGroupTasks, 10);
     }
   },
-  async clearDay(ctx) {
+  async clearDay() {
     // No longer needed based on what Justin said
     // log('clearDay');
     // await executeRefresh(ctx)`
@@ -131,7 +144,9 @@ async function getReactionTasks(ctx: MetricContext) {
       SELECT DISTINCT entityId as imageId
       FROM entityMetricEvents
       WHERE entityType = 'Image'
-      AND createdAt > ${ctx.lastUpdate};
+        AND entityId IS NOT NULL
+        AND createdAt > ${ctx.lastUpdate}
+      ORDER BY entityId ASC;
   `;
 
   const affected = new Set<number>();
@@ -148,8 +163,9 @@ async function getReactionTasks(ctx: MetricContext) {
         i."postId" AS id
       FROM "Image" i
       WHERE i.id IN (${ids})
+        AND i.id BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
     `;
-    postIds.forEach((x) => affected.add(x));
+    postIds.filter(isDefined).forEach((x) => affected.add(x));
     log('getReactionPosts', i + 1, 'of', postFetchTasks.length, 'done');
   });
   await limitConcurrency(postFetchTasks, 3);
@@ -157,7 +173,6 @@ async function getReactionTasks(ctx: MetricContext) {
   const tasks = chunk([...affected], 100).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
-
     await getMetrics(ctx)`
       -- get post reaction metrics
       SELECT
@@ -166,8 +181,9 @@ async function getReactionTasks(ctx: MetricContext) {
         ${snippets.reactionTimeframes()}
       FROM "ImageReaction" r
       JOIN "Image" i ON i.id = r."imageId"
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE i."postId" IN (${ids})
+        AND i."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY i."postId", tf.timeframe
     `;
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
@@ -197,8 +213,9 @@ async function getCommentTasks(ctx: MetricContext) {
         ${snippets.timeframeSum('c."createdAt"')} "commentCount"
       FROM "Thread" t
       JOIN "CommentV2" c ON c."threadId" = t.id
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE t."postId" IN (${ids})
+        AND t."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]} 
       GROUP BY t."postId", tf.timeframe
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
@@ -226,8 +243,9 @@ async function getCollectionTasks(ctx: MetricContext) {
         tf.timeframe,
         ${snippets.timeframeSum('ci."createdAt"')} "collectedCount"
       FROM "CollectionItem" ci
-      CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      CROSS JOIN (SELECT unnest(enum_range('AllTime'::"MetricTimeframe", NULL)) AS "timeframe") tf
       WHERE ci."postId" IN (${ids})
+        AND ci."postId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY ci."postId", tf.timeframe
     `;
     log('getCollectionTasks', i + 1, 'of', tasks.length, 'done');

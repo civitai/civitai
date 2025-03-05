@@ -242,7 +242,8 @@ export async function batchProcessor({
     await Promise.all(cancelFns.map((cancel) => cancel()));
   });
 
-  let { batchSize, concurrency, ids } = params;
+  const { batchSize, concurrency } = params;
+  let { ids } = params;
   if (stop) return;
   const context = { ...params, cancelFns };
   ids ??= await batchFetcher(context);
@@ -277,3 +278,19 @@ export function combineSqlWithParams(sql: string, params: readonly unknown[]) {
   }
   return query;
 }
+
+export const dbKV = {
+  get: async function <T>(key: string, defaultValue?: T) {
+    const stored = await dbWrite.keyValue.findUnique({ where: { key } });
+    return stored ? (stored.value as T) : defaultValue;
+  },
+  set: async function <T>(key: string, value: T) {
+    const json = JSON.stringify(value);
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "KeyValue" ("key", "value")
+      VALUES ('${key}', '${json}'::jsonb)
+      ON CONFLICT ("key")
+      DO UPDATE SET "value" = '${json}'::jsonb
+    `);
+  },
+};

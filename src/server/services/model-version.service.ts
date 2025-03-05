@@ -88,16 +88,18 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
 export const getDefaultModelVersion = async ({
   modelId,
   modelVersionId,
+  userId,
 }: {
   modelId: number;
   modelVersionId?: number;
+  userId?: number;
 }) => {
   const db = await getDbWithoutLag('model', modelId);
   const result = await db.model.findUnique({
     where: { id: modelId },
     select: {
       modelVersions: {
-        take: 1,
+        take: 10,
         where: modelVersionId ? { id: modelVersionId } : undefined,
         orderBy: { index: 'asc' },
         select: {
@@ -110,8 +112,12 @@ export const getDefaultModelVersion = async ({
       },
     },
   });
+
   if (!result) throw throwNotFoundError();
-  return result.modelVersions[0];
+
+  // Attempt to return the first published version. Otherwise, return whatever is available.
+  const published = result.modelVersions.find((v) => v.status === ModelStatus.Published);
+  return published ?? result.modelVersions[0];
 };
 
 export const toggleModelVersionEngagement = async ({
@@ -630,7 +636,7 @@ export const publishModelVersionById = async ({
       id: true,
       name: true,
       earlyAccessConfig: true,
-      model: { select: { userId: true, name: true, availability: true } },
+      model: { select: { userId: true, name: true, availability: true, publishedAt: true } },
     },
   });
 
@@ -683,6 +689,14 @@ export const publishModelVersionById = async ({
         WHERE "userId" = ${updatedVersion.model.userId}
         AND "modelVersionId" = ${updatedVersion.id}
       `;
+
+      if (!currentVersion.model.publishedAt) {
+        // Safeguard to ensure the model is marked as published if it wasn't already.
+        await tx.model.update({
+          where: { id: updatedVersion.model.id },
+          data: { publishedAt },
+        });
+      }
 
       return updatedVersion;
     },

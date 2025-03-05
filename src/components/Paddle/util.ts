@@ -84,16 +84,18 @@ export const useSubscriptionManagementUrls = (data: { enabled?: boolean } = { en
 export const useHasPaddleSubscription = () => {
   const currentUser = useCurrentUser();
 
-  const { data: hasPaddleSubscription, isLoading } = trpc.paddle.hasSubscription.useQuery(
-    undefined,
-    {
-      enabled: !!currentUser,
-    }
-  );
+  const {
+    data: hasPaddleSubscription,
+    isLoading,
+    isInitialLoading,
+  } = trpc.paddle.hasSubscription.useQuery(undefined, {
+    enabled: !!currentUser,
+  });
 
   return {
     hasPaddleSubscription,
     isLoading,
+    isInitialLoading,
   };
 };
 
@@ -120,6 +122,7 @@ export const usePaddleAdjustmentsInfinite = (
 };
 
 export const usePaddleSubscriptionRefresh = () => {
+  const currentUser = useCurrentUser();
   const { refreshSubscription, refreshingSubscription } = useMutatePaddle();
   const { hasPaddleSubscription, isLoading: loadingPaddleSubscriptionStatus } =
     useHasPaddleSubscription();
@@ -131,7 +134,8 @@ export const usePaddleSubscriptionRefresh = () => {
   });
 
   const isLoading =
-    refreshingSubscription || loadingPaddleSubscriptionStatus || subscriptionLoading;
+    currentUser &&
+    (refreshingSubscription || loadingPaddleSubscriptionStatus || subscriptionLoading);
 
   const handleRefresh = async () => {
     await refreshSubscription();

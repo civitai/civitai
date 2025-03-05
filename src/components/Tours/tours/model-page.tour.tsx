@@ -42,6 +42,11 @@ export const modelPageTour: StepWithData[] = [
     disableBeacon: true,
     title: 'Join the Discussion',
     content: 'Engage in discussions related to this resource.',
+    // Hack to prevent solid gray box from appearing
+    styles: {
+      overlay: { backgroundColor: 'rgba(0, 0, 0, 0.4)' },
+      spotlight: { backgroundColor: 'rgba(255, 255, 255, 0.2)' },
+    },
   },
   {
     target: '[data-tour="model:gallery"]',
@@ -61,7 +66,12 @@ export const modelPageTour: StepWithData[] = [
     disableBeacon: true,
     spotlightClicks: true,
     disableOverlayClose: true,
-    spotlightPadding: 16,
+    spotlightPadding: 10,
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+      },
+    },
   },
 ];
 
@@ -88,8 +98,13 @@ export const welcomeTour: StepWithData[] = [
     disableBeacon: true,
     showProgress: false,
     hideFooter: true,
-    spotlightPadding: 16,
+    spotlightPadding: 10,
     spotlightClicks: true,
     disableOverlayClose: true,
+    styles: {
+      spotlight: {
+        animation: 'shadowGlow 2s infinite',
+      },
+    },
   },
 ];

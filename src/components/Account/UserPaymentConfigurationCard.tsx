@@ -20,7 +20,6 @@ import { trpc } from '../../utils/trpc';
 import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -31,24 +30,19 @@ import {
   useUserPaymentConfiguration,
 } from '~/components/UserPaymentConfiguration/util';
 import dynamic from 'next/dynamic';
+import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
 
 export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) => {
   const dialog = useDialogContext();
-  const utils = trpc.useContext();
-  const currentUser = useCurrentUser();
   const handleClose = dialog.onClose;
   const [acceptedCoC, setAcceptedCoC] = useState(false);
   const { data, isLoading } = trpc.content.get.useQuery({
     slug: 'creators-program-coc',
   });
-  const queryUtils = trpc.useContext();
 
-  const updateUserSettings = trpc.user.setSettings.useMutation({
-    async onSuccess(res) {
-      queryUtils.user.getSettings.setData(undefined, res);
-    },
+  const updateUserSettings = useMutateUserSettings({
     onError(_error, _payload, context) {
       showErrorNotification({
         title: 'Failed to accept code of conduct',
@@ -62,7 +56,7 @@ export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) 
     }
 
     await updateUserSettings.mutate({
-      creatorsProgramCodeOfConductAccepted: true,
+      creatorsProgramCodeOfConductAccepted: new Date(),
     });
 
     handleClose();
@@ -262,8 +256,7 @@ const StripeConnectConfigurationCard = () => {
       ) : !userPaymentConfiguration ? (
         <Stack>
           <Alert color="red">
-            It looks like you are not authorized to receive payments or setup your account. Please
-            contact support.
+            It looks like you are not authorized to receive payments or setup your account yet.
           </Alert>
         </Stack>
       ) : (
@@ -371,13 +364,19 @@ const TipaltiConfigurationCard = () => {
 };
 
 export function UserPaymentConfigurationCard() {
-  const features = useFeatureFlags();
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
 
-  if (!features.creatorsProgram || !userPaymentConfiguration) return null;
+  if (!isLoading && !userPaymentConfiguration) {
+    return null;
+  }
 
   return (
     <Card withBorder id="payments">
+      {isLoading && (
+        <Stack>
+          <Loader />
+        </Stack>
+      )}
       {userPaymentConfiguration?.stripeAccountId && <StripeConnectConfigurationCard />}
       {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
         <Divider my="xl" />

@@ -51,7 +51,7 @@ import {
   getInjectablResources,
   getIsFlux,
   getIsSD3,
-  getRoundedUpscaleSize,
+  getRoundedWidthHeight,
   getSizeFromAspectRatio,
   InjectableResource,
   samplersToSchedulers,
@@ -117,6 +117,7 @@ export async function parseGenerateImageInput({
   workflowDefinition: WorkflowDefinition;
   whatIf?: boolean;
 }) {
+  if (originalParams.workflow.startsWith('txt2img')) originalParams.sourceImage = null;
   // remove data not allowed by workflow features
   sanitizeParamsByWorkflowDefinition(originalParams, workflowDefinition);
   if (originalParams.sourceImage) {
@@ -324,7 +325,7 @@ export async function parseGenerateImageInput({
 
   const upscale =
     upscaleHeight && upscaleWidth
-      ? getRoundedUpscaleSize({ width: upscaleWidth, height: upscaleHeight })
+      ? getRoundedWidthHeight({ width: upscaleWidth, height: upscaleHeight })
       : undefined;
 
   const { sourceImage, width, height } = params;
@@ -398,6 +399,7 @@ function combineResourcesWithInputResource(
     .filter(isDefined);
 }
 
+export type WorkflowFormatted = AsyncReturnType<typeof formatGenerationResponse>[number];
 export async function formatGenerationResponse(workflows: Workflow[], user?: SessionUser) {
   const steps = workflows.flatMap((x) => x.steps ?? []);
   const allResources = steps.flatMap(getResources);

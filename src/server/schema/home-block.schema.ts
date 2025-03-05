@@ -45,6 +45,7 @@ export const homeBlockMetaSchema = z
     link: z.string(),
     linkText: z.string(),
     cosmeticShopSection: cosmeticShopSectionSchema,
+    footer: z.string().optional(),
   })
   .partial();
 

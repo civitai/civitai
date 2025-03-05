@@ -41,13 +41,7 @@ export function ModelFeedFilters({ ...groupProps }: GroupProps) {
           buttonProps={{ className: classes.subnavDropdown }}
         />
       )}
-      <SortFilter
-        type="models"
-        variant="button"
-        buttonProps={{
-          className: classes.subnavDropdown,
-        }}
-      />
+      <SortFilter type="models" className={classes.subnavDropdown} />
       <ModelFiltersDropdown size="sm" w="100%" compact className={classes.subnavDropdown} isFeed />
     </Group>
   );

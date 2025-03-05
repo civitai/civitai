@@ -26,6 +26,7 @@ import {
   profilePictureCache,
   userBasicCache,
   userCosmeticCache,
+  userFollowsCache,
 } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
@@ -95,6 +96,7 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
+import { createCachedObject } from '~/server/utils/cache-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -354,42 +356,6 @@ export const updateUserById = async ({
   return user;
 };
 
-export async function setUserSetting(userId: number, settings: UserSettingsInput) {
-  const toSet = removeEmpty(settings);
-  if (Object.keys(toSet).length) {
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "User"
-      SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
-      WHERE id = ${userId}
-    `);
-  }
-
-  const toRemove = Object.entries(settings)
-    .filter(([, value]) => value === undefined)
-    .map(([key]) => `'${key}'`);
-  if (toRemove.length) {
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "User"
-      SET settings = settings - ${toRemove.join(' - ')}}
-      WHERE id = ${userId}
-    `);
-  }
-}
-
-export async function getUserSettings(userId: number) {
-  const settings = await dbWrite.$queryRaw<{ settings: UserSettingsSchema }[]>`
-    SELECT settings
-    FROM "User"
-    WHERE id = ${userId}
-  `;
-
-  const userSettings = userSettingsSchema.safeParse(settings[0]?.settings ?? {});
-  // Pass over the default settings if the user settings cannot be parsed
-  if (!userSettings.success) return settings[0]?.settings ?? {};
-
-  return userSettings.data;
-}
-
 export const getUserEngagedModels = ({ id, type }: { id: number; type?: ModelEngagementType }) => {
   return dbRead.modelEngagement.findMany({
     where: { userId: id, type },
@@ -558,6 +524,7 @@ export const toggleFollowUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Follow', targetUserId, userId } });
+  await userFollowsCache.bust(userId);
   return true;
 };
 
@@ -588,6 +555,7 @@ export const toggleHideUser = async ({
   }
 
   await dbWrite.userEngagement.create({ data: { type: 'Hide', targetUserId, userId } });
+  await userFollowsCache.bust(userId);
   return true;
 };
 
@@ -1722,3 +1690,50 @@ export const getUserByPaddleCustomerId = async ({
 
   return user;
 };
+
+// #region [user settings]
+const userSettingsCache = createCachedObject<UserSettingsSchema & { userId: number }>({
+  key: REDIS_KEYS.USER.SETTINGS,
+  idKey: 'userId',
+  ttl: CacheTTL.hour * 4,
+  lookupFn: async (ids) => {
+    const settings = await dbWrite.$queryRaw<{ id: number; settings: UserSettingsSchema }[]>`
+    SELECT id, settings
+    FROM "User"
+    WHERE id IN (${Prisma.join(ids)})
+  `;
+    return Object.fromEntries(settings.map((x) => [x.id, { userId: x.id, ...x.settings }]));
+  },
+});
+
+export async function getUserSettings(id: number) {
+  const result = await userSettingsCache.fetch([id]);
+  const { userId, ...settings } = result[id] ?? {};
+  return settings;
+}
+
+export async function setUserSetting(userId: number, settings: UserSettingsInput) {
+  const toSet = removeEmpty(settings);
+  const keys = Object.keys(toSet);
+  if (!keys.length) return;
+
+  await dbWrite.$executeRawUnsafe(`
+      UPDATE "User"
+      SET settings = COALESCE(settings, '{}') || '${JSON.stringify(toSet)}'::jsonb
+      WHERE id = ${userId}
+    `);
+
+  const toRemove = Object.entries(settings)
+    .filter(([, value]) => value === undefined)
+    .map(([key]) => `'${key}'`);
+  if (toRemove.length) {
+    await dbWrite.$executeRawUnsafe(`
+      UPDATE "User"
+      SET settings = settings - ${toRemove.join(' - ')}}
+      WHERE id = ${userId}
+    `);
+  }
+
+  await userSettingsCache.bust([userId]);
+}
+// #endregion

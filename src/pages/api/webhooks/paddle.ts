@@ -7,6 +7,7 @@ import { dbWrite } from '~/server/db/client';
 import { updateServiceTier } from '~/server/integrations/freshdesk';
 import { getPaddle } from '~/server/paddle/client';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
+import { userCapCache } from '~/server/services/creator-program.service';
 import {
   getBuzzPurchaseItem,
   manageSubscriptionTransactionComplete,
@@ -122,7 +123,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           case EventName.ProductUpdated: {
             const data = event.data;
             const meta = data.customData as SubscriptionProductMetadata;
-            if (!meta?.tier) {
+            if (!meta?.tier && !('one_time' in meta)) {
               break;
             }
 
@@ -164,6 +165,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
               userId: user.id,
               serviceTier: subscription?.tier ?? serviceTier ?? null,
             });
+            await userCapCache.bust(user.id);
           }
         }
 

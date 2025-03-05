@@ -267,6 +267,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
   setup: onIndexSetup,
   maxQueueSize: 100, // Avoids hogging too much memory.
   pullSteps: 7,
+  queues: ['delete'], // Makes it so we don't process updates but deletes only.
   prepareBatches: async ({ pg, jobContext }, lastUpdatedAt) => {
     // const lastUpdateIso = lastUpdatedAt?.toISOString();
 

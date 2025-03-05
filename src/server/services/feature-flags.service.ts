@@ -73,7 +73,7 @@ const featureFlags = createFeatureFlags({
   safety: ['public'],
   csamReports: ['granted'],
   appealReports: ['granted'],
-  reviewTrainingData: ['granted'],
+  reviewTrainingData: isDev ? ['mod'] : ['granted'],
   clubs: ['mod'],
   createClubs: ['mod', 'granted'],
   moderateTags: ['granted'],
@@ -109,7 +109,7 @@ const featureFlags = createFeatureFlags({
   blocklists: ['granted'],
   toolSearch: ['public'],
   generationOnlyModels: ['mod', 'granted', 'gold'],
-  appTour: ['mod', 'granted'],
+  appTour: ['public'],
   privateModels: ['mod', 'granted'],
 });
 

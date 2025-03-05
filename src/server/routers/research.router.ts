@@ -166,10 +166,13 @@ export const researchRouter = router({
     // Set the user's position if they don't have one
     if (!foundTrack) {
       const redisKey = `${REDIS_KEYS.RESEARCH.RATINGS_PROGRESS}:${ctx.user.id}` as const;
-      await redis.hSet(redisKey, {
-        currentTrack: userPosition.trackId!.toString(),
-        [`track:${userPosition.trackId}`]: userPosition.trackPosition!.toString(),
-      });
+      // two calls because it doesn't work with object
+      await redis.hSet(redisKey, 'currentTrack', userPosition.trackId!.toString());
+      await redis.hSet(
+        redisKey,
+        `track:${userPosition.trackId}`,
+        userPosition.trackPosition!.toString()
+      );
       await redis.expire(redisKey, CacheTTL.week);
     }
 

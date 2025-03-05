@@ -15,6 +15,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   cancelPaddleSubscription,
+  createOneTimeProductPurchaseTransaction,
   createBuzzTransaction as createPaddleBuzzTransaction,
   getCustomerLatestTransaction,
   getOrCreateCustomer,
@@ -861,4 +862,57 @@ export const getAdjustmentsInfinite = async ({
     items: data,
     nextCursor: nextItem?.id,
   };
+};
+
+export const createOneTimePurchaseTransaction = async ({
+  productId,
+  userId,
+}: {
+  productId: string;
+  userId: number;
+}) => {
+  const product = await dbRead.product.findUnique({
+    where: { id: productId, provider: PaymentProvider.Paddle },
+    select: {
+      id: true,
+      defaultPriceId: true,
+      prices: { where: { active: true, type: 'one_time' } },
+    },
+  });
+
+  if (!product) {
+    throw throwNotFoundError('Product not found');
+  }
+
+  if (!product.prices.length) {
+    throw throwBadRequestError('Product does not have a one-time price');
+  }
+
+  const price = product.prices.find((p) => p.id === product.defaultPriceId) ?? product.prices[0];
+
+  if (!price) {
+    throw throwNotFoundError('Price not found');
+  }
+
+  const user = await dbRead.user.findFirst({
+    where: { id: userId },
+    select: { paddleCustomerId: true, email: true },
+  });
+
+  if (!user) {
+    throw throwNotFoundError('User not found');
+  }
+
+  let customerId = user?.paddleCustomerId;
+
+  if (!user?.paddleCustomerId) {
+    customerId = await createCustomer({ id: userId, email: user.email as string });
+  }
+
+  const paddleTransaction = await createOneTimeProductPurchaseTransaction({
+    customerId: customerId as string,
+    priceId: price.id,
+  });
+
+  return paddleTransaction.id;
 };

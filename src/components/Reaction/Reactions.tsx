@@ -134,7 +134,7 @@ export function Reactions({
   if (hideReactions) return null;
 
   return (
-    <LoginPopover message="You must be logged in to react to this" withArrow={false}>
+    <LoginPopover message="You must be logged in to react to this">
       <div
         className={clsx('flex items-center justify-center gap-1', className)}
         onClick={(e) => {

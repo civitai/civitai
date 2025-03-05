@@ -29,17 +29,14 @@ import { removeEmpty } from '~/utils/object-helpers';
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
+  // No longer include count since we just have too many now...
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
-    SELECT "public"."Tag"."id",
-           "public"."Tag"."name",
-           CAST(COUNT("public"."TagsOnModels"."tagId") AS INTEGER) as count
-    FROM "public"."Tag"
-           LEFT JOIN "public"."TagsOnModels" ON "public"."Tag"."id" = "public"."TagsOnModels"."tagId"
-           LEFT JOIN "public"."Model" ON "public"."TagsOnModels"."modelId" = "public"."Model"."id"
-    WHERE "public"."Tag"."name" = ${name}
-      AND "public"."Model"."status" = 'Published'
-      AND "public"."TagsOnModels"."modelId" IS NOT NULL
-    GROUP BY "public"."Tag"."id", "public"."Tag"."name"
+    SELECT "id",
+           "name",
+           0 as count
+    FROM "Tag"
+    WHERE "name" = ${name}
+    GROUP BY "id", "name"
     LIMIT 1 OFFSET 0;
   `;
 };
@@ -191,23 +188,23 @@ export const getTags = async ({
            ${isCategory}
            ${isNsfwLevel}
     FROM "Tag" t
-      ${Prisma.raw(orderBy.includes('r.') ? `LEFT JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
+      ${Prisma.raw(orderBy.includes('r.') ? `JOIN "TagRank" r ON r."tagId" = t."id"` : '')}
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY ${Prisma.raw(orderBy)}
     LIMIT ${take} OFFSET ${skip}
   `;
 
   const models: Record<number, number[]> = {};
-  if (withModels) {
-    const modelTags = await dbRead.tagsOnModels.findMany({
-      where: { tagId: { in: tagsRaw.map((t) => t.id) } },
-      select: { tagId: true, modelId: true },
-    });
-    for (const { tagId, modelId } of modelTags) {
-      if (!models[tagId]) models[tagId] = [];
-      models[tagId].push(modelId);
-    }
-  }
+  // if (withModels) {
+  //   const modelTags = await dbRead.tagsOnModels.findMany({
+  //     where: { tagId: { in: tagsRaw.map((t) => t.id) } },
+  //     select: { tagId: true, modelId: true },
+  //   });
+  //   for (const { tagId, modelId } of modelTags) {
+  //     if (!models[tagId]) models[tagId] = [];
+  //     models[tagId].push(modelId);
+  //   }
+  // }
 
   const items = tagsRaw.map((t) =>
     removeEmpty({
@@ -488,9 +485,10 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
     `);
   } else if (entityType === 'image') {
     await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId")
+      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
       SELECT i."id",
-             t."id"
+             t."id",
+              ${0}
       FROM "Image" i
              JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
       WHERE i."id" IN (${entityIds.join(', ')})

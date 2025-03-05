@@ -26,7 +26,7 @@ export const useActiveSubscription = ({
 
   return {
     subscription,
-    subscriptionLoading: !isMember ? false : isLoading || isFetching,
+    subscriptionLoading: !isMember || !currentUser ? false : isLoading || isFetching,
     subscriptionPaymentProvider: subscription?.product?.provider,
     isFreeTier: !subscription || meta?.tier === 'free',
     tier: meta?.tier ?? currentUser?.tier ?? 'free',
@@ -74,14 +74,16 @@ export const appliesForFounderDiscount = (tier?: string) => {
   return appliesForDiscount;
 };
 
-export const useRefreshSession = () => {
+export const useRefreshSession = (shouldReload = true) => {
   const currentUser = useCurrentUser();
   const [refreshing, setRefreshing] = useState(false);
 
   const handleRefreshSession = async () => {
     setRefreshing(true);
     await currentUser?.refresh();
-    window?.location.reload();
+    if (shouldReload) {
+      window?.location.reload();
+    }
     setRefreshing(false);
   };
 

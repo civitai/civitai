@@ -26,12 +26,14 @@ import { GenerationForm } from '~/components/Generate/GenerationForm';
 import { ChallengeIndicator } from '~/components/Challenges/ChallengeIndicator';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
-import { useTourContext } from '~/providers/TourProvider';
+import { useTourContext } from '~/components/Tours/ToursProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const { runTour } = useTourContext();
+  const features = useFeatureFlags();
 
   const isGeneratePage = router.pathname.startsWith('/generate');
   const isImageFeedSeparate = isGeneratePage && !fullScreen;
@@ -70,17 +72,20 @@ export default function GenerationTabs({ fullScreen }: { fullScreen?: boolean })
         <div className="flex w-full items-center justify-between gap-2">
           <div className="relative flex flex-1 flex-nowrap items-center gap-2">
             <ChallengeIndicator />
-            <HelpButton
-              data-tour="gen:reset"
-              tooltip="Need help? Start the tour!"
-              onClick={async () => {
-                runTour({
-                  key: remixOfId ? 'remix-content-generation' : 'content-generation',
-                  step: 0,
-                  forceRun: true,
-                });
-              }}
-            />
+            {features.appTour && (
+              <HelpButton
+                data-tour="gen:reset"
+                tooltip="Need help? Start the tour!"
+                onClick={async () => {
+                  generationPanel.setView('generate');
+                  runTour({
+                    key: remixOfId ? 'remix-content-generation' : 'content-generation',
+                    step: 0,
+                    forceRun: true,
+                  });
+                }}
+              />
+            )}
           </div>
           {currentUser && tabEntries.length > 1 && (
             <SegmentedControl

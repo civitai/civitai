@@ -60,6 +60,12 @@ declare global {
     message?: string;
   };
 
+  type DeepRequired<T> = T extends BrowserNativeObject | Blob
+    ? T
+    : {
+        [K in keyof T]-?: NonNullable<DeepRequired<T[K]>>;
+      };
+
   type DeepNonNullable<T> = { [P in keyof T]-?: NonNullable<T[P]> } & NonNullable<T>;
 
   type Nullable<T> = { [K in keyof T]: T[K] | null };

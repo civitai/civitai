@@ -32,7 +32,6 @@ export default function TagPage({
   const [tag] = data;
 
   const { classes } = useStyles();
-  const count = tag?.count ?? 0;
 
   return (
     <>
@@ -48,9 +47,6 @@ export default function TagPage({
               <Title order={1} align="center">
                 {tag.name}
               </Title>
-              <Text transform="uppercase" align="center">
-                {count} {count === 1 ? 'model' : 'models'}
-              </Text>
             </Stack>
           </Center>
         </Box>
@@ -63,7 +59,7 @@ export default function TagPage({
         <MasonryContainer>
           <Stack spacing="xs">
             <Group position="right">
-              <SortFilter type="models" variant="button" />
+              <SortFilter type="models" />
               <ModelFiltersDropdown size="sm" compact />
             </Group>
             <ModelsInfinite

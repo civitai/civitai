@@ -45,41 +45,22 @@ import { generationResourceSchema } from '~/server/schema/generation.schema';
 type PartialFormData = Partial<TypeOf<typeof formSchema>>;
 type DeepPartialFormData = DeepPartial<TypeOf<typeof formSchema>>;
 export type GenerationFormOutput = TypeOf<typeof formSchema>;
-const formSchema = textToImageParamsSchema
+const baseSchema = textToImageParamsSchema
   .omit({ aspectRatio: true, width: true, height: true, fluxUltraAspectRatio: true, prompt: true })
   .extend({
     model: generationResourceSchema,
     resources: generationResourceSchema.array().min(0).default([]),
     vae: generationResourceSchema.optional(),
-    prompt: z
-      .string()
-      .superRefine((val, ctx) => {
-        const { blockedFor, success } = auditPrompt(val);
-        if (!success) {
-          let message = `Blocked for: ${blockedFor.join(', ')}`;
-          const count = blockedRequest.increment();
-          const status = blockedRequest.status();
-          if (status === 'warned') {
-            message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
-          } else if (status === 'notified') {
-            message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
-          }
-
-          ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message,
-            params: { count },
-          });
-        }
-      })
-      .default(''),
+    prompt: z.string().default(''),
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     remixPrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
     fluxUltraRaw: z.boolean().optional(),
-  })
+  });
+const partialSchema = baseSchema.partial();
+const formSchema = baseSchema
   .transform(({ fluxUltraRaw, ...data }) => {
     const isFluxUltra = getIsFluxUltra({ modelId: data.model.model.id, fluxMode: data.fluxMode });
     const { height, width } = isFluxUltra
@@ -89,8 +70,6 @@ const formSchema = textToImageParamsSchema
     if (data.model.id === fluxModelId && data.fluxMode !== fluxStandardAir) data.priority = 'low';
     if (fluxUltraRaw) data.engine = 'flux-pro-raw';
     else data.engine = undefined;
-
-    if (!data.workflow.startsWith('img2img')) data.sourceImage = null;
 
     return removeEmpty({
       ...data,
@@ -106,14 +85,38 @@ const formSchema = textToImageParamsSchema
           message: 'Prompt cannot be empty',
           path: ['prompt'],
         });
-      } else if (prompt.length > 1500) {
+      }
+    }
+
+    if (data.prompt.length > 1500) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt cannot be longer than 1500 characters',
+        path: ['prompt'],
+      });
+    }
+
+    if (data.prompt.length > 0) {
+      const { blockedFor, success } = auditPrompt(data.prompt);
+      if (!success) {
+        let message = `Blocked for: ${blockedFor.join(', ')}`;
+        const count = blockedRequest.increment();
+        const status = blockedRequest.status();
+        if (status === 'warned') {
+          message += `. If you continue to attempt blocked prompts, your account will be sent for review.`;
+        } else if (status === 'notified') {
+          message += `. Your account has been sent for review. If you continue to attempt blocked prompts, your generation permissions will be revoked.`;
+        }
+
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
-          message: 'Prompt cannot be longer than 1500 characters',
+          message,
+          params: { count },
           path: ['prompt'],
         });
       }
     }
+
     if (data.workflow.startsWith('img2img') && !data.sourceImage) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -255,7 +258,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
   const form = usePersistForm('generation-form-2', {
     schema: formSchema,
-    version: 1.2,
+    partialSchema,
+    version: 1.3,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,

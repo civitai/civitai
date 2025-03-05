@@ -22,6 +22,7 @@ export function usePersistForm<
   storageKey: string,
   args?: Omit<UseFormProps<TypeOf<TSchema>>, 'resolver' | 'defaultValues' | 'values'> & {
     schema?: TSchema;
+    partialSchema?: z.AnyZodObject;
     storage?: Storage;
     version?: number;
     exclude?: TExclude;
@@ -35,6 +36,7 @@ export function usePersistForm<
 ) {
   const {
     schema,
+    partialSchema = z.object({}),
     storage,
     version = 0,
     exclude = [],
@@ -46,7 +48,7 @@ export function usePersistForm<
   const _storageSchema = useRef<AnyZodObject | undefined>();
   if (!_storageSchema.current)
     _storageSchema.current = z.object({
-      state: z.object({}).passthrough(),
+      state: partialSchema.passthrough(),
       // state: schema ? getDeepPartialWithoutChecks(schema) : z.object({}).passthrough(),
       version: z.number().default(version),
     });
@@ -97,10 +99,12 @@ export function usePersistForm<
     const obj = JSON.parse(value);
     const result = _storageSchema.current.safeParse(obj);
     const response = result.success ? result.data : defaults;
-    if (response.version !== version) {
+
+    if (!result.success || response.version !== version) {
       getStorage().setItem(storageKey, JSON.stringify(defaults));
       return defaults;
     }
+
     return {
       state: {
         ...response.state,

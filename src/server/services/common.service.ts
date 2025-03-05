@@ -118,14 +118,23 @@ export const hasEntityAccess = async ({
     data = await dbRead.$queryRaw<EntityAccessDataType[]>(query);
   }
 
-  const privateRecords = data.filter((d) =>
+  const matched = entityIds.map((entityId) => ({
+    entityId,
+    entityType,
+    hasAccess: false,
+    availability: Availability.Private,
+    permissions: -1,
+    ...data.find((x) => x.entityId === entityId),
+  }));
+
+  const privateRecords = matched.filter((d) =>
     // Private & EarlyAccess both require a permission check.
     [Availability.Private, Availability.EarlyAccess].some((a) => a === d.availability)
   );
 
   // All entities are public. Access granted to everyone.
   if (privateRecords.length === 0 || isModerator) {
-    return data.map((d) => ({
+    return matched.map((d) => ({
       entityId: d.entityId,
       entityType,
       hasAccess: true,
@@ -134,12 +143,12 @@ export const hasEntityAccess = async ({
     }));
   }
 
-  const ownedRecords = data.filter((d) => d.userId === userId);
+  const ownedRecords = matched.filter((d) => d.userId === userId);
 
   // Owners always have access.
-  if (userId && ownedRecords.length === data.length) {
+  if (userId && ownedRecords.length === matched.length) {
     // Access to all records since all are owned by the user.
-    return data.map((d) => ({
+    return matched.map((d) => ({
       entityId: d.entityId,
       entityType,
       hasAccess: true,
@@ -150,7 +159,7 @@ export const hasEntityAccess = async ({
 
   if (!userId) {
     // Unauthenticated user. Only grant access to public items.
-    return data.map((d) => ({
+    return matched.map((d) => ({
       entityType,
       entityId: d.entityId,
       hasAccess: OPEN_ACCESS_AVAILABILITY.some((a) => a === d.availability),

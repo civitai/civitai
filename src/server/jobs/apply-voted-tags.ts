@@ -41,11 +41,12 @@ async function applyUpvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) >= ${UPVOTE_TAG_THRESHOLD}
     )
-    INSERT INTO "TagsOnImage"("tagId", "imageId", "createdAt")
+    INSERT INTO "TagsOnImage"("tagId", "imageId", "createdAt", "confidence")
     SELECT
       "tagId",
       "imageId",
-      ${now}
+      ${now},
+      ${0}
     FROM over_threshold
     ON CONFLICT ("tagId", "imageId") DO NOTHING
     RETURNING "tagId", "imageId";
@@ -115,9 +116,9 @@ async function applyUpvotes() {
         SELECT 1 FROM "TagsOnImage" toi
         JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
         WHERE
-          toi."disabledAt" IS NULL
-          AND toi."imageId" = i.id
+          toi."imageId" = i.id
           AND toi."createdAt" > ${lastApplied} - INTERVAL '1 minute'
+          AND toi."disabledAt" IS NULL
       )
     `
   ).map(({ id }) => id);
@@ -293,7 +294,7 @@ async function applyDownvotes() {
         SELECT 1 FROM "TagsOnImage" toi
         JOIN "Tag" t ON t.id = toi."tagId"
         WHERE
-          toi."disabledAt" IS NOT NULL AND t.type = 'Moderation' AND toi."imageId" = i.id
+          toi."imageId" = i.id AND toi."disabledAt" IS NOT NULL AND t.type = 'Moderation'
           AND toi."disabledAt" > ${lastApplied} - INTERVAL '1 minute'
       )
     `

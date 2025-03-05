@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown';
 import { Options } from 'react-markdown';
 import clsx from 'clsx';
 import ContentErrorBoundary from '~/components/ErrorBoundary/ContentErrorBoundary';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type CustomOptions = Options & {
   allowExternalVideo?: boolean;
@@ -20,6 +21,8 @@ export function CustomMarkdown({
   className,
   ...options
 }: CustomOptions) {
+  const user = useCurrentUser();
+
   return (
     <ContentErrorBoundary>
       <ReactMarkdown
@@ -49,6 +52,8 @@ export function CustomMarkdown({
             const isExternalLink = href.startsWith('http');
             if (typeof window !== 'undefined')
               href = href.replace('//civitai.com', `//${location.host}`);
+
+            href = href.replace(encodeURI('{userId}'), user?.id?.toString() ?? '');
 
             return (
               <Link legacyBehavior href={href} passHref>

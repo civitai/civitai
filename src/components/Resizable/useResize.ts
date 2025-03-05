@@ -42,7 +42,7 @@ export const useResize = (options: Props) => {
     frame.current = requestAnimationFrame(() => {
       ref.style.width = `${width}px`;
     });
-  }, [name, ref]) // eslint-disable-line
+  }, [name, ref]); // eslint-disable-line
 
   const mouseMoveClient = orientation === 'horizontal' ? 'clientX' : 'clientY';
 

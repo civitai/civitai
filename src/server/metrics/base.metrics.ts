@@ -13,6 +13,7 @@ const DEFAULT_UPDATE_INTERVAL = 60 * 1000;
 const DEFAULT_RANK_REFRESH_INTERVAL = 60 * 60 * 1000;
 
 export function createMetricProcessor({
+  disabled,
   name,
   update,
   updateInterval = DEFAULT_UPDATE_INTERVAL,
@@ -20,6 +21,7 @@ export function createMetricProcessor({
   rank,
   lockTime,
 }: {
+  disabled?: boolean;
   name: string;
   update: MetricContextProcessor;
   updateInterval?: number;
@@ -30,7 +32,7 @@ export function createMetricProcessor({
   return {
     name,
     async update(jobContext: JobContext) {
-      if (!clickhouse) return;
+      if (!clickhouse || disabled) return;
       const [lastUpdate, setLastUpdate] = await getJobDate(`metric:${name.toLowerCase()}`);
       const ctx: MetricProcessorRunContext = {
         db: dbWrite,
@@ -68,7 +70,7 @@ export function createMetricProcessor({
       await queue.commit();
     },
     async refreshRank(jobContext: JobContext) {
-      if (!rank || !clickhouse) return;
+      if (!rank || !clickhouse || disabled) return;
 
       // Check if rank refresh is needed
       const [lastUpdate, setLastUpdate] = await getJobDate(`rank:${name.toLowerCase()}`);
@@ -93,6 +95,7 @@ export function createMetricProcessor({
       await setLastUpdate();
     },
     queueUpdate: async (ids: number | number[]) => {
+      if (disabled) return;
       if (!Array.isArray(ids)) ids = [ids];
       await addToQueue('metric-update:' + name.toLowerCase(), ids);
     },

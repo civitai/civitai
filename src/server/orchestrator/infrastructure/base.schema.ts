@@ -1,5 +1,6 @@
 import { Priority } from '@civitai/client';
 import z from 'zod';
+import { maxUpscaleSize } from '~/server/common/constants';
 import { GenerationType } from '~/server/orchestrator/infrastructure/base.enums';
 
 export const promptSchema = z

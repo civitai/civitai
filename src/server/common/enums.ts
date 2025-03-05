@@ -132,6 +132,9 @@ export enum SignalMessages {
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
   Pong = 'pong',
+  // Creator Program:
+  CompensationPoolUpdate = 'creators-program:compensation-pool-update',
+  CashInvalidator = 'creators-program:cash-invalidator',
 }
 
 export enum BountySort {
@@ -186,13 +189,13 @@ export enum ThreadSort {
   MostReactions = 'Most Reactions',
 }
 
-export enum MarkerType {
+export enum GenerationReactType {
   Favorited = 'favorited',
   Liked = 'liked',
   Disliked = 'disliked',
 }
 
-export enum MarkerSort {
+export enum GenerationSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
 }
@@ -211,6 +214,8 @@ export enum OnboardingSteps {
   Profile = 2,
   BrowsingLevels = 4,
   Buzz = 8,
+  CreatorProgram = 16,
+  BannedCreatorProgram = 32,
 }
 
 export const OnboardingComplete =
@@ -268,6 +273,7 @@ export enum NotificationCategory {
   Milestone = 'Milestone',
   Bounty = 'Bounty',
   Buzz = 'Buzz',
+  Creator = 'Creator',
   System = 'System',
   Other = 'Other',
 }
@@ -330,4 +336,8 @@ export enum BuzzWithdrawalRequestSort {
   Oldest = 'Oldest',
   HighestAmount = 'Highest Amount',
   LowestAmount = 'Lowest Amount',
+}
+
+export enum SignalTopic {
+  CreatorProgram = 'creators-program',
 }

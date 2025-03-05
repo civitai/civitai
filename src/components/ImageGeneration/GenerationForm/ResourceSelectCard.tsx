@@ -175,7 +175,7 @@ function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
               </Badge>
             )}
 
-            {resource.availability === Availability.Private && (
+            {(resource.availability === Availability.Private || !!resource.epochDetails) && (
               <Tooltip label="This resource is private" position="top" withArrow>
                 <ActionIcon size={18} color="dark.5" variant="filled">
                   <IconLock size={14} />
