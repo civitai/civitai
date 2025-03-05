@@ -22,7 +22,7 @@ import {
   IconLogout,
   IconLogout2,
   IconPigMoney,
-  IconSettings
+  IconSettings,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import dayjs from 'dayjs';
@@ -498,7 +498,7 @@ const EstimatedEarningsCard = () => {
       <div className="flex flex-col gap-2">
         <h3 className="text-xl font-bold">Estimated Earnings</h3>
 
-        <table className="table-auto -mt-2">
+        <table className="-mt-2 table-auto">
           <tbody>
             <tr className="font-bold">
               <td colSpan={2} className="border-b">
@@ -509,13 +509,15 @@ const EstimatedEarningsCard = () => {
                   </ActionIcon>
                 </div>
               </td>
-              <td className="border-l border-b py-1 pl-2">
+              <td className="border-b border-l py-1 pl-2">
                 ${numberWithCommas(formatToLeastDecimals(compensationPool?.value ?? 0))}
               </td>
             </tr>
             <tr>
-              <td colSpan={2} className="border-b">Total Banked Buzz</td>
-              <td className="border-l border-b py-1 pl-2">
+              <td colSpan={2} className="border-b">
+                Total Banked Buzz
+              </td>
+              <td className="border-b border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   <CurrencyIcon currency={Currency.BUZZ} size={16} />
                   <span>{numberWithCommas(compensationPool?.size.current)}</span>
@@ -523,7 +525,7 @@ const EstimatedEarningsCard = () => {
               </td>
             </tr>
             <tr>
-              <td >Your Banked Buzz</td>
+              <td>Your Banked Buzz</td>
               <td className="text-right">
                 {cap && (
                   <Text
@@ -640,7 +642,8 @@ const CreatorProgramCapsInfo = () => {
     (c) =>
       (!c.limit ||
         banked.cap.cap < banked.cap.peakEarning.earned * (c.percentOfPeakEarning ?? 1)) &&
-      c.tier !== banked.cap.definition.tier
+      c.tier !== banked.cap.definition.tier &&
+      !c.hidden
   );
 
   const potentialEarnings =
@@ -721,7 +724,7 @@ const CreatorProgramCapsInfo = () => {
           </p>
 
           {banked.cap.cap <= MIN_CAP && (
-            <p className="opacity-50 text-sm">
+            <p className="text-sm opacity-50">
               All members have a minimum cap of{' '}
               <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
               {abbreviateNumber(MIN_CAP)}
@@ -829,7 +832,7 @@ const WithdrawCashCard = () => {
                   </ActionIcon>
                 </div>
               </td>
-              <td className="py-1 pl-2 border-l">
+              <td className="border-l py-1 pl-2">
                 <div className="flex items-center gap-2">
                   $<span>{formatCurrencyForDisplay(userCash?.pending ?? 0, Currency.USD)}</span>
                 </div>
@@ -879,7 +882,8 @@ const WithdrawCashCard = () => {
               <IconLock size={24} className="shrink-0" />
               <div className="flex flex-1 flex-col">
                 <p className="text-sm leading-tight">
-                  ${formatPriceForDisplay(MIN_WITHDRAWAL_AMOUNT, 'USD', { decimals: false })} is required to make a withdrawal
+                  ${formatPriceForDisplay(MIN_WITHDRAWAL_AMOUNT, 'USD', { decimals: false })} is
+                  required to make a withdrawal
                 </p>
               </div>
             </div>
