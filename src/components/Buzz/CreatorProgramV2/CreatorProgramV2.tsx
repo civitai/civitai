@@ -40,6 +40,7 @@ import {
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import {
+  CreatorProgramCapsInfoModal,
   openCompensationPoolModal,
   openCreatorScoreModal,
   openEarningEstimateModal,
@@ -534,7 +535,7 @@ const EstimatedEarningsCard = () => {
                     td="underline"
                     onClick={() => {
                       dialogStore.trigger({
-                        component: CreatorProgramCapsInfo,
+                        component: CreatorProgramCapsInfoModal,
                       });
                     }}
                   >
@@ -627,126 +628,6 @@ export const CreatorProgramPhase = () => {
     <Badge leftSection={<Icon size={18} />} color={color} className="capitalize">
       {phase === 'bank' ? 'Banking' : 'Extraction'} Phase
     </Badge>
-  );
-};
-
-const CreatorProgramCapsInfo = () => {
-  const { banked, isLoading } = useBankedBuzz();
-  const dialog = useDialogContext();
-
-  if (isLoading || !banked) {
-    return null;
-  }
-
-  const nextCap = CAP_DEFINITIONS.find(
-    (c) =>
-      (!c.limit ||
-        banked.cap.cap < banked.cap.peakEarning.earned * (c.percentOfPeakEarning ?? 1)) &&
-      c.tier !== banked.cap.definition.tier &&
-      !c.hidden
-  );
-
-  const potentialEarnings =
-    nextCap && banked.cap.peakEarning.earned * (nextCap.percentOfPeakEarning ?? 1);
-
-  return (
-    <Modal {...dialog} size="lg" radius="md" withCloseButton={false}>
-      <div className="flex flex-col gap-4">
-        <p className="text-center text-lg font-bold">Creator Banking Caps</p>
-        <p>
-          Every creator in the program has a Cap to the amount of Buzz they can Bank in a month.
-          Caps align with membership tiers as outlined below.
-        </p>
-
-        <Table className="table-auto">
-          <thead>
-            <tr>
-              <th>Tier</th>
-              <th>Cap</th>
-            </tr>
-          </thead>
-          <tbody>
-            {CAP_DEFINITIONS.map((cap) => {
-              if (cap.hidden) {
-                return null;
-              }
-
-              return (
-                <tr key={cap.tier}>
-                  <td className="font-bold">{capitalize(cap.tier)} Member</td>
-                  <td>
-                    <p>
-                      {cap.percentOfPeakEarning
-                        ? `${cap.percentOfPeakEarning * 100}% of your Peak Earning Month with `
-                        : ''}
-
-                      {!cap.limit ? (
-                        'no cap'
-                      ) : cap.percentOfPeakEarning ? (
-                        <span>
-                          a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-                          {abbreviateNumber(cap.limit)} cap
-                        </span>
-                      ) : (
-                        <span>
-                          <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-                          {abbreviateNumber(cap.limit)}
-                        </span>
-                      )}
-                    </p>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </Table>
-
-        <div className="flex flex-col">
-          <p>
-            <span className="font-bold">Tier:</span> {capitalize(banked.cap.definition.tier)} Member
-          </p>
-          <p>
-            <span className="font-bold">Peak Earning Month:</span>{' '}
-            <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-            {abbreviateNumber(banked.cap.peakEarning.earned)}{' '}
-            <span className="opacity-50">
-              ({formatDate(banked.cap.peakEarning.month, 'MMM YYYY')})
-            </span>
-          </p>
-          <p>
-            <span className="font-bold">Tier Cap:</span>{' '}
-            <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-            {banked.cap.definition.limit ? numberWithCommas(banked.cap.definition.limit) : 'No Cap'}
-          </p>
-          <p className="font-bold">
-            Your Cap: <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
-            {numberWithCommas(banked.cap.cap)}
-          </p>
-
-          {banked.cap.cap <= MIN_CAP && (
-            <p className="text-sm opacity-50">
-              All members have a minimum cap of{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
-              {abbreviateNumber(MIN_CAP)}
-            </p>
-          )}
-        </div>
-
-        {nextCap && (
-          <p>
-            You could increase your cap to{' '}
-            <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
-            {numberWithCommas(potentialEarnings)} by upgrading to a {capitalize(nextCap.tier)}{' '}
-            Membership.{' '}
-            <Anchor className="text-nowrap" href="/pricing" onClick={dialog.onClose}>
-              Upgrade Now
-            </Anchor>
-          </p>
-        )}
-
-        <Button onClick={dialog.onClose}>Close</Button>
-      </div>
-    </Modal>
   );
 };
 
