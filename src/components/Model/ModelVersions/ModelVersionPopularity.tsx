@@ -48,9 +48,11 @@ const popularityInfoMap = {
 
 export const ModelVersionPopularity = ({
   versionId,
+  isCheckpoint,
   listenForUpdates,
 }: {
   versionId: number;
+  isCheckpoint: boolean;
   listenForUpdates: boolean;
 }) => {
   const theme = useMantineTheme();
@@ -83,15 +85,17 @@ export const ModelVersionPopularity = ({
       label={
         <Stack spacing={4}>
           <Text>{closestPopularityInfo.description}</Text>
-          <Group spacing="sm">
-            <Badge
-              color={isMarkup ? (isDark ? 'red.1' : 'red.9') : isDark ? 'green.1' : 'green.9'}
-              size="xs"
-            >
-              {isMarkup ? 'Markup' : 'Discount'}
-            </Badge>
-            <Text>{Math.abs(markup)}%</Text>
-          </Group>
+          {isCheckpoint && markup !== 0 && (
+            <Group spacing="sm">
+              <Badge
+                color={isMarkup ? (isDark ? 'red.1' : 'red.9') : isDark ? 'green.1' : 'green.9'}
+                size="xs"
+              >
+                {isMarkup ? 'Markup' : 'Discount'}
+              </Badge>
+              <Text>{Math.abs(markup)}%</Text>
+            </Group>
+          )}
         </Stack>
       }
     >

@@ -200,7 +200,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
         id: true,
         nsfwLevel: true,
         modelId: true,
-        model: { select: { name: true } },
+        model: { select: { name: true, poi: true } },
       },
     });
 
@@ -209,7 +209,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     const modelIds = uniq(
       modelData
         // Filter only safe models
-        .filter((m) => getIsSafeBrowsingLevel(m.nsfwLevel))
+        .filter((m) => getIsSafeBrowsingLevel(m.nsfwLevel) && !m.model.poi)
         // Sort by position
         .sort((a, b) => {
           const matchA = winners.find((w) => w.entityId === a.id);

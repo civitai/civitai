@@ -119,8 +119,8 @@ export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => any }) 
                 <Badge color="green" mr="xs">
                   Discount
                 </Badge>
-                Generations with this model will have a {Math.abs(featureInfo.markup) * 100}%
-                discount applied to them.
+                Generations with this model (if it&apos;s a checkpoint) will have a{' '}
+                {Math.abs(featureInfo.markup) * 100}% discount applied to them.
               </Text>
             </Stack>
           </Stack>
