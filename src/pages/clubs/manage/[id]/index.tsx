@@ -1,53 +1,41 @@
 import {
   Alert,
   Anchor,
-  Box,
   Button,
-  Center,
   Container,
   Divider,
   Grid,
   Group,
-  Loader,
   Paper,
   Stack,
   Text,
   Title,
 } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
+import { IconAlertCircle, IconArrowLeft, IconTrash } from '@tabler/icons-react';
 import { InferGetServerSidePropsType } from 'next';
-import { z } from 'zod';
-import { NotFound } from '~/components/AppLayout/NotFound';
-import { useQueryBounty } from '~/components/Bounty/bounty.utils';
-import { dbRead } from '~/server/db/client';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { BountyGetById } from '~/types/router';
-import { ClubManagementNavigation } from '~/components/Club/ClubManagementNavigation';
-import { InputText } from '~/libs/form';
 import { useRouter } from 'next/router';
+import React from 'react';
+import { z } from 'zod';
+import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
-// import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
-import UserProfileEntry from '~/pages/user/[username]';
+import { NotFound } from '~/components/AppLayout/NotFound';
 import {
   useClubContributorStatus,
   useMutateClub,
   useQueryClub,
 } from '~/components/Club/club.utils';
-import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import React from 'react';
-import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
-import { trpc } from '~/utils/trpc';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { IconAlertCircle, IconArrowLeft, IconTrash } from '@tabler/icons-react';
-import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
-import { constants } from '~/server/common/constants';
+import { ClubManagementNavigation } from '~/components/Club/ClubManagementNavigation';
 import { useClubFeedStyles } from '~/components/Club/ClubPost/ClubFeed';
-import { showSuccessNotification } from '~/utils/notifications';
-import { BackButton } from '~/components/BackButton/BackButton';
+import { ClubUpsertForm } from '~/components/Club/ClubUpsertForm';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { openConfirmModal } from '@mantine/modals';
+import { PageLoader } from '~/components/PageLoader/PageLoader';
+// import { UserProfileLayout } from '~/components/Profile/old/OldProfileLayout';
+import { dbRead } from '~/server/db/client';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
-import { ClubsInfinite } from '../../../../components/Club/Infinite/ClubsInfinite';
+import { showSuccessNotification } from '~/utils/notifications';
+import { trpc } from '~/utils/trpc';
 
 const querySchema = z.object({ id: z.coerce.number() });
 
@@ -178,7 +166,7 @@ export default function ManageClub({ id }: InferGetServerSidePropsType<typeof ge
               <Title order={3}>Delete this club</Title>
               <Text>
                 By deleting this club, all resources in it will be automatically be made publicly
-                available, meaning users will not lose access to the resources, however, buzz will
+                available, meaning users will not lose access to the resources, however, Buzz will
                 not be refunded to any of your members, so use with care.
               </Text>
               <Button color="red" mt="lg" fullWidth onClick={onDelete} leftIcon={<IconTrash />}>

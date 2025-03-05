@@ -186,7 +186,7 @@ export function AspectRatioImageCard<T extends DialogKey>({
   );
 }
 
-function LinkOrClick<T extends DialogKey>({
+export function LinkOrClick<T extends DialogKey>({
   href,
   onClick,
   children,

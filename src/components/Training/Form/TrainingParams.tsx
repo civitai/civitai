@@ -1,14 +1,16 @@
 import React from 'react';
-import {
-  engineTypes,
-  EngineTypes,
-  loraTypes,
-  lrSchedulerTypes,
-  OptimizerTypes,
-  optimizerTypes,
+import type {
   TrainingDetailsBaseModel,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
+import {
+  engineTypes,
+  type EngineTypes,
+  loraTypes,
+  lrSchedulerTypes,
+  optimizerTypes,
+  type OptimizerTypes,
+} from '~/utils/training';
 
 // nb: keep these in line with what is set by the worker
 export const optimizerArgMap: { [key in OptimizerTypes]: string } = {

@@ -1,5 +1,5 @@
-import { ClubAdminPermission, EntityType } from '~/shared/utils/prisma/enums';
 import { getTRPCErrorFromUnknown } from '@trpc/server';
+import dayjs from 'dayjs';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
@@ -32,6 +32,7 @@ import { getImageById } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { amIBlockedByUser } from '~/server/services/user.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
+import { ClubAdminPermission, EntityType } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { userContributingClubs } from '../services/club.service';
 import {
@@ -41,7 +42,6 @@ import {
   throwInsufficientFundsError,
 } from '../utils/errorHandling';
 import { DEFAULT_PAGE_SIZE } from '../utils/pagination-helpers';
-import dayjs from 'dayjs';
 
 export function getUserAccountHandler({ ctx }: { ctx: DeepNonNullable<Context> }) {
   try {
@@ -133,10 +133,10 @@ export async function createBuzzTipTransactionHandler({
   try {
     const { id: fromAccountId } = ctx.user;
     if (fromAccountId === input.toAccountId)
-      throw throwBadRequestError('You cannot send buzz to the same account');
+      throw throwBadRequestError('You cannot send Buzz to the same account');
 
     if (input.toAccountId === -1) {
-      throw throwBadRequestError('You cannot send buzz to the system account');
+      throw throwBadRequestError('You cannot send Buzz to the system account');
     }
 
     let accountCreatedAt = ctx.user?.createdAt ? new Date(ctx.user.createdAt) : undefined;
@@ -148,7 +148,7 @@ export async function createBuzzTipTransactionHandler({
       accountCreatedAt = user?.createdAt;
     }
     if (!accountCreatedAt || accountCreatedAt > dayjs().subtract(1, 'day').toDate()) {
-      throw throwBadRequestError('You cannot send buzz until you have been a member for 24 hours');
+      throw throwBadRequestError('You cannot send Buzz until you have been a member for 24 hours');
     }
 
     const blocked = await amIBlockedByUser({
@@ -156,7 +156,7 @@ export async function createBuzzTipTransactionHandler({
       targetUserId: input.toAccountId,
     });
     if (blocked) {
-      throw throwBadRequestError('You cannot send buzz to a user that has blocked you');
+      throw throwBadRequestError('You cannot send Buzz to a user that has blocked you');
     }
 
     const { entityType, entityId } = input;
@@ -185,7 +185,7 @@ export async function createBuzzTipTransactionHandler({
     }
 
     if (targetUserIds.includes(fromAccountId)) {
-      throw throwBadRequestError('You cannot send buzz to the same account');
+      throw throwBadRequestError('You cannot send Buzz to the same account');
     }
 
     if (targetUserIds.length > 0) {

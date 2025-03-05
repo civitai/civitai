@@ -49,7 +49,7 @@ const generationResourceSchemaBase = z.object({
   canGenerate: z.boolean(),
   minStrength: z.number().default(-1),
   maxStrength: z.number().default(2),
-  image: imageSchema.pick({ url: true }).optional(),
+  image: imageSchema.pick({ url: true, type: true }).optional(), // TODO there are more here
   covered: z.boolean(),
   hasAccess: z.boolean(),
   additionalResourceCost: z.boolean().optional(),

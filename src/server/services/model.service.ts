@@ -21,7 +21,6 @@ import { modelMetrics } from '~/server/metrics';
 import { dataForModelsCache, modelTagCache, userContentOverviewCache } from '~/server/redis/caches';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { GetAllSchema, GetByIdInput } from '~/server/schema/base.schema';
-import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { ModelVersionMeta } from '~/server/schema/model-version.schema';
 import {
   GetAllModelsOutput,
@@ -66,8 +65,6 @@ import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   ImagesForModelVersions,
-  ingestImageBulk,
-  uploadImageFromUrl,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
@@ -75,7 +72,7 @@ import {
   createModelVersionPostFromTraining,
   publishModelVersionsWithEarlyAccess,
 } from '~/server/services/model-version.service';
-import { addPostImage, createPost } from '~/server/services/post.service';
+import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -99,6 +96,7 @@ import {
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import {
+  AuctionType,
   Availability,
   CommercialUse,
   MetricTimeframe,
@@ -119,7 +117,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { getUserSubscription } from '~/server/services/subscriptions.service';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1903,6 +1900,23 @@ export const getRecentlyRecommended = async ({ take, userId }: LimitOnly & { use
   return uniq(data.map((d) => d.resource.modelId));
 };
 
+export const getRecentlyBid = async ({ take, userId }: LimitOnly & { userId: number }) => {
+  const data = await dbRead.bid.findMany({
+    select: { entityId: true },
+    where: {
+      userId,
+      auction: {
+        auctionBase: {
+          type: AuctionType.Model,
+        },
+      },
+    },
+    orderBy: { createdAt: 'desc' },
+    take,
+  });
+  return uniq(data.map((d) => d.entityId));
+};
+
 // export const getFeaturedModels = async ({ take }: LimitOnly) => {
 //   const homeblocks = await getSystemHomeBlocks({ input: {} });
 //   const featuredModelCollection = homeblocks.find(
@@ -2710,24 +2724,47 @@ export async function ingestModel(data: IngestModelInput) {
   else return false;
 }
 
+export type GetFeaturedModels = AsyncReturnType<typeof getFeaturedModels>;
 export async function getFeaturedModels() {
-  const featuredModels = await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
+  return await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
+    // subtract 2 minutes for the job to finish
+    const now = dayjs().subtract(2, 'minute');
+
+    // TODO we're featuring modelVersions, but showing models due to how collections and meili works
+
+    let retries = 0;
+    while (retries < 3) {
+      const nowDate = now.subtract(retries, 'day').toDate();
+      const data = await dbRead.featuredModelVersion.findMany({
+        where: {
+          validFrom: { lte: nowDate },
+          validTo: { gt: nowDate },
+        },
+        select: {
+          position: true,
+          modelVersion: {
+            select: { modelId: true },
+          },
+        },
+        orderBy: { position: 'asc' },
+      });
+      if (data.length === 0) {
+        retries++;
+      } else {
+        return data.map((row) => ({ modelId: row.modelVersion.modelId, position: row.position }));
+      }
+    }
+
+    // if nothing found, get from the collection
     const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
       SELECT ci."modelId"
       FROM "CollectionItem" ci
       WHERE ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
-      AND EXISTS (
-        SELECT 1
-        FROM "GenerationCoverage" gc
-        WHERE gc."modelId" = ci."modelId"
-        AND gc.covered
-      )
     `;
-    return query.map((row) => row.modelId);
+    return query.map((row) => ({ modelId: row.modelId, position: 0 }));
   });
-
-  return featuredModels;
 }
+
 export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
 }

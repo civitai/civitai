@@ -29,6 +29,7 @@ export enum TransactionType {
   Bank = 23,
   Extract = 24,
   Fee = 25,
+  Bid = 26,
 }
 
 export const buzzAccountTypes = [

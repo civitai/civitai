@@ -52,6 +52,7 @@ export type ModelVersionApiReturn = Prisma.ModelVersionGetPayload<typeof modelVe
 export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersionSelect>()({
   id: true,
   name: true,
+  nsfwLevel: true,
   earlyAccessEndsAt: true,
   createdAt: true,
   generationCoverage: { select: { covered: true } },

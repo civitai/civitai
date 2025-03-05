@@ -73,6 +73,7 @@ import {
   getAssociatedResourcesSimple,
   getAvailableModelsByUserId,
   getFeaturedModels,
+  getRecentlyBid,
   getRecentlyManuallyAdded,
   getRecentlyRecommended,
   getSimpleModelWithVersions,
@@ -152,7 +153,10 @@ export const modelRouter = router({
   getRecentlyRecommended: protectedProcedure
     .input(limitOnly)
     .query(({ ctx, input }) => getRecentlyRecommended({ userId: ctx.user.id, ...input })),
-  getFeaturedModels: publicProcedure.query(() => getFeaturedModels().then((x) => x.slice(200))),
+  getRecentlyBid: protectedProcedure
+    .input(limitOnly)
+    .query(({ ctx, input }) => getRecentlyBid({ userId: ctx.user.id, ...input })),
+  getFeaturedModels: publicProcedure.query(() => getFeaturedModels()),
   upsert: guardedProcedure.input(modelUpsertSchema).mutation(upsertModelHandler),
   delete: protectedProcedure
     .input(deleteModelSchema)

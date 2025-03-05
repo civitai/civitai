@@ -19,6 +19,7 @@ CREATE TYPE public."NotificationCategory" AS ENUM (
     'Milestone',
     'Bounty',
     'Buzz',
+    'Creator',
     'System',
     'Other'
 );

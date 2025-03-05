@@ -184,7 +184,9 @@ export default MixedAuthEndpoint(async function handler(
     },
   ]);
 
-  const isFeatured = (await getFeaturedModels()).includes(modelVersion.modelId);
+  const isFeatured = (await getFeaturedModels())
+    .map((fm) => fm.modelId)
+    .includes(modelVersion.modelId);
 
   const data = {
     air,

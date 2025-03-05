@@ -1,10 +1,10 @@
 import { z } from 'zod';
-import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
-import { comfylessImageSchema } from '~/server/schema/image.schema';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { infiniteQuerySchema, paginationSchema, resourceInput } from '~/server/schema/base.schema';
-import { ClubSort } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
+import { ClubSort } from '~/server/common/enums';
+import { infiniteQuerySchema, paginationSchema, resourceInput } from '~/server/schema/base.schema';
+import { comfylessImageSchema } from '~/server/schema/image.schema';
+import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { Currency } from '~/shared/utils/prisma/enums';
 
 export type UpsertClubTierInput = z.infer<typeof upsertClubTierInput>;
 export const upsertClubTierInput = z
@@ -18,7 +18,7 @@ export const upsertClubTierInput = z
       .number()
       .refine(
         (data) => data === 0 || data >= constants.clubs.minMonthlyBuzz,
-        `Minimum price is ${constants.clubs.minMonthlyBuzz} BUZZ`
+        `Minimum price is ${constants.clubs.minMonthlyBuzz} Buzz`
       ),
     currency: z.nativeEnum(Currency).default(Currency.BUZZ),
     coverImage: comfylessImageSchema.nullish(),

@@ -8,9 +8,9 @@ import { rewardFailedCounter, rewardGivenCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { BuzzAccountType, TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany, getMultipliersForUser } from '~/server/services/buzz.service';
+import { Fingerprint } from '~/server/utils/fingerprint';
 import { hashifyObject } from '~/utils/string-helpers';
 import { withRetries } from '../utils/errorHandling';
-import { Fingerprint } from '~/server/utils/fingerprint';
 
 const log = (event: BuzzEventLog, data: MixedObject) => {
   logToAxiom({
@@ -198,9 +198,9 @@ export function createBuzzEvent<T>({
     try {
       await addBuzzEvent(event);
     } catch (error) {
-      log(event, { message: 'Failed to record buzz event', error });
+      log(event, { message: 'Failed to record Buzz event', error });
       rewardFailedCounter?.inc?.();
-      throw new Error(`Failed to record buzz event: ${error}`);
+      throw new Error(`Failed to record Buzz event: ${error}`);
     }
 
     if (event.status === 'awarded') {
@@ -209,12 +209,12 @@ export function createBuzzEvent<T>({
         rewardGivenCounter?.inc?.();
       } catch (error) {
         log(event, {
-          message: 'Failed to send award for buzz event',
+          message: 'Failed to send award for Buzz event',
           error,
         });
         rewardFailedCounter?.inc?.();
         throw new Error(
-          `Failed to send award for buzz event: ${error}.\n\nTransaction: ${JSON.stringify(event)}`
+          `Failed to send award for Buzz event: ${error}.\n\nTransaction: ${JSON.stringify(event)}`
         );
       }
     }
@@ -312,7 +312,7 @@ export function createBuzzEvent<T>({
 
         // Then throw the error
         throw new Error(
-          `Buzz Event Processing Failure: Failed to ${transactionStatus} buzz events for ${type}`,
+          `Buzz Event Processing Failure: Failed to ${transactionStatus} Buzz events for ${type}`,
           {
             cause: (error as any).message,
           }

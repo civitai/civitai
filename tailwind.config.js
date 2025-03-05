@@ -1,5 +1,6 @@
-const plugin = require('tailwindcss/plugin')
-const colors = require('tailwindcss/colors')
+const plugin = require('tailwindcss/plugin');
+const colors = require('tailwindcss/colors');
+const { keyframes } = require('@mantine/core');
 
 const breakpoints = {
   xs: '576px',
@@ -7,7 +8,7 @@ const breakpoints = {
   md: '992px',
   lg: '1200px',
   xl: '1400px',
-}
+};
 
 const fontFamilies = [
   '"-apple-system"',
@@ -23,7 +24,7 @@ const fontFamilies = [
 
 /** @type {import('tailwindcss').Config} */
 module.exports = {
-  content: ['./src/**/*.{ts,tsx}',],
+  content: ['./src/**/*.{ts,tsx}'],
   darkMode: 'selector',
   important: 'body',
   experimental: {
@@ -146,34 +147,69 @@ module.exports = {
           7: '#74b816',
           8: '#66a80f',
           9: '#5c940d',
-        }
+        },
       },
       keyframes: {
         wiggle: {
-          '0%, 100%': {transform: 'rotate(-3deg)'},
-          '50%': {transform: 'rotate(3deg)'},
-        }
+          '0%, 100%': { transform: 'rotate(-3deg)' },
+          '50%': { transform: 'rotate(3deg)' },
+        },
+        jello: {
+          '0%': {
+            transform: 'scale3d(1, 1, 1)',
+          },
+          '30%': {
+            transform: 'scale3d(0.75, 1.25, 1)',
+          },
+          '40%': {
+            transform: 'scale3d(1.25, 0.75, 1)',
+          },
+          '50%': {
+            transform: 'scale3d(0.85, 1.15, 1)',
+          },
+          '65%': {
+            transform: 'scale3d(1.05, 0.95, 1)',
+          },
+          '75%': {
+            transform: 'scale3d(0.95, 1.05, 1)',
+          },
+          '100%': {
+            transform: 'scale3d(1, 1, 1)',
+          },
+        },
+        glowPulse: {
+          '0%': {
+            boxShadow: '0 0 0px rgba(0,255,0,0)',
+          },
+          '50%': {
+            boxShadow: '0 0 10px rgba(0,255,0,.8)',
+          },
+          '100%': {
+            boxShadow: '0 0 0px rgba(0,255,0,0)',
+          },
+        },
       },
       animation: {
         wiggle: 'wiggle 1s ease-in-out infinite',
+        jello: 'jello 2s 1s ease-in-out',
+        glowPulse: 'glowPulse 1.2s ease-in-out 3',
       },
     },
   },
   plugins: [
     require('./src/tailwind/container-queries'),
-    plugin(function ({matchUtilities, theme, addUtilities, addVariant, e}) {
+    plugin(function ({ matchUtilities, theme, addUtilities, addVariant, e }) {
       matchUtilities(
         {
           'text-shadow': (value) => ({
             textShadow: value,
           }),
         },
-        {values: theme('textShadow')},
-
+        { values: theme('textShadow') }
       ),
         addUtilities({
           '.aspect-portrait': {
-            aspectRatio: '7 / 9'
+            aspectRatio: '7 / 9',
           },
           '.card': {},
           '.absolute-center': {},
@@ -184,21 +220,20 @@ module.exports = {
             },
           },
           '.scrollbar-thin': {
-            scrollbarWidth: 'thin'
-          }
+            scrollbarWidth: 'thin',
+          },
         }),
-        addVariant('not-first', ({modifySelectors, separator}) => {
-          modifySelectors(({className}) => {
-            return `.${e(`not-first${separator}${className}`)}:not(:first-child)`
-          })
+        addVariant('not-first', ({ modifySelectors, separator }) => {
+          modifySelectors(({ className }) => {
+            return `.${e(`not-first${separator}${className}`)}:not(:first-child)`;
+          });
         }),
-        addVariant('not-last', ({modifySelectors, separator}) => {
-          modifySelectors(({className}) => {
-            return `.${e(`not-last${separator}${className}`)}:not(:last-child)`
-          })
-        })
+        addVariant('not-last', ({ modifySelectors, separator }) => {
+          modifySelectors(({ className }) => {
+            return `.${e(`not-last${separator}${className}`)}:not(:last-child)`;
+          });
+        });
     }),
     // ...(process.env.NODE_ENV === 'production' ? { cssnano: {} } : {})
   ],
-}
-
+};
