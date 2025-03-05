@@ -46,7 +46,7 @@ import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { KlingMode } from '@civitai/client';
+import { KlingMode, ViduVideoGenStyle } from '@civitai/client';
 import { type OrchestratorEngine } from '~/server/orchestrator/infrastructure/base.enums';
 import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
 import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
@@ -54,6 +54,7 @@ import { VideoGenerationSchema } from '~/server/orchestrator/generation/generati
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
+import { viduDuration } from '~/server/orchestrator/vidu/vidu.schema';
 import { uniqBy } from 'lodash-es';
 import {
   lightricksAspectRatios,
@@ -181,6 +182,10 @@ function EngineForm() {
       return <MinimaxTxt2VidGenerationForm />;
     case 'minimax-img2vid':
       return <MinimaxImg2VidGenerationForm />;
+    case 'vidu-txt2vid':
+      return <ViduTxt2VidGenerationForm />;
+    case 'vidu-img2vid':
+      return <ViduImg2VidGenerationForm />;
     case 'lightricks-txt2vid':
       return <LightricksTxt2VidGenerationForm />;
     case 'lightricks-img2vid':
@@ -576,6 +581,73 @@ function LightricksImg2VidGenerationForm() {
         max={40}
         reverse
       />
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+function ViduTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="vidu">
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={viduDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Style</Input.Label>
+        <InputSegmentedControl
+          name="style"
+          data={Object.values(ViduVideoGenStyle).map((value) => ({
+            label: value,
+            value,
+          }))}
+        />
+      </div>
+
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+function ViduImg2VidGenerationForm() {
+  return (
+    <FormWrapper engine="vidu">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch name="enablePromptEnhancer" label="Enable prompt enhancer" />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={viduDuration.map((value) => ({
+            label: `${value}s`,
+            value,
+          }))}
+        />
+      </div>
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Style</Input.Label>
+        <InputSegmentedControl
+          name="style"
+          data={Object.values(ViduVideoGenStyle).map((value) => ({
+            label: value,
+            value,
+          }))}
+        />
+      </div>
       <InputSeed name="seed" label="Seed" />
     </FormWrapper>
   );
