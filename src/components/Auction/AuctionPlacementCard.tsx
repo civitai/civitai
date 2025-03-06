@@ -344,8 +344,11 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
             ob.count -= 1;
             old.bids = old.bids
               .filter((b) => b.totalAmount > 0)
-              .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count);
-            ob.position = old.bids.findIndex((o) => o.entityId === data.entityId) + 1;
+              .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count)
+              .map((b, idx) => ({
+                ...b,
+                position: idx + 1,
+              }));
           }
         })
       );

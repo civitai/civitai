@@ -4,8 +4,8 @@ import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/m
 import { trpc } from '~/utils/trpc';
 
 export const featureInfo = {
-  name: 'Featured',
-  description: 'Featured by the community',
+  name: 'Promoted',
+  description: 'Promoted by the community',
   markup: -0.2,
 } as const;
 const popularityInfoMap = {
@@ -76,6 +76,8 @@ export const ModelVersionPopularity = ({
   const markup = Math.trunc(closestPopularityInfo.markup * 100);
   const isMarkup = markup >= 0;
 
+  // if we want to show this for non checkpoints, simply remove this line
+  if (!isCheckpoint) return <></>;
   if (isLoading) return <Loader size="xs" variant="bars" />;
 
   return (
@@ -85,7 +87,7 @@ export const ModelVersionPopularity = ({
       label={
         <Stack spacing={4}>
           <Text>{closestPopularityInfo.description}</Text>
-          {isCheckpoint && markup !== 0 && (
+          {isCheckpoint && (
             <Group spacing="sm">
               <Badge
                 color={isMarkup ? (isDark ? 'red.1' : 'red.9') : isDark ? 'green.1' : 'green.9'}
@@ -93,7 +95,7 @@ export const ModelVersionPopularity = ({
               >
                 {isMarkup ? 'Markup' : 'Discount'}
               </Badge>
-              <Text>{Math.abs(markup)}%</Text>
+              <Text>{markup === 0 ? 'None' : `${Math.abs(markup)}%`}</Text>
             </Group>
           )}
         </Stack>

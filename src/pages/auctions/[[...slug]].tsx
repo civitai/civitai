@@ -117,6 +117,7 @@ export default function Auctions({
     if (selectedAuction?.id !== selected?.id) {
       setSelectedAuction(selected);
     }
+    document.title = getDocTitle();
   }, [slug, auctions.length]);
 
   useEffect(() => {
@@ -188,10 +189,22 @@ export default function Auctions({
     </Stack>
   );
 
+  const getDocTitle = () => {
+    return `Auction${
+      slug === MY_BIDS
+        ? ': My Bids'
+        : auctionName
+        ? `: ${auctionName}`
+        : selectedAuction?.auctionBase?.name
+        ? `: ${selectedAuction.auctionBase.name}`
+        : 's'
+    } | Civitai`;
+  };
+
   return (
     <>
       <Meta
-        title={`Auction${auctionName ? `: ${auctionName}` : 's'} | Civitai`}
+        title={getDocTitle()}
         description="View and participate in auctions for featured spots on Civitai."
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/${pathname}`, rel: 'canonical' }]}
         deIndex={slug === MY_BIDS}

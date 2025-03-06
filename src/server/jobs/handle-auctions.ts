@@ -206,6 +206,8 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
 
     modelData.forEach((md) => (entityNames[md.id] = md.model.name));
 
+    // TODO check getIsSafeBrowsingLevel
+    //  Limit to one per creator
     const modelIds = uniq(
       modelData
         // Filter only safe models
