@@ -372,15 +372,21 @@ export const moderateImages = async ({
     }
 
     // TODO.TagsOnImage - remove this after the migration
-    await dbWrite.tagsOnImage.updateMany({
-      where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true, disabledAt: new Date(), needsReview: false },
-    });
-
-    await dbWrite.$executeRaw`
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
-      FROM "TagsOnImageDetails"
+    const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+      UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
       WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
+      RETURNING "imageId", "tagId";
+    `;
+
+    await dbWrite.$queryRaw`
+      WITH to_insert AS (
+        SELECT
+          (value ->> 'imageId')::int as "imageId",
+          (value ->> 'tagId')::int as "tagId"
+        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
+      )
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+      FROM to_insert;
     `;
 
     // Resolve any pending appeals
@@ -473,17 +479,23 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   `;
   if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
 
-  await dbWrite.tagsOnImage.updateMany({
-    where: { imageId: images[0].id, disabledAt: { not: null } },
-    data: { disabled: false, disabledAt: null },
-  });
-
   // TODO.TagsOnImage - remove this after the migration
-  await dbWrite.$executeRaw`
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, false, null)
-      FROM "TagsOnImageDetails"
-      WHERE "imageId" = ${images[0].id}) AND "disabled"
-    `;
+  const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+    WHERE "imageId" = ${images[0].id} AND "disabledAt" IS NOT NULL
+    RETURNING "imageId", "tagId";
+  `;
+
+  await dbWrite.$queryRaw`
+    WITH to_insert AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements(${JSON.stringify(results)}::json)
+    )
+    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, false)
+    FROM to_insert;
+  `;
 
   return await ingestImage({ image: images[0] });
 };

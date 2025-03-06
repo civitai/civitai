@@ -48,7 +48,9 @@ export default ModEndpoint(
       const json = JSON.stringify(batch);
 
       // TODO.TagsOnImage - remove this after the migration
-      await dbWrite.$executeRaw`
+      const toInsert = await dbWrite.$queryRaw<
+        { imageId: number; tagId: number; source: string }[]
+      >`
         WITH image_tags AS (
           SELECT
             (value ->> 'imageId')::int AS id,
@@ -64,19 +66,19 @@ export default ModEndpoint(
           'Computed' "source"
         FROM image_tags it
         JOIN "Tag" t ON t.name = it.tag
-        ON CONFLICT ("imageId", "tagId") DO NOTHING;
+        ON CONFLICT ("imageId", "tagId") DO NOTHING
+        RETURNING "imageId", "tagId";
       `;
 
-      await dbWrite.$executeRaw`
-        WITH image_tags AS (
+      await dbWrite.$queryRaw`
+        WITH to_update AS (
           SELECT
-            (value ->> 'imageId')::int AS id,
-            value ->> 'tag' AS tag
-          FROM json_array_elements(${json}::json)
+            (value ->> 'imageId')::int as "imageId",
+            (value ->> 'tagId')::int as "tagId"
+          FROM json_array_elements(${JSON.stringify(toInsert)}::json)
         )
-        SELECT upsert_tag_on_image(it.id, t.id, 'Computed',  70, true)
-        FROM image_tags it
-        JOIN "Tag" t ON t.name = it.tag;
+        SELECT upsert_tag_on_image("imageId", "tagId", 'Computed', 70, true)
+        FROM to_update;
       `;
 
       // Recompute the nsfw level
