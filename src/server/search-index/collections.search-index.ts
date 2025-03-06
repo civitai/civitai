@@ -47,6 +47,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     'createdAt',
+    'id',
     'metrics.itemCount',
     'metrics.followerCount',
     'metrics.contributorCount',
@@ -67,7 +68,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = ['user.username', 'type', 'nsfwLevel'];
+  const filterableAttributes = ['user.username', 'type', 'nsfwLevel', 'id'];
 
   if (
     // Meilisearch stores sorted.

@@ -17,7 +17,7 @@ export async function sleep(timeout: number) {
 }
 
 export function withRetries<T>(
-  fn: (currentAttempt: number) => Promise<T>,
+  fn: (remainingAttempts: number) => Promise<T>,
   retries = 3,
   retryTimeout?: number
 ): Promise<T> {
