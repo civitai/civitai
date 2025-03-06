@@ -61,11 +61,12 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     // sort
-    'metrics.thumbsUpCount',
     'createdAt',
+    'id',
+    'metrics.collectedCount',
     'metrics.commentCount',
     'metrics.downloadCount',
-    'metrics.collectedCount',
+    'metrics.thumbsUpCount',
     'metrics.tippedAmountCount',
   ];
 
@@ -93,24 +94,24 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   const filterableAttributes = [
-    'id',
-    'hashes',
-    'nsfwLevel',
-    'type',
+    'availability',
+    'canGenerate',
+    'category.name',
     'checkpointType',
+    'fileFormats',
+    'hashes',
+    'id',
+    'lastVersionAtUnix',
+    'nsfwLevel',
+    'status',
     'tags.name',
-    'version.baseModel',
+    'type',
     'user.id',
     'user.username',
-    'status',
-    'category.name',
-    'canGenerate',
-    'fileFormats',
-    'lastVersionAtUnix',
-    'versions.hashes',
+    'version.baseModel',
     'versions.baseModel',
+    'versions.hashes',
     'versions.id',
-    'availability',
   ];
 
   if (

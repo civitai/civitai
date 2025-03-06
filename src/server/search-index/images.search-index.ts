@@ -45,6 +45,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const searchableAttributes: SearchableAttributes = ['prompt', 'tagNames', 'user.username'];
 
   const sortableAttributes: SortableAttributes = [
+    'id',
     'sortAt',
     'stats.commentCountAllTime',
     'stats.reactionCountAllTime',
@@ -53,6 +54,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ];
 
   const filterableAttributes: FilterableAttributes = [
+    'id',
     'createdAtUnix',
     'tagNames',
     'user.username',
