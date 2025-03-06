@@ -17,3 +17,5 @@ CREATE INDEX "FeaturedModelVersion_validFrom_validTo_idx" ON "FeaturedModelVersi
 
 ALTER TABLE "Bid" DROP COLUMN "transactionId";
 ALTER TABLE "Bid" ADD COLUMN "transactionIds" text[] NOT NULL DEFAULT ARRAY[]::text[];
+
+DROP INDEX IF EXISTS "FeaturedModelVersion_modelVersionId_key";

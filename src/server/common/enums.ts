@@ -139,6 +139,7 @@ export enum SignalMessages {
   // Auction
   AuctionUpdate = 'auction:update',
   AuctionBidChange = 'auction:bid-change',
+  TopicUpdate = 'topic:connections',
 }
 
 export enum BountySort {

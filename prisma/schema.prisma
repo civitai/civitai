@@ -3452,8 +3452,6 @@ model FeaturedModelVersion {
   validFrom      DateTime
   validTo        DateTime
   position       Int
-
-  @@unique([modelVersionId])
 }
 
 /// @view

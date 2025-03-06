@@ -228,8 +228,6 @@ export const useAuctionTopicListener = (auctionId?: number) => {
   const utils = trpc.useUtils();
   const currentUser = useCurrentUser();
 
-  useSignalTopic(auctionId ? `${SignalTopic.Auction}:${auctionId}` : undefined);
-
   // TODO
   useSignalConnection(SignalMessages.AuctionUpdate, (data: any) => {
     console.log('auction update', data);
@@ -237,4 +235,11 @@ export const useAuctionTopicListener = (auctionId?: number) => {
   useSignalConnection(SignalMessages.AuctionBidChange, (data: any) => {
     console.log('auction bid change', data);
   });
+  useSignalConnection(SignalMessages.TopicUpdate, (data: { topic: string; count: number }) => {
+    // if topic === .... then get count
+    console.log('auction count', data);
+  });
+
+  // TODO is there a race condition? missing the first topic message
+  useSignalTopic(auctionId ? `${SignalTopic.Auction}:${auctionId}` : undefined, true);
 };

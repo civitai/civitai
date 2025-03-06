@@ -32,6 +32,7 @@ import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+import { useCardStyles } from '~/components/Cards/Cards.styles';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -623,6 +624,7 @@ export const ModelPlacementCard = ({
   const currentUser = useCurrentUser();
   const { selectedAuction, justBid, setJustBid } = useAuctionContext();
   const animatedRef = useRef<HTMLDivElement>(null);
+  const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
 
   const { data: myBidData = [] } = trpc.auction.getMyBids.useQuery(undefined, {
     enabled: !!currentUser,
@@ -656,67 +658,76 @@ export const ModelPlacementCard = ({
   // TODO scroll to animatedRef on success
 
   return (
-    <CosmeticCard
-      className={clsx('group hover:bg-gray-2 dark:hover:bg-dark-5', {
-        'animate-glowPulse': isRecentlyBid,
+    <div
+      className={clsx({
+        [cardClasses.winnerFirst]: data.position === 1,
+        [cardClasses.winnerSecond]: data.position === 2,
+        [cardClasses.winnerThird]: data.position === 3,
+        'before:blur-sm': !!data.position && data.position <= 3,
       })}
-      ref={animatedRef}
     >
-      <Group className="gap-y-2 max-md:flex-col">
-        {!mobile && <SectionPosition position={data.position} />}
-        <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
-          <SectionModelImage image={data.entityData?.image} />
-          <SectionModelInfo entityData={data.entityData} />
-        </Group>
+      <CosmeticCard
+        className={clsx('group hover:bg-gray-2 dark:hover:bg-dark-5', {
+          'animate-glowPulse': isRecentlyBid,
+        })}
+        ref={animatedRef}
+      >
+        <Group className="gap-y-2 max-md:flex-col">
+          {!mobile && <SectionPosition position={data.position} />}
+          <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
+            <SectionModelImage image={data.entityData?.image} />
+            <SectionModelInfo entityData={data.entityData} />
+          </Group>
 
-        {!mobile && <Divider orientation="vertical" />}
+          {!mobile && <Divider orientation="vertical" />}
 
-        <SectionBidInfo
-          amount={data.totalAmount}
-          position={data.position}
-          right={
-            !!data.entityData ? (
-              <Tooltip label="Support this model" position="top" withinPortal>
-                <ActionIcon
-                  size="lg"
-                  variant="light"
-                  color="blue"
-                  onClick={() =>
-                    data.entityData
-                      ? addBidFn({
-                          // TODO make a discriminator so we dont have to do this
-                          ...data.entityData,
-                          strength: -1,
-                          minStrength: -1,
-                          maxStrength: -1,
-                          trainedWords: [],
-                          canGenerate: true,
-                          hasAccess: true,
-                          covered: true,
-                        })
-                      : undefined
-                  }
-                >
-                  <IconPlus size={16} />
-                </ActionIcon>
-              </Tooltip>
-            ) : undefined
-          }
-          bottom={
-            <Group noWrap spacing={4}>
-              <IconUser size={14} />
-              <Text size="sm">{`${data.count} Bid${data.count !== 1 ? 's' : ''}`}</Text>
-              {!!myBid && (
-                <Tooltip
-                  label={`You bid ⚡${formatCurrencyForDisplay(myBid.amount, Currency.BUZZ)}`}
-                >
-                  <IconStarFilled size={14} color="gold" />
+          <SectionBidInfo
+            amount={data.totalAmount}
+            position={data.position}
+            right={
+              !!data.entityData ? (
+                <Tooltip label="Support this model" position="top" withinPortal>
+                  <ActionIcon
+                    size="lg"
+                    variant="light"
+                    color="blue"
+                    onClick={() =>
+                      data.entityData
+                        ? addBidFn({
+                            // TODO make a discriminator so we dont have to do this
+                            ...data.entityData,
+                            strength: -1,
+                            minStrength: -1,
+                            maxStrength: -1,
+                            trainedWords: [],
+                            canGenerate: true,
+                            hasAccess: true,
+                            covered: true,
+                          })
+                        : undefined
+                    }
+                  >
+                    <IconPlus size={16} />
+                  </ActionIcon>
                 </Tooltip>
-              )}
-            </Group>
-          }
-        />
-      </Group>
-    </CosmeticCard>
+              ) : undefined
+            }
+            bottom={
+              <Group noWrap spacing={4}>
+                <IconUser size={14} />
+                <Text size="sm">{`${data.count} Bid${data.count !== 1 ? 's' : ''}`}</Text>
+                {!!myBid && (
+                  <Tooltip
+                    label={`You bid ⚡${formatCurrencyForDisplay(myBid.amount, Currency.BUZZ)}`}
+                  >
+                    <IconStarFilled size={14} color="gold" />
+                  </Tooltip>
+                )}
+              </Group>
+            }
+          />
+        </Group>
+      </CosmeticCard>
+    </div>
   );
 };

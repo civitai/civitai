@@ -49,21 +49,30 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
   }, [worker, message]);
 };
 
-export const useSignalTopic = (topic: `${SignalTopic}${'' | `:${number}`}` | undefined) => {
+export const useSignalTopic = (
+  topic: `${SignalTopic}${'' | `:${number}`}` | undefined,
+  notify?: boolean
+) => {
   const { worker } = useSignalContext();
 
   const interval = useInterval(() => {
     if (!topic) return;
-    worker?.topicRegister(topic);
-  }, 30000);
+    worker?.topicRegister(topic, notify);
+  }, 60000);
 
   useEffect(() => {
-    interval.start();
+    if (topic) {
+      worker?.topicRegister(topic, notify);
+    }
+
+    if (!!interval?.active && !!topic) {
+      interval.start();
+    }
 
     return () => {
       interval.stop();
     };
-  }, [worker]);
+  }, [interval, notify, topic, worker]);
 };
 
 const SIGNAL_DATA_REFRESH_DEBOUNCE = 10;

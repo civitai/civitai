@@ -495,6 +495,7 @@ function ResourceHitList({
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
   const { classes, cx } = useSearchLayoutStyles();
+  const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
   const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const {
     items: models,
@@ -590,28 +591,36 @@ function ResourceHitList({
       )}
 
       {topItems.length > 0 && (
-        <div className={cx(classes.grid, 'p-3 grid-cols-[repeat(auto-fit,minmax(250px,1fr))]')}>
-          <ResourceSelectCard
-            data={topItems[0]}
-            isFavorite={!!likes && likes.includes(topItems[0].id)}
-            selectSource={selectSource}
-            position={1}
-          />
-          {topItems.length > 1 && (
+        <div
+          className={cx(
+            classes.grid,
+            'p-3 grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6'
+          )}
+        >
+          <div className={cardClasses.winnerFirst}>
             <ResourceSelectCard
-              data={topItems[1]}
-              isFavorite={!!likes && likes.includes(topItems[1].id)}
+              data={topItems[0]}
+              isFavorite={!!likes && likes.includes(topItems[0].id)}
               selectSource={selectSource}
-              position={2}
             />
+          </div>
+          {topItems.length > 1 && (
+            <div className={cardClasses.winnerSecond}>
+              <ResourceSelectCard
+                data={topItems[1]}
+                isFavorite={!!likes && likes.includes(topItems[1].id)}
+                selectSource={selectSource}
+              />
+            </div>
           )}
           {topItems.length > 2 && (
-            <ResourceSelectCard
-              data={topItems[2]}
-              isFavorite={!!likes && likes.includes(topItems[2].id)}
-              selectSource={selectSource}
-              position={3}
-            />
+            <div className={cardClasses.winnerThird}>
+              <ResourceSelectCard
+                data={topItems[2]}
+                isFavorite={!!likes && likes.includes(topItems[2].id)}
+                selectSource={selectSource}
+              />
+            </div>
           )}
         </div>
       )}
@@ -775,12 +784,10 @@ function ResourceSelectCard({
   data,
   isFavorite,
   selectSource,
-  position,
 }: {
   data: SearchIndexDataMap['models'][number];
   isFavorite: boolean;
   selectSource?: ResourceSelectSource;
-  position?: number;
 }) {
   // const [ref, inView] = useInViewDynamic({ id: data.id.toString() });
   const { onSelect } = useResourceSelectContext();
@@ -985,12 +992,7 @@ function ResourceSelectCard({
   return (
     // Visually hide card if there are no versions
     <TwCard
-      className={clsx(classes.root, 'justify-between', {
-        '!shadow-[0_0_10px]': !!position && position <= 3,
-        '!shadow-yellow-5': position === 1,
-        '!shadow-gray-5': position === 2,
-        '!shadow-orange-5': position === 3,
-      })}
+      className={clsx(classes.root, 'justify-between')}
       // onClick={handleSelect}
       style={{ display: versions.length === 0 ? 'none' : undefined }}
     >

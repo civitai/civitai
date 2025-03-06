@@ -605,9 +605,7 @@ export const getModelsRaw = async ({
         m."allowCommercialUse",
         m."allowDerivatives",
         m."allowDifferentLicense",
-      `}
-      m."type",
-      m."minor",
+      `} m."type", m."minor",
       m."poi",
       m."nsfw",
       m."nsfwLevel",
@@ -628,20 +626,22 @@ export const getModelsRaw = async ({
         'rating', mm."rating",
         'collectedCount', mm."collectedCount",
         'tippedAmountCount', mm."tippedAmountCount"
-      ) as "rank",
+      )                                               as "rank",
       jsonb_build_object(
         'id', u."id",
         'username', u."username",
         'deletedAt', u."deletedAt",
         'image', u."image"
-      ) as "user",
+      )                                               as "user",
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"
     FROM "Model" m
-    JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
-    JOIN "User" u ON m."userId" = u.id
-    ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
-    WHERE ${Prisma.join(AND, ' AND ')}
-    ORDER BY ${Prisma.raw(orderBy)}
+         JOIN "ModelMetric" mm ON mm."modelId" = m."id" AND mm."timeframe" = ${period}::"MetricTimeframe"
+         JOIN "User" u ON m."userId" = u.id
+      ${clubId ? Prisma.sql`JOIN "clubModels" cm ON cm."modelId" = m."id"` : Prisma.sql``}
+    WHERE
+      ${Prisma.join(AND, ' AND ')}
+    ORDER BY
+      ${Prisma.raw(orderBy)}
     LIMIT ${(take ?? 100) + 1}
   `;
 
@@ -1225,8 +1225,9 @@ export const deleteModelById = async ({
         SET "metadata" = "metadata" || jsonb_build_object(
           'unpublishedAt', ${new Date().toISOString()},
           'unpublishedBy', ${userId}
-        )
-        WHERE "publishedAt" IS NOT NULL
+                                       )
+        WHERE
+            "publishedAt" IS NOT NULL
         AND "userId" = ${model.userId}
         AND "modelVersionId" IN (${Prisma.join(
           model.modelVersions.map(({ id }) => id),
@@ -1615,14 +1616,14 @@ export const publishModelById = async ({
 
         await tx.$executeRaw`
           UPDATE "Post"
-          SET
-            "publishedAt" = CASE
-              WHEN "metadata"->>'prevPublishedAt' IS NOT NULL
-              THEN to_timestamp("metadata"->>'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
-              ELSE ${publishedAt}
+          SET "publishedAt" = CASE
+                                WHEN "metadata" ->> 'prevPublishedAt' IS NOT NULL
+                                  THEN to_timestamp("metadata" ->> 'prevPublishedAt', 'YYYY-MM-DD"T"HH24:MI:SS.MS')
+                                ELSE ${publishedAt}
             END,
-            "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
-          WHERE "userId" = ${model.userId}
+              "metadata"    = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
+          WHERE
+            "userId" = ${model.userId}
           AND "modelVersionId" IN (${Prisma.join(versionIds, ',')})
         `;
       }
@@ -1735,14 +1736,14 @@ export const unpublishModelById = async ({
       const versionIds = updatedModel.modelVersions.map((x) => x.id);
       await tx.$executeRaw`
         UPDATE "Post"
-        SET
-          "metadata" = "metadata" || jsonb_build_object(
-            'unpublishedAt', ${unpublishedAt},
-            'unpublishedBy', ${userId},
-            'prevPublishedAt', "publishedAt"
-          ),
-          "publishedAt" = NULL
-        WHERE "publishedAt" IS NOT NULL
+        SET "metadata"    = "metadata" || jsonb_build_object(
+          'unpublishedAt', ${unpublishedAt},
+          'unpublishedBy', ${userId},
+          'prevPublishedAt', "publishedAt"
+                                          ),
+            "publishedAt" = NULL
+        WHERE
+          "publishedAt" IS NOT NULL
         AND "userId" = ${updatedModel.userId}
         AND "modelVersionId" IN (${Prisma.join(versionIds)})
       `;
@@ -2080,21 +2081,26 @@ export const setModelsCategory = async ({
 
     // Remove all categories from models
     await dbWrite.$executeRaw`
-      DELETE FROM "TagsOnModels" tom
-      USING "Model" m
-      WHERE m.id = tom."modelId"
-        AND m."userId" = ${userId}
-        AND "modelId" IN (${models})
-        AND "tagId" IN (${allCategories})
+      DELETE
+      FROM "TagsOnModels" tom
+        USING "Model" m
+      WHERE
+          m.id = tom."modelId"
+      AND m."userId" = ${userId}
+      AND "modelId" IN (${models})
+      AND "tagId" IN (${allCategories})
     `;
 
     // Add category to models
     await dbWrite.$executeRaw`
       INSERT INTO "TagsOnModels" ("modelId", "tagId")
-      SELECT m.id, ${categoryId}
+      SELECT
+        m.id,
+        ${categoryId}
       FROM "Model" m
-      WHERE m."userId" = ${userId}
-        AND m.id IN (${models})
+      WHERE
+          m."userId" = ${userId}
+      AND m.id IN (${models})
       ON CONFLICT ("modelId", "tagId") DO NOTHING;
     `;
 
@@ -2248,8 +2254,11 @@ export async function getCheckpointGenerationCoverage(versionIds: number[]) {
   }
 
   const coveredResources = await dbRead.$queryRaw<{ version_id: number }[]>`
-    SELECT version_id FROM "CoveredCheckpointDetails"
-    WHERE version_id IN (${Prisma.join(versionIds)});
+    SELECT
+      version_id
+    FROM "CoveredCheckpointDetails"
+    WHERE
+      version_id IN (${Prisma.join(versionIds)});
   `;
 
   return coveredResources.map((x) => x.version_id);
@@ -2257,10 +2266,14 @@ export async function getCheckpointGenerationCoverage(versionIds: number[]) {
 
 export async function isModelHashBlocked(sha256Hash: string) {
   const [{ blocked }] = await dbRead.$queryRaw<{ blocked: boolean }[]>`
-    SELECT EXISTS (
-      SELECT 1 FROM "BlockedModelHashes"
-      WHERE hash = ${sha256Hash}
-    ) as blocked;
+    SELECT
+      EXISTS (
+        SELECT
+          1
+        FROM "BlockedModelHashes"
+        WHERE
+          hash = ${sha256Hash}
+      ) as blocked;
   `;
 
   return blocked;
@@ -2274,9 +2287,12 @@ export async function refreshBlockedModelHashes() {
 
 export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpointCoverageInput) {
   const affectedVersionIds = await dbWrite.$queryRaw<{ version_id: number }[]>`
-    SELECT version_id FROM "CoveredCheckpointDetails"
-    JOIN "ModelVersion" mv ON mv.id = version_id
-    WHERE mv."modelId" = ${id};
+    SELECT
+      version_id
+    FROM "CoveredCheckpointDetails"
+         JOIN "ModelVersion" mv ON mv.id = version_id
+    WHERE
+      mv."modelId" = ${id};
   `;
 
   const transaction: Prisma.PrismaPromise<unknown>[] = [
@@ -2289,9 +2305,12 @@ export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpoi
     if (affectedVersionIds.some((x) => x.version_id === versionId)) {
       transaction.unshift(
         dbWrite.$executeRaw`
-        DELETE FROM "CoveredCheckpoint"
-        WHERE ("model_id" = ${id} AND "version_id" = ${versionId}) OR ("model_id" = ${id} AND "version_id" IS NULL);
-      `
+          DELETE
+          FROM "CoveredCheckpoint"
+          WHERE
+            ("model_id" = ${id} AND "version_id" = ${versionId})
+          OR ("model_id" = ${id} AND "version_id" IS NULL);
+        `
       );
       affectedVersionIds.splice(
         affectedVersionIds.findIndex((x) => x.version_id === versionId),
@@ -2300,10 +2319,11 @@ export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpoi
     } else {
       transaction.unshift(
         dbWrite.$executeRaw`
-        INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
-        VALUES (${id}, ${versionId})
-        ON CONFLICT DO NOTHING;
-      `
+          INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
+          VALUES
+            (${id}, ${versionId})
+          ON CONFLICT DO NOTHING;
+        `
       );
       affectedVersionIds.push({ version_id: versionId });
     }
@@ -2494,8 +2514,9 @@ export async function copyGallerySettingsToAllModelsByUser({
         'level', ${settings.level},
         'users', ${JSON.stringify(settings.users || [])}::jsonb,
         'tags', ${JSON.stringify(settings.tags || [])}::jsonb
-      )
-      WHERE "userId" = ${userId}
+                                                   )
+      WHERE
+        "userId" = ${userId}
     `;
 
     await userContentOverviewCache.bust(userId);
@@ -2513,7 +2534,10 @@ export async function setModelShowcaseCollection({
   collectionId,
   userId,
   isModerator,
-}: SetModelCollectionShowcaseInput & { userId: number; isModerator?: boolean }) {
+}: SetModelCollectionShowcaseInput & {
+  userId: number;
+  isModerator?: boolean;
+}) {
   const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
@@ -2725,6 +2749,7 @@ export async function ingestModel(data: IngestModelInput) {
 }
 
 export type GetFeaturedModels = AsyncReturnType<typeof getFeaturedModels>;
+
 export async function getFeaturedModels() {
   return await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
     // subtract 2 minutes for the job to finish
@@ -2751,15 +2776,30 @@ export async function getFeaturedModels() {
       if (data.length === 0) {
         retries++;
       } else {
-        return data.map((row) => ({ modelId: row.modelVersion.modelId, position: row.position }));
+        return [
+          ...data
+            .reduce((map, row) => {
+              const current = map.get(row.modelVersion.modelId);
+              if (!current || row.position < current.position) {
+                map.set(row.modelVersion.modelId, {
+                  modelId: row.modelVersion.modelId,
+                  position: row.position,
+                });
+              }
+              return map;
+            }, new Map<number, { modelId: number; position: number }>())
+            .values(),
+        ];
       }
     }
 
     // if nothing found, get from the collection
     const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
-      SELECT ci."modelId"
+      SELECT
+        ci."modelId"
       FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
+      WHERE
+        ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
     `;
     return query.map((row) => ({ modelId: row.modelId, position: 0 }));
   });
