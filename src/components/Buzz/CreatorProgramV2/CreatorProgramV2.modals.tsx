@@ -53,6 +53,10 @@ export const openPhasesModal = () => {
                 Creators can review their share of the Compensation Pool and decide whether to keep
                 their Buzz Banked or extract it.
               </li>
+              <li>
+                Extraction is all or nothing, and a fee applies to any amount over 100k Buzz to
+                prevent Bank manipulation.
+              </li>
               <li>Extracted Buzz can be saved for a future month or used on Civitai.</li>
               <li>
                 This phase starts 3 days before the end of the month and ends 1 hour before the
