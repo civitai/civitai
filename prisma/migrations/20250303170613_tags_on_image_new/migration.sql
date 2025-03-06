@@ -9,7 +9,7 @@ CREATE TABLE "TagsOnImageNew" (
 );
 
 -- CreateIndex
-CREATE INDEX "TagsOnImageNew_imageId_idx" ON "TagsOnImageNew"("imageId");
+CREATE INDEX "TagsOnImageNew_tagId_idx" ON "TagsOnImageNew"("tagId");
 CREATE INDEX "TagsOnImageNew_needsReview_idx" ON "TagsOnImageNew" ("attributes") WHERE ("attributes" & 1 << 09) != 0;
 CREATE INDEX "TagsOnImageNew_disabled_idx" ON "TagsOnImageNew" ("attributes") WHERE ("attributes" & 1 << 10) != 0;
 
