@@ -51,6 +51,7 @@ export function getClient(
   const pool = new Pool({
     connectionString,
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
+    min: 0,
     max: env.DATABASE_POOL_MAX,
     idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:

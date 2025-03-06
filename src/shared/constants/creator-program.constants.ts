@@ -53,6 +53,7 @@ export const MIN_CREATOR_SCORE = 40000;
 type WithdrawalFee = {
   type: 'fixed' | 'percent';
   amount: number;
+  enabled?: boolean;
 };
 
 // TODO creators program - Justin: Revise withdrawal fees here. They might make no sense.
@@ -60,12 +61,12 @@ export const WITHDRAWAL_FEES: Record<CashWithdrawalMethod, WithdrawalFee | undef
   ACH: { type: 'fixed', amount: 200 },
   PayPal: { type: 'percent', amount: 0.05 },
   Check: { type: 'fixed', amount: 400 },
-  Card: { type: 'fixed', amount: 200 },
-  Custom: { type: 'fixed', amount: 200 },
-  eCheck: { type: 'fixed', amount: 200 },
-  Intercash: { type: 'fixed', amount: 200 },
-  Payoneer: { type: 'fixed', amount: 200 },
-  WireTransfer: { type: 'fixed', amount: 3000 },
+  Card: undefined,
+  Custom: undefined,
+  eCheck: undefined,
+  Intercash: undefined,
+  Payoneer: undefined,
+  WireTransfer: undefined,
   HoldMyPayments: undefined,
   NoPM: undefined,
   TipaltiInternalValue: undefined,

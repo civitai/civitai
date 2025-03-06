@@ -18,6 +18,7 @@ import {
   formatCurrencyForDisplay,
   numberWithCommas,
 } from '~/utils/number-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export const openPhasesModal = () => {
   dialogStore.trigger({
@@ -51,6 +52,10 @@ export const openPhasesModal = () => {
               <li>
                 Creators can review their share of the Compensation Pool and decide whether to keep
                 their Buzz Banked or extract it.
+              </li>
+              <li>
+                Extraction is all or nothing, and a fee applies to any amount over 100k Buzz to
+                prevent Bank manipulation.
               </li>
               <li>Extracted Buzz can be saved for a future month or used on Civitai.</li>
               <li>
@@ -113,7 +118,7 @@ export const openSettlementModal = () => {
   });
 };
 
-export const openWithdrawalFreeModal = () => {
+export const openWithdrawalFeeModal = () => {
   const keys = Object.keys(WITHDRAWAL_FEES) as CashWithdrawalMethod[];
   dialogStore.trigger({
     component: AlertDialog,
@@ -123,7 +128,9 @@ export const openWithdrawalFreeModal = () => {
       icon: null,
       children: ({ handleClose }) => (
         <div className="flex flex-col gap-1">
-          <p className="mb-2">Withdrawl fees vary depending on the Payout Method you choose.</p>
+          <p className="mb-2">
+            Withdrawal fees vary depending on the Withdrawal Method you choose.
+          </p>
           {keys.map((key) => {
             if (!WITHDRAWAL_FEES[key]) {
               return null;
@@ -131,7 +138,7 @@ export const openWithdrawalFreeModal = () => {
 
             return (
               <div className="flex gap-4" key={key}>
-                <p className="font-bold">{capitalize(key)}</p>
+                <p className="font-bold">{getDisplayName(key)}</p>
                 <p>
                   {WITHDRAWAL_FEES[key].type === 'percent'
                     ? `${WITHDRAWAL_FEES[key].amount * 100}%`
