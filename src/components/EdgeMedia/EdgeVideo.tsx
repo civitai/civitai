@@ -23,6 +23,7 @@ import { useLocalStorage, useTimeout } from '@mantine/hooks';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
+import { useEdgeVideoSettingsContext } from '~/components/EdgeMedia/EdgeVideoSettingsProvider';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -78,7 +79,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     forwardedRef
   ) => {
     const ref = useRef<HTMLVideoElement | null>(null);
-
+    const settings = useEdgeVideoSettingsContext();
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [state, setState] = useState<State>({
       loaded: false,
@@ -190,7 +191,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           ([{ isIntersecting, intersectionRatio, target }]) => {
             const elem = target as HTMLVideoElement;
             if (!options?.anim) return;
-            if (isIntersecting && intersectionRatio >= threshold) {
+            if (isIntersecting && intersectionRatio >= threshold && !settings?.skipManualPlay) {
               elem.play().catch(console.error);
             } else if (!isIntersecting || (isIntersecting && intersectionRatio < threshold)) {
               elem.pause();
