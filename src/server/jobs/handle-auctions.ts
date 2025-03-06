@@ -106,6 +106,9 @@ const handlePreviousAuctions = async (now: Dayjs) => {
   // Get the bids from previous auctions
   const allAuctionsWithBids = await _fetchAuctionsWithBids(now);
 
+  // Track creators across all auctions
+  const creatorsSeen = new Set<number>();
+
   // Insert the winners into the featured table and the collection
   // Refund people who didn't make the cutoff
   // Mark auctions as finalized
@@ -135,7 +138,7 @@ const handlePreviousAuctions = async (now: Dayjs) => {
 
       // Feature the winners
       if (winners.length > 0) {
-        await _handleWinnersForAuction(auctionRow, winners);
+        await _handleWinnersForAuction(auctionRow, winners, creatorsSeen);
       }
 
       // Refund the losers
@@ -177,7 +180,11 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
   });
 };
 
-const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerType[]) => {
+const _handleWinnersForAuction = async (
+  auctionRow: AuctionRow,
+  winners: WinnerType[],
+  creatorsSeen: Set<number>
+) => {
   const winnerIds = winners.map((w) => w.entityId);
   const entityNames = Object.fromEntries(winnerIds.map((w) => [w, null as string | null]));
 
@@ -200,19 +207,37 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
         id: true,
         nsfwLevel: true,
         modelId: true,
-        model: { select: { name: true, poi: true, nsfw: true } },
+        model: {
+          select: {
+            name: true,
+            poi: true,
+            nsfw: true,
+            userId: true,
+          },
+        },
       },
     });
 
-    modelData.forEach((md) => (entityNames[md.id] = md.model.name));
+    // update entity names for notifications later
+    modelData.forEach((md) => {
+      entityNames[md.id] = md.model.name;
+    });
 
-    // TODO check getIsSafeBrowsingLevel
-    //  Limit to one per creator
+    // Filter only safe models
+    const validModelData = modelData.filter(
+      (m) => hasSafeBrowsingLevel(m.nsfwLevel) && !m.model.nsfw && !m.model.poi
+    );
+
+    const filteredModelData: typeof validModelData = [];
+    validModelData.forEach((md) => {
+      if (!creatorsSeen.has(md.model.userId)) {
+        validModelData.push(md);
+        creatorsSeen.add(md.model.userId);
+      }
+    });
+
     const modelIds = uniq(
-      modelData
-        // Filter only safe models
-        .filter((m) => hasSafeBrowsingLevel(m.nsfwLevel) && !m.model.nsfw && !m.model.poi)
-        // Sort by position
+      filteredModelData
         .sort((a, b) => {
           const matchA = winners.find((w) => w.entityId === a.id);
           const matchB = winners.find((w) => w.entityId === b.id);
@@ -222,8 +247,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
         })
         // Pick top models to add to the collection
         .map((m) => m.modelId)
-        .slice(0, modelsToAddToCollection)
-    );
+    ).slice(0, modelsToAddToCollection);
 
     // Add them to the collection
     if (modelIds.length > 0) {
