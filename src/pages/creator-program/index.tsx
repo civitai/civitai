@@ -400,6 +400,10 @@ const faq: { q: string; a: string | React.ReactNode }[] = [
     q: 'Must I withdraw my “Ready to Withdraw” funds each month?',
     a: 'No, funds can accumulate in your account until you’re ready to pay out! There’s no requirement to pay out each month.',
   },
+  {
+    q: 'What happens if I decide I want my Banked Buzz back?',
+    a: `The last three days of each month make up the Extraction Phase, during which you can reclaim your Buzz back to your Buzz Wallet if you choose not to proceed with a payout. Extractions must be all or nothing - you cannot partially Extract your Buzz. A tiered fee structure is in place to prevent Bank manipulation: the first 100k Buzz is fee-free, the next 900k Buzz is charged a 5% Extraction fee, the next 4M Buzz is charged a 10% Extraction fee, and any amount above 5M Buzz is charged a 15% Extraction fee.`,
+  },
 ];
 
 const FAQ = () => {
