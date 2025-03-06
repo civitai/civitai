@@ -235,6 +235,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         {...wrapperProps}
       >
         <video
+          key={videoUrl}
           ref={ref}
           className={clsx(`block cursor-pointer ${contain ? 'h-full' : 'h-auto'}`)}
           muted={state.muted}
