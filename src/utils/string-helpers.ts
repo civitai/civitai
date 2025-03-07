@@ -260,6 +260,7 @@ export function stringifyAIR({
   })
     ?.replace('pony', 'sdxl')
     ?.replace('illustrious', 'sdxl')
+    ?.replace('noobai', 'sdxl')
     ?.replace('sd3_5m', 'sd3');
 }
 
