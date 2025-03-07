@@ -2750,60 +2750,71 @@ export async function ingestModel(data: IngestModelInput) {
 }
 
 export type GetFeaturedModels = AsyncReturnType<typeof getFeaturedModels>;
-
 export async function getFeaturedModels() {
-  return await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
-    // subtract 2 minutes for the job to finish
-    const now = dayjs().subtract(2, 'minute');
+  try {
+    return await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
+      // subtract 2 minutes for the job to finish
+      const now = dayjs().subtract(2, 'minute');
 
-    // TODO we're featuring modelVersions, but showing models due to how collections and meili works
+      // TODO we're featuring modelVersions, but showing models due to how collections and meili works
 
-    let retries = 0;
-    while (retries < 3) {
-      const nowDate = now.subtract(retries, 'day').toDate();
-      const data = await dbRead.featuredModelVersion.findMany({
-        where: {
-          validFrom: { lte: nowDate },
-          validTo: { gt: nowDate },
-        },
-        select: {
-          position: true,
-          modelVersion: {
-            select: { modelId: true },
+      let retries = 0;
+      while (retries < 3) {
+        const nowDate = now.subtract(retries, 'day').toDate();
+        const data = await dbRead.featuredModelVersion.findMany({
+          where: {
+            validFrom: { lte: nowDate },
+            validTo: { gt: nowDate },
           },
-        },
-        orderBy: { position: 'asc' },
-      });
-      if (data.length === 0) {
-        retries++;
-      } else {
-        return [
-          ...data
-            .reduce((map, row) => {
-              const current = map.get(row.modelVersion.modelId);
-              if (!current || row.position < current.position) {
-                map.set(row.modelVersion.modelId, {
-                  modelId: row.modelVersion.modelId,
-                  position: row.position,
-                });
-              }
-              return map;
-            }, new Map<number, { modelId: number; position: number }>())
-            .values(),
-        ];
+          select: {
+            position: true,
+            modelVersion: {
+              select: { modelId: true },
+            },
+          },
+          orderBy: { position: 'asc' },
+        });
+        if (data.length === 0) {
+          retries++;
+        } else {
+          return [
+            ...data
+              .reduce((map, row) => {
+                const current = map.get(row.modelVersion.modelId);
+                if (!current || row.position < current.position) {
+                  map.set(row.modelVersion.modelId, {
+                    modelId: row.modelVersion.modelId,
+                    position: row.position,
+                  });
+                }
+                return map;
+              }, new Map<number, { modelId: number; position: number }>())
+              .values(),
+          ];
+        }
       }
-    }
 
-    // if nothing found, get from the collection
-    const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
-      SELECT
-        ci."modelId"
-      FROM "CollectionItem" ci
-      WHERE
-        ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
-    `;
-    return query.map((row) => ({ modelId: row.modelId, position: 0 }));
-  });
+      // if nothing found, get from the collection
+      const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
+        SELECT
+          ci."modelId"
+        FROM "CollectionItem" ci
+        WHERE
+          ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
+      `;
+      return query.map((row) => ({ modelId: row.modelId, position: 0 }));
+    });
+  } catch (e) {
+    const error = e as Error;
+    logToAxiom({
+      name: 'featured-models',
+      type: 'error',
+      message: error.message,
+      stack: error.stack,
+      cause: error.cause,
+    }).catch();
+    return [];
+  }
 }
 
 export async function bustFeaturedModelsCache() {
