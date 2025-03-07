@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.535",
+  "version": "5.0.542",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -43,7 +43,8 @@
     "test": "cross-env NODE_ENV=development npx playwright test",
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
-    "test:reset": "make bootstrap-db"
+    "test:reset": "make bootstrap-db",
+    "meilisearch:migrate": "NODE_ENV=development tsx scripts/meilisearch-migration.ts"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"

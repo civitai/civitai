@@ -36,6 +36,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     'createdAt',
+    'id',
     'metrics.thumbsUpCount',
     'metrics.followerCount',
     'metrics.uploadCount',

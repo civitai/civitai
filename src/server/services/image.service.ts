@@ -1006,21 +1006,21 @@ export const getAllImages = async (
     orderBy = `i."index"`;
   } else {
     // Sort by selected sort
-    if (sort === ImageSort.MostComments) {
-      orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."commentCount" > 0`);
-    } else if (sort === ImageSort.MostReactions) {
-      orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."reactionCount" > 0`);
-    } else if (sort === ImageSort.MostCollected) {
-      orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
-    }
+    // if (sort === ImageSort.MostComments) {
+    //   orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."commentCount" > 0`);
+    // } else if (sort === ImageSort.MostReactions) {
+    //   orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."reactionCount" > 0`);
+    // } else if (sort === ImageSort.MostCollected) {
+    //   orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
+    // }
     // else if (sort === ImageSort.MostTipped) {
     //   orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
     //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     // }
-    else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
+    if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {
     //   orderBy = 'i."sortAt" ASC';
@@ -1029,7 +1029,7 @@ export const getAllImages = async (
     //   orderBy = 'i."sortAt" DESC';
     //   AND.push(Prisma.sql`i."sortAt" <= now()`);
     // }
-    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
+    else if (sort === ImageSort.Oldest) orderBy = `i."id" ASC`;
     else {
       if (from.indexOf(`irr`) !== -1) {
         // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
@@ -1242,6 +1242,10 @@ export const getAllImages = async (
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
+
+  console.log('----------------');
+  console.log(orderBy);
+  console.log('----------------');
 
   // Disable Prisma query
   // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
@@ -4719,7 +4723,10 @@ export async function createImageResources({
     resources.filter((x) => x.modelversionid),
     'modelversionid'
   );
-  const resourcesWithoutModelVersions = resources.filter((x) => !x.modelversionid);
+  const resourcesWithoutModelVersions = uniqBy(
+    resources.filter((x) => !x.modelversionid),
+    'name'
+  );
 
   const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
     (r) => Prisma.sql`

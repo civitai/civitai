@@ -704,6 +704,9 @@ export async function getResourceData({
         substitute: substituteData,
       });
 
+      /*
+        epochs are used to generate images from a trained model before the model is finished training. It allows the user to determine the best trained model from the available epochs.
+      */
       return (epochsDetails?.length ?? 0) > 0
         ? epochsDetails.map((epochDetails) => ({ ...payload, epochDetails }))
         : payload;

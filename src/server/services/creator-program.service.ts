@@ -62,6 +62,8 @@ type UserCapCacheItem = {
 export const userCapCache = createCachedObject<UserCapCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CAPS,
   idKey: 'id',
+  dontCacheFn: (data) => !data.cap,
+  cacheNotFound: false,
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 
@@ -560,6 +562,10 @@ export async function withdrawCash(userId: number, amount: number) {
     throw new Error(
       'We could not determine your Tipalti payment method. Please update it and check back.'
     );
+  }
+
+  if (!WITHDRAWAL_FEES[userPaymentConfiguration.tipaltiWithdrawalMethod]) {
+    throw new Error('Selected withdrawal method is not supported');
   }
 
   // Determine withdrawal amount

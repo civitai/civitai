@@ -980,10 +980,7 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   if (!clickhouse || modelVersions.length === 0) return [];
 
-  const date = maxDate(
-    dayjs().startOf('day').subtract(timeframe, 'day').toDate(),
-    dayjs().startOf('month').subtract(1, 'day').toDate()
-  ).toISOString();
+  const date = dayjs().startOf('day').subtract(timeframe, 'day').toDate();
 
   const generationData = await clickhouse.$query<Row>`
     SELECT
@@ -1435,6 +1432,7 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
 
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
+  cacheNotFound: false,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
     const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`

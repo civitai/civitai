@@ -210,59 +210,59 @@ export const samplersToComfySamplers: Record<
 };
 
 // TODO - improve this
-export const defaultCheckpoints: Record<
-  string,
-  {
-    ecosystem: string;
-    type: string;
-    source: string;
-    model: number;
-    version: number;
-  }
-> = {
-  SD1: {
-    ecosystem: 'sd1',
-    type: 'model',
-    source: 'civitai',
-    model: 4384,
-    version: 128713,
-  },
-  SD3: {
-    ecosystem: 'sd3',
-    type: 'model',
-    source: 'civitai',
-    model: 878387,
-    version: 983309,
-  },
-  SD3_5M: {
-    ecosystem: 'sd3',
-    type: 'model',
-    source: 'civitai',
-    model: 896953,
-    version: 1003708,
-  },
-  SDXL: {
-    ecosystem: 'sdxl',
-    type: 'model',
-    source: 'civitai',
-    model: 101055,
-    version: 128078,
-  },
-  Pony: {
-    ecosystem: 'sdxl',
-    type: 'model',
-    source: 'civitai',
-    model: 257749,
-    version: 290640,
-  },
-  Illustrious: {
-    ecosystem: 'sdxl',
-    type: 'model',
-    source: 'civitai',
-    model: 795765,
-    version: 889818,
-  },
-};
+// export const defaultCheckpoints: Record<
+//   string,
+//   {
+//     ecosystem: string;
+//     type: string;
+//     source: string;
+//     model: number;
+//     version: number;
+//   }
+// > = {
+//   SD1: {
+//     ecosystem: 'sd1',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 4384,
+//     version: 128713,
+//   },
+//   SD3: {
+//     ecosystem: 'sd3',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 878387,
+//     version: 983309,
+//   },
+//   SD3_5M: {
+//     ecosystem: 'sd3',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 896953,
+//     version: 1003708,
+//   },
+//   SDXL: {
+//     ecosystem: 'sdxl',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 101055,
+//     version: 128078,
+//   },
+//   Pony: {
+//     ecosystem: 'sdxl',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 257749,
+//     version: 290640,
+//   },
+//   Illustrious: {
+//     ecosystem: 'sdxl',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 795765,
+//     version: 889818,
+//   },
+// };
 
 // #region [utils]
 // some base models, such as SD1.5 can work with different base model set types
@@ -287,7 +287,8 @@ export function getIsSdxl(baseModel?: string) {
     baseModelSetType === 'SDXL' ||
     baseModelSetType === 'Pony' ||
     baseModelSetType === 'SDXLDistilled' ||
-    baseModelSetType === 'Illustrious'
+    baseModelSetType === 'Illustrious' ||
+    baseModelSetType === 'NoobAI'
   );
 }
 
@@ -311,6 +312,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Illustrious'))
     return 'Illustrious';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'NoobAI')) return 'NoobAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
   else return 'SD1';
