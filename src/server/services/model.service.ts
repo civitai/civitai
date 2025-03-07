@@ -53,6 +53,7 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { deleteBidsForModel } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -3016,4 +3017,39 @@ export const publishPrivateModel = async ({
   }
 
   return { versionIds };
+};
+
+export const toggleCannotPromote = async ({
+  id,
+  isModerator,
+}: GetByIdInput & {
+  isModerator: boolean;
+}) => {
+  if (!isModerator) throw throwAuthorizationError();
+
+  const model = await getModel({ id, select: { id: true, meta: true } });
+  if (!model) throw throwNotFoundError(`No model with id ${id}`);
+
+  const modelMeta = model.meta as ModelMeta | null;
+  const currentCannotPromote = modelMeta?.cannotPromote ?? false;
+  const cannotPromote = !currentCannotPromote;
+
+  const updated = await dbWrite.model.update({
+    where: { id },
+    data: {
+      meta: modelMeta ? { ...modelMeta, cannotPromote } : { cannotPromote },
+    },
+    select: { id: true, meta: true },
+  });
+
+  await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  if (cannotPromote) {
+    await deleteBidsForModel({ modelId: id });
+  }
+
+  return {
+    id: updated.id,
+    meta: updated.meta as ModelMeta | null,
+  };
 };

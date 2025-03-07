@@ -7,6 +7,7 @@ import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { imagesForModelVersionsCache, modelTagCache } from '~/server/redis/caches';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { ImagesForModelVersions } from '~/server/services/image.service';
@@ -103,6 +104,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'versions.baseModel',
     'versions.id',
     'availability',
+    'cannotPromote',
   ];
 
   if (
@@ -152,6 +154,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
   const modelCategoriesIds = modelCategories.map((category) => category.id);
 
   const unavailableGenResources = await getUnavailableResources();
+
   const indexReadyRecords = models
     .map((modelRecord) => {
       const {
@@ -162,6 +165,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         allowCommercialUse,
         allowDerivatives,
         allowDifferentLicense,
+        meta,
         ...model
       } = modelRecord;
       const metrics = modelRecord.metrics[0] ?? {};
@@ -178,6 +182,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const canGenerate = modelVersions.some(
         (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
       );
+      const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
       const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
 
@@ -248,6 +253,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           tippedAmountCount: metrics.tippedAmountCount ?? 0,
         },
         canGenerate,
+        cannotPromote,
         cosmetic: cosmetics[model.id] ?? null,
       };
     })

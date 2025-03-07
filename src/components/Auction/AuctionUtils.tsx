@@ -174,7 +174,9 @@ export const BidModelButton = ({
   const router = useRouter();
   const features = useFeatureFlags();
 
-  const { data: auctions = [] } = trpc.auction.getAll.useQuery();
+  const { data: auctions = [] } = trpc.auction.getAll.useQuery(undefined, {
+    enabled: features.auctions,
+  });
 
   const destAuction = useMemo(() => {
     const modelSet =
@@ -204,6 +206,7 @@ export const BidModelButton = ({
   };
 
   if (!features.auctions) return <></>;
+  if (entityData.model.cannotPromote) return <></>;
 
   return (
     <Tooltip

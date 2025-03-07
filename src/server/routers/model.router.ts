@@ -81,6 +81,7 @@ import {
   rescanModel,
   setAssociatedResources,
   setModelsCategory,
+  toggleCannotPromote,
 } from '~/server/services/model.service';
 import {
   guardedProcedure,
@@ -255,4 +256,9 @@ export const modelRouter = router({
     .input(publishPrivateModelSchema)
     .use(isOwnerOrModerator)
     .mutation(publishPrivateModelHandler),
+  toggleCannotPromote: moderatorProcedure
+    .input(getByIdSchema)
+    .mutation(({ input, ctx }) =>
+      toggleCannotPromote({ ...input, isModerator: ctx.user.isModerator ?? false })
+    ),
 });

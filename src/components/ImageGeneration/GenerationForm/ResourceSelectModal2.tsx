@@ -306,7 +306,10 @@ function ResourceSelectModalContent() {
   ];
 
   const or: string[] = [];
+
   if (canGenerate !== undefined) meiliFilters.push(`canGenerate = ${canGenerate}`);
+  if (selectSource === 'auction') meiliFilters.push(`cannotPromote != true`);
+
   for (const { type, baseModels = [] } of resources) {
     const _type = filters.types.length > 0 ? filters.types.find((x) => x === type) : type;
     const _baseModels =
@@ -1105,7 +1108,10 @@ function ResourceSelectCard({
                           px={4}
                           entityData={{
                             ...selectedVersion,
-                            model: data,
+                            model: {
+                              ...data,
+                              cannotPromote: data.cannotPromote ?? false,
+                            },
                             image,
                           }}
                         />

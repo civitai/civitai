@@ -151,7 +151,7 @@ export const useModelVersionTopicListener = (modelVersionId?: number) => {
   useSignalConnection(
     SignalMessages.ModelVersionPopularityUpdate,
     (data: ModelVersionResourceCacheItem) => {
-      console.log('pop update', data);
+      // console.log('pop update', data);
       utils.modelVersion.getPopularity.setData({ id: data.versionId }, () => {
         return {
           versionId: data.versionId,

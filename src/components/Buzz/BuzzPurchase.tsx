@@ -200,7 +200,6 @@ export const BuzzPurchase = ({
 }: Props) => {
   const { classes, cx, theme } = useBuzzButtonStyles();
   const canUpgradeMembership = useCanUpgrade();
-  const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
   const [error, setError] = useState('');
@@ -383,7 +382,7 @@ export const BuzzPurchase = ({
                         sx={{
                           ['& > *']: { flexGrow: 1 },
                         }}
-                        className={!isMobile ? 'flex-col items-center' : ''}
+                        className="flex-col items-center"
                         noWrap
                       >
                         <NumberInputWrapper
@@ -401,7 +400,7 @@ export const BuzzPurchase = ({
                             setCustomAmount(Math.ceil((value ?? 0) / 10));
                           }}
                           step={100}
-                          w={!isMobile ? '80%' : undefined}
+                          w="80%"
                         />
                         {/* @ts-ignore: transparent variant works with ThemeIcon */}
                         <ThemeIcon size={36} maw={24} variant="transparent" color="gray">
@@ -425,7 +424,7 @@ export const BuzzPurchase = ({
                             setError('');
                             setCustomAmount(value ?? 0);
                           }}
-                          w={!isMobile ? '80%' : undefined}
+                          w="80%"
                         />
                       </Group>
                       <Text size="xs" color="dimmed" mt="xs">

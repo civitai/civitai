@@ -1,13 +1,17 @@
 import { Prisma } from '@prisma/client';
+import { uniq } from 'lodash-es';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import {
+import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
+import type {
   CreateBidInput,
   DeleteBidInput,
   GetAuctionBySlugInput,
   TogglePauseRecurringBidInput,
 } from '~/server/schema/auction.schema';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
   createBuzzTransaction,
@@ -15,6 +19,7 @@ import {
   refundTransaction,
 } from '~/server/services/buzz.service';
 import { getImagesForModelVersionCache } from '~/server/services/image.service';
+import { createNotification } from '~/server/services/notification.service';
 import {
   throwBadRequestError,
   throwDbError,
@@ -22,6 +27,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { BuzzAccountType } from '~/shared/utils/prisma/enums';
+import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 
 export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
@@ -58,6 +64,7 @@ type AuctionType = Prisma.AuctionGetPayload<typeof auctionValidator>;
 // TODO surround all in try catch
 
 export type GetAllAuctionsReturn = AsyncReturnType<typeof getAllAuctions>;
+
 export async function getAllAuctions() {
   const now = new Date();
 
@@ -126,6 +133,7 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
           id: true,
           name: true,
           type: true,
+          meta: true,
           user: {
             select: userWithCosmeticsSelect,
           },
@@ -137,17 +145,28 @@ const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
 
   return data.map((b) => {
     const mvMatch = mvData.find((d) => d.id === b.entityId);
+
+    if (!mvMatch) {
+      return {
+        ...b,
+        entityData: undefined,
+      };
+    }
+
+    const { meta, ...modelData } = mvMatch.model;
     const firstImage =
       imageData[b.entityId]?.images?.length > 0 ? imageData[b.entityId]?.images?.[0] : undefined;
 
     return {
       ...b,
-      entityData: !!mvMatch
-        ? {
-            ...mvMatch,
-            image: firstImage,
-          }
-        : undefined,
+      entityData: {
+        ...mvMatch,
+        model: {
+          ...modelData,
+          cannotPromote: (meta as ModelMeta | null | undefined)?.cannotPromote ?? false,
+        },
+        image: firstImage,
+      },
     };
   });
 };
@@ -495,6 +514,113 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   });
 };
 
+export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
+  const now = new Date();
+
+  const model = await dbRead.model.findFirst({
+    where: { id: modelId },
+    select: { name: true, modelVersions: { select: { id: true } } },
+  });
+
+  if (!model) throw throwNotFoundError('Model not found.');
+  const versionIds = model.modelVersions.map((mv) => mv.id);
+  if (!versionIds.length) throw throwBadRequestError('Model has no versions.');
+
+  const aIds = (
+    await dbRead.auction.findMany({
+      where: { startAt: { lte: now }, endAt: { gt: now } },
+      select: { id: true },
+    })
+  ).map((a) => a.id);
+
+  let deletedIds: number[] = [];
+  let deletedRecurringIds: number[] = [];
+
+  if (aIds.length > 0) {
+    // we could reverse the logic here and refund first
+    const deleted = await dbWrite.bid.updateManyAndReturn({
+      where: { auctionId: { in: aIds }, entityId: { in: versionIds } },
+      data: {
+        deleted: true,
+      },
+      select: {
+        id: true,
+        userId: true,
+        transactionIds: true,
+      },
+    });
+
+    for (const bid of deleted) {
+      for (const transactionId of bid.transactionIds) {
+        try {
+          await withRetries(() =>
+            refundTransaction(transactionId, 'Deleted bid - model not available.')
+          );
+        } catch (e) {
+          const error = e as Error;
+          logToAxiom({
+            name: 'handle-auctions',
+            type: 'error',
+            message: `Failed to refund user for removed bid`,
+            stack: error.stack,
+            cause: error.cause,
+            data: { transactionId, message: error.message },
+          }).catch();
+        }
+      }
+    }
+
+    if (deleted.length > 0) {
+      const details: DetailsCanceledBid = {
+        name: model?.name ?? null,
+        reason: 'Model not available',
+        recurring: false,
+      };
+      await createNotification({
+        userIds: uniq(deleted.map((d) => d.userId)),
+        category: NotificationCategory.System,
+        type: 'canceled-bid-auction',
+        key: `canceled-bid-auction:${modelId}:${formatDate(now, 'YYYY-MM-DD')}`,
+        details,
+      });
+
+      deletedIds = deleted.map((d) => d.id);
+    }
+  }
+
+  const recToDelete = await dbWrite.bidRecurring.findMany({
+    where: { entityId: { in: versionIds } },
+    select: { id: true, userId: true },
+  });
+
+  if (recToDelete.length > 0) {
+    await dbWrite.bidRecurring.deleteMany({
+      where: { id: { in: recToDelete.map((r) => r.id) } },
+    });
+    const details: DetailsCanceledBid = {
+      name: model?.name ?? null,
+      reason: 'Model no longer available',
+      recurring: true,
+    };
+    await createNotification({
+      userIds: uniq(recToDelete.map((d) => d.userId)),
+      category: NotificationCategory.System,
+      type: 'canceled-bid-auction',
+      key: `canceled-bid-auction:recurring:${modelId}:${formatDate(now, 'YYYY-MM-DD')}`,
+      details,
+    });
+
+    deletedRecurringIds = recToDelete.map((d) => d.id);
+  }
+
+  // TODO send signal
+
+  return {
+    bidsDeleted: deletedIds,
+    recurringBidsDeleted: deletedRecurringIds,
+  };
+};
+
 export const deleteRecurringBid = async ({
   userId,
   bidId,
@@ -515,7 +641,9 @@ export const deleteRecurringBid = async ({
 export const togglePauseRecurringBid = async ({
   userId,
   bidId,
-}: TogglePauseRecurringBidInput & { userId: number }) => {
+}: TogglePauseRecurringBidInput & {
+  userId: number;
+}) => {
   const bid = await dbRead.bidRecurring.findFirst({
     where: { id: bidId },
     select: {

@@ -14,6 +14,11 @@ export type DetailsDroppedOutAuction = {
 export type DetailsFailedRecurringBid = {
   auctionName: string | null;
 };
+export type DetailsCanceledBid = {
+  name: string | null;
+  reason: string;
+  recurring: boolean;
+};
 
 export const auctionNotifications = createNotificationProcessor({
   'won-auction': {
@@ -56,6 +61,20 @@ export const auctionNotifications = createNotificationProcessor({
         message: `Your recurring bid for ${
           details.auctionName ?? 'an auction'
         } failed. Please try adding more Buzz to your account, or contact us.`,
+        url: `/auctions/${MY_BIDS}`,
+      };
+    },
+  },
+  'canceled-bid-auction': {
+    displayName: 'Canceled Bid',
+    category: NotificationCategory.System,
+    toggleable: false,
+    prepareMessage: (notification) => {
+      const details = notification.details as DetailsCanceledBid;
+      return {
+        message: `Your ${details.recurring ? 'recurring ' : ''}bid for ${
+          details.name ?? 'your item'
+        } was canceled. Reason: ${details.reason}.`,
         url: `/auctions/${MY_BIDS}`,
       };
     },

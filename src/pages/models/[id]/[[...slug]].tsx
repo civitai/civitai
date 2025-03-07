@@ -514,6 +514,28 @@ export default function ModelDetailsV2({
       });
   };
 
+  const toggleCannotPromoteMutation = trpc.model.toggleCannotPromote.useMutation({
+    async onSuccess({ id, meta }) {
+      const prevModel = queryUtils.model.getById.getData({ id });
+      await queryUtils.model.getById.cancel({ id });
+
+      if (prevModel) {
+        queryUtils.model.getById.setData({ id }, { ...prevModel, meta });
+      }
+
+      // invalidate all auction results in case we deleted bids
+      await queryUtils.auction.getBySlug.invalidate();
+
+      showSuccessNotification({ message: 'Successfully toggled cannot promote' });
+    },
+    onError(error) {
+      showErrorNotification({ title: 'Failed to toggle', error: new Error(error.message) });
+    },
+  });
+  const handleToggleCannotPromote = () => {
+    toggleCannotPromoteMutation.mutate({ id });
+  };
+
   const view = router.query.view;
   const basicView = view === 'basic' && isModerator;
   const canLoadBelowTheFold = isClient && !loadingModel && !loadingImages && !basicView;
@@ -608,6 +630,7 @@ export default function ModelDetailsV2({
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${model.meta?.customMessage}.`;
+  const isBannedFromPromotion = model.meta?.cannotPromote ?? false;
 
   return (
     <>
@@ -770,7 +793,10 @@ export default function ModelDetailsV2({
                         entityData={{
                           // TODO these overrides are colossally stupid.
                           ...selectedVersion,
-                          model,
+                          model: {
+                            ...model,
+                            cannotPromote: (model.meta as ModelMeta | null)?.cannotPromote ?? false,
+                          },
                           image: !!image
                             ? {
                                 ...image,
@@ -850,6 +876,13 @@ export default function ModelDetailsV2({
                                 Unpublish as Violation
                               </Menu.Item>
                             )}
+                            <Menu.Item
+                              color="orange"
+                              icon={<IconBan size={14} stroke={1.5} />}
+                              onClick={() => handleToggleCannotPromote()}
+                            >
+                              {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
+                            </Menu.Item>
                             <Menu.Item
                               color={theme.colors.red[6]}
                               icon={<IconTrash size={14} stroke={1.5} />}
