@@ -32,6 +32,8 @@ async function main() {
       ? indexesToMigrate
       : (await source.getIndexes()).results.map((index) => index.uid);
 
+    const highestIds: Record<string, number> = {};
+
     console.log('Indexes to migrate :: ', indexes);
 
     const jobs = indexes.map((index, i) => async () => {
@@ -45,6 +47,7 @@ async function main() {
 
         // Clone settings:
         const settings = await sourceIndex.getSettings();
+        const targetSettings = await targetIndex.getSettings();
 
         if (
           !settings.sortableAttributes?.includes('id') ||
@@ -54,7 +57,10 @@ async function main() {
             'Index must be sortable and filterable by ID. Please update the settings in the index'
           );
         }
-        await target.index(index).updateSettings(settings);
+
+        if (JSON.stringify(settings) !== JSON.stringify(targetSettings)) {
+          await target.index(index).updateSettings(settings);
+        }
 
         // Now, we can go ahead and start adding stuff:
         let cursor = Array.isArray(baseCursor) ? baseCursor[i] : baseCursor;
@@ -74,7 +80,9 @@ async function main() {
         // Play it safe:
         endCursor = Math.max(hits[0].id + 1, endCursor);
 
-        console.log('Highest ID registered :: ', endCursor);
+        console.log('Highest ID registered :: ', endCursor, ' Starting from:', cursor);
+
+        highestIds[index] = endCursor;
 
         const tasks: Task[] = [];
         while (cursor < endCursor) {
@@ -146,7 +154,15 @@ async function main() {
     // Migrate 1 by 1.
     await limitConcurrency(jobs, 1);
 
-    console.log('Migration completed');
+    console.log('Migration completed', {
+      ...highestIds,
+      updateQuery: `npm run meilisearch:migrate ${sourceUrl} ${sourceApiKey} ${targetUrl} ${targetApiKey} ${Object.keys(
+        highestIds
+      ).join(',')} ${Object.keys(highestIds)
+        .map((key) => highestIds[key])
+        .join(',')}`,
+    });
+
     process.exit(0);
   } catch (e) {
     console.error('Error :: ', e);

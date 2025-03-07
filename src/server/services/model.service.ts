@@ -2711,22 +2711,27 @@ export async function ingestModel(data: IngestModelInput) {
 }
 
 export async function getFeaturedModels() {
-  const featuredModels = await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
-    const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
-      SELECT ci."modelId"
-      FROM "CollectionItem" ci
-      WHERE ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
-      AND EXISTS (
-        SELECT 1
-        FROM "GenerationCoverage" gc
-        WHERE gc."modelId" = ci."modelId"
-        AND gc.covered
-      )
-    `;
-    return query.map((row) => row.modelId);
-  });
+  try {
+    const featuredModels = await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
+      const query = await dbWrite.$queryRaw<{ modelId: number }[]>`
+        SELECT ci."modelId"
+        FROM "CollectionItem" ci
+        WHERE ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
+        AND EXISTS (
+          SELECT 1
+          FROM "GenerationCoverage" gc
+          WHERE gc."modelId" = ci."modelId"
+          AND gc.covered
+        )
+      `;
+      return query.map((row) => row.modelId);
+    });
 
-  return featuredModels;
+    return featuredModels;
+  } catch (error) {
+    // This method is not important enough that we should error out.
+    return [];
+  }
 }
 export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
