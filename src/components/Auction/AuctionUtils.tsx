@@ -233,14 +233,14 @@ export const useAuctionTopicListener = (auctionId?: number) => {
 
   // TODO
   useSignalConnection(SignalMessages.AuctionUpdate, (data: any) => {
-    console.log('auction update', data);
+    // console.log('auction update', data);
   });
   useSignalConnection(SignalMessages.AuctionBidChange, (data: any) => {
-    console.log('auction bid change', data);
+    // console.log('auction bid change', data);
   });
   useSignalConnection(SignalMessages.TopicUpdate, (data: { topic: string; count: number }) => {
     // if topic === .... then get count
-    console.log('auction count', data);
+    // console.log('auction count', data);
   });
 
   // TODO is there a race condition? missing the first topic message

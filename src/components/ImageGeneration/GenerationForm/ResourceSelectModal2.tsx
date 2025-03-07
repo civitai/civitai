@@ -308,7 +308,7 @@ function ResourceSelectModalContent() {
   const or: string[] = [];
 
   if (canGenerate !== undefined) meiliFilters.push(`canGenerate = ${canGenerate}`);
-  if (selectSource === 'auction') meiliFilters.push(`cannotPromote != true`);
+  if (selectSource === 'auction') meiliFilters.push(`NOT cannotPromote = true`);
 
   for (const { type, baseModels = [] } of resources) {
     const _type = filters.types.length > 0 ? filters.types.find((x) => x === type) : type;
