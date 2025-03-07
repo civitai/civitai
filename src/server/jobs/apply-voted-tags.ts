@@ -22,6 +22,7 @@ async function applyUpvotes() {
 
   // Apply tags over the threshold
   // --------------------------------------------
+  // TODO.TagsOnImage - remove this after the migration
   const addedImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Apply voted tags
     WITH affected AS (
@@ -51,9 +52,20 @@ async function applyUpvotes() {
     ON CONFLICT ("tagId", "imageId") DO NOTHING
     RETURNING "tagId", "imageId";
   `;
+  await dbWrite.$queryRaw`
+    WITH to_insert AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements(${JSON.stringify(addedImageTags)}::json)
+    )
+    SELECT upsert_tag_on_image("imageId", "tagId")
+    FROM to_insert;
+  `;
 
   // Bring back disabled tag where voted by moderator
   // --------------------------------------------
+  // TODO.TagsOnImage - remove this after the migration
   const restoredImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Enable upvoted moderation tags if voted by mod
     WITH affected AS (
@@ -69,6 +81,16 @@ async function applyUpvotes() {
       SELECT "tagId", "imageId" FROM affected
     )
     RETURNING "tagId", "imageId";
+  `;
+  await dbWrite.$queryRaw`
+    WITH to_insert AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements(${JSON.stringify(restoredImageTags)}::json)
+    )
+    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, false)
+    FROM to_insert;
   `;
 
   // Get affected images to update search index, cache, and votes
@@ -152,6 +174,7 @@ async function applyDownvotes() {
 
   // Delete tags under the threshold (not moderation)
   // --------------------------------------------
+  // TODO.TagsOnImage - remove this after the migration
   const deletedImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Delete downvoted tags (not moderation)
     WITH affected AS (
@@ -184,8 +207,21 @@ async function applyDownvotes() {
     RETURNING "tagId", "imageId";
   `;
 
+  await dbWrite.$queryRaw`
+    WITH to_delete AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements(${JSON.stringify(deletedImageTags)}::json)
+    )
+    DELETE FROM "TagsOnImageNew" WHERE ("imageId", "tagId") IN  (
+      SELECT * FROM to_delete
+    );
+  `;
+
   // Disable tags under the threshold (moderation) where voted by moderator
   // --------------------------------------------
+  // TODO.TagsOnImage - remove this after the migration
   const disabledImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Disable downvoted moderation tags if voted by mod
     WITH affected AS (
@@ -219,9 +255,21 @@ async function applyDownvotes() {
     RETURNING "tagId", "imageId";
   `;
 
+  await dbWrite.$queryRaw`
+    WITH to_insert AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements(${JSON.stringify(disabledImageTags)}::json)
+    )
+    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+    FROM to_insert;
+  `;
+
   // Add "Needs Review" to tags under the threshold (moderation)
   // --------------------------------------------
-  await dbWrite.$executeRaw`
+  // TODO.TagsOnImage - remove this after the migration
+  const needsReviewImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Send downvoted tags for review (moderation)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -248,7 +296,19 @@ async function applyDownvotes() {
       FROM under_threshold ut
       JOIN "Tag" t ON t.id = ut."tagId"
       WHERE t.type = 'Moderation'
-    );
+    )
+    RETURNING "tagId", "imageId";
+  `;
+
+  await dbWrite.$queryRaw`
+    WITH to_insert AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements(${JSON.stringify(needsReviewImageTags)}::json)
+    )
+    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, null, true)
+    FROM to_insert;
   `;
 
   // Get affected images to update search index
@@ -257,6 +317,7 @@ async function applyDownvotes() {
     ...new Set([...disabledImageTags, ...deletedImageTags].map((x) => x.imageId)),
   ];
 
+  // TODO.TagsOnImage - add to action queue when TagsOnImageNew.disabled is set to true
   // Update votes
   await dbWrite.$executeRaw`
     -- Update image tag votes (unapply)
@@ -281,6 +342,7 @@ async function applyDownvotes() {
   );
   // - no need to update imagesMetricsSearchIndex here
 
+  // TODO.TagsOnImage - add to action queue when TagsOnImageNew.disabled is set to true
   // Update NSFW baseline
   // --------------------------------------------
   const toUpdate = (

@@ -354,6 +354,7 @@ async function handleSuccess({
   try {
     if (tags.length > 0) {
       const uniqTags = uniqBy(tags, (x) => x.id);
+      // TODO.TagsOnImage - remove this after the migration
       await dbWrite.$executeRawUnsafe(`
         INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source", "disabledAt")
         VALUES ${uniqTags
@@ -369,6 +370,32 @@ async function handleSuccess({
           )
           .join(', ')}
         ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
+      `);
+
+      const toInsert = uniqTags
+        .filter((x) => x.id)
+        .map((x) => ({
+          imageId: id,
+          tagId: x.id,
+          tagSource: x.source ?? source,
+          automated: true,
+          confidence: x.confidence,
+          disabled: shouldIgnore(x.tag, x.source ?? source),
+        }));
+
+      await dbWrite.$queryRawUnsafe(`
+        WITH to_insert AS (
+          SELECT
+            (value ->> 'imageId')::int as "imageId",
+            (value ->> 'tagId')::int as "tagId",
+            (value ->> 'tagSource')::"TagSource" as "tagSource",
+            (value ->> 'automated')::boolean as "automated",
+            (value ->> 'confidence')::int as "confidence",
+            (value ->> 'disabled')::boolean as "disabled"
+          FROM json_array_elements(${JSON.stringify(toInsert)}::json)
+        )
+        SELECT upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", "disabled")
+        FROM to_insert
       `);
     } else {
       logToAxiom({ type: 'image-scan-result', message: 'No tags found', imageId: id, source });

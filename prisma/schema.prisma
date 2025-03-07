@@ -1637,6 +1637,15 @@ model TagsOnImage {
   @@index([disabled])
 }
 
+model TagsOnImageNew {
+  imageId    Int
+  tagId      Int
+  attributes Int @db.SmallInt()
+
+  @@id([imageId, tagId])
+  @@index([imageId])
+}
+
 model TagsOnImageVote {
   imageId   Int
   image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)
@@ -4383,4 +4392,19 @@ model EntityMetricImage {
   comment       Int?
   collection    Int?
   buzz          Int?
+}
+
+/// @view
+model TagsOnImageDetails {
+  imageId     Int
+  tagId       Int
+  sourceId    TagSource
+  automated   Boolean
+  disabled    Boolean
+  needsReview Boolean
+  reserved_1  Boolean
+  reserved_2  Boolean
+  confidence  Int
+
+  @@id([imageId, tagId])
 }
