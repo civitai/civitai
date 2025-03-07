@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
+import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -26,7 +27,7 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { BuzzAccountType } from '~/shared/utils/prisma/enums';
+import { AuctionType, Availability, BuzzAccountType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 
@@ -59,7 +60,7 @@ export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
 const auctionValidator = Prisma.validator<Prisma.AuctionFindFirstArgs>()({
   select: auctionSelect,
 });
-type AuctionType = Prisma.AuctionGetPayload<typeof auctionValidator>;
+type AuctionSelectType = Prisma.AuctionGetPayload<typeof auctionValidator>;
 
 // TODO surround all in try catch
 
@@ -92,8 +93,8 @@ export async function getAllAuctions() {
 
 export type PrepareBidsReturn = ReturnType<typeof prepareBids>;
 export const prepareBids = (
-  a: Pick<AuctionType, 'bids' | 'quantity'> & {
-    bids: Pick<AuctionType['bids'][number], 'deleted' | 'entityId' | 'amount'>[];
+  a: Pick<AuctionSelectType, 'bids' | 'quantity'> & {
+    bids: Pick<AuctionSelectType['bids'][number], 'deleted' | 'entityId' | 'amount'>[];
   }
 ) => {
   return Object.values(
@@ -346,9 +347,42 @@ export const createBid = async ({
   if (!(auctionData.startAt <= now && auctionData.endAt > now)) {
     throw throwBadRequestError('Cannot bid on an auction from a different day.');
   }
-  // TODO check if entityId is valid for this auction type
 
-  // Go
+  // - Check if entityId is valid for this auction type
+
+  if (auctionData.auctionBase.type === AuctionType.Model) {
+    const mv = await dbRead.modelVersion.findFirst({
+      where: { id: entityId },
+      select: {
+        baseModel: true,
+        availability: true,
+        model: {
+          select: {
+            type: true,
+            meta: true,
+          },
+        },
+      },
+    });
+    if (!mv) throw throwBadRequestError('Could not find model version.');
+
+    if (mv.availability === Availability.Private)
+      throw throwBadRequestError('Invalid model version.');
+
+    if ((mv.model.meta as ModelMeta | null)?.cannotPromote === true)
+      throw throwBadRequestError('Invalid model version.');
+
+    const allowedTypeData = getModelTypesForAuction(auctionData.auctionBase);
+    const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
+    if (!matchAllowed) throw throwBadRequestError('Invalid model type for this auction.');
+
+    if (!!auctionData.auctionBase.ecosystem) {
+      if (!(matchAllowed.baseModels ?? []).includes(mv.baseModel))
+        throw throwBadRequestError('Invalid model ecosystem for this auction.');
+    }
+  }
+
+  // - Go
 
   const account = await getUserBuzzAccount({ accountId: userId });
   if ((account.balance ?? 0) < amount) {

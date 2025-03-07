@@ -6,39 +6,16 @@ import React, { useMemo, useState } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
-import {
-  getBaseModelResourceTypes,
-  getBaseModelSetType,
-} from '~/shared/constants/generation.constants';
+import { getBaseModelSetType } from '~/shared/constants/generation.constants';
 import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-
-type ResourceOptions = Exclude<ResourceSelectOptions['resources'], undefined>;
-
-export const getModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'] | undefined) => {
-  if (!ab) return [] as ResourceOptions;
-
-  if (ab.ecosystem === null) {
-    return [
-      {
-        type: ModelType.Checkpoint,
-      },
-    ] as ResourceOptions;
-  }
-
-  //  as BaseModelResourceTypes[keyof BaseModelResourceTypes]
-  return (getBaseModelResourceTypes(ab.ecosystem) ?? []).filter(
-    (t) => t.type !== 'Checkpoint'
-  ) as ResourceOptions;
-};
 
 export function usePurchaseBid() {
   const queryUtils = trpc.useUtils();
