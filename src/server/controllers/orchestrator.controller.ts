@@ -15,6 +15,7 @@ import { createLimiter } from '~/server/utils/rate-limiting';
 import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
+import { isDefined } from '~/utils/type-guards';
 
 type Ctx = { token: string; userId: number };
 
@@ -76,14 +77,24 @@ export async function generate({
   }
 
   if (!('seed' in args.data) || !args.data.seed)
-    args.data = { ...args.data, seed: getRandomInt(1, maxRandomSeed) };
+    args.data = { ...args.data, seed: getRandomInt(1, maxRandomSeed) } as any;
 
   const step = await createWorkflowStep(args as GenerationSchema);
 
   const workflow = await submitWorkflow({
     token: token,
     body: {
-      tags: [WORKFLOW_TAGS.GENERATION, ...tags],
+      tags: [
+        ...new Set(
+          [
+            WORKFLOW_TAGS.GENERATION,
+            args.type === 'video' ? WORKFLOW_TAGS.VIDEO : WORKFLOW_TAGS.IMAGE,
+            args.data.workflow,
+            args.data.type,
+            ...tags,
+          ].filter(isDefined)
+        ),
+      ],
       steps: [step as any], // TODO.orchestrator -  fix types
       tips: {
         civitai: civitaiTip,
