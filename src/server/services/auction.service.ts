@@ -68,7 +68,7 @@ export type GetAllAuctionsReturn = AsyncReturnType<typeof getAllAuctions>;
 export async function getAllAuctions() {
   const now = new Date();
 
-  const aData = await dbRead.auction.findMany({
+  const aData = await dbWrite.auction.findMany({
     where: { startAt: { lte: now }, endAt: { gt: now } },
     select: auctionSelect,
     orderBy: { auctionBase: { ecosystem: { sort: 'asc', nulls: 'first' } } },
@@ -175,7 +175,7 @@ export type GetAuctionBySlugReturn = AsyncReturnType<typeof getAuctionBySlug>;
 export async function getAuctionBySlug({ slug }: GetAuctionBySlugInput) {
   const now = new Date();
 
-  const auction = await dbRead.auction.findFirst({
+  const auction = await dbWrite.auction.findFirst({
     where: { startAt: { lte: now }, endAt: { gt: now }, auctionBase: { slug } },
     select: auctionSelect,
   });
@@ -204,7 +204,7 @@ export async function getAuctionBySlug({ slug }: GetAuctionBySlugInput) {
 export type GetMyBidsReturn = AsyncReturnType<typeof getMyBids>;
 export const getMyBids = async ({ userId }: { userId: number }) => {
   try {
-    const bids = await dbRead.bid.findMany({
+    const bids = await dbWrite.bid.findMany({
       where: { userId, deleted: false },
       select: {
         id: true,
@@ -281,7 +281,7 @@ export const getMyRecurringBids = async ({ userId }: { userId: number }) => {
     const now = new Date();
 
     // TODO add active check on auctionBase
-    const bids = await dbRead.bidRecurring.findMany({
+    const bids = await dbWrite.bidRecurring.findMany({
       where: {
         userId,
         startAt: { lte: now },
@@ -323,7 +323,7 @@ export const createBid = async ({
 
   const now = new Date();
 
-  const auctionData = await dbRead.auction.findFirst({
+  const auctionData = await dbWrite.auction.findFirst({
     where: { id: auctionId },
     select: {
       ...auctionSelect,
@@ -373,7 +373,7 @@ export const createBid = async ({
   }
 
   // // For notifications...
-  // const allBids = await dbRead.bid.findMany({
+  // const allBids = await dbWrite.bid.findMany({
   //   where: {
   //     auctionId,
   //     deleted: false,
@@ -484,7 +484,7 @@ export const createBid = async ({
 export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: number }) => {
   const now = new Date();
 
-  const bid = await dbRead.bid.findFirst({
+  const bid = await dbWrite.bid.findFirst({
     where: { id: bidId },
     select: {
       userId: true,
@@ -517,7 +517,7 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
 export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
   const now = new Date();
 
-  const model = await dbRead.model.findFirst({
+  const model = await dbWrite.model.findFirst({
     where: { id: modelId },
     select: { name: true, modelVersions: { select: { id: true } } },
   });
@@ -527,7 +527,7 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
   if (!versionIds.length) throw throwBadRequestError('Model has no versions.');
 
   const aIds = (
-    await dbRead.auction.findMany({
+    await dbWrite.auction.findMany({
       where: { startAt: { lte: now }, endAt: { gt: now } },
       select: { id: true },
     })
@@ -625,7 +625,7 @@ export const deleteRecurringBid = async ({
   userId,
   bidId,
 }: DeleteBidInput & { userId: number }) => {
-  const bid = await dbRead.bidRecurring.findFirst({
+  const bid = await dbWrite.bidRecurring.findFirst({
     where: { id: bidId },
     select: {
       userId: true,
@@ -644,7 +644,7 @@ export const togglePauseRecurringBid = async ({
 }: TogglePauseRecurringBidInput & {
   userId: number;
 }) => {
-  const bid = await dbRead.bidRecurring.findFirst({
+  const bid = await dbWrite.bidRecurring.findFirst({
     where: { id: bidId },
     select: {
       userId: true,
