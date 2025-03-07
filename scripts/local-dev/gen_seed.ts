@@ -2690,61 +2690,61 @@ const genAuctionBases = () => {
       1, // id
       'Model', // type
       null, // ecosystem
-      'Promoted Checkpoints', // name
+      'Boosted Checkpoints', // name
       40, // quantity
       1000, // minPrice
       true, // active
-      'promoted-checkpoints', // slug
+      'boosted-checkpoints', // slug
     ],
     [
       2, // id
       'Model', // type
       'Pony', // ecosystem
-      'Promoted Resources - Pony', // name
+      'Boosted Resources - Pony', // name
       20, // quantity
       500, // minPrice
       true, // active
-      'promoted-resources-pony', // slug
+      'boosted-resources-pony', // slug
     ],
     [
       3, // id
       'Model', // type
       'Illustrious', // ecosystem
-      'Promoted Resources - Illustrious', // name
+      'Boosted Resources - Illustrious', // name
       20, // quantity
       500, // minPrice
       false, // active
-      'promoted-resources-illustrious', // slug
+      'boosted-resources-illustrious', // slug
     ],
     [
       4, // id
       'Model', // type
       'Flux1', // ecosystem
-      'Promoted Resources - Flux', // name
+      'Boosted Resources - Flux', // name
       10, // quantity
       200, // minPrice
       true, // active
-      'promoted-resources-flux', // slug
+      'boosted-resources-flux', // slug
     ],
     [
       5, // id
       'Model', // type
       'SDXL', // ecosystem
-      'Promoted Resources - SDXL', // name
+      'Boosted Resources - SDXL', // name
       40, // quantity
       500, // minPrice
       true, // active
-      'promoted-resources-sdxl', // slug
+      'boosted-resources-sdxl', // slug
     ],
     [
       6, // id
       'Model', // type
       'SD1', // ecosystem
-      'Promoted Resources - SD1', // name
+      'Boosted Resources - SD1', // name
       40, // quantity
       500, // minPrice
       true, // active
-      'promoted-resources-sd1', // slug
+      'boosted-resources-sd1', // slug
     ],
   ];
 };

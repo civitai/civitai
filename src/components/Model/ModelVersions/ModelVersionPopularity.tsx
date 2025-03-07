@@ -4,8 +4,8 @@ import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/m
 import { trpc } from '~/utils/trpc';
 
 export const featureInfo = {
-  name: 'Promoted',
-  description: 'Promoted by the community',
+  name: 'Boosted',
+  description: 'Boosted by the community',
   markup: -0.2,
 } as const;
 const popularityInfoMap = {

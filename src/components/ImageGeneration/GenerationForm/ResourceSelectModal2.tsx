@@ -118,8 +118,8 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-// TODO eventually move promoted to first
-const tabs = ['all', 'promoted', 'recent', 'liked', 'mine'] as const;
+// TODO eventually move boosted to first
+const tabs = ['all', 'boosted', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
 
 const take = 20;
@@ -284,7 +284,7 @@ function ResourceSelectModalContent() {
   );
 
   const isLoadingExtra =
-    (isLoadingFeatured && selectedTab === 'promoted') ||
+    (isLoadingFeatured && selectedTab === 'boosted') ||
     ((isLoadingGenerations ||
       isLoadingTraining ||
       isLoadingManuallyAdded ||
@@ -346,7 +346,7 @@ function ResourceSelectModalContent() {
     );
   }
 
-  if (selectedTab === 'promoted') {
+  if (selectedTab === 'boosted') {
     if (!!featuredModels) {
       meiliFilters.push(`id IN [${featuredModels.map((fm) => fm.modelId).join(',')}]`);
     }
@@ -574,7 +574,7 @@ function ResourceHitList({
     );
 
   const filteredSorted =
-    selectedTab === 'promoted'
+    selectedTab === 'boosted'
       ? filtered.sort((a, b) => {
           const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
           const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
@@ -583,8 +583,8 @@ function ResourceHitList({
           return aPos - bPos;
         })
       : filtered;
-  const topItems = selectedTab === 'promoted' ? filteredSorted.slice(0, 3) : [];
-  const restItems = selectedTab === 'promoted' ? filteredSorted.slice(3) : filteredSorted;
+  const topItems = selectedTab === 'boosted' ? filteredSorted.slice(0, 3) : [];
+  const restItems = selectedTab === 'boosted' ? filteredSorted.slice(3) : filteredSorted;
 
   return (
     // <ScrollArea id="resource-select-modal" className="flex-1 p-3">
