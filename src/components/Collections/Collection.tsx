@@ -202,9 +202,8 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
-  const defaultSort = imageCollectionSortOptions.includes(query.sort)
-    ? query.sort
-    : ImageSort.Newest;
+  const defaultSort =
+    query.sort && imageCollectionSortOptions.includes(query.sort) ? query.sort : ImageSort.Newest;
   const sort = isContestCollection ? ImageSort.Random : defaultSort;
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
