@@ -1,6 +1,7 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { v4 as uuid } from 'uuid';
+import { isDev } from '~/env/other';
 import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
@@ -39,7 +40,6 @@ import { getServerStripe } from '~/server/utils/get-server-stripe';
 import { formatDate, stripTime } from '~/utils/date-helpers';
 import { QS } from '~/utils/qs';
 import { getUserByUsername, getUsers } from './user.service';
-import { isDev } from '~/env/other';
 // import { adWatchedReward } from '~/server/rewards';
 
 type AccountType = 'User';
@@ -83,7 +83,7 @@ export async function getMultipliersForUser(userId: number, refresh = false) {
   if (refresh) await deleteMultipliersForUserCache(userId);
 
   const multipliers = await getMultipliersForUserCache([userId]);
-  return multipliers[userId];
+  return multipliers[userId] ?? { purchasesMultiplier: 1, rewardsMultiplier: 1, userId };
 }
 
 export function deleteMultipliersForUserCache(userId: number) {
@@ -193,7 +193,7 @@ export async function createBuzzTransaction({
   }
 
   if (toAccountId === payload.fromAccountId) {
-    throw throwBadRequestError('You cannot send buzz to the same account');
+    throw throwBadRequestError('You cannot send Buzz to the same account');
   }
 
   if (amount <= 0) {
@@ -233,7 +233,7 @@ export async function createBuzzTransaction({
 
   if (!response.ok) {
     if (isDev) {
-      console.error('Failed to create buzz transaction', response);
+      console.error('Failed to create Buzz transaction', response);
     }
     switch (response.status) {
       case 400:
@@ -248,7 +248,7 @@ export async function createBuzzTransaction({
     }
   }
 
-  const data: { transactionId: string } = await response.json();
+  const data: { transactionId: string | null } = await response.json();
 
   return data;
 }
@@ -329,6 +329,10 @@ export async function upsertBuzzTip({
   }
 }
 
+/*
+ * Consider using singular transactions instead
+ * Ask Koen for details!
+ */
 export async function createBuzzTransactionMany(
   transactions: (CreateBuzzTransactionInput & {
     fromAccountId: number;
@@ -411,11 +415,11 @@ export async function completeStripeBuzzTransaction({
       fromAccountId: 0,
       toAccountId: userId,
       type: TransactionType.Purchase,
-      description: `Purchase of ${amount} buzz. ${
+      description: `Purchase of ${amount} Buzz. ${
         purchasesMultiplier && purchasesMultiplier > 1
           ? 'Multiplier applied due to membership. '
           : ''
-      }A total of ${buzzAmount} buzz was added to your account.`,
+      }A total of ${buzzAmount} Buzz was added to your account.`,
       details: { ...(details ?? {}), stripePaymentIntentId },
       externalTransactionId: paymentIntent.id,
     });
@@ -611,7 +615,7 @@ export async function pingBuzzService() {
     const response = await fetch(`${env.BUZZ_ENDPOINT}`, { signal: AbortSignal.timeout(1000) });
     return response.ok;
   } catch (error) {
-    console.log('Failed to ping buzz service');
+    console.log('Failed to ping Buzz service');
     console.error(error);
     return false;
   }

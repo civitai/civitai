@@ -49,6 +49,9 @@ export const gamesRouter = router({
       }`,
       externalTransactionId: 'chopped-' + code,
     });
+    if (!transactionId) {
+      throw new Error('Failed to create transaction');
+    }
 
     try {
       await createGameInstance(code);

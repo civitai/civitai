@@ -4,16 +4,16 @@ import {
   getModelVersionsForSearchIndex,
 } from '~/server/selectors/modelVersion.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { profileImageSelect } from './image.selector';
-import { modelFileSelect } from './modelFile.selector';
 import {
   Availability,
   MetricTimeframe,
   ModelHashType,
   ModelStatus,
 } from '~/shared/utils/prisma/enums';
-import { modelHashSelect } from './modelHash.selector';
 import { ModelFileType } from '../common/constants';
+import { profileImageSelect } from './image.selector';
+import { modelFileSelect } from './modelFile.selector';
+import { modelHashSelect } from './modelHash.selector';
 
 export const getAllModelsWithVersionsSelect = Prisma.validator<Prisma.ModelSelect>()({
   id: true,
@@ -199,6 +199,7 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   type: true,
   nsfw: true,
   nsfwLevel: true,
+  meta: true,
   minor: true,
   status: true,
   createdAt: true,

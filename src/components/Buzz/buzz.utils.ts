@@ -54,7 +54,7 @@ export const useQueryBuzzPackages = ({ onPurchaseSuccess }: { onPurchaseSuccess?
       },
       onError(error) {
         showErrorNotification({
-          title: 'There was an error while attempting to purchase buzz. Please contact support.',
+          title: 'There was an error while attempting to purchase Buzz. Please contact support.',
           error: new Error(error.message),
         });
 

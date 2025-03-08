@@ -12,6 +12,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useIsClient } from '~/providers/IsClientProvider';
 // TODO - check for any selector type imports in client files
 import type { UserWithCosmetics } from '~/server/selectors/user.selector';
+
 const ChatWindow = dynamic(() => import('~/components/Chat/ChatWindow').then((m) => m.ChatWindow));
 
 type ChatState = {

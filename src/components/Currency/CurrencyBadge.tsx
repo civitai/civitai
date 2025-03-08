@@ -1,10 +1,19 @@
-import { Badge, BadgeProps, Loader, MantineSize, Tooltip, useMantineTheme } from '@mantine/core';
-import { Currency } from '~/shared/utils/prisma/enums';
+import {
+  Badge,
+  BadgeProps,
+  Loader,
+  MantineSize,
+  Text,
+  Tooltip,
+  useMantineTheme,
+} from '@mantine/core';
+import NumberFlow from '@number-flow/react';
 import { IconProps } from '@tabler/icons-react';
+import React, { forwardRef } from 'react';
 import { BuzzTypeDistribution } from '~/components/Buzz/buzz.utils';
 import { CurrencyConfig } from '~/server/common/constants';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { formatCurrencyForDisplay } from '~/utils/number-helpers';
-import { forwardRef } from 'react';
 
 type Props = BadgeProps & {
   currency: Currency;
@@ -16,6 +25,7 @@ type Props = BadgeProps & {
   textColor?: string;
   type?: string;
   typeDistrib?: BuzzTypeDistribution;
+  asCounter?: boolean;
 };
 
 const iconSize: Record<MantineSize, number> = {
@@ -40,6 +50,7 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
       textColor,
       type,
       typeDistrib,
+      asCounter,
       ...badgeProps
     },
     ref
@@ -109,9 +120,15 @@ export const CurrencyBadge = forwardRef<HTMLDivElement, Props>(
               <Loader size="xs" variant="dots" color={colorString} />
             ) : (
               <div className="flex items-center gap-1">
-                {formatter
-                  ? formatter(unitAmount)
-                  : `${value || 0} ${displayCurrency ? currency : ''}`}
+                {asCounter ? (
+                  <NumberFlow respectMotionPreference={false} value={unitAmount} />
+                ) : (
+                  <Text>
+                    {formatter
+                      ? formatter(unitAmount)
+                      : `${value || 0} ${displayCurrency ? currency : ''}`}
+                  </Text>
+                )}
                 {children}
               </div>
             )}

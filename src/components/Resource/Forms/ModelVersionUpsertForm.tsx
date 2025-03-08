@@ -544,7 +544,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                 Allow users to pay for download (Includes ability to generate)
                               </Text>
                               <Text size="xs">
-                                This will require users to pay buzz to download your {resourceLabel}{' '}
+                                This will require users to pay Buzz to download your {resourceLabel}{' '}
                                 during the early access period
                               </Text>
                             </div>
@@ -559,7 +559,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                             <InputNumber
                               name="earlyAccessConfig.downloadPrice"
                               label="Download price"
-                              description=" How much buzz would you like to charge for your version download?"
+                              description=" How much Buzz would you like to charge for your version download?"
                               min={100}
                               max={
                                 isPublished
@@ -583,7 +583,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                               Allow users to pay for generation only - no download.
                             </Text>
                             <Text size="xs">
-                              This will require users to pay buzz to generate with your{' '}
+                              This will require users to pay Buzz to generate with your{' '}
                               {resourceLabel} during the early access period
                             </Text>
                           </div>
@@ -643,7 +643,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
                                 </Text>
                                 <Text size="xs">
                                   You can use this feature to remove early access once a certain
-                                  amount of buzz is met. This will allow you to set a goal for your
+                                  amount of Buzz is met. This will allow you to set a goal for your
                                   model and remove early access once that goal is met.
                                 </Text>
                                 <Text size="xs">

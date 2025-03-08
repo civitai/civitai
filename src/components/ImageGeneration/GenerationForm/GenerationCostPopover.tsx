@@ -134,6 +134,16 @@ function GenerationCostPopoverDetail({ workflowCost, readOnly, disabled, hideCre
       className: classes.tableCell,
     },
     {
+      label: 'Popularity',
+      value: (
+        <Text align="right">
+          {Math.round(((workflowCost.factors?.popularity ?? 0) - 1) * 100)}%
+        </Text>
+      ),
+      visible: !!workflowCost.factors?.popularity && workflowCost.factors?.popularity !== 1,
+      className: classes.tableCell,
+    },
+    {
       label: <div className="font-bold">Base Cost</div>,
       value: (
         <Group spacing={4} position="right" className="font-bold" noWrap>

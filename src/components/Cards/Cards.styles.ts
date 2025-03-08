@@ -1,6 +1,20 @@
-import { createStyles } from '@mantine/core';
+import { createStyles, CSSObject } from '@mantine/core';
 import { constants } from '~/server/common/constants';
 import { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
+
+const winnerFrame: CSSObject = {
+  content: '""',
+  position: 'absolute',
+  backgroundSize: '200% !important',
+  top: '-2px',
+  left: '-2px',
+  width: 'calc(100% + 4px)',
+  height: 'calc(100% + 4px)',
+  filter: 'blur(8px)',
+  zIndex: -1,
+  animation: 'glowing 20s linear infinite',
+  // transition: 'opacity .3s ease-in-out',
+};
 
 export const useCardStyles = createStyles<string, { aspectRatio: number }>(
   (theme, params, getRef) => {
@@ -178,6 +192,34 @@ export const useCardStyles = createStyles<string, { aspectRatio: number }>(
 
       dropShadow: {
         filter: 'drop-shadow(1px 1px 1px rgba(0, 0, 0, 0.8))',
+      },
+
+      winnerFirst: {
+        position: 'relative',
+        width: '100%',
+        '&::before': {
+          ...winnerFrame,
+          background:
+            'linear-gradient(to right, #b97010 1%, #ad790a 17%, #ffd02a 31%, #fffbc2 47%, #ffd02a 64%, #ad8223 81%, #a36700 98%)',
+        },
+      },
+      winnerSecond: {
+        position: 'relative',
+        width: '100%',
+        '&::before': {
+          ...winnerFrame,
+          background:
+            'linear-gradient(to right, #808080 1%, #454349 17%, #7f8081 31%, #e9e9e9 47%, #7f8081 64%, #6b6970 81%, #606060 98%)',
+        },
+      },
+      winnerThird: {
+        position: 'relative',
+        width: '100%',
+        '&::before': {
+          ...winnerFrame,
+          background:
+            'linear-gradient(to right, #451500 1%, #6a2d06 17%, #995a2d 31%, #ffb382 47%, #995a2d 64%, #6a2d06 81%, #451500 98%)',
+        },
       },
     };
   }
