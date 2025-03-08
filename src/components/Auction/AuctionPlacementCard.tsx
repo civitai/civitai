@@ -312,6 +312,7 @@ const SectionBidInfo = ({
             sx={{
               fontSize: '1.25rem',
             }}
+            asCounter={true}
           />
         </Tooltip>
         {right}

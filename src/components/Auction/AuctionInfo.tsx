@@ -21,6 +21,7 @@ import {
   IconCalendar,
   IconLayoutSidebarLeftExpand,
   IconMoodSmile,
+  IconPlugConnected,
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
 import dayjs from 'dayjs';
@@ -30,7 +31,7 @@ import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
 import { ModelPlacementCard } from '~/components/Auction/AuctionPlacementCard';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
-import { usePurchaseBid } from '~/components/Auction/AuctionUtils';
+import { AuctionViews, usePurchaseBid } from '~/components/Auction/AuctionUtils';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { CosmeticCard } from '~/components/CardTemplates/CosmeticCard';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -38,6 +39,7 @@ import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
 import { featureInfo } from '~/components/Model/ModelVersions/ModelVersionPopularity';
+import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -79,11 +81,17 @@ export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => any }) 
   const features = useFeatureFlags();
   const { runTour } = useTourContext();
   const { drawerToggle } = useAuctionContext();
+  const { connected } = useSignalContext();
 
   // {/*<Group className="sticky top-0 right-0">*/}
 
   return (
     <Group position="right">
+      {!connected && (
+        <Tooltip label="Not connected. May not receive live updates.">
+          <IconPlugConnected color="orangered" />
+        </Tooltip>
+      )}
       {features.appTour && (
         <HelpButton
           data-tour="auction:reset"
@@ -127,6 +135,7 @@ export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => any }) 
           </Stack>
         </HoverCard.Dropdown>
       </HoverCard>
+      <AuctionViews />
       <Button
         className="md:hidden"
         onClick={drawerToggle}
@@ -138,7 +147,11 @@ export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => any }) 
           <Text>Auctions</Text>
         </Group>
       </Button>
-      {!!refreshFunc && <Button onClick={() => refreshFunc()}>Refresh</Button>}
+      {!!refreshFunc && (
+        <Button variant="light" onClick={() => refreshFunc()}>
+          Refresh
+        </Button>
+      )}
     </Group>
   );
 };
@@ -320,6 +333,7 @@ export const AuctionInfo = () => {
                   sx={{
                     flexGrow: 1,
                     justifyItems: 'center',
+                    display: 'grid', // for firefox
                   }}
                   buttonProps={{
                     fullWidth: mobile,

@@ -16,16 +16,19 @@ type AuctionState = {
   selectedModel: GenerationResource | undefined;
   validAuction: boolean;
   justBid: { auctionId: number; entityId: number } | undefined;
+  viewing: { [p: number]: number };
 };
 type AuctionContextState = {
   selectedAuction: AuctionState['selectedAuction'];
   selectedModel: AuctionState['selectedModel'];
   validAuction: AuctionState['validAuction'];
   justBid: AuctionState['justBid'];
+  viewing: AuctionState['viewing'];
   setSelectedAuction: Dispatch<SetStateAction<AuctionState['selectedAuction']>>;
   setSelectedModel: Dispatch<SetStateAction<AuctionState['selectedModel']>>;
   setValidAuction: Dispatch<SetStateAction<AuctionState['validAuction']>>;
   setJustBid: Dispatch<SetStateAction<AuctionState['justBid']>>;
+  setViewing: Dispatch<SetStateAction<AuctionState['viewing']>>;
   drawerIsOpen: boolean;
   drawerToggle: () => void;
   drawerClose: () => void;
@@ -48,6 +51,7 @@ export const AuctionContextProvider = ({ children }: { children: ReactNode }) =>
   const [selectedModel, setSelectedModel] = useState<AuctionState['selectedModel']>(undefined);
   const [validAuction, setValidAuction] = useState<AuctionState['validAuction']>(true);
   const [justBid, setJustBid] = useState<AuctionState['justBid']>(undefined);
+  const [viewing, setViewing] = useState<AuctionState['viewing']>({});
   const [drawerIsOpen, { close: drawerClose, toggle: drawerToggle }] = useDisclosure();
   const router = useRouter();
 
@@ -76,10 +80,12 @@ export const AuctionContextProvider = ({ children }: { children: ReactNode }) =>
         selectedModel,
         validAuction,
         justBid,
+        viewing,
         setSelectedAuction,
         setSelectedModel,
         setValidAuction,
         setJustBid,
+        setViewing,
         drawerIsOpen,
         drawerToggle,
         drawerClose,

@@ -71,6 +71,8 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
       log('-----------');
     }
 
+    // TODO possibly send signals
+
     log('end', dayjs().toDate());
 
     await dbKV.set(kvKey, 0);

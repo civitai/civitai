@@ -1,13 +1,17 @@
-import { ActionIcon, ActionIconProps, Stack, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, ActionIconProps, Group, Paper, Stack, Text, Tooltip } from '@mantine/core';
 import { showNotification, updateNotification } from '@mantine/notifications';
-import { IconCheck, IconGavel, IconX } from '@tabler/icons-react';
+import NumberFlow from '@number-flow/react';
+import { IconCheck, IconGavel, IconUsers, IconX } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { useMemo, useState } from 'react';
 import { useAuctionContext } from '~/components/Auction/AuctionProvider';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import {
+  useSignalConnection,
+  useSignalContext,
+  useSignalTopic,
+} from '~/components/Signals/SignalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
@@ -21,6 +25,7 @@ export function usePurchaseBid() {
   const queryUtils = trpc.useUtils();
   const [createLoading, setCreateLoading] = useState(false);
   const { setJustBid } = useAuctionContext();
+  const { connected } = useSignalContext();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance: number) =>
@@ -68,7 +73,9 @@ export function usePurchaseBid() {
       });
 
       // TODO updates instead for MyBids
-      await queryUtils.auction.getBySlug.invalidate({ slug: res.slug });
+      if (!connected) {
+        await queryUtils.auction.getBySlug.invalidate({ slug: res.slug });
+      }
       await queryUtils.auction.getMyBids.invalidate();
       await queryUtils.auction.getMyRecurringBids.invalidate();
       await queryUtils.model.getRecentlyBid.invalidate();
@@ -204,20 +211,59 @@ export const BidModelButton = ({
   );
 };
 
-export const useAuctionTopicListener = (auctionId?: number) => {
-  const utils = trpc.useUtils();
-  const currentUser = useCurrentUser();
+export const AuctionViews = () => {
+  const { viewing, selectedAuction } = useAuctionContext();
 
-  // TODO
-  useSignalConnection(SignalMessages.AuctionUpdate, (data: any) => {
-    // console.log('auction update', data);
-  });
-  useSignalConnection(SignalMessages.AuctionBidChange, (data: any) => {
+  const views = selectedAuction?.id ? viewing[selectedAuction.id] ?? 0 : 0;
+  if (!views) return <></>;
+
+  return (
+    <Tooltip label="Currently viewing">
+      <Paper radius="sm" shadow="xs" px={8} py={4} withBorder className="bg-gray-0 dark:bg-dark-6">
+        <Group spacing={4} className="min-w-[55px] cursor-default justify-center">
+          <IconUsers size={14} />
+          <NumberFlow
+            format={{ notation: 'compact' }}
+            respectMotionPreference={false}
+            value={views}
+            className="text-sm"
+          />
+          {/*<button*/}
+          {/*  onClick={() => {*/}
+          {/*    const delta = Math.floor(Math.random() * 100000);*/}
+          {/*    if (selectedAuction)*/}
+          {/*      setViewing((prev) => ({ ...prev, [selectedAuction?.id]: delta }));*/}
+          {/*  }}*/}
+          {/*>*/}
+          {/*  change*/}
+          {/*</button>*/}
+        </Group>
+      </Paper>
+    </Tooltip>
+  );
+};
+
+export const useAuctionTopicListener = (auctionId?: number) => {
+  const queryUtils = trpc.useUtils();
+  const { setViewing } = useAuctionContext();
+
+  // console.log('listening to auction', auctionId);
+
+  useSignalConnection(SignalMessages.AuctionBidChange, (data: GetAuctionBySlugReturn) => {
     // console.log('auction bid change', data);
+    queryUtils.auction.getBySlug.setData({ slug: data.auctionBase.slug }, data);
   });
   useSignalConnection(SignalMessages.TopicUpdate, (data: { topic: string; count: number }) => {
-    // if topic === .... then get count
     // console.log('auction count', data);
+    setViewing((prev) => {
+      const auctionId = parseInt(data.topic.split(':')[1]);
+      if (isNaN(auctionId)) return prev;
+
+      return {
+        ...prev,
+        [auctionId]: Math.max(0, data.count),
+      };
+    });
   });
 
   // TODO is there a race condition? missing the first topic message

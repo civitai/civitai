@@ -133,11 +133,8 @@ export enum SignalMessages {
   NotificationNew = 'notification:new',
   ModelVersionPopularityUpdate = 'model-version:popularity:update',
   Pong = 'pong',
-  // Creator Program:
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
   CashInvalidator = 'creators-program:cash-invalidator',
-  // Auction
-  AuctionUpdate = 'auction:update',
   AuctionBidChange = 'auction:bid-change',
   TopicUpdate = 'topic:connections',
 }

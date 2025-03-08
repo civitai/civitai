@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
 import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import type { DetailsCanceledBid } from '~/server/notifications/auction.notifications';
@@ -30,6 +30,7 @@ import {
 import { AuctionType, Availability, BuzzAccountType } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
+import { signalClient } from '~/utils/signal-client';
 
 export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   id: true,
@@ -496,6 +497,16 @@ export const createBid = async ({
     });
   }
 
+  // TODO there is probably a better way to do this that avoids refetching everything, but we need to update all positions and numbers
+  const signalData = await getAuctionBySlug({ slug: auctionData.auctionBase.slug });
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.Auction}:${auctionId}`,
+      target: SignalMessages.AuctionBidChange,
+      data: signalData,
+    })
+    .catch();
+
   // TODO fetch the entity that was knocked out (if any)
   //  get all the bids userIds
 
@@ -525,8 +536,12 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
       transactionIds: true,
       auction: {
         select: {
+          id: true,
           startAt: true,
           endAt: true,
+          auctionBase: {
+            select: { slug: true },
+          },
         },
       },
     },
@@ -546,6 +561,15 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
       deleted: true,
     },
   });
+
+  const signalData = await getAuctionBySlug({ slug: bid.auction.auctionBase.slug });
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.Auction}:${bid.auction.id}`,
+      target: SignalMessages.AuctionBidChange,
+      data: signalData,
+    })
+    .catch();
 };
 
 export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
@@ -560,12 +584,18 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
   const versionIds = model.modelVersions.map((mv) => mv.id);
   if (!versionIds.length) throw throwBadRequestError('Model has no versions.');
 
-  const aIds = (
-    await dbWrite.auction.findMany({
-      where: { startAt: { lte: now }, endAt: { gt: now } },
-      select: { id: true },
-    })
-  ).map((a) => a.id);
+  const aData = await dbWrite.auction.findMany({
+    where: { startAt: { lte: now }, endAt: { gt: now } },
+    select: {
+      id: true,
+      auctionBase: {
+        select: {
+          slug: true,
+        },
+      },
+    },
+  });
+  const aIds = aData.map((a) => a.id);
 
   let deletedIds: number[] = [];
   let deletedRecurringIds: number[] = [];
@@ -647,7 +677,16 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
     deletedRecurringIds = recToDelete.map((d) => d.id);
   }
 
-  // TODO send signal
+  for (const a of aData) {
+    const signalData = await getAuctionBySlug({ slug: a.auctionBase.slug });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.Auction}:${a.id}`,
+        target: SignalMessages.AuctionBidChange,
+        data: signalData,
+      })
+      .catch();
+  }
 
   return {
     bidsDeleted: deletedIds,
