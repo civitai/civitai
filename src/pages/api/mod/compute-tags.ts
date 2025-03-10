@@ -77,7 +77,7 @@ export default ModEndpoint(
             (value ->> 'tagId')::int as "tagId"
           FROM json_array_elements(${JSON.stringify(toInsert)}::json)
         )
-        SELECT upsert_tag_on_image("imageId", "tagId", 'Computed', 70, true)
+        SELECT insert_tag_on_image("imageId", "tagId", 'Computed', 70, true)
         FROM to_update;
       `;
 

@@ -47,9 +47,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 
-CREATE OR REPLACE FUNCTION upsert_tag_on_image(
-  targetImageId integer,
-  targetTagId integer,
+CREATE OR REPLACE FUNCTION get_tag_on_image_attributes(
   tagSource "TagSource" default null,
   confidence integer default null,
   automated bool default null,
@@ -88,6 +86,27 @@ BEGIN
       | (0 << 07)                                         -- 07: reserved (0 bit)
       | confidence_score;                               -- 06-00: confidence (7 bits)
 
+    RETURN packed_attributes;
+END;
+$$
+LANGUAGE plpgsql;
+
+
+CREATE OR REPLACE FUNCTION upsert_tag_on_image(
+  targetImageId integer,
+  targetTagId integer,
+  tagSource "TagSource" default null,
+  confidence integer default null,
+  automated bool default null,
+  disabled bool default null,
+  needsReview bool default null
+)
+RETURNS INTEGER AS $$
+DECLARE
+    packed_attributes SMALLINT;
+BEGIN
+    packed_attributes := get_tag_on_image_attributes(tagSource, confidence, automated, disabled, needsReview);
+
     -- Insert the record into the TagsOnImageNew table
     INSERT INTO "TagsOnImageNew" ("imageId", "tagId", "attributes")
     VALUES (targetImageId, targetTagId, packed_attributes)
@@ -100,6 +119,30 @@ BEGIN
                             ), 10, disabled
                           ), 11, automated
                         );  -- Replace the attributes on conflict
+    RETURN targetImageId;
+END;
+$$
+LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION insert_tag_on_image(
+  targetImageId integer,
+  targetTagId integer,
+  tagSource "TagSource" default null,
+  confidence integer default null,
+  automated bool default null,
+  disabled bool default null,
+  needsReview bool default null
+)
+RETURNS INTEGER AS $$
+DECLARE
+    packed_attributes SMALLINT;
+BEGIN
+    packed_attributes := get_tag_on_image_attributes(tagSource, confidence, automated, disabled, needsReview);
+
+    -- Insert the record into the TagsOnImageNew table
+    INSERT INTO "TagsOnImageNew" ("imageId", "tagId", "attributes")
+    VALUES (targetImageId, targetTagId, packed_attributes)
+    ON CONFLICT ("imageId", "tagId") DO NOTHING;
     RETURN targetImageId;
 END;
 $$
