@@ -72,10 +72,10 @@ export function usePurchaseBid() {
         disallowClose: false,
       });
 
-      // TODO updates instead for MyBids
       if (!connected) {
         await queryUtils.auction.getBySlug.invalidate({ slug: res.slug });
       }
+      // TODO updates instead for MyBids
       await queryUtils.auction.getMyBids.invalidate();
       await queryUtils.auction.getMyRecurringBids.invalidate();
       await queryUtils.model.getRecentlyBid.invalidate();

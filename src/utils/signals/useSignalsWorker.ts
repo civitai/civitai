@@ -127,11 +127,16 @@ export function useSignalsWorker(options?: {
       worker?.port.postMessage({ type: notify ? 'topic:registerNotify' : 'topic:register', topic });
     }
 
+    function topicUnsubscribe(topic: string) {
+      worker?.port.postMessage({ type: 'topic:unsubscribe', topic });
+    }
+
     return {
       on,
       off,
       send,
       topicRegister,
+      topicUnsubscribe,
     };
   }, [worker]);
 

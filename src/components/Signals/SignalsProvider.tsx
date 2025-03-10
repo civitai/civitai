@@ -1,6 +1,14 @@
 import { MantineColor, Notification, NotificationProps } from '@mantine/core';
 import { useInterval } from '@mantine/hooks';
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import {
+  createContext,
+  type Dispatch,
+  type SetStateAction,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import { SignalNotifications } from '~/components/Signals/SignalsNotifications';
 import { SignalsRegistrar } from '~/components/Signals/SignalsRegistrar';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
@@ -15,6 +23,8 @@ type SignalState = {
   connected: boolean;
   status: SignalStatus | null;
   worker: SignalWorker | null;
+  registeredTopics: string[];
+  setRegisteredTopics: Dispatch<SetStateAction<string[]>>;
 };
 
 const signalStatusDictionary: Record<SignalStatus, MantineColor> = {
@@ -53,7 +63,8 @@ export const useSignalTopic = (
   topic: `${SignalTopic}${'' | `:${number}`}` | undefined,
   notify?: boolean
 ) => {
-  const { worker } = useSignalContext();
+  // TODO
+  const { worker, registeredTopics, setRegisteredTopics } = useSignalContext();
 
   const interval = useInterval(() => {
     if (!topic) return;
@@ -71,8 +82,10 @@ export const useSignalTopic = (
 
     return () => {
       interval.stop();
+      if (topic) worker?.topicUnsubscribe(topic);
     };
-  }, [interval, notify, topic, worker]);
+    // }, [interval, notify, topic, worker]);
+  }, [topic, worker]);
 };
 
 const SIGNAL_DATA_REFRESH_DEBOUNCE = 10;
@@ -84,6 +97,7 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
 
   const [status, setStatus] = useState<SignalStatus | null>(null);
   prevStatusRef.current = status ?? null;
+  const [registeredTopics, setRegisteredTopics] = useState<string[]>([]);
 
   const worker = useSignalsWorker({
     onStateChange: ({ state }) => {
@@ -109,6 +123,8 @@ export function SignalProvider({ children }: { children: React.ReactNode }) {
         connected,
         status,
         worker,
+        registeredTopics,
+        setRegisteredTopics,
       }}
     >
       <SignalNotifications />

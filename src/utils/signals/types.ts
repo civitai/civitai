@@ -32,4 +32,5 @@ export type WorkerIncomingMessage =
   | { type: 'ping' }
   | { type: 'send'; target: string; args: Record<string, unknown> }
   | { type: 'topic:register'; topic: string }
-  | { type: 'topic:registerNotify'; topic: string };
+  | { type: 'topic:registerNotify'; topic: string }
+  | { type: 'topic:unsubscribe'; topic: string };

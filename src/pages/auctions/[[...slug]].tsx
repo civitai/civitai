@@ -214,7 +214,7 @@ export default function Auctions({
           {!isMobile && (
             <ContainerGrid.Col xs={12} md={4}>
               <Box
-                maw={300}
+                maw={330}
                 w="100%"
                 h="100%"
                 mah="calc(100dvh - var(--header-height) - var(--footer-height) - 24px)"

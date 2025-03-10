@@ -1243,6 +1243,7 @@ export const deleteModelById = async ({
     await userContentOverviewCache.bust(deletedModel.userId);
   }
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await deleteBidsForModel({ modelId: id });
 
   return deletedModel;
 };
@@ -1289,6 +1290,7 @@ export const permaDeleteModelById = async ({
   });
 
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  await deleteBidsForModel({ modelId: id });
 
   return deletedModel;
 };
@@ -1775,6 +1777,8 @@ export const unpublishModelById = async ({
   await imagesMetricsSearchIndex.queueUpdate(
     images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
   );
+
+  await deleteBidsForModel({ modelId: id });
 
   return model;
 };
