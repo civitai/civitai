@@ -45,6 +45,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
+import { SignalTopic } from '~/server/common/enums';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
@@ -80,14 +81,16 @@ const QuickBid = ({
 export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => any }) => {
   const features = useFeatureFlags();
   const { runTour } = useTourContext();
-  const { drawerToggle } = useAuctionContext();
-  const { connected } = useSignalContext();
+  const { drawerToggle, selectedAuction } = useAuctionContext();
+  const { connected, registeredTopics } = useSignalContext();
 
   // {/*<Group className="sticky top-0 right-0">*/}
 
   return (
     <Group position="right">
-      {!connected && (
+      {(!connected ||
+        (selectedAuction?.id &&
+          !registeredTopics.includes(`${SignalTopic.Auction}:${selectedAuction?.id}`))) && (
         <Tooltip label="Not connected. May not receive live updates.">
           <IconPlugConnected color="orangered" />
         </Tooltip>

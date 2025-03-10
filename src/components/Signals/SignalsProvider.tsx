@@ -69,11 +69,13 @@ export const useSignalTopic = (
   const interval = useInterval(() => {
     if (!topic) return;
     worker?.topicRegister(topic, notify);
+    if (!registeredTopics.includes(topic)) setRegisteredTopics((prev) => [...prev, topic]);
   }, 60000);
 
   useEffect(() => {
     if (topic) {
       worker?.topicRegister(topic, notify);
+      if (!registeredTopics.includes(topic)) setRegisteredTopics((prev) => [...prev, topic]);
     }
 
     if (!!interval?.active && !!topic) {
@@ -82,7 +84,11 @@ export const useSignalTopic = (
 
     return () => {
       interval.stop();
-      if (topic) worker?.topicUnsubscribe(topic);
+      if (topic) {
+        worker?.topicUnsubscribe(topic);
+        if (registeredTopics.includes(topic))
+          setRegisteredTopics((prev) => prev.filter((t) => t !== topic));
+      }
     };
     // }, [interval, notify, topic, worker]);
   }, [topic, worker]);

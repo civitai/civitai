@@ -25,7 +25,7 @@ export function usePurchaseBid() {
   const queryUtils = trpc.useUtils();
   const [createLoading, setCreateLoading] = useState(false);
   const { setJustBid } = useAuctionContext();
-  const { connected } = useSignalContext();
+  const { connected, registeredTopics } = useSignalContext();
 
   const { conditionalPerformTransaction } = useBuzzTransaction({
     message: (requiredBalance: number) =>
@@ -72,7 +72,7 @@ export function usePurchaseBid() {
         disallowClose: false,
       });
 
-      if (!connected) {
+      if (!connected || !registeredTopics.includes(`${SignalTopic.Auction}:${auctionId}`)) {
         await queryUtils.auction.getBySlug.invalidate({ slug: res.slug });
       }
       // TODO updates instead for MyBids
