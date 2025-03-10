@@ -101,6 +101,7 @@ import {
 import {
   Availability,
   CommercialUse,
+  EntityType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,
@@ -120,6 +121,7 @@ import {
   SetModelsCategoryInput,
 } from './../schema/model.schema';
 import { getUserSubscription } from '~/server/services/subscriptions.service';
+import { RuleDefinition } from '~/server/utils/mod-rules';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2735,6 +2737,27 @@ export async function getFeaturedModels() {
 }
 export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
+}
+
+export async function getModelModRules() {
+  const modRules = await fetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.MODELS, async () => {
+    const rules = await dbRead.moderationRule.findMany({
+      where: { entityType: EntityType.Model, enabled: true },
+      select: { definition: true, action: true },
+      orderBy: [{ order: 'asc' }],
+    });
+
+    return rules.map(({ definition, ...rule }) => ({
+      ...rule,
+      definition: definition as RuleDefinition,
+    }));
+  });
+
+  return modRules;
+}
+
+export async function bustModelModRulesCache() {
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.MODELS);
 }
 
 export const getPrivateModelCount = async ({ userId }: { userId: number }) => {

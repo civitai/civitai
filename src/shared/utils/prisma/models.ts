@@ -158,6 +158,8 @@ export type TechniqueType = "Image" | "Video";
 
 export type AppealStatus = "Pending" | "Approved" | "Rejected";
 
+export type ModerationRuleAction = "Approved" | "Block" | "Hold";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -2537,6 +2539,17 @@ export interface Appeal {
   resolvedMessage: string | null;
   internalNotes: string | null;
   buzzTransactionId: string | null;
+}
+
+export interface ModerationRule {
+  id: number;
+  entityType: EntityType;
+  definition: JsonValue;
+  action: ModerationRuleAction;
+  createdAt: Date;
+  updatedAt: Date;
+  enabled: boolean;
+  order: number | null;
 }
 
 export interface QuestionRank {

@@ -5,18 +5,31 @@ import { env } from '~/env/server';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
-import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
+import {
+  BlockedReason,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+  SignalMessages,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { scanJobsSchema } from '~/server/schema/image.schema';
+import { ImageMetaProps, scanJobsSchema } from '~/server/schema/image.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import { getImagesModRules } from '~/server/services/image.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { evaluateRules } from '~/server/utils/mod-rules';
 import { getComputedTags } from '~/server/utils/tag-rules';
-import { ImageIngestionStatus, TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
+import {
+  ImageIngestionStatus,
+  ModerationRuleAction,
+  TagSource,
+  TagTarget,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import { logToDb } from '~/utils/logging';
 import {
   auditMetaData,
@@ -246,6 +259,38 @@ async function handleSuccess({
   if (!image) {
     await logScanResultError({ id, message: 'Image not found' });
     throw new Error('Image not found');
+  }
+
+  const imageModRules = await getImagesModRules();
+  if (imageModRules.length) {
+    const appliedRule = evaluateRules(imageModRules, {
+      ...image,
+      tags: incomingTags.map((x) => x.tag),
+      prompt: (image.meta as ImageMetaProps)?.prompt,
+    });
+
+    switch (appliedRule?.action) {
+      case ModerationRuleAction.Block:
+        await dbWrite.image.update({
+          where: { id },
+          data: {
+            ingestion: ImageIngestionStatus.Blocked,
+            blockedFor: BlockedReason.Moderated,
+          },
+        });
+        return;
+      case ModerationRuleAction.Hold:
+        await dbWrite.image.update({
+          where: { id },
+          data: {
+            ingestion: ImageIngestionStatus.Pending,
+            needsReview: 'blocked',
+          },
+        });
+        return;
+      default:
+        break;
+    }
   }
 
   // Preprocess tags

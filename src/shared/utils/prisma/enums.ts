@@ -740,6 +740,14 @@ export const AppealStatus = {
 
 export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
 
+export const ModerationRuleAction = {
+  Approved: 'Approved',
+  Block: 'Block',
+  Hold: 'Hold',
+} as const;
+
+export type ModerationRuleAction = (typeof ModerationRuleAction)[keyof typeof ModerationRuleAction];
+
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;
