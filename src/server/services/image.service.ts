@@ -371,10 +371,23 @@ export const moderateImages = async ({
       tagIds.push(...blockedTags.map((x) => x.id));
     }
 
-    await dbWrite.tagsOnImage.updateMany({
-      where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true, disabledAt: new Date(), needsReview: false },
-    });
+    // TODO.TagsOnImage - remove this after the migration
+    const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+      UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+      WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
+      RETURNING "imageId", "tagId";
+    `;
+
+    await dbWrite.$queryRaw`
+      WITH to_insert AS (
+        SELECT
+          (value ->> 'imageId')::int as "imageId",
+          (value ->> 'tagId')::int as "tagId"
+        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
+      )
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+      FROM to_insert;
+    `;
 
     // Resolve any pending appeals
     await resolveEntityAppeal({
@@ -466,10 +479,23 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   `;
   if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
 
-  await dbWrite.tagsOnImage.updateMany({
-    where: { imageId: images[0].id, disabledAt: { not: null } },
-    data: { disabled: false, disabledAt: null },
-  });
+  // TODO.TagsOnImage - remove this after the migration
+  const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+    WHERE "imageId" = ${images[0].id} AND "disabledAt" IS NOT NULL
+    RETURNING "imageId", "tagId";
+  `;
+
+  await dbWrite.$queryRaw`
+    WITH to_insert AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements(${JSON.stringify(results)}::json)
+    )
+    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, false)
+    FROM to_insert;
+  `;
 
   return await ingestImage({ image: images[0] });
 };
@@ -3915,8 +3941,18 @@ async function removeNameReference(images: number[]) {
     `;
 
     // Remove tags
+    // TODO.TagsOnImage - remove this after the migration
     await dbWrite.$executeRaw`
       DELETE FROM "TagsOnImage" toi
+      USING "TagsOnTags" tot
+      WHERE toi."imageId" IN (${Prisma.join(images)})
+        AND toi."tagId" = tot."toTagId"
+        AND tot."fromTagId" IN (SELECT id FROM "Tag" WHERE name = 'real person');
+    `;
+
+    // Remove tags
+    await dbWrite.$executeRaw`
+      DELETE FROM "TagsOnImageNew" toi
       USING "TagsOnTags" tot
       WHERE toi."imageId" IN (${Prisma.join(images)})
         AND toi."tagId" = tot."toTagId"

@@ -1259,6 +1259,12 @@ export interface TagsOnImage {
   source: TagSource;
 }
 
+export interface TagsOnImageNew {
+  imageId: number;
+  tagId: number;
+  attributes: number;
+}
+
 export interface TagsOnImageVote {
   imageId: number;
   image?: Image;
@@ -3489,6 +3495,18 @@ export interface EntityMetricImage {
   comment: number | null;
   collection: number | null;
   buzz: number | null;
+}
+
+export interface TagsOnImageDetails {
+  imageId: number;
+  tagId: number;
+  sourceId: TagSource;
+  automated: boolean;
+  disabled: boolean;
+  needsReview: boolean;
+  reserved_1: boolean;
+  reserved_2: boolean;
+  confidence: number;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;
