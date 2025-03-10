@@ -53,7 +53,9 @@ class NcmecCaller extends HttpCaller {
     const xmlResponse = await response.text();
     const json = await parseStringPromise(xmlResponse);
     if (!response.ok) {
-      throw new Error(xmlResponse);
+      throw new Error(
+        `Status: ${response.status}${response.statusText ? `\n${response.statusText}` : ''}`
+      );
     }
     return Ncmec.reportResponseSchema.parse(json).reportResponse;
   }
