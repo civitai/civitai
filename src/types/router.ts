@@ -153,3 +153,6 @@ type OrchestratorRouter = RouterOutput['orchestrator'];
 export type QueryGeneratedImages = OrchestratorRouter['queryGeneratedImages'];
 
 export type CompensationPool = RouterOutput['creatorProgram']['getCompensationPool'];
+
+type AuctionRouter = RouterOutput['auction'];
+export type AuctionBySlug = AuctionRouter['getBySlug'];

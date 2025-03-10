@@ -2,30 +2,32 @@ import {
   declineReviewHandler,
   deleteModelVersionHandler,
   earlyAccessModelVersionsOnTimeframeHandler,
+  getModelVersionForTrainingReviewHandler,
   getModelVersionHandler,
+  getModelVersionOwnerHandler,
   getModelVersionRunStrategiesHandler,
+  getVersionLicenseHandler,
+  modelVersionDonationGoalsHandler,
+  modelVersionEarlyAccessPurchaseHandler,
   modelVersionGeneratedImagesOnTimeframeHandler,
   publishModelVersionHandler,
+  publishPrivateModelVersionHandler,
   requestReviewHandler,
   toggleNotifyEarlyAccessHandler,
   unpublishModelVersionHandler,
   upsertModelVersionHandler,
-  getVersionLicenseHandler,
-  modelVersionEarlyAccessPurchaseHandler,
-  modelVersionDonationGoalsHandler,
-  getModelVersionOwnerHandler,
-  getModelVersionForTrainingReviewHandler,
-  publishPrivateModelVersionHandler,
 } from '~/server/controllers/model-version.controller';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import {
   deleteExplorationPromptSchema,
   earlyAccessModelVersionsOnTimeframeSchema,
   getModelVersionByModelTypeSchema,
+  getModelVersionPopularityInput,
   getModelVersionSchema,
+  getModelVersionsPopularityInput,
   modelVersionEarlyAccessPurchase,
-  modelVersionUpsertSchema2,
   modelVersionsGeneratedImagesOnTimeframeSchema,
+  modelVersionUpsertSchema2,
   publishVersionSchema,
   upsertExplorationPromptSchema,
 } from '~/server/schema/model-version.schema';
@@ -33,7 +35,9 @@ import { declineReviewSchema, unpublishModelSchema } from '~/server/schema/model
 import {
   deleteExplorationPrompt,
   getExplorationPromptsById,
+  getModelVersionPopularity,
   getModelVersionsByModelType,
+  getModelVersionsPopularity,
   getVersionById,
   upsertExplorationPrompt,
 } from '~/server/services/model-version.service';
@@ -75,6 +79,12 @@ export const modelVersionRouter = router({
   getById: publicProcedure.input(getModelVersionSchema).query(getModelVersionHandler),
   getOwner: publicProcedure.input(getByIdSchema).query(getModelVersionOwnerHandler),
   getRunStrategies: publicProcedure.input(getByIdSchema).query(getModelVersionRunStrategiesHandler),
+  getPopularity: publicProcedure
+    .input(getModelVersionPopularityInput)
+    .query(({ input }) => getModelVersionPopularity(input)),
+  getPopularities: publicProcedure
+    .input(getModelVersionsPopularityInput)
+    .query(({ input }) => getModelVersionsPopularity(input)),
   getExplorationPromptsById: publicProcedure
     .input(getByIdSchema)
     .query(({ input }) => getExplorationPromptsById(input)),

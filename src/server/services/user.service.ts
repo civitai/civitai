@@ -54,6 +54,7 @@ import {
 } from '~/server/search-index';
 import { purchasableRewardDetails } from '~/server/selectors/purchasableReward.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
+import { deleteBidsForModel } from '~/server/services/auction.service';
 import { isCosmeticAvailable } from '~/server/services/cosmetic.service';
 import { deleteImageById } from '~/server/services/image.service';
 import { unpublishModelById } from '~/server/services/model.service';
@@ -64,6 +65,7 @@ import {
 import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { getSystemPermissions } from '~/server/services/system-cache';
 import { BlockedByUsers, HiddenModels } from '~/server/services/user-preferences.service';
+import { createCachedObject } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
   throwBadRequestError,
@@ -96,7 +98,6 @@ import {
   UserSettingsSchema,
   UserTier,
 } from './../schema/user.schema';
-import { createCachedObject } from '~/server/utils/cache-helpers';
 // import { createFeaturebaseToken } from '~/server/featurebase/featurebase';
 
 export const getUserCreator = async ({
@@ -850,6 +851,10 @@ export const removeAllContent = async ({ id }: { id: number }) => {
   await userMetrics.queueUpdate(id);
   await imageMetrics.queueUpdate(images.map((i) => i.id));
   await articleMetrics.queueUpdate(articles.map((a) => a.id));
+
+  for (const m of models) {
+    await deleteBidsForModel({ modelId: m.id });
+  }
 };
 
 export const getUserCosmetics = ({

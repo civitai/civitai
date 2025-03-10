@@ -1,50 +1,24 @@
 import {
-  Alert,
-  Button,
-  Group,
-  Stack,
-  Text,
-  ThemeIcon,
-  Title,
-  Tooltip,
-  TooltipProps,
-  SimpleGrid,
-  Paper,
   ActionIcon,
-  Progress,
-  Divider,
-  Input,
-  Radio,
-  createStyles,
-  Grid,
-  Anchor,
-  List,
   Avatar,
-  Box,
+  Button,
   Chip,
   ChipProps,
+  Divider,
+  Grid,
+  Group,
+  Input,
+  Stack,
+  Text,
+  Tooltip,
+  TooltipProps,
 } from '@mantine/core';
-import {
-  BountyEntryMode,
-  BountyMode,
-  BountyType,
-  Currency,
-  PurchasableRewardUsage,
-  TagTarget,
-} from '~/shared/utils/prisma/enums';
-import {
-  IconCalendar,
-  IconCalendarDue,
-  IconExclamationMark,
-  IconInfoCircle,
-  IconQuestionMark,
-  IconTrash,
-} from '@tabler/icons-react';
-import { useRouter } from 'next/router';
-import React, { useState } from 'react';
-
-import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
-import { useFormStorage } from '~/hooks/useFormStorage';
+import { IconCalendar, IconCalendarDue, IconTrash } from '@tabler/icons-react';
+import React from 'react';
+import { z } from 'zod';
+import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { useMutatePurchasableReward } from '~/components/PurchasableRewards/purchasableRewards.util';
 import {
   Form,
   InputDatePicker,
@@ -56,13 +30,9 @@ import {
   InputTextArea,
   useForm,
 } from '~/libs/form';
-import { z } from 'zod';
-import { constants } from '~/server/common/constants';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
-import { useMutatePurchasableReward } from '~/components/PurchasableRewards/purchasableRewards.util';
 import { purchasableRewardUpsertSchema } from '~/server/schema/purchasable-reward.schema';
+import { PurchasableRewardUsage } from '~/shared/utils/prisma/enums';
 import { PurchasableRewardGetById } from '~/types/router';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { getDisplayName } from '~/utils/string-helpers';
 
 const tooltipProps: Partial<TooltipProps> = {
@@ -201,7 +171,7 @@ export function PurchasableRewardUpsertForm({
                 <InputNumber
                   name="unitPrice"
                   label="Buzz Price"
-                  placeholder="How much will this reward cost in BUZZ?"
+                  placeholder="How much will this reward cost in Buzz?"
                   step={100}
                   icon={<CurrencyIcon currency="BUZZ" size={16} />}
                   format={undefined}

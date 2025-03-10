@@ -89,6 +89,10 @@ CreateBuzzWithdrawalRequestSchema & {
     amount: amount,
     type: TransactionType.Withdrawal,
   });
+  if (!transaction.transactionId)
+    throw throwBadRequestError(
+      'There was an error while trying to create your withdrawal request.'
+    );
 
   try {
     const providerData: {
@@ -394,11 +398,16 @@ export const updateBuzzWithdrawalRequest = async ({
         type: TransactionType.Refund,
         description: `Refund due to rejection or cancellation of withdrawal request. ${
           refundFees
-            ? `A total of ${refundFees} BUZZ has not been refunded due to fees by the Payment provider upon issues with the payment`
+            ? `A total of ${refundFees} Buzz has not been refunded due to fees by the Payment provider upon issues with the payment`
             : ''
         }`,
         externalTransactionId: request.buzzWithdrawalTransactionId,
       });
+
+      if (!transaction.transactionId)
+        throw throwBadRequestError(
+          'There was an error while trying to update your withdrawal request.'
+        );
 
       metadata.buzzTransactionId = transaction.transactionId;
     }
@@ -521,6 +530,11 @@ export const updateBuzzWithdrawalRequest = async ({
         type: TransactionType.Refund,
         description: 'Refund due to reversal of withdrawal request',
       });
+
+      if (!transaction.transactionId)
+        throw throwBadRequestError(
+          'There was an error while trying to update your withdrawal request.'
+        );
 
       metadata.buzzTransactionId = transaction.transactionId;
 

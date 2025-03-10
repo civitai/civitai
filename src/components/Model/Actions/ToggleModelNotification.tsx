@@ -1,9 +1,9 @@
 import { ActionIcon, ActionIconProps, Tooltip } from '@mantine/core';
-import { ModelEngagementType } from '~/shared/utils/prisma/enums';
 import { IconBellCheck, IconBellPlus } from '@tabler/icons-react';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { ModelEngagementType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -44,7 +44,7 @@ export function ToggleModelNotification({
       label={
         isOn
           ? 'Stop getting notifications for this model'
-          : 'Get notification when there is a new update on this model'
+          : 'Get a notification when there is a new update on this model'
       }
     >
       {/* Need div to keep ref with tooltip */}

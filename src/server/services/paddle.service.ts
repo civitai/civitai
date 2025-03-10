@@ -15,8 +15,8 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   cancelPaddleSubscription,
-  createOneTimeProductPurchaseTransaction,
   createBuzzTransaction as createPaddleBuzzTransaction,
+  createOneTimeProductPurchaseTransaction,
   getCustomerLatestTransaction,
   getOrCreateCustomer,
   getPaddleAdjustments,
@@ -165,13 +165,13 @@ export const processCompleteBuzzTransaction = async (
   });
 
   if (!buzzItem) {
-    throw throwBadRequestError('Could not find buzz item in transaction');
+    throw throwBadRequestError('Could not find Buzz item in transaction');
   }
 
   const meta = buzzItem.price?.customData as TransactionMetadataSchema;
 
   if (!meta || meta?.type !== 'buzzPurchase') {
-    throw throwBadRequestError('Only use this method to process buzz purchases.');
+    throw throwBadRequestError('Only use this method to process Buzz purchases.');
   }
 
   if (meta.buzzTransactionId) {
@@ -191,9 +191,9 @@ export const processCompleteBuzzTransaction = async (
     toAccountId: userId,
     externalTransactionId: transaction.id,
     type: TransactionType.Purchase,
-    description: `Purchase of ${amount} buzz. ${
+    description: `Purchase of ${amount} Buzz. ${
       purchasesMultiplier && purchasesMultiplier > 1 ? 'Multiplier applied due to membership. ' : ''
-    }A total of ${buzzAmount} buzz was added to your account.`,
+    }A total of ${buzzAmount} Buzz was added to your account.`,
     details: {
       paddleTransactionId: transaction.id,
       ...buzzTransactionExtras,

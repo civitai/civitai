@@ -1,25 +1,25 @@
-import { Line } from 'react-chartjs-2';
+import { Center, Loader, Paper, Stack, Text, Title } from '@mantine/core';
 import {
   CategoryScale,
   Chart as ChartJS,
+  ChartOptions,
+  Colors,
+  Legend,
   LinearScale,
   LineElement,
   PointElement,
   Tooltip as ChartTooltip,
-  Colors,
-  Legend,
-  ChartOptions,
 } from 'chart.js';
 import dayjs from 'dayjs';
-import { trpc } from '~/utils/trpc';
-import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { useMemo } from 'react';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { Paper, Stack, Title, Text, Center, Loader } from '@mantine/core';
-import { constants } from '~/server/common/constants';
+import { Line } from 'react-chartjs-2';
+import { useBuzzDashboardStyles } from '~/components/Buzz/buzz.styles';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
+import { constants } from '~/server/common/constants';
 import { StripeConnectStatus } from '~/server/common/enums';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { trpc } from '~/utils/trpc';
 
 ChartJS.register(
   CategoryScale,
@@ -122,7 +122,7 @@ export const EarlyAccessRewards = () => {
         <Stack spacing={0}>
           <Text>
             As a member of the Civitai Creator Program, your models in early access will award you
-            buzz per unique download.
+            Buzz per unique download.
           </Text>
           <Text>
             Each unique download will award you{' '}

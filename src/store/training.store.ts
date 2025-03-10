@@ -1,15 +1,15 @@
 import { z } from 'zod';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import type { ImageSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { constants } from '~/server/common/constants';
 import type {
   TrainingDetailsBaseModel,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
-import { GenerationResource } from '~/server/services/generation/generation.service';
-import { TrainingBaseModelType } from '~/utils/training';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { TrainingBaseModelType } from '~/utils/training';
 
 export type ImageDataType = {
   url: string;

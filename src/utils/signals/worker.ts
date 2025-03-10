@@ -151,8 +151,11 @@ const start = async (port: MessagePort) => {
       emitter.emit('pong', undefined);
       emitCurrentConnectionState();
     } else if (data.type === 'topic:register') {
-      const x = await connection?.invoke('subscribe', data.topic);
-      console.log(x);
+      await connection?.invoke('subscribe', data.topic);
+    } else if (data.type === 'topic:registerNotify') {
+      await connection?.invoke('subscribeNotify', data.topic);
+    } else if (data.type === 'topic:unsubscribe') {
+      await connection?.invoke('unsubscribe', data.topic);
     } else if (data.type === 'send') connection?.send(data.target, data.args);
   };
 };

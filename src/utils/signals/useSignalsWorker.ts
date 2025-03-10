@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
 import SharedWorker from '@okikio/sharedworker';
-import type { SignalConnectionState, SignalStatus, WorkerOutgoingMessage } from './types';
-import { Deferred, EventEmitter } from './utils';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { trpc } from '~/utils/trpc';
+import type { SignalConnectionState, SignalStatus, WorkerOutgoingMessage } from './types';
+import { Deferred, EventEmitter } from './utils';
 
 export type SignalWorker = NonNullable<ReturnType<typeof useSignalsWorker>>;
 
@@ -123,8 +123,12 @@ export function useSignalsWorker(options?: {
       emitterRef.current.off(target, cb);
     }
 
-    function topicRegister(topic: string) {
-      worker?.port.postMessage({ type: 'topic:register', topic });
+    function topicRegister(topic: string, notify?: boolean) {
+      worker?.port.postMessage({ type: notify ? 'topic:registerNotify' : 'topic:register', topic });
+    }
+
+    function topicUnsubscribe(topic: string) {
+      worker?.port.postMessage({ type: 'topic:unsubscribe', topic });
     }
 
     return {
@@ -132,6 +136,7 @@ export function useSignalsWorker(options?: {
       off,
       send,
       topicRegister,
+      topicUnsubscribe,
     };
   }, [worker]);
 

@@ -9,7 +9,6 @@ import {
   Loader,
   Menu,
   Modal,
-  Popover,
   SegmentedControl,
   Select,
   Stack,
@@ -40,6 +39,7 @@ import {
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
+import { BidModelButton } from '~/components/Auction/AuctionUtils';
 import { useCardStyles } from '~/components/Cards/Cards.styles';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { CategoryTags } from '~/components/CategoryTags/CategoryTags';
@@ -51,6 +51,7 @@ import {
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { HideModelButton } from '~/components/HideModelButton/HideModelButton';
 import { HideUserButton } from '~/components/HideUserButton/HideUserButton';
@@ -66,6 +67,7 @@ import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
+import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PermissionIndicator } from '~/components/PermissionIndicator/PermissionIndicator';
@@ -77,17 +79,19 @@ import { useSearchLayoutStyles } from '~/components/Search/SearchLayout';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
-import { TrainingDetailsObj } from '~/server/schema/model-version.schema';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GetFeaturedModels } from '~/server/services/model.service';
 import { getIsSdxl } from '~/shared/constants/generation.constants';
-import { Availability } from '~/shared/utils/prisma/enums';
+import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -99,8 +103,6 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
-import { GenerationSettingsPopover } from '~/components/Generation/GenerationSettings';
-import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -116,7 +118,8 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-const tabs = ['all', 'featured', 'recent', 'liked', 'mine'] as const;
+// TODO eventually move boosted to first
+const tabs = ['all', 'boosted', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
 
 const take = 20;
@@ -151,7 +154,17 @@ function ResourceSelectProvider({
   const resources = (props.options?.resources ?? []).map(
     ({ type, baseModels = [], partialSupport = [] }) => ({
       type,
-      baseModels: generation?.advancedMode ? [...baseModels, ...partialSupport] : baseModels,
+      // if generation, check toggle
+      // if modelVersion or addResource, always include all
+      // otherwise (training, auction, etc.), only include baseModels
+      baseModels:
+        props.selectSource === 'generation'
+          ? generation?.advancedMode
+            ? [...baseModels, ...partialSupport]
+            : baseModels
+          : props.selectSource === 'modelVersion' || props.selectSource === 'addResource'
+          ? [...baseModels, ...partialSupport]
+          : baseModels,
       partialSupport,
     })
   );
@@ -162,7 +175,6 @@ function ResourceSelectProvider({
       : filters.types;
 
   const resourceBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
-  console.log({ resourceBaseModels });
   const baseModels =
     resourceBaseModels.length > 0
       ? filters.baseModels.filter((baseModel) => resourceBaseModels.includes(baseModel))
@@ -262,12 +274,22 @@ function ResourceSelectModalContent() {
     { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'modelVersion' }
   );
 
+  const {
+    data: auctionModels,
+    isFetching: isLoadingAuctionModels,
+    // isError: isErrorAuctionModels,
+  } = trpc.model.getRecentlyBid.useQuery(
+    { take },
+    { enabled: !!currentUser && selectedTab === 'recent' && selectSource === 'auction' }
+  );
+
   const isLoadingExtra =
-    (isLoadingFeatured && selectedTab === 'featured') ||
+    (isLoadingFeatured && selectedTab === 'boosted') ||
     ((isLoadingGenerations ||
       isLoadingTraining ||
       isLoadingManuallyAdded ||
-      isLoadingRecommendedModels) &&
+      isLoadingRecommendedModels ||
+      isLoadingAuctionModels) &&
       selectedTab === 'recent');
 
   // TODO handle fetching errors from above
@@ -278,11 +300,16 @@ function ResourceSelectModalContent() {
 
   const meiliFilters: string[] = [
     // Default filter for visibility:
-    `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
+    selectSource === 'auction'
+      ? `availability != ${Availability.Private}`
+      : `(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`,
   ];
 
   const or: string[] = [];
+
   if (canGenerate !== undefined) meiliFilters.push(`canGenerate = ${canGenerate}`);
+  if (selectSource === 'auction') meiliFilters.push(`NOT cannotPromote = true`);
+
   for (const { type, baseModels = [] } of resources) {
     const _type = filters.types.length > 0 ? filters.types.find((x) => x === type) : type;
     const _baseModels =
@@ -319,9 +346,9 @@ function ResourceSelectModalContent() {
     );
   }
 
-  if (selectedTab === 'featured') {
+  if (selectedTab === 'boosted') {
     if (!!featuredModels) {
-      meiliFilters.push(`id IN [${featuredModels.join(',')}]`);
+      meiliFilters.push(`id IN [${featuredModels.map((fm) => fm.modelId).join(',')}]`);
     }
   } else if (selectedTab === 'recent') {
     if (selectSource === 'generation') {
@@ -351,6 +378,10 @@ function ResourceSelectModalContent() {
     } else if (selectSource === 'modelVersion') {
       if (!!recommendedModels) {
         meiliFilters.push(`id IN [${recommendedModels.join(',')}]`);
+      }
+    } else if (selectSource === 'auction') {
+      if (!!auctionModels) {
+        meiliFilters.push(`id IN [${auctionModels.join(',')}]`);
       }
     }
   } else if (selectedTab === 'liked') {
@@ -420,7 +451,11 @@ function ResourceSelectModalContent() {
               </Center>
             </div>
           ) : (
-            <ResourceHitList likes={likedModels} />
+            <ResourceHitList
+              likes={likedModels}
+              featured={featuredModels}
+              selectedTab={selectedTab}
+            />
           )}
         </InstantSearch>
       </div>
@@ -451,14 +486,19 @@ function CategoryTagFilters() {
 
 function ResourceHitList({
   likes,
+  featured,
+  selectedTab,
 }: ResourceSelectOptions & {
   likes: number[] | undefined;
+  featured: GetFeaturedModels | undefined;
+  selectedTab: Tabs;
 }) {
   const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
-  const { classes } = useSearchLayoutStyles();
+  const { classes, cx } = useSearchLayoutStyles();
+  const { classes: cardClasses } = useCardStyles({ aspectRatio: 1 });
   const { items, showMore, isLastPage } = useInfiniteHitsTransformed<'models'>();
   const {
     items: models,
@@ -491,16 +531,15 @@ function ResourceHitList({
         if (!versions.length) return null;
         return { ...model, versions };
       })
-      .filter(isDefined);
+      .filter(isDefined)
+      .filter((model) => model.versions.length > 0);
   }, [canGenerate, excludedIds, models, resources]);
-  // console.log({ filtered });
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
   }, [status]);
 
-  // TODO should these checks be off "filtered" or "items"?
-  if (loading && !items.length)
+  if (loading && !filtered.length)
     return (
       <div className="p-3 py-5">
         <Center mt="md">
@@ -534,6 +573,19 @@ function ResourceHitList({
       </div>
     );
 
+  const filteredSorted =
+    selectedTab === 'boosted'
+      ? filtered.sort((a, b) => {
+          const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
+          const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
+          if (!aPos) return 1;
+          if (!bPos) return -1;
+          return aPos - bPos;
+        })
+      : filtered;
+  const topItems = selectedTab === 'boosted' ? filteredSorted.slice(0, 3) : [];
+  const restItems = selectedTab === 'boosted' ? filteredSorted.slice(3) : filteredSorted;
+
   return (
     // <ScrollArea id="resource-select-modal" className="flex-1 p-3">
     <div className="flex flex-col gap-3 p-3">
@@ -541,17 +593,49 @@ function ResourceHitList({
         <Text color="dimmed">{hiddenCount} models have been hidden due to your settings.</Text>
       )}
 
-      <div className={classes.grid}>
-        {filtered
-          .filter((model) => model.versions.length > 0)
-          .map((model) => (
+      {topItems.length > 0 && (
+        <div
+          className={cx(
+            classes.grid,
+            'p-3 grid-cols-[repeat(auto-fit,350px)] justify-center justify-items-center gap-6'
+          )}
+        >
+          <div className={cardClasses.winnerFirst}>
             <ResourceSelectCard
-              key={model.id}
-              data={model}
-              isFavorite={!!likes && likes.includes(model.id)}
+              data={topItems[0]}
+              isFavorite={!!likes && likes.includes(topItems[0].id)}
               selectSource={selectSource}
             />
-          ))}
+          </div>
+          {topItems.length > 1 && (
+            <div className={cardClasses.winnerSecond}>
+              <ResourceSelectCard
+                data={topItems[1]}
+                isFavorite={!!likes && likes.includes(topItems[1].id)}
+                selectSource={selectSource}
+              />
+            </div>
+          )}
+          {topItems.length > 2 && (
+            <div className={cardClasses.winnerThird}>
+              <ResourceSelectCard
+                data={topItems[2]}
+                isFavorite={!!likes && likes.includes(topItems[2].id)}
+                selectSource={selectSource}
+              />
+            </div>
+          )}
+        </div>
+      )}
+      <div className={classes.grid}>
+        {restItems.map((model) => (
+          <ResourceSelectCard
+            key={model.id}
+            data={model}
+            isFavorite={!!likes && likes.includes(model.id)}
+            selectSource={selectSource}
+          />
+        ))}
       </div>
       {items.length > 0 && !isLastPage && (
         <InViewLoader loadFn={showMore} loadCondition={status === 'idle'}>
@@ -984,8 +1068,19 @@ function ResourceSelectCard({
                       )}
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
-                    {data.availability === Availability.Private && (
-                      <div className="absolute bottom-2 left-2 flex items-center gap-1">
+                    <Group className="absolute bottom-2 left-2 flex items-center gap-1">
+                      {selectSource === 'generation' && (
+                        <Badge variant="light" radius="xl" size="sm">
+                          <ModelVersionPopularity
+                            versionId={selectedVersion.id}
+                            isCheckpoint={data.type === ModelType.Checkpoint}
+                            listenForUpdates={false}
+                          />
+                        </Badge>
+                      )}
+                    </Group>
+                    <Group className="absolute bottom-2 right-2 flex items-center gap-1">
+                      {data.availability === Availability.Private && (
                         <Tooltip
                           label="This is a private model which requires permission to generate with."
                           position="top"
@@ -1005,10 +1100,23 @@ function ResourceSelectCard({
                             <IconLock size={16} />
                           </Badge>
                         </Tooltip>
-                      </div>
-                    )}
-                    {!!currentUser && (
-                      <div className="absolute bottom-2 right-2 flex items-center gap-1">
+                      )}
+                      {selectSource !== 'auction' && (
+                        <BidModelButton
+                          size="md"
+                          variant={theme.colorScheme === 'light' ? undefined : 'light'}
+                          px={4}
+                          entityData={{
+                            ...selectedVersion,
+                            model: {
+                              ...data,
+                              cannotPromote: data.cannotPromote ?? false,
+                            },
+                            image,
+                          }}
+                        />
+                      )}
+                      {!!currentUser && (
                         <Tooltip
                           label={isFavorite ? 'Unlike' : 'Like'}
                           position="top"
@@ -1025,8 +1133,8 @@ function ResourceSelectCard({
                             <ThumbsUpIcon color="#fff" filled={isFavorite} size={20} />
                           </Button>
                         </Tooltip>
-                      </div>
-                    )}
+                      )}
+                    </Group>
                   </div>
                 );
               }}

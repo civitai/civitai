@@ -136,7 +136,6 @@ const ModelSelector = ({
               styles: { label: { fontSize: 12 } },
             }}
             options={{
-              // canGenerate: true, // TODO toggle this on
               resources: [
                 {
                   type: ModelType.Checkpoint,
