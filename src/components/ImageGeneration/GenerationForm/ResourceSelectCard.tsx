@@ -60,7 +60,7 @@ export const ResourceSelectCard = (props: Props) => {
       {isCheckpoint || props.showAsCheckpoint ? (
         <CheckpointInfo {...props} />
       ) : (
-        <ResourceInfo {...props} />
+        <ResourceInfoCard {...props} />
       )}
     </div>
   );
@@ -152,7 +152,7 @@ function CheckpointInfo({
   );
 }
 
-function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
+function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props) {
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;

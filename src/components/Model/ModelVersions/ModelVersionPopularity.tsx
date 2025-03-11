@@ -8,6 +8,11 @@ export const featureInfo = {
   description: 'Boosted by the community',
   markup: -0.2,
 } as const;
+const newInfo = {
+  name: 'New',
+  description: 'Newly available for generation',
+  markup: 0.2,
+};
 const popularityInfoMap = {
   '0.0': {
     name: 'Dormant',
@@ -62,6 +67,8 @@ export const ModelVersionPopularity = ({
 
   const popularity = data?.popularityRank ?? 0;
   const isFeatured = data?.isFeatured ?? false;
+  const isNew = data?.isNew ?? false;
+  // TODO check for isNew
 
   const isDark = theme.colorScheme === 'dark';
 

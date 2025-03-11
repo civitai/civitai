@@ -80,10 +80,11 @@ export async function getAllAuctions() {
 
   return aData.map((ad) => {
     const bids = prepareBids(ad);
+    const winningBids = bids.filter((w) => w.totalAmount >= ad.minPrice);
     const lowestBidRequired =
-      bids.length > 0
-        ? bids.length >= ad.quantity
-          ? bids[bids.length - 1].totalAmount + 1
+      winningBids.length > 0
+        ? winningBids.length >= ad.quantity
+          ? winningBids[winningBids.length - 1].totalAmount + 1
           : ad.minPrice
         : ad.minPrice;
     return {
