@@ -39,7 +39,7 @@ class SignalClient {
     target,
     data,
   }: {
-    topic: SignalTopic;
+    topic: `${SignalTopic}${'' | `:${number}`}`;
     target: string;
     data: Record<string, unknown>;
   }) => {
@@ -57,7 +57,10 @@ class SignalClient {
   };
 
   constructor({ endpoint }: { endpoint: string }) {
-    this._endpoint = z.string().url().parse(endpoint);
+    this._endpoint = z
+      .string()
+      .url()
+      .parse(endpoint || 'http://localhost');
   }
 }
 

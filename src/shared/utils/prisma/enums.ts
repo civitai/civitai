@@ -740,6 +740,15 @@ export const AppealStatus = {
 
 export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
 
+export const AuctionType = {
+  Model: 'Model',
+  Image: 'Image',
+  Collection: 'Collection',
+  Article: 'Article',
+} as const;
+
+export type AuctionType = (typeof AuctionType)[keyof typeof AuctionType];
+
 export const ModerationRuleAction = {
   Approved: 'Approved',
   Block: 'Block',

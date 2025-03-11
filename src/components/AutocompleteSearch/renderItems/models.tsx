@@ -1,24 +1,21 @@
-import React, { forwardRef } from 'react';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { AutocompleteItem, Badge, Center, Group, Stack, Text, ThemeIcon } from '@mantine/core';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBrush, IconDownload, IconMessageCircle2, IconPhotoOff } from '@tabler/icons-react';
+import React, { forwardRef } from 'react';
 import { Highlight } from 'react-instantsearch';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { IconBadge } from '~/components/IconBadge/IconBadge';
-import { abbreviateNumber } from '~/utils/number-helpers';
 import {
   useSearchItemStyles,
   ViewMoreItem,
 } from '~/components/AutocompleteSearch/renderItems/common';
-import { truncate } from 'lodash-es';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { constants } from '~/server/common/constants';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { IconBadge } from '~/components/IconBadge/IconBadge';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { SearchIndexDataMap } from '~/components/Search/search.utils2';
-import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { getDisplayName } from '~/utils/string-helpers';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
+import { abbreviateNumber } from '~/utils/number-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 
 export const ModelSearchItem = forwardRef<
   HTMLDivElement,
@@ -90,7 +87,7 @@ export const ModelSearchItem = forwardRef<
             </Badge>
           )}
           <Badge size="xs">{getDisplayName(type)}</Badge>
-          {category && <Badge size="xs">{getDisplayName(category.name)}</Badge>}
+          {category && category.name && <Badge size="xs">{getDisplayName(category.name)}</Badge>}
         </Group>
         <Group spacing={4}>
           <IconBadge icon={<ThumbsUpIcon size={12} />}>

@@ -248,6 +248,7 @@ export type ModelMeta = Partial<{
   declinedReason: string;
   declinedAt: string;
   showcaseCollectionId: number;
+  cannotPromote: boolean;
 }>;
 
 export type ChangeModelModifierSchema = z.infer<typeof changeModelModifierSchema>;

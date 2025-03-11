@@ -3,6 +3,7 @@ import {
   Box,
   Button,
   Center,
+  createStyles,
   Group,
   Image,
   Loader,
@@ -11,7 +12,6 @@ import {
   Radio,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
@@ -21,10 +21,10 @@ import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useMutatePaddle } from '~/components/Paddle/util';
-import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { SubscribeButton } from '~/components/Stripe/SubscribeButton';
 import { PlanBenefitList } from '~/components/Subscriptions/PlanBenefitList';
-import { PlanMeta, getPlanDetails } from '~/components/Subscriptions/PlanCard';
+import { getPlanDetails, PlanMeta } from '~/components/Subscriptions/PlanCard';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useQueryVault, useQueryVaultItems } from '~/components/Vault/vault.util';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -92,7 +92,7 @@ export const DowngradeFeedbackModal = ({
             <Stack>
               <Text>
                 Downgrade is immediate and you will be charged instantly. You will lose your tier
-                benefits as soon as you downgrade, and will receive the buzz along the other
+                benefits as soon as you downgrade, and will receive the Buzz along the other
                 benefits of the downgraded tier.
               </Text>
               <Text>

@@ -4,14 +4,15 @@ import {
   Badge,
   Button,
   Group,
+  GroupPosition,
   Overlay,
   Paper,
   Popover,
   Stack,
   Text,
   ThemeIcon,
-  useMantineTheme,
   Tooltip,
+  useMantineTheme,
 } from '@mantine/core';
 import {
   IconAlertTriangle,
@@ -23,6 +24,7 @@ import {
 } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ResourceSelectSource } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NumberSlider } from '~/libs/form/components/NumberSlider';
 import { GenerationResourceSchema } from '~/server/schema/generation.schema';
@@ -37,6 +39,8 @@ type Props = {
   onSwap?: VoidFunction;
   disabled?: boolean;
   hideVersion?: boolean;
+  groupPosition?: GroupPosition;
+  showAsCheckpoint?: boolean;
 };
 
 export const ResourceSelectCard = (props: Props) => {
@@ -53,16 +57,27 @@ export const ResourceSelectCard = (props: Props) => {
           opacity={0.8}
         />
       )}
-      {isCheckpoint ? <CheckpointInfo {...props} /> : <ResourceInfo {...props} />}
+      {isCheckpoint || props.showAsCheckpoint ? (
+        <CheckpointInfo {...props} />
+      ) : (
+        <ResourceInfoCard {...props} />
+      )}
     </div>
   );
 };
 
-function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion }: Props) {
+function CheckpointInfo({
+  resource,
+  onRemove,
+  onSwap,
+  selectSource,
+  hideVersion,
+  groupPosition,
+}: Props) {
   const unavailable = selectSource !== 'generation' ? false : resource.canGenerate !== true;
 
   return (
-    <Group spacing="xs" position="apart" noWrap>
+    <Group spacing="xs" position={groupPosition ?? 'apart'} noWrap>
       <Group spacing={4} noWrap>
         {unavailable ? (
           <ThemeIcon color="red" w="auto" size="sm" px={4} mr={8}>
@@ -82,8 +97,8 @@ function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion 
             h={64}
           >
             <EdgeMedia
-              type="image"
-              src={resource.image?.url}
+              type={resource.image.type ?? 'image'}
+              src={resource.image.url}
               width={64}
               className="h-full object-cover"
             />
@@ -95,6 +110,7 @@ function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion 
             sx={(theme) => ({
               cursor: 'pointer',
               color: theme.colorScheme === 'dark' ? theme.white : theme.black,
+              overflowWrap: 'anywhere',
             })}
             href={`/models/${resource.model.id}?modelVersionId=${resource.id}`}
             rel="nofollow noindex"
@@ -108,6 +124,13 @@ function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion 
             <Text size="sm" color="dimmed">
               {resource.name}
             </Text>
+          )}
+          {selectSource === 'generation' && (
+            <ModelVersionPopularity
+              versionId={resource.id}
+              isCheckpoint={resource.model.type === ModelType.Checkpoint}
+              listenForUpdates={true}
+            />
           )}
         </Stack>
       </Group>
@@ -129,7 +152,7 @@ function CheckpointInfo({ resource, onRemove, onSwap, selectSource, hideVersion 
   );
 }
 
-function ResourceInfo({ resource, onRemove, onUpdate, selectSource }: Props) {
+function ResourceInfoCard({ resource, onRemove, onUpdate, selectSource }: Props) {
   const hasStrength = ['LORA', 'LoCon', 'DoRA'].includes(resource.model.type);
   const isSameMinMaxStrength = resource.minStrength === resource.maxStrength;
   const unavailable = selectSource !== 'generation' ? false : !resource.canGenerate;
