@@ -1,5 +1,4 @@
 import dayjs from 'dayjs';
-import { purgeCache } from '~/server/cloudflare/client';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
 import { pgDbReadLong, pgDbWrite } from '~/server/db/pgDb';
@@ -46,9 +45,9 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
           if (id === 'images-rater') return; // Temporarily disable images-rater leaderboard
 
           const hasDataQuery = await pgDbWrite.query<{ count: number }>(`
-      SELECT COUNT(*) as count FROM "LeaderboardResult"
-      WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
-    `);
+            SELECT COUNT(*) as count FROM "LeaderboardResult"
+            WHERE "leaderboardId" = '${id}' AND date = current_date + interval '${addDays} days'
+          `);
           const hasData = hasDataQuery.rows[0].count > 0;
           if (hasData) {
             log(`Leaderboard ${id} - Previously completed`);
@@ -91,7 +90,7 @@ const prepareLeaderboard = createJob('prepare-leaderboard', '0 23 * * *', async 
         }, 3)
   );
   try {
-    await limitConcurrency(tasks, 1);
+    await limitConcurrency(tasks, 3);
     log('Leaderboards - Done');
     await updateLegendsBoardResults();
     await setLastRun();
@@ -254,7 +253,7 @@ function appendScore(userScores: Record<number, UserScoreKeeper>, toAdd: ImageSc
     userScores[score.userId].metrics.imageCount++;
 
     // Append score
-    insertSorted(userScores[score.userId].scores!, score.score, 'desc');
+    insertSorted(userScores[score.userId].scores!, score.score >= 0 ? score.score : 0, 'desc');
 
     // Remove lowest score if over limit
     if (userScores[score.userId].scores!.length > IMAGE_SCORE_FALLOFF)
@@ -295,7 +294,6 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
       // ctx.jobContext.checkIfCanceled();
       const key = `Leaderboard ${ctx.id} - Fetching scores - ${startIndex} to ${endIndex}`;
       log(key);
-      // console.time(key);
       const isClickhouseQuery = ctx.query.includes('ch_image_scores');
       if (isClickhouseQuery) {
         if (!clickhouse) return;
@@ -317,7 +315,6 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
           `${ctx.query} SELECT * FROM image_scores`,
           [startIndex, endIndex]
         );
-        // console.timeEnd(key);
         appendScore(userScores, batchScores.rows);
       }
     });
@@ -354,7 +351,6 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
 
   // Insert into leaderboard
   log(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
-  // console.time(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
   const userScoresJson = JSON.stringify(userScoresArray);
   const leaderboardUpdateQuery = await pgDbWrite.cancellableQuery(`
     INSERT INTO "LeaderboardResult"("leaderboardId", "date", "userId", "score", "metrics", "position")
@@ -374,7 +370,6 @@ async function imageLeaderboardPopulation(ctx: LeaderboardContext, [min, max]: [
   `);
   // ctx.jobContext.on('cancel', leaderboardUpdateQuery.cancel);
   await leaderboardUpdateQuery.result();
-  // console.timeEnd(`Leaderboard ${ctx.id} - Inserting into leaderboard`);
 }
 
 type NsfwLevelRow = {

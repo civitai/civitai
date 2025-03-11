@@ -195,7 +195,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
 
       const completeUpload = () =>
         withRetries(
-          async (currentAttempt) => {
+          async (remainingAttempts) => {
             const res = await fetch(completeEndpoint, {
               method: 'POST',
               headers,
@@ -208,7 +208,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
               }),
             });
 
-            if (!res.ok && currentAttempt > 0) {
+            if (!res.ok && remainingAttempts > 0) {
               throw new Error('Failed to complete upload');
             }
 

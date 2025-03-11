@@ -1,30 +1,23 @@
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import { TypoTolerance } from 'meilisearch';
-import { ModelFileType, MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { imagesForModelVersionsCache, modelTagCache } from '~/server/redis/caches';
 import { ModelFileMetadata } from '~/server/schema/model-file.schema';
 import { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
+import { ModelMeta } from '~/server/schema/model.schema';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
-import { modelHashSelect } from '~/server/selectors/modelHash.selector';
-import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { ImagesForModelVersions } from '~/server/services/image.service';
 import { getCategoryTags } from '~/server/services/system-cache';
 import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import {
-  Availability,
-  MetricTimeframe,
-  ModelHashType,
-  ModelStatus,
-} from '~/shared/utils/prisma/enums';
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { getModelVersionsForSearchIndex } from '../selectors/modelVersion.selector';
-import { getUnavailableResources } from '../services/generation/generation.service';
 import { modelSearchIndexSelect } from '../selectors/model.selector';
+import { getUnavailableResources } from '../services/generation/generation.service';
 
 const RATING_BAYESIAN_M = 3.5;
 const RATING_BAYESIAN_C = 10;
@@ -61,11 +54,12 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     // sort
-    'metrics.thumbsUpCount',
     'createdAt',
+    'id',
+    'metrics.collectedCount',
     'metrics.commentCount',
     'metrics.downloadCount',
-    'metrics.collectedCount',
+    'metrics.thumbsUpCount',
     'metrics.tippedAmountCount',
   ];
 
@@ -93,23 +87,26 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   const filterableAttributes = [
-    'id',
-    'hashes',
-    'nsfwLevel',
-    'type',
+    'availability',
+    'canGenerate',
+    'category.name',
     'checkpointType',
+    'fileFormats',
+    'hashes',
+    'id',
+    'lastVersionAtUnix',
+    'nsfwLevel',
+    'status',
     'tags.name',
-    'version.baseModel',
+    'type',
     'user.id',
     'user.username',
-    'status',
-    'category.name',
-    'canGenerate',
-    'fileFormats',
-    'lastVersionAtUnix',
-    'versions.hashes',
+    'version.baseModel',
     'versions.baseModel',
+    'versions.hashes',
     'versions.id',
+    'availability',
+    'cannotPromote',
   ];
 
   if (
@@ -170,6 +167,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         allowCommercialUse,
         allowDerivatives,
         allowDifferentLicense,
+        meta,
         ...model
       } = modelRecord;
       const metrics = modelRecord.metrics[0] ?? {};
@@ -186,8 +184,9 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
       const canGenerate = modelVersions.some(
         (x) => x.generationCoverage?.covered && !unavailableGenResources.includes(x.id)
       );
+      const cannotPromote = (meta as ModelMeta | null)?.cannotPromote;
 
-      const category = tags[model.id]?.tags.find(({ id }) => modelCategoriesIds.includes(id))!;
+      const category = tags[model.id]?.tags?.find(({ id }) => modelCategoriesIds.includes(id));
 
       return {
         ...model,
@@ -195,8 +194,8 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
         lastVersionAtUnix: model.lastVersionAt?.getTime() ?? model.createdAt.getTime(),
         user,
         category: {
-          id: category.id,
-          name: category.name!,
+          id: category?.id,
+          name: category?.name,
         },
         permissions: {
           allowNoCredit,
@@ -256,6 +255,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           tippedAmountCount: metrics.tippedAmountCount ?? 0,
         },
         canGenerate,
+        cannotPromote,
         cosmetic: cosmetics[model.id] ?? null,
       };
     })

@@ -60,6 +60,8 @@ const nameOverrides: Record<string, string> = {
   CogVideoX: 'CogVideoX',
   minimax: 'Hailou by MiniMax',
   NoobAI: 'NoobAI',
+  InternalValue: 'Internal Value',
+  ACH: 'ACH',
 };
 
 export function getDisplayName(
@@ -258,6 +260,7 @@ export function stringifyAIR({
   })
     ?.replace('pony', 'sdxl')
     ?.replace('illustrious', 'sdxl')
+    ?.replace('noobai', 'sdxl')
     ?.replace('sd3_5m', 'sd3');
 }
 
@@ -302,4 +305,8 @@ export function toPascalCase(str: string) {
 
   // Join the words back together with a space
   return pascalCaseWords.join(' ');
+}
+
+export function capitalize(str: string) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
 }

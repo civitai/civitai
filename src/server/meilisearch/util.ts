@@ -35,13 +35,15 @@ const getOrCreateIndex = async (
 
         return index;
       } catch (e) {
-        console.error('getOrCreateIndex :: Error :: ', e);
         const meiliSearchError = e as MeiliSearchErrorInfo;
 
         if (meiliSearchError.code === 'index_not_found') {
+          console.error('getOrCreateIndex :: Error :: Index not found. Attempting to create it...');
           const createdIndexTask = await client.createIndex(indexName, options);
           await client.waitForTask(createdIndexTask.taskUid);
           return await client.getIndex(indexName);
+        } else {
+          console.error('getOrCreateIndex :: Error :: ', e);
         }
 
         // Don't handle it within this scope

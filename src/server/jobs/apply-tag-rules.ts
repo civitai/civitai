@@ -85,7 +85,17 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
     const end = cursor;
     log(`Updating images ${start} - ${end}`);
     return async () => {
-      await dbWrite.$executeRaw`
+      // TODO.TagsOnImage - remove this after the migration
+      const results = await dbWrite.$queryRaw<
+        {
+          imageId: number;
+          tagId: number;
+          automated: boolean;
+          confidence: number;
+          needsReview: boolean;
+          source: string;
+        }[]
+      >`
         INSERT INTO "TagsOnImage"("imageId", "tagId", automated, confidence, "needsReview", source)
         SELECT "imageId", ${fromId}, automated, confidence, toi."needsReview", source
         FROM "TagsOnImage" toi
@@ -95,7 +105,32 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
           AND "imageId" < ${end}
           AND EXISTS (SELECT 1 FROM "Image" WHERE id = toi."imageId") -- Ensure image exists
           ${sinceClause}
-        ON CONFLICT ("imageId", "tagId") DO UPDATE SET confidence = excluded.confidence, source = excluded.source;
+        ON CONFLICT ("imageId", "tagId") DO UPDATE SET confidence = excluded.confidence, source = excluded.source
+        RETURNING "imageId", "tagId", "automated", "confidence", "needsReview", "source";
+      `;
+
+      const toUpdate = results.map((x) => ({
+        imageId: x.imageId,
+        tagId: x.tagId,
+        tagSource: x.source,
+        automated: x.automated,
+        confidence: x.confidence,
+        needsReview: x.needsReview,
+      }));
+
+      await dbWrite.$queryRaw`
+        WITH to_update AS (
+          SELECT
+            (value ->> 'imageId')::int as "imageId",
+            (value ->> 'tagId')::int as "tagId",
+            (value ->> 'tagSource')::"TagSource" as "tagSource",
+            (value ->> 'automated')::boolean as "automated",
+            (value ->> 'confidence')::int as "confidence",
+            (value ->> 'needsReview')::boolean as "needsReview"
+          FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
+        )
+        SELECT upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", null, "needsReview")
+        FROM to_update;
       `;
     };
   }, 3);
@@ -142,12 +177,25 @@ async function deleteTag({ toId }: TagRule, maxImageId: number, since?: Date) {
     const end = cursor;
     log(`Updating images ${start} - ${end}`);
     return async () => {
-      await dbWrite.$executeRaw`
+      // TODO.TagsOnImage - remove this after the migration
+      const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
         UPDATE "TagsOnImage" SET disabled = true, "disabledAt" = now(), "disabledReason" = 'Replaced'
         WHERE "tagId" = ${toId} AND "disabledAt" IS NULL
           AND "imageId" >= ${start}
           AND "imageId" < ${end}
           ${sinceClause}
+        RETURNING "imageId", "tagId";
+      `;
+
+      await dbWrite.$queryRaw`
+        WITH to_insert AS (
+          SELECT
+            (value ->> 'imageId')::int as "imageId",
+            (value ->> 'tagId')::int as "tagId"
+          FROM json_array_elements(${JSON.stringify(results)}::json)
+        )
+        SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, null)
+        FROM to_insert;
       `;
     };
   }, 3);

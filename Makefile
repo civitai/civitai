@@ -61,7 +61,7 @@ run:
 init: copy-env npm-install start run-migrations bootstrap-db bootstrap-metrics run
 
 .PHONY: rerun
-rerun: start bootstrap-db
+rerun: start bootstrap-db bootstrap-metrics
 	npm run dev
 
 .PHONY: init-devcontainer

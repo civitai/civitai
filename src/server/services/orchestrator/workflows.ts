@@ -2,14 +2,13 @@ import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
   getWorkflow as clientGetWorkflow,
+  GetWorkflowData,
   patchWorkflow,
   queryWorkflows as clientQueryWorkflows,
   removeWorkflowTag,
   submitWorkflow as clientSubmitWorkflow,
-  updateWorkflow as clientUpdateWorkflow,
-  GetWorkflowData,
   SubmitWorkflowData,
-  NSFWLevel,
+  updateWorkflow as clientUpdateWorkflow,
 } from '@civitai/client';
 import { z } from 'zod';
 import { isProd } from '~/env/other';

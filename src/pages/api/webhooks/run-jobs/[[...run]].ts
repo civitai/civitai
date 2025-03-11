@@ -29,8 +29,8 @@ import {
   eventEngineDailyReset,
   eventEngineLeaderboardUpdate,
 } from '~/server/jobs/event-engine-work';
-
 import { fullImageExistence } from '~/server/jobs/full-image-existence';
+import { handleAuctions } from '~/server/jobs/handle-auctions';
 // import { refreshImageGenerationCoverage } from '~/server/jobs/refresh-image-generation-coverage';
 import { ingestImages, removeBlockedImages } from '~/server/jobs/image-ingestion';
 import { imagesCreatedEvents } from '~/server/jobs/images-created-events';
@@ -134,6 +134,7 @@ export const jobs: Job[] = [
   dummyJob,
   retroactiveHashBlocking,
   ...creatorProgramJobs,
+  handleAuctions,
 ];
 
 const log = createLogger('jobs', 'green');

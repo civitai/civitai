@@ -11,7 +11,6 @@ import {
   Title,
   useMantineTheme,
 } from '@mantine/core';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { IconCircleCheck } from '@tabler/icons-react';
 import { z } from 'zod';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
@@ -21,6 +20,7 @@ import { enterFall, jelloVertical } from '~/libs/animations';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { CurrencyConfig } from '~/server/common/constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -71,7 +71,7 @@ export default function ClaimBuzzPage({ id }: { id: string }) {
     },
     onError: (error) => {
       showErrorNotification({
-        title: 'Unable to claim buzz',
+        title: 'Unable to claim Buzz',
         error: new Error(error.message),
       });
     },

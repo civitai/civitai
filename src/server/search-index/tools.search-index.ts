@@ -13,7 +13,7 @@ const MEILISEARCH_DOCUMENT_BATCH_SIZE = 1000;
 const INDEX_ID = TOOLS_SEARCH_INDEX;
 
 const searchableAttributes = ['name', 'domain', 'company', 'description'];
-const sortableAttributes = ['createdAt', 'name'];
+const sortableAttributes = ['createdAt', 'id', 'name'];
 const filterableAttributes = ['id', 'type', 'company'];
 const rankingRules = [
   'supported:desc',

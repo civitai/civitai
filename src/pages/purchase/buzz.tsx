@@ -1,28 +1,28 @@
 import {
-  Container,
-  Stack,
-  Title,
-  Text,
   Alert,
+  Center,
+  Container,
+  Divider,
   Group,
   List,
-  Center,
-  Divider,
   ListProps,
+  Stack,
+  Text,
+  Title,
 } from '@mantine/core';
 import { useRouter } from 'next/router';
-import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
+import React, { useState } from 'react';
 import { z } from 'zod';
 import { BuzzPurchase } from '~/components/Buzz/BuzzPurchase';
-import { enterFall, jelloVertical } from '~/libs/animations';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import React, { useState } from 'react';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { env } from '~/env/client';
+import { enterFall, jelloVertical } from '~/libs/animations';
+import { BUZZ_FEATURE_LIST } from '~/server/common/constants';
+import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 
 export const getServerSideProps = createServerSideProps({
@@ -97,7 +97,7 @@ export default function PurchaseBuzz() {
           Thank you! 🎉
         </Title>
         <Text size="lg" align="center" mb="lg">
-          Your BUZZ has been added to your account and you&rsquo;re ready to start using it!
+          Your Buzz has been added to your account and you&rsquo;re ready to start using it!
         </Text>
         <Divider my="md" />
         <Center>

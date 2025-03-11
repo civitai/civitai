@@ -51,6 +51,7 @@ export function getClient(
   const pool = new Pool({
     connectionString,
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
+    min: 0,
     max: env.DATABASE_POOL_MAX,
     idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
@@ -286,11 +287,11 @@ export const dbKV = {
   },
   set: async function <T>(key: string, value: T) {
     const json = JSON.stringify(value);
-    await dbWrite.$executeRaw`
+    await dbWrite.$executeRawUnsafe(`
       INSERT INTO "KeyValue" ("key", "value")
-      VALUES (${key}, ${json})
+      VALUES ('${key}', '${json}'::jsonb)
       ON CONFLICT ("key")
-      DO UPDATE SET "value" = ${json}
-    `;
+      DO UPDATE SET "value" = '${json}'::jsonb
+    `);
   },
 };

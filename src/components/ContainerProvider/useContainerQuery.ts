@@ -2,8 +2,8 @@ import { MantineNumberSize } from '@mantine/core';
 import { useMediaQuery as useMantineMediaQuery } from '@mantine/hooks';
 import { useCallback } from 'react';
 import {
-  useContainerProviderStore,
   useContainerContext,
+  useContainerProviderStore,
 } from '~/components/ContainerProvider/ContainerProvider';
 import { mantineContainerSizes } from '~/utils/mantine-css-helpers';
 
@@ -22,6 +22,9 @@ export function useContainerQuery({
       (state) => {
         const { inlineSize = nodeRef.current?.offsetWidth ?? 0 } =
           state[context.containerName] ?? {};
+
+        // otherwise, this will return true at first
+        if (inlineSize === 0) return false;
 
         if (type === 'max-width') return size > inlineSize;
         else return size <= inlineSize;

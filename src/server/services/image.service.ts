@@ -371,10 +371,23 @@ export const moderateImages = async ({
       tagIds.push(...blockedTags.map((x) => x.id));
     }
 
-    await dbWrite.tagsOnImage.updateMany({
-      where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true, disabledAt: new Date(), needsReview: false },
-    });
+    // TODO.TagsOnImage - remove this after the migration
+    const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+      UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+      WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
+      RETURNING "imageId", "tagId";
+    `;
+
+    await dbWrite.$queryRaw`
+      WITH to_insert AS (
+        SELECT
+          (value ->> 'imageId')::int as "imageId",
+          (value ->> 'tagId')::int as "tagId"
+        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
+      )
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+      FROM to_insert;
+    `;
 
     // Resolve any pending appeals
     await resolveEntityAppeal({
@@ -466,10 +479,23 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   `;
   if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
 
-  await dbWrite.tagsOnImage.updateMany({
-    where: { imageId: images[0].id, disabledAt: { not: null } },
-    data: { disabled: false, disabledAt: null },
-  });
+  // TODO.TagsOnImage - remove this after the migration
+  const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+    WHERE "imageId" = ${images[0].id} AND "disabledAt" IS NOT NULL
+    RETURNING "imageId", "tagId";
+  `;
+
+  await dbWrite.$queryRaw`
+    WITH to_insert AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements(${JSON.stringify(results)}::json)
+    )
+    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, false)
+    FROM to_insert;
+  `;
 
   return await ingestImage({ image: images[0] });
 };
@@ -1006,21 +1032,21 @@ export const getAllImages = async (
     orderBy = `i."index"`;
   } else {
     // Sort by selected sort
-    if (sort === ImageSort.MostComments) {
-      orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."commentCount" > 0`);
-    } else if (sort === ImageSort.MostReactions) {
-      orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."reactionCount" > 0`);
-    } else if (sort === ImageSort.MostCollected) {
-      orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
-    }
+    // if (sort === ImageSort.MostComments) {
+    //   orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."commentCount" > 0`);
+    // } else if (sort === ImageSort.MostReactions) {
+    //   orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."reactionCount" > 0`);
+    // } else if (sort === ImageSort.MostCollected) {
+    //   orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
+    // }
     // else if (sort === ImageSort.MostTipped) {
     //   orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
     //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     // }
-    else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
+    if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {
     //   orderBy = 'i."sortAt" ASC';
@@ -1029,7 +1055,7 @@ export const getAllImages = async (
     //   orderBy = 'i."sortAt" DESC';
     //   AND.push(Prisma.sql`i."sortAt" <= now()`);
     // }
-    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
+    else if (sort === ImageSort.Oldest) orderBy = `i."id" ASC`;
     else {
       if (from.indexOf(`irr`) !== -1) {
         // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
@@ -1242,6 +1268,10 @@ export const getAllImages = async (
       ${Prisma.raw(skip ? `OFFSET ${skip}` : '')}
       LIMIT ${limit + 1}
   `;
+
+  console.log('----------------');
+  console.log(orderBy);
+  console.log('----------------');
 
   // Disable Prisma query
   // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
@@ -3911,8 +3941,18 @@ async function removeNameReference(images: number[]) {
     `;
 
     // Remove tags
+    // TODO.TagsOnImage - remove this after the migration
     await dbWrite.$executeRaw`
       DELETE FROM "TagsOnImage" toi
+      USING "TagsOnTags" tot
+      WHERE toi."imageId" IN (${Prisma.join(images)})
+        AND toi."tagId" = tot."toTagId"
+        AND tot."fromTagId" IN (SELECT id FROM "Tag" WHERE name = 'real person');
+    `;
+
+    // Remove tags
+    await dbWrite.$executeRaw`
+      DELETE FROM "TagsOnImageNew" toi
       USING "TagsOnTags" tot
       WHERE toi."imageId" IN (${Prisma.join(images)})
         AND toi."tagId" = tot."toTagId"
@@ -3967,7 +4007,9 @@ export async function updateImageNsfwLevel({
   if (!nsfwLevel) throw throwBadRequestError();
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
-    await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
+    // Commenting this out should solve the problem.
+    // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     if (status) {
       await dbWrite.imageRatingRequest.updateMany({
         where: { imageId: id, status: 'Pending' },
@@ -4717,7 +4759,10 @@ export async function createImageResources({
     resources.filter((x) => x.modelversionid),
     'modelversionid'
   );
-  const resourcesWithoutModelVersions = resources.filter((x) => !x.modelversionid);
+  const resourcesWithoutModelVersions = uniqBy(
+    resources.filter((x) => !x.modelversionid),
+    'name'
+  );
 
   const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
     (r) => Prisma.sql`

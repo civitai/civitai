@@ -29,10 +29,10 @@ const test = [1183765, 164821];
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
-    const modelVersions = await getResourceData({
-      ids: [1182093],
-      user: session?.user,
-    });
+    // const modelVersions = await getResourceData({
+    //   ids: [1182093],
+    //   user: session?.user,
+    // });
     // const modelVersions = await dbRead.$queryRaw`
     //   SELECT
     //     mv."id",
@@ -70,8 +70,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   entityId: 10936,
     //   entityType: 'article',
     // });
+    const data = await dbRead.tagsOnImage.findMany({ where: { imageId: 150224 } });
 
-    res.status(200).send(modelVersions);
+    res.status(200).send(data);
   } catch (e) {
     console.log(e);
     res.status(400).end();

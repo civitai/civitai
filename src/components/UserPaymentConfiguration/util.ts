@@ -4,12 +4,11 @@ import { GetTipaltiDashbordUrlSchema } from '~/server/schema/user-payment-config
 import { trpc } from '~/utils/trpc';
 
 export const useUserPaymentConfiguration = () => {
-  const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const { data: userPaymentConfiguration, isLoading } = trpc.userPaymentConfiguration.get.useQuery(
     undefined,
     {
-      enabled: !!features.creatorsProgram && !!currentUser,
+      enabled: !!currentUser,
     }
   );
 

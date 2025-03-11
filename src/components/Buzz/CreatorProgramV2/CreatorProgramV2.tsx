@@ -40,13 +40,14 @@ import {
   useWithdrawalHistory,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import {
+  CreatorProgramCapsInfoModal,
   openCompensationPoolModal,
   openCreatorScoreModal,
   openEarningEstimateModal,
   openExtractionFeeModal,
   openPhasesModal,
   openSettlementModal,
-  openWithdrawalFreeModal,
+  openWithdrawalFeeModal,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -72,9 +73,10 @@ import {
   CAP_DEFINITIONS,
   MIN_CAP,
   MIN_WITHDRAWAL_AMOUNT,
+  WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { CashWithdrawalMethod, Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, roundMinutes } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import {
@@ -534,7 +536,7 @@ const EstimatedEarningsCard = () => {
                     td="underline"
                     onClick={() => {
                       dialogStore.trigger({
-                        component: CreatorProgramCapsInfo,
+                        component: CreatorProgramCapsInfoModal,
                       });
                     }}
                   >
@@ -630,126 +632,6 @@ export const CreatorProgramPhase = () => {
   );
 };
 
-const CreatorProgramCapsInfo = () => {
-  const { banked, isLoading } = useBankedBuzz();
-  const dialog = useDialogContext();
-
-  if (isLoading || !banked) {
-    return null;
-  }
-
-  const nextCap = CAP_DEFINITIONS.find(
-    (c) =>
-      (!c.limit ||
-        banked.cap.cap < banked.cap.peakEarning.earned * (c.percentOfPeakEarning ?? 1)) &&
-      c.tier !== banked.cap.definition.tier &&
-      !c.hidden
-  );
-
-  const potentialEarnings =
-    nextCap && banked.cap.peakEarning.earned * (nextCap.percentOfPeakEarning ?? 1);
-
-  return (
-    <Modal {...dialog} size="lg" radius="md" withCloseButton={false}>
-      <div className="flex flex-col gap-4">
-        <p className="text-center text-lg font-bold">Creator Banking Caps</p>
-        <p>
-          Every creator in the program has a Cap to the amount of Buzz they can Bank in a month.
-          Caps align with membership tiers as outlined below.
-        </p>
-
-        <Table className="table-auto">
-          <thead>
-            <tr>
-              <th>Tier</th>
-              <th>Cap</th>
-            </tr>
-          </thead>
-          <tbody>
-            {CAP_DEFINITIONS.map((cap) => {
-              if (cap.hidden) {
-                return null;
-              }
-
-              return (
-                <tr key={cap.tier}>
-                  <td className="font-bold">{capitalize(cap.tier)} Member</td>
-                  <td>
-                    <p>
-                      {cap.percentOfPeakEarning
-                        ? `${cap.percentOfPeakEarning * 100}% of your Peak Earning Month with `
-                        : ''}
-
-                      {!cap.limit ? (
-                        'no cap'
-                      ) : cap.percentOfPeakEarning ? (
-                        <span>
-                          a <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-                          {abbreviateNumber(cap.limit)} cap
-                        </span>
-                      ) : (
-                        <span>
-                          <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-                          {abbreviateNumber(cap.limit)}
-                        </span>
-                      )}
-                    </p>
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </Table>
-
-        <div className="flex flex-col">
-          <p>
-            <span className="font-bold">Tier:</span> {capitalize(banked.cap.definition.tier)} Member
-          </p>
-          <p>
-            <span className="font-bold">Peak Earning Month:</span>{' '}
-            <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-            {abbreviateNumber(banked.cap.peakEarning.earned)}{' '}
-            <span className="opacity-50">
-              ({formatDate(banked.cap.peakEarning.month, 'MMM YYYY')})
-            </span>
-          </p>
-          <p>
-            <span className="font-bold">Tier Cap:</span>{' '}
-            <CurrencyIcon currency={Currency.BUZZ} className="inline" />
-            {banked.cap.definition.limit ? numberWithCommas(banked.cap.definition.limit) : 'No Cap'}
-          </p>
-          <p className="font-bold">
-            Your Cap: <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
-            {numberWithCommas(banked.cap.cap)}
-          </p>
-
-          {banked.cap.cap <= MIN_CAP && (
-            <p className="text-sm opacity-50">
-              All members have a minimum cap of{' '}
-              <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
-              {abbreviateNumber(MIN_CAP)}
-            </p>
-          )}
-        </div>
-
-        {nextCap && (
-          <p>
-            You could increase your cap to{' '}
-            <CurrencyIcon currency={Currency.BUZZ} className="inline" />{' '}
-            {numberWithCommas(potentialEarnings)} by upgrading to a {capitalize(nextCap.tier)}{' '}
-            Membership.{' '}
-            <Anchor className="text-nowrap" href="/pricing" onClick={dialog.onClose}>
-              Upgrade Now
-            </Anchor>
-          </p>
-        )}
-
-        <Button onClick={dialog.onClose}>Close</Button>
-      </div>
-    </Modal>
-  );
-};
-
 const WithdrawCashCard = () => {
   const { userCash, isLoading: isLoadingCash } = useUserCash();
   const { withdrawCash, withdrawingCash } = useCreatorProgramMutate();
@@ -759,6 +641,10 @@ const WithdrawCashCard = () => {
   const [toWithdraw, setToWithdraw] = React.useState<number>(MIN_WITHDRAWAL_AMOUNT);
 
   const isLoading = isLoadingCash || isLoadingPaymentConfiguration;
+  const withdrawalMethodSetup = userPaymentConfiguration?.tipaltiWithdrawalMethod;
+  const unsupportedWithdrawalMethod = withdrawalMethodSetup
+    ? !WITHDRAWAL_FEES[userPaymentConfiguration.tipaltiWithdrawalMethod as CashWithdrawalMethod]
+    : false;
 
   useEffect(() => {
     if (userCash && userCash.ready) {
@@ -929,7 +815,10 @@ const WithdrawCashCard = () => {
                   h="100%"
                   loading={withdrawingCash}
                   disabled={
-                    toWithdraw < MIN_WITHDRAWAL_AMOUNT || toWithdraw > (userCash?.ready ?? 0)
+                    toWithdraw < MIN_WITHDRAWAL_AMOUNT ||
+                    toWithdraw > (userCash?.ready ?? 0) ||
+                    unsupportedWithdrawalMethod ||
+                    !withdrawalMethodSetup
                   }
                   onClick={() => {
                     dialogStore.trigger({
@@ -954,6 +843,22 @@ const WithdrawCashCard = () => {
                   <IconBuildingBank size={24} />
                 </ActionIcon>
               </Tooltip>
+              {!withdrawalMethodSetup && (
+                <Alert color="red" className="mt-auto p-2">
+                  <p>
+                    It does not seem your withdrawal method has been setup. Please go into your
+                    withdrawal method settings to configure.
+                  </p>
+                </Alert>
+              )}
+              {unsupportedWithdrawalMethod && (
+                <Alert color="red" className="mt-auto p-2">
+                  <p>
+                    Your current withdrawal method is not supported. Please update your withdrawal
+                    method in your Tipalti configuration to one of our supported methods.
+                  </p>
+                </Alert>
+              )}
             </div>
             {userCash?.withdrawalFee && (
               <div className="flex gap-2">
@@ -963,7 +868,7 @@ const WithdrawCashCard = () => {
                     ? formatCurrencyForDisplay(userCash?.withdrawalFee.amount)
                     : formatCurrencyForDisplay(toWithdraw * userCash?.withdrawalFee.amount)}
                 </p>
-                <ActionIcon onClick={openWithdrawalFreeModal}>
+                <ActionIcon onClick={openWithdrawalFeeModal}>
                   <IconInfoCircle size={14} />
                 </ActionIcon>
               </div>
@@ -1004,7 +909,7 @@ const WithdrawalHistoryModal = () => {
                 <tbody>
                   {withdrawalHistory?.map((withdrawal) => (
                     <tr key={withdrawal.id}>
-                      <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA [UTC]', true)}</td>
+                      <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA z')}</td>
                       <td>
                         <div className="flex items-center gap-2">
                           <span>${formatCurrencyForDisplay(withdrawal.amount)}</span>
@@ -1020,7 +925,7 @@ const WithdrawalHistoryModal = () => {
                       </td>
                       <td>
                         <div className="flex items-center gap-2">
-                          <span>{capitalize(withdrawal.status)}</span>
+                          <span>{getDisplayName(withdrawal.status)}</span>
                           {withdrawal.note && (
                             <Tooltip label={withdrawal.note} position="top">
                               <IconInfoCircle size={14} />

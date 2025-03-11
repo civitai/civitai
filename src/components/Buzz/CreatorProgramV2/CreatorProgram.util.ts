@@ -1,5 +1,4 @@
 import dayjs from 'dayjs';
-import { use } from 'motion/dist/react-m';
 import { useMemo, useState } from 'react';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -42,7 +41,8 @@ export const useBankedBuzz = () => {
 
   return {
     banked: data,
-    isLoading,
+    // No loading without a user.
+    isLoading: isLoading && currentUser,
   };
 };
 
@@ -160,7 +160,7 @@ export const useCreatorProgramMutate = () => {
       });
     },
     onError(error) {
-      handleTRPCError(error, 'Failed to bank your buzz.');
+      handleTRPCError(error, 'Failed to bank your Buzz.');
     },
   });
   const withdrawCashMutation = trpc.creatorProgram.withdrawCash.useMutation({
@@ -187,7 +187,7 @@ export const useCreatorProgramMutate = () => {
       });
     },
     onError(error) {
-      handleTRPCError(error, 'Failed to extract your buzz.');
+      handleTRPCError(error, 'Failed to extract your Buzz.');
     },
   });
 
