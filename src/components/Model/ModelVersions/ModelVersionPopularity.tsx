@@ -11,37 +11,37 @@ export const featureInfo = {
 const popularityInfoMap = {
   '0.0': {
     name: 'Dormant',
-    description: 'Not being used',
+    description: 'Not currently being used for generation',
     markup: 0.4,
   },
   '0.1': {
     name: 'Quiet',
-    description: 'Very low engagement',
+    description: 'Very low generation engagement',
     markup: 0.3,
   },
   '0.2': {
     name: 'Underground Hit',
-    description: 'Some activity, but not frequent',
+    description: 'Some generation activity, but not frequent',
     markup: 0.2,
   },
   '0.3': {
     name: 'Getting Hype',
-    description: 'Consistently used at a moderate level',
+    description: 'Consistently generated with at a moderate level',
     markup: 0.1,
   },
   '0.4': {
     name: 'Taking Off',
-    description: 'Frequently used, growing demand',
+    description: 'Frequently generated with, growing demand',
     markup: 0.0,
   },
   '0.6': {
     name: 'Crushing It',
-    description: 'Strong demand, many users',
+    description: 'Strong generation demand, many users',
     markup: -0.1,
   },
   '0.8': {
     name: 'Buzzing!',
-    description: 'Extremely high usage, peak demand',
+    description: 'Extremely high generation usage, peak demand',
     markup: -0.2,
   },
 } as const;
