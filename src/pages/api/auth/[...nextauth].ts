@@ -420,14 +420,15 @@ async function sendVerificationRequest({
     throw new Error(`Email domain ${emailDomain} is not allowed`);
   }
 
-  if (await emailLimiter.hasExceededLimit(to)) {
-    const limitHitTime = await emailLimiter.getLimitHitTime(to);
-    let message = 'Too many verification emails sent to this address';
-    if (limitHitTime)
-      message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
-    throw new Error(message);
-  }
+  //Temporarily disabling; Redis not creating the counters
+  // if (await emailLimiter.hasExceededLimit(to)) {
+  //   const limitHitTime = await emailLimiter.getLimitHitTime(to);
+  //   let message = 'Too many verification emails sent to this address';
+  //   if (limitHitTime)
+  //     message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
+  //   throw new Error(message);
+  // }
 
   await verificationEmail.send({ to, url, theme });
-  await emailLimiter.increment(to);
+  // await emailLimiter.increment(to);
 }
