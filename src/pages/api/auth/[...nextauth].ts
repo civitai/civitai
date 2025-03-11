@@ -19,6 +19,7 @@ import { CacheTTL, getRequestDomainColor } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
+import { logToAxiom } from '~/server/logging/client';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
@@ -422,7 +423,13 @@ async function sendVerificationRequest({
   try {
     await verificationEmail.send({ to, url, theme });
     await emailLimiter.increment(to).catch(() => null);
-  } catch {
+  } catch (error) {
+    logToAxiom({
+      name: 'verification-email',
+      type: 'error',
+      message: 'Failed to send verification email',
+      error,
+    });
     throw new Error('Failed to send verification email');
   }
 }
