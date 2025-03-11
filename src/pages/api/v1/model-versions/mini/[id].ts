@@ -22,6 +22,7 @@ type VersionRow = {
   id: number;
   versionName: string;
   availability: Availability;
+  publishedAt: Date | null;
   modelId: number;
   modelName: string;
   baseModel: BaseModel;
@@ -69,6 +70,7 @@ export default MixedAuthEndpoint(async function handler(
       mv."baseModel",
       mv.status,
       mv.availability,
+      mv."publishedAt",
       m.type,
       m.minor,
       mv."earlyAccessEndsAt",
@@ -194,6 +196,7 @@ export default MixedAuthEndpoint(async function handler(
     modelName: modelVersion.modelName,
     baseModel: modelVersion.baseModel,
     availability: modelVersion.availability,
+    publishedAt: modelVersion.publishedAt,
     size: primaryFile.sizeKB, // nullable
     // nullable - hashes
     hashes: {
