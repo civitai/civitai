@@ -118,7 +118,7 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
         needsReview: x.needsReview,
       }));
 
-      await dbWrite.$queryRawUnsafe(`
+      await dbWrite.$queryRaw`
         WITH to_update AS (
           SELECT
             (value ->> 'imageId')::int as "imageId",
@@ -131,7 +131,7 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
         )
         SELECT upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", null, "needsReview")
         FROM to_update;
-      `);
+      `;
     };
   }, 3);
 }
