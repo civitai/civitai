@@ -240,7 +240,7 @@ export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
   allowAds: z.boolean().optional(),
-  tour: tourSettingsSchema.optional(),
+  tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
 });

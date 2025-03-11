@@ -383,7 +383,7 @@ async function handleSuccess({
           disabled: shouldIgnore(x.tag, x.source ?? source),
         }));
 
-      await dbWrite.$queryRawUnsafe(`
+      await dbWrite.$queryRaw`
         WITH to_insert AS (
           SELECT
             (value ->> 'imageId')::int as "imageId",
@@ -396,7 +396,7 @@ async function handleSuccess({
         )
         SELECT upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", "disabled")
         FROM to_insert
-      `);
+      `;
     } else {
       logToAxiom({ type: 'image-scan-result', message: 'No tags found', imageId: id, source });
     }
