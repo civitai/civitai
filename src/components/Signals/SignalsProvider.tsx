@@ -63,7 +63,6 @@ export const useSignalTopic = (
   topic: `${SignalTopic}${'' | `:${number}`}` | undefined,
   notify?: boolean
 ) => {
-  // TODO
   const { worker, registeredTopics, setRegisteredTopics } = useSignalContext();
 
   const interval = useInterval(() => {

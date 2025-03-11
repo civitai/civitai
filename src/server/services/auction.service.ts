@@ -338,6 +338,7 @@ export const createBid = async ({
           ...auctionSelect.bids.select,
           id: true,
           transactionIds: true,
+          // userId: true,
         },
       },
     },
@@ -407,18 +408,16 @@ export const createBid = async ({
     throw throwBadRequestError('Could not complete transaction');
   }
 
-  // // For notifications...
-  // const allBids = await dbWrite.bid.findMany({
-  //   where: {
-  //     auctionId,
-  //     deleted: false,
-  //   },
-  //   select: auctionSelect.bids.select,
+  // For notifications...
+  // const previousBidsSorted = prepareBids(auctionData).filter(
+  //   (w) => w.totalAmount >= auctionData.minPrice
+  // );
+  // const previousWinners = previousBidsSorted.map((pb) => {
+  //   const matchUserIds = auctionData.bids
+  //     .filter((b) => b.entityId === pb.entityId)
+  //     .map((b) => b.userId);
+  //   return { ...pb, userIds: matchUserIds };
   // });
-  // const previousWinners = prepareBids({
-  //   quantity: auctionData.quantity,
-  //   bids: allBids,
-  // }).filter((w) => w.totalAmount >= auctionData.minPrice)
 
   if (auctionData.bids?.length > 0) {
     // if there already exists a bid, either add to it or remove the deleted status
@@ -509,6 +508,15 @@ export const createBid = async ({
 
   // TODO fetch the entity that was knocked out (if any)
   //  get all the bids userIds
+
+  // const currentBidsSorted = prepareBids(signalData);
+  // const currentWinners = currentBidsSorted.map((pb) => {
+  //   const matchUserIds = auctionData.bids
+  //     .filter((b) => b.entityId === pb.entityId)
+  //     .map((b) => b.userId);
+  //   return { ...pb, userIds: matchUserIds };
+  // });
+  // const losers = previousWinners.filter((w) => !currentWinners.find((pw) => pw.entityId === w.entityId));
 
   // await createNotification({
   //   userIds: loser.userIds,
