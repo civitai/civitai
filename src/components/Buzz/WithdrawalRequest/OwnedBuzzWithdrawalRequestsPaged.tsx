@@ -1,4 +1,5 @@
 import {
+  Badge,
   Button,
   Center,
   Divider,
@@ -12,33 +13,30 @@ import {
   Text,
   ThemeIcon,
   Title,
-  Badge,
 } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
+import { openConfirmModal } from '@mantine/modals';
+import { IconCloudOff } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
 import React, { useEffect, useState } from 'react';
+import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
+import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
+import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
+import { BuzzWithdrawalRequestStatus, Currency } from '~/shared/utils/prisma/enums';
+import { showSuccessNotification } from '~/utils/notifications';
 import { GetPaginatedOwnedBuzzWithdrawalRequestSchema } from '../../../server/schema/buzz-withdrawal-request.schema';
-import {
-  useMutateBuzzWithdrawalRequest,
-  useQueryOwnedBuzzWithdrawalRequests,
-} from '../WithdrawalRequest/buzzWithdrawalRequest.util';
 import { formatDate } from '../../../utils/date-helpers';
 import {
   formatCurrencyForDisplay,
   getBuzzWithdrawalDetails,
   numberWithCommas,
 } from '../../../utils/number-helpers';
-import { WithdrawalRequestBadgeColor, useBuzzDashboardStyles } from '../buzz.styles';
-import { IconCloudOff } from '@tabler/icons-react';
-import { dialogStore } from '~/components/Dialog/dialogStore';
-import { CreateWithdrawalRequest } from '~/components/Buzz/WithdrawalRequest/CreateWithdrawalRequest';
-import { BuzzWithdrawalRequestStatus, Currency } from '~/shared/utils/prisma/enums';
-import { openConfirmModal } from '@mantine/modals';
-import { showSuccessNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
-import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
-import { StripeConnectStatus } from '~/server/common/enums';
-import BuzzWithdrawalRequestHistory from '~/components/Buzz/WithdrawalRequest/BuzzWithdrawalRequestHistory';
+import { useBuzzDashboardStyles, WithdrawalRequestBadgeColor } from '../buzz.styles';
+import {
+  useMutateBuzzWithdrawalRequest,
+  useQueryOwnedBuzzWithdrawalRequests,
+} from '../WithdrawalRequest/buzzWithdrawalRequest.util';
 
 export function OwnedBuzzWithdrawalRequestsPaged() {
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
@@ -74,7 +72,7 @@ export function OwnedBuzzWithdrawalRequestsPaged() {
         await cancelBuzzWithdrawalRequest({ id });
         showSuccessNotification({
           title: 'Withdrawal request canceled',
-          message: 'Withdrawal request has been canceled successfully and buzz has been refunded.',
+          message: 'Withdrawal request has been canceled successfully and Buzz has been refunded.',
         });
       },
     });

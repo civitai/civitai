@@ -1,16 +1,14 @@
-import { Paper, createStyles, Text, Stack, Group } from '@mantine/core';
-import { IconBolt } from '@tabler/icons-react';
+import { createStyles, Group, Paper, Stack, Text } from '@mantine/core';
 import { capitalize } from 'lodash-es';
 import { useUserMultipliers } from '~/components/Buzz/useBuzz';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import { getPlanDetails } from '~/components/Subscriptions/PlanCard';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { trpc } from '~/utils/trpc';
 
 const useStyles = createStyles((theme) => ({
   card: {
@@ -92,7 +90,7 @@ export const BuzzPurchaseMultiplierFeature = ({ buzzAmount }: { buzzAmount: numb
       subtitle={`As a ${capitalize(metadata.tier)} member you get ${(
         (purchasesMultiplier - 1) *
         100
-      ).toFixed(0)}% bonus buzz on each purchase.`}
+      ).toFixed(0)}% bonus Buzz on each purchase.`}
     />
   );
 };

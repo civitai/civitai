@@ -1,28 +1,28 @@
-import { ActionIcon, Tooltip, MantineNumberSize, Button, Checkbox } from '@mantine/core';
+import { ActionIcon, Button, Checkbox, MantineNumberSize, Tooltip } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconDownload, IconTrash } from '@tabler/icons-react';
+import { uniqBy } from 'lodash-es';
 import { useRouter } from 'next/router';
+import pLimit from 'p-limit';
+import { useState } from 'react';
+import { SortFilter } from '~/components/Filters';
+import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
 import { orchestratorImageSelect } from '~/components/ImageGeneration/utils/generationImage.select';
 import {
+  UpdateImageStepMetadataArgs,
   useGetTextToImageRequests,
   useUpdateImageStepMetadata,
-  UpdateImageStepMetadataArgs,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
+import { useTourContext } from '~/components/Tours/ToursProvider';
+import { constants } from '~/server/common/constants';
 import { generationPanel } from '~/store/generation.store';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
-import { trpc } from '~/utils/trpc';
-import { showErrorNotification } from '~/utils/notifications';
-import { isDefined } from '~/utils/type-guards';
-import { constants } from '~/server/common/constants';
 import { fetchBlob } from '~/utils/file-utils';
-import { uniqBy } from 'lodash-es';
-import { useState } from 'react';
-import pLimit from 'p-limit';
 import { getJSZip } from '~/utils/lazy';
-import { SortFilter } from '~/components/Filters';
-import { useTourContext } from '~/components/Tours/ToursProvider';
+import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
+import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -224,7 +224,7 @@ export function GeneratedImageActions({
               <IconTrash size={iconSize} />
             </ActionIcon>
           </Tooltip>
-          <Tooltip label="Post your generations to earn buzz!">
+          <Tooltip label="Post your generations to earn Buzz!">
             <Button
               data-tour="gen:post"
               color="blue"

@@ -105,7 +105,7 @@ export const CreateWithdrawalRequest = () => {
               <Stack>
                 <Group spacing="xs">
                   <IconMoodDollar />
-                  <Text weight="bold">Enter buzz amount</Text>
+                  <Text weight="bold">Enter Buzz amount</Text>
                 </Group>
                 <Stack>
                   <InputNumber

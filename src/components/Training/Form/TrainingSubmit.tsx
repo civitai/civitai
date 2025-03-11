@@ -118,7 +118,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     message: (requiredBalance) =>
       `You don't have enough funds to train this model. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to complete the training process.`,
+      )}. Buy or earn more Buzz to complete the training process.`,
     performTransactionOnPurchase: false,
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>
