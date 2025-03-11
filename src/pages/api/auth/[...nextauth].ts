@@ -131,6 +131,11 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           else return false;
         }
 
+        if (email?.verificationRequest && account && account.provider === 'email') {
+          const canSignIn = await isAllowedToSignIn({ email: account.providerAccountId });
+          return canSignIn;
+        }
+
         return true;
       },
       async jwt({ token, user, trigger }) {
@@ -414,21 +419,32 @@ async function sendVerificationRequest({
   url,
   theme,
 }: SendVerificationRequestParams) {
-  const emailDomain = to.split('@')[1];
-  const blockedDomains = await getBlockedEmailDomains();
-  if (blockedDomains.includes(emailDomain)) {
-    throw new Error(`Email domain ${emailDomain} is not allowed`);
+  try {
+    await verificationEmail.send({ to, url, theme });
+    await emailLimiter.increment(to).catch(() => null);
+  } catch {
+    throw new Error('Failed to send verification email');
+  }
+}
+
+async function isAllowedToSignIn({ email }: { email: string }) {
+  try {
+    const emailDomain = email.split('@')[1];
+    const blockedDomains = await getBlockedEmailDomains();
+    if (blockedDomains.includes(emailDomain)) {
+      throw new Error(`Email domain ${emailDomain} is not allowed`);
+    }
+
+    if (await emailLimiter.hasExceededLimit(email)) {
+      const limitHitTime = await emailLimiter.getLimitHitTime(email);
+      let message = 'Too many verification emails sent to this address';
+      if (limitHitTime)
+        message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
+      throw new Error(message);
+    }
+  } catch (error) {
+    throw error;
   }
 
-  //Temporarily disabling; Redis not creating the counters
-  // if (await emailLimiter.hasExceededLimit(to)) {
-  //   const limitHitTime = await emailLimiter.getLimitHitTime(to);
-  //   let message = 'Too many verification emails sent to this address';
-  //   if (limitHitTime)
-  //     message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
-  //   throw new Error(message);
-  // }
-
-  await verificationEmail.send({ to, url, theme });
-  // await emailLimiter.increment(to);
+  return true;
 }
