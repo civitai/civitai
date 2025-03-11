@@ -454,7 +454,7 @@ export const REDIS_KEYS = {
       MODEL_VERSIONS: 'packed:caches:entity-availability:model-versions',
     },
     OVERVIEW_USERS: 'packed:caches:overview-users',
-    FEATURED_MODELS: 'packed:featured-models2',
+    FEATURED_MODELS: 'packed:featured-models3',
     IMAGE_META: 'packed:caches:image-meta',
     IMAGE_METADATA: 'packed:caches:image-metadata',
     ANNOUNCEMENTS: 'packed:caches:announcement',
@@ -462,6 +462,7 @@ export const REDIS_KEYS = {
     IMAGE_METRICS: 'packed:caches:image-metrics',
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
+    MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

@@ -1,10 +1,4 @@
 import { Prisma } from '@prisma/client';
-import {
-  CollectionType,
-  CosmeticType,
-  MediaType,
-  MetricTimeframe,
-} from '~/shared/utils/prisma/enums';
 import { ImageSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -29,6 +23,12 @@ import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { createEntityImages, getAllImages } from '~/server/services/image.service';
 import { withRetries } from '~/server/utils/errorHandling';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
+import {
+  CollectionType,
+  CosmeticType,
+  MediaType,
+  MetricTimeframe,
+} from '~/shared/utils/prisma/enums';
 
 export const getShopItemById = async ({ id }: GetByIdInput) => {
   return dbRead.cosmeticShopItem.findUniqueOrThrow({
@@ -524,6 +524,11 @@ export const purchaseCosmeticShopItem = async ({
     description: `Cosmetic purchase - ${shopItem.title}`,
   });
 
+  const transactionId = transaction.transactionId;
+  if (!transactionId) {
+    throw new Error('There was an error creating the transaction');
+  }
+
   try {
     const data = await dbWrite.$transaction(async (tx) => {
       // Create purchase:
@@ -533,7 +538,7 @@ export const purchaseCosmeticShopItem = async ({
           cosmeticId: shopItem.cosmeticId,
           shopItemId,
           unitAmount: shopItem.unitAmount,
-          buzzTransactionId: transaction.transactionId,
+          buzzTransactionId: transactionId,
           refunded: false,
         },
       });
@@ -543,7 +548,7 @@ export const purchaseCosmeticShopItem = async ({
         data: {
           userId,
           cosmeticId: shopItem.cosmeticId,
-          claimKey: transaction.transactionId,
+          claimKey: transactionId,
         },
       });
 
@@ -578,7 +583,7 @@ export const purchaseCosmeticShopItem = async ({
                 amount: amountPerUser,
                 type: TransactionType.Sell,
                 description: `A user has purchased your cosmetic - ${shopItem.title}`,
-                externalTransactionId: transaction.transactionId,
+                externalTransactionId: transactionId,
                 details: {
                   purchasedBy: userId,
                   originalAmount: shopItem.unitAmount,

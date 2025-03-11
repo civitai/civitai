@@ -3,7 +3,7 @@ import { chunk } from 'lodash-es';
 import { createClient } from 'redis';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
-import { redis, REDIS_KEYS, RedisKeyTemplateCache, RedisKeyTemplates } from '~/server/redis/client';
+import { redis, REDIS_KEYS, RedisKeyTemplateCache } from '~/server/redis/client';
 import { sleep } from '~/server/utils/concurrency-helpers';
 import { createLogger } from '~/utils/logging';
 import { hashifyObject } from '~/utils/string-helpers';
@@ -73,7 +73,7 @@ export function createCachedArray<T extends object>({
   staleWhileRevalidate = true,
 }: CachedLookupOptions<T>) {
   async function fetch(ids: number[]) {
-    if (!ids.length) return [];
+    if (!ids.length) return [] as T[];
     const results = new Set<T>();
     const cacheResults: T[] = [];
     for (const batch of chunk(ids, 200)) {

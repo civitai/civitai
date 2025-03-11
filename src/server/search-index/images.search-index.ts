@@ -45,6 +45,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   const searchableAttributes: SearchableAttributes = ['prompt', 'tagNames', 'user.username'];
 
   const sortableAttributes: SortableAttributes = [
+    'id',
     'sortAt',
     'stats.commentCountAllTime',
     'stats.reactionCountAllTime',
@@ -53,6 +54,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   ];
 
   const filterableAttributes: FilterableAttributes = [
+    'id',
     'createdAtUnix',
     'tagNames',
     'user.username',
@@ -401,28 +403,28 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
       const images = (result.images as BaseImage[]).filter((i) => batch.includes(i.id));
 
       // Metrics:
-      if (step === 1) {
-        logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
-        const metrics = await db.$queryRaw<Metrics[]>`
-          SELECT
-            im."imageId" as id,
-            im."collectedCount" as "collectedCount",
-            im."reactionCount" as "reactionCount",
-            im."commentCount" as "commentCount",
-            im."likeCount" as "likeCount",
-            im."cryCount" as "cryCount",
-            im."laughCount" as "laughCount",
-            im."tippedAmountCount" as "tippedAmountCount",
-            im."heartCount" as "heartCount"
-          FROM "ImageMetric" im
-          WHERE im."imageId" IN (${Prisma.join(batch)})
-            AND im."timeframe" = 'AllTime'::"MetricTimeframe"
-      `;
+      // if (step === 1) {
+      //   logger(`Pulling metrics :: ${indexName} ::`, batchLogKey, subBatchLogKey);
+      //   const metrics = await db.$queryRaw<Metrics[]>`
+      //     SELECT
+      //       im."imageId" as id,
+      //       im."collectedCount" as "collectedCount",
+      //       im."reactionCount" as "reactionCount",
+      //       im."commentCount" as "commentCount",
+      //       im."likeCount" as "likeCount",
+      //       im."cryCount" as "cryCount",
+      //       im."laughCount" as "laughCount",
+      //       im."tippedAmountCount" as "tippedAmountCount",
+      //       im."heartCount" as "heartCount"
+      //     FROM "ImageMetric" im
+      //     WHERE im."imageId" IN (${Prisma.join(batch)})
+      //       AND im."timeframe" = 'AllTime'::"MetricTimeframe"
+      // `;
 
-        result.metrics ??= [];
-        result.metrics.push(...(metrics ?? []));
-        continue;
-      }
+      //   result.metrics ??= [];
+      //   result.metrics.push(...(metrics ?? []));
+      //   continue;
+      // }
 
       // Get modelVersionIds
       if (step === 2) {

@@ -9,7 +9,6 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
-import { Currency } from '~/shared/utils/prisma/enums';
 import { IconBolt } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { z } from 'zod';
@@ -19,12 +18,13 @@ import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { createContextModal } from '~/components/Modals/utils/createContextModal';
 import { Form, InputChipGroup, InputNumber, InputTextArea, useForm } from '~/libs/form';
+import { constants } from '~/server/common/constants';
+import { Currency } from '~/shared/utils/prisma/enums';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
-import { constants } from '~/server/common/constants';
 
 const useStyles = createStyles((theme) => ({
   presetCard: {
@@ -151,7 +151,7 @@ const { openModal, Modal } = createContextModal<{
       message: (requiredBalance: number) =>
         `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
           requiredBalance
-        )}. Buy or earn more buzz to perform this action.`,
+        )}. Buy or earn more Buzz to perform this action.`,
       purchaseSuccessMessage: (purchasedBalance) => (
         <Stack>
           <Text>Thank you for your purchase!</Text>
@@ -238,7 +238,7 @@ const { openModal, Modal } = createContextModal<{
           </Group>
         </Group>
         <Divider mx="-lg" />
-        <Text>How much buzz do you want to tip?</Text>
+        <Text>How much Buzz do you want to tip?</Text>
         <Form form={form} onSubmit={handleSubmit} style={{ position: 'static' }}>
           <Stack spacing="md">
             <InputChipGroup className={classes.chipGroup} name="amount" spacing={8}>
@@ -265,7 +265,7 @@ const { openModal, Modal } = createContextModal<{
             {amount === '-1' && (
               <InputNumber
                 name="customAmount"
-                placeholder="Your tip. Minimum 50 BUZZ"
+                placeholder="Your tip. Minimum 50 Buzz"
                 variant="filled"
                 rightSectionWidth="10%"
                 min={1}

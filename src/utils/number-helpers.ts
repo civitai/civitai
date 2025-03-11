@@ -39,6 +39,11 @@ export function asOrdinal(n: number) {
   return n + (suffixes[lastDigit] || 'th');
 }
 
+export function asOrdinalSuffix(n: number) {
+  const val = asOrdinal(n);
+  return val.slice(-2);
+}
+
 export function formatSeconds(seconds: number) {
   if (seconds === 0) return '0 seconds';
 

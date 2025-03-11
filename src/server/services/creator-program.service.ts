@@ -62,6 +62,8 @@ type UserCapCacheItem = {
 export const userCapCache = createCachedObject<UserCapCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CAPS,
   idKey: 'id',
+  dontCacheFn: (data) => !data.cap,
+  cacheNotFound: false,
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 

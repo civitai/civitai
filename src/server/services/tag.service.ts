@@ -484,7 +484,8 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       ON CONFLICT DO NOTHING
     `);
   } else if (entityType === 'image') {
-    await dbWrite.$executeRawUnsafe(`
+    // TODO.TagsOnImage - remove this after the migration
+    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
       INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
       SELECT i."id",
              t."id",
@@ -495,7 +496,18 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled"    = false,
                                                      "needsReview" = false,
                                                      automated     = false
+      RETURNING "tagId", "imageId";
     `);
+    await dbWrite.$queryRaw`
+      WITH to_update AS (
+        SELECT
+          (value ->> 'imageId')::int as "imageId",
+          (value ->> 'tagId')::int as "tagId"
+        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
+      )
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, null, true)
+      FROM to_update;
+  `;
     updateImageNSFWLevels(entityIds);
   } else if (entityType === 'article') {
     await dbWrite.$executeRawUnsafe(`
@@ -601,7 +613,8 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
         }
     `);
   } else if (entityType === 'image') {
-    await dbWrite.$executeRawUnsafe(`
+    // TODO.TagsOnImage - remove this after the migration
+    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
       UPDATE "TagsOnImage"
       SET "disabled"    = true,
           "needsReview" = false,
@@ -612,7 +625,18 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
             ? `AND "tagId" IN (${tagIn})`
             : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
         }
+      RETURNING "tagId", "imageId";
     `);
+    await dbWrite.$queryRaw`
+      WITH to_update AS (
+        SELECT
+          (value ->> 'imageId')::int as "imageId",
+          (value ->> 'tagId')::int as "tagId"
+        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
+      )
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+      FROM to_update;
+  `;
     updateImageNSFWLevels(entityIds);
     await tagIdsForImagesCache.bust(entityIds);
   } else if (entityType === 'tag') {
@@ -639,7 +663,8 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
     //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
     // `);
   } else if (entityType === 'image') {
-    await dbWrite.$executeRawUnsafe(`
+    // TODO.TagsOnImage - remove this after the migration
+    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
       UPDATE "TagsOnImage"
       SET "disabled"    = ${disable},
           "needsReview" = false,
@@ -647,7 +672,19 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
           "disabledAt"  = ${disable ? 'NOW()' : 'null'}
       WHERE "needsReview" = true
         AND "imageId" IN (${entityIds.join(', ')})
+      RETURNING "tagId", "imageId";
     `);
+
+    await dbWrite.$queryRaw`
+      WITH to_update AS (
+        SELECT
+          (value ->> 'imageId')::int as "imageId",
+          (value ->> 'tagId')::int as "tagId"
+        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
+      )
+      SELECT upsert_tag_on_image("imageId", "tagId", null, null, false, ${disable}, false)
+      FROM to_update;
+  `;
 
     // Update nsfw baseline
     if (disable) updateImageNSFWLevels(entityIds);

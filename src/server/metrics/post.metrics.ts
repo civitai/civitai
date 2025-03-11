@@ -7,12 +7,12 @@ import { PostMetric } from '~/shared/utils/prisma/models';
 import dayjs from 'dayjs';
 import { templateHandler } from '~/server/db/db-helpers';
 import { isDefined } from '~/utils/type-guards';
-import { capitalize } from '~/utils/string-helpers';
 import { getJobDate } from '~/server/jobs/job';
+import { capitalize } from '~/utils/string-helpers';
 
 const log = createLogger('metrics:post');
 
-const timePeriods = ['day', 'week', 'month', 'year', 'allTime'] as const;
+const timePeriods = ['now', 'day', 'week', 'month', 'year', 'allTime'] as const;
 
 export const postMetrics = createMetricProcessor({
   name: 'Post',
@@ -91,8 +91,14 @@ export const postMetrics = createMetricProcessor({
       if (timePeriod === 'allTime') continue;
 
       const windowDuration = lastRunStart - ctx.lastUpdate.valueOf();
-      const windowEnd = dayjs(lastRunStart).subtract(1, timePeriod).valueOf();
-      const windowStart = windowEnd - windowDuration;
+      const windowEnd =
+        timePeriod === 'now'
+          ? dayjs(lastRunStart).valueOf()
+          : dayjs(lastRunStart).subtract(1, timePeriod).valueOf();
+      const windowStart =
+        timePeriod === 'now'
+          ? dayjs(windowEnd).subtract(1, 'day').valueOf() - windowDuration
+          : windowEnd - windowDuration;
 
       // Fetch affected posts between the timeframe
       const affectedPostIdsQuery = await ctx.pg.cancellableQuery<{ id: number }>(`

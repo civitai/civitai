@@ -442,7 +442,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
               JOIN "Post" p ON p.id = i."postId"
               JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
               WHERE ir."modelVersionId" = mv.id
-              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0 AND i."nsfwLevel" != 32
               ORDER BY im."reactionCount" DESC
               LIMIT 20
             ) AS ranked
@@ -456,7 +456,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
               JOIN "Image" i ON i."postId" = p.id
               WHERE p."modelVersionId" = mv.id
               AND p."userId" = m."userId"
-              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0 AND i."nsfwLevel" != 32
               ORDER BY p."id", i."index"
               LIMIT 20
             ) AS i

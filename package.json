@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.537",
+  "version": "5.0.546",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -43,7 +43,8 @@
     "test": "cross-env NODE_ENV=development npx playwright test",
     "test:ui": "cross-env NODE_ENV=development npx playwright test --ui",
     "test:gen": "cross-env NODE_ENV=development npx playwright codegen",
-    "test:reset": "make bootstrap-db"
+    "test:reset": "make bootstrap-db",
+    "meilisearch:migrate": "NODE_ENV=development tsx scripts/meilisearch-migration.ts"
   },
   "prisma": {
     "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
@@ -56,7 +57,7 @@
     "@aws-sdk/lib-storage": "^3.490.0",
     "@aws-sdk/s3-request-presigner": "^3.490.0",
     "@axiomhq/axiom-node": "^0.12.0",
-    "@civitai/client": "^0.1.9-beta.22",
+    "@civitai/client": "^0.1.9-beta.23",
     "@civitai/next-axiom": "^0.17.0",
     "@clickhouse/client": "^0.2.2",
     "@cloudamqp/amqp-client": "^2.1.1",
@@ -88,6 +89,7 @@
     "@next-auth/prisma-adapter": "^1.0.7",
     "@next/bundle-analyzer": "^15.0.3",
     "@next/third-parties": "^15.0.3",
+    "@number-flow/react": "^0.5.7",
     "@okikio/sharedworker": "^1.0.4",
     "@paddle/paddle-js": "^1.2.1",
     "@paddle/paddle-node-sdk": "^1.4.1",

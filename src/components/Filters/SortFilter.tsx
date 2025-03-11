@@ -25,6 +25,7 @@ import clsx from 'clsx';
 type SortFilterComponentProps = {
   type: FilterSubTypes;
   ignoreNsfwLevel?: boolean;
+  options?: { label: SortOption; value: SortOption }[];
 } & Omit<ButtonProps, 'children' | 'type'>;
 
 type SortFilterProps = StatefulProps | DumbProps;
@@ -51,39 +52,27 @@ export function SortFilter(props: SortFilterProps) {
   return <StatefulSortFilter {...props} type={props.type} />;
 }
 
+type SortOption =
+  | ModelSort
+  | PostSort
+  | ImageSort
+  | QuestionSort
+  | ArticleSort
+  | CollectionSort
+  | BountySort
+  | ClubSort
+  | GenerationSort
+  | ThreadSort
+  | ToolSort
+  | BuzzWithdrawalRequestSort;
+
 type DumbProps = {
   // Dumb props should work without needing to create a full filter attribute.
-  value:
-    | ModelSort
-    | PostSort
-    | ImageSort
-    | QuestionSort
-    | ArticleSort
-    | CollectionSort
-    | BountySort
-    | ClubSort
-    | GenerationSort
-    | ThreadSort
-    | ToolSort
-    | BuzzWithdrawalRequestSort;
-  onChange: (
-    value:
-      | ModelSort
-      | PostSort
-      | ImageSort
-      | QuestionSort
-      | ArticleSort
-      | CollectionSort
-      | BountySort
-      | ClubSort
-      | GenerationSort
-      | ThreadSort
-      | ToolSort
-      | BuzzWithdrawalRequestSort
-  ) => void;
+  value: SortOption;
+  onChange: (value: SortOption) => void;
 } & SortFilterComponentProps;
 
-function DumbSortFilter({ type, value, onChange, ignoreNsfwLevel, ...props }: DumbProps) {
+function DumbSortFilter({ type, value, onChange, ignoreNsfwLevel, options, ...props }: DumbProps) {
   const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const { canViewNsfw } = useFeatureFlags();
 
@@ -92,17 +81,15 @@ function DumbSortFilter({ type, value, onChange, ignoreNsfwLevel, ...props }: Du
       label={value}
       onClick={onChange}
       value={value}
-      options={sortOptions[type]
-        .map((x) => ({ label: x, value: x }))
-        .filter((x) => {
-          if (ignoreNsfwLevel) return true;
-          if (!canViewNsfw && (x.value === 'Newest' || x.value === 'Oldest')) return false;
-          if (type === 'images') {
-            if (!showNsfw && x.value === 'Newest') return false;
-            return true;
-          }
+      options={(options ?? sortOptions[type].map((x) => ({ label: x, value: x }))).filter((x) => {
+        if (ignoreNsfwLevel) return true;
+        if (!canViewNsfw && (x.value === 'Newest' || x.value === 'Oldest')) return false;
+        if (type === 'images') {
+          if (!showNsfw && x.value === 'Newest') return false;
           return true;
-        })}
+        }
+        return true;
+      })}
       {...props}
     />
   );

@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Avatar,
+  Badge,
   Button,
   Divider,
   Popover,
@@ -9,17 +10,7 @@ import {
   useMantineColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import clsx from 'clsx';
-import {
-  UserMenuItem,
-  useGetActionMenuItems,
-  useGetCreator,
-  useGetMenuItems,
-} from '~/components/AppLayout/AppHeader/hooks';
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { UserBuzz } from '~/components/User/UserBuzz';
+import { useHotkeys } from '@mantine/hooks';
 import {
   IconChevronLeft,
   IconChevronRight,
@@ -30,27 +21,37 @@ import {
   IconSettings,
   IconSun,
 } from '@tabler/icons-react';
+import clsx from 'clsx';
+import { LinkProps } from 'next/link';
+import { useRouter } from 'next/router';
+import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
+import {
+  useGetActionMenuItems,
+  useGetCreator,
+  useGetMenuItems,
+  UserMenuItem,
+} from '~/components/AppLayout/AppHeader/hooks';
+import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
+import { Burger } from '~/components/Burger/Burger';
+import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 import {
   type CivitaiAccount,
   useAccountContext,
 } from '~/components/CivitaiWrapped/AccountProvider';
-import { Username } from '~/components/User/Username';
-import { getInitials } from '~/utils/string-helpers';
-import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
-import { showErrorNotification } from '~/utils/notifications';
-import { getLoginLink } from '~/utils/login-helpers';
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
-import { useRouter } from 'next/router';
-import { NextLink } from '~/components/NextLink/NextLink';
-import { LinkProps } from 'next/link';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { useHotkeys } from '@mantine/hooks';
-import { Burger } from '~/components/Burger/Burger';
-import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
+import { NextLink } from '~/components/NextLink/NextLink';
+import { UserBuzz } from '~/components/User/UserBuzz';
+import { Username } from '~/components/User/Username';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { getLoginLink } from '~/utils/login-helpers';
+import { showErrorNotification } from '~/utils/notifications';
+import { getInitials } from '~/utils/string-helpers';
 
 const UserMenuCtx = createContext<{ handleClose: () => void }>({ handleClose: () => undefined });
 function useUserMenuContext() {
@@ -234,6 +235,11 @@ function UserMenuItems({ items }: { items: UserMenuItem[] }) {
               <item.icon stroke={1.5} color={item.color} />
               <span className="text-sm leading-none">{item.label}</span>
               {item.currency && <CurrencyIcon currency={Currency.BUZZ} size={16} />}
+              {!!item.newUntil && Date.now() < item.newUntil.getTime() && (
+                <Badge color="green.8" variant="filled" size="sm" ml={4}>
+                  NEW
+                </Badge>
+              )}
             </>
           );
           const linkOrButton = item.href ? (

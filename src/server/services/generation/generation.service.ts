@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
+
+import { env } from '~/env/server';
 import { getGenerationConfig } from '~/server/common/constants';
 
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -25,18 +27,13 @@ import {
   GenerationResourceDataModel,
   resourceDataCache,
 } from '~/server/services/model-version.service';
+import { getFeaturedModels } from '~/server/services/model.service';
 import {
   handleLogError,
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
-import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
-
-import { fromJson, toJson } from '~/utils/json-helpers';
-
-import { env } from '~/env/server';
-import { getFeaturedModels } from '~/server/services/model.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   baseModelResourceTypes,
@@ -46,7 +43,10 @@ import {
   getBaseModelSetType,
   SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
+import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { isFutureDate } from '~/utils/date-helpers';
+
+import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
@@ -489,7 +489,7 @@ export async function getShouldChargeForResources(
       ...acc,
       [modelId]: fileSizeKB
         ? !FREE_RESOURCE_TYPES.includes(modelType) &&
-          !featuredModels.includes(modelId) &&
+          !featuredModels.map((fm) => fm.modelId).includes(modelId) &&
           fileSizeKB > 10 * 1024
         : false,
     }),
@@ -664,7 +664,7 @@ export async function getResourceData({
       if (env.ORCHESTRATOR_EXPERIMENTAL && fileSizeKB) {
         additionalResourceCost =
           !FREE_RESOURCE_TYPES.includes(item.model.type) &&
-          !featuredModels.includes(item.model.id) &&
+          !featuredModels.map((fm) => fm.modelId).includes(item.model.id) &&
           fileSizeKB > 10 * 1024;
       }
 
@@ -704,6 +704,9 @@ export async function getResourceData({
         substitute: substituteData,
       });
 
+      /*
+        epochs are used to generate images from a trained model before the model is finished training. It allows the user to determine the best trained model from the available epochs.
+      */
       return (epochsDetails?.length ?? 0) > 0
         ? epochsDetails.map((epochDetails) => ({ ...payload, epochDetails }))
         : payload;
