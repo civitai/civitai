@@ -1701,6 +1701,7 @@ const userSettingsCache = createCachedObject<UserSettingsSchema & { userId: numb
   key: REDIS_KEYS.USER.SETTINGS,
   idKey: 'userId',
   ttl: CacheTTL.hour * 4,
+  staleWhileRevalidate: false,
   lookupFn: async (ids) => {
     const settings = await dbWrite.$queryRaw<{ id: number; settings: UserSettingsSchema }[]>`
     SELECT id, settings
