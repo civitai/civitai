@@ -57,7 +57,10 @@ class SignalClient {
   };
 
   constructor({ endpoint }: { endpoint: string }) {
-    this._endpoint = z.string().url().parse(endpoint);
+    this._endpoint = z
+      .string()
+      .url()
+      .parse(endpoint || 'http://localhost');
   }
 }
 

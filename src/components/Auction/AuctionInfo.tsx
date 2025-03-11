@@ -223,6 +223,10 @@ export const AuctionInfo = () => {
     }
   };
 
+  const validFor = auctionData
+    ? dayjs(auctionData.validTo).diff(dayjs(auctionData.validFrom), 'day')
+    : 'Unknown';
+
   return (
     <Stack w="100%" spacing="sm">
       <AuctionTopSection refreshFunc={refetchAuction} />
@@ -254,7 +258,7 @@ export const AuctionInfo = () => {
             <Group spacing="sm" className="max-md:justify-between max-md:gap-1">
               <Tooltip label={`Maximum # of entities that can win.`}>
                 <Group spacing="sm" className="max-md:w-full">
-                  <Badge w={70}>
+                  <Badge className="max-md:w-[80px]">
                     <Text>Spots</Text>
                   </Badge>
 
@@ -266,12 +270,42 @@ export const AuctionInfo = () => {
 
               <Tooltip label={`Minimum Buzz cost to place.`}>
                 <Group spacing="sm" className="max-md:w-full">
-                  <Badge w={70}>
+                  <Badge className="max-md:w-[80px]">
                     <Text>Min ⚡</Text>
                   </Badge>
 
                   {auctionData ? (
                     <Text>{auctionData.minPrice.toLocaleString()}</Text>
+                  ) : (
+                    <Loader variant="dots" />
+                  )}
+                </Group>
+              </Tooltip>
+
+              <Divider orientation="vertical" />
+
+              <Tooltip
+                label={
+                  auctionData ? (
+                    <Stack spacing={4} align="end">
+                      <Text>Winning resources will be boosted:</Text>
+                      <Text>
+                        From: {formatDate(auctionData.validFrom, 'MMM DD, YYYY h:mm:ss a')}
+                      </Text>
+                      <Text>To: {formatDate(auctionData.validTo, 'MMM DD, YYYY h:mm:ss a')}</Text>
+                    </Stack>
+                  ) : undefined
+                }
+              >
+                <Group spacing="sm" className="max-md:w-full">
+                  <Badge className="max-md:w-[80px]">
+                    <Text>Boosted</Text>
+                  </Badge>
+
+                  {auctionData ? (
+                    <Text>
+                      For {validFor} day{validFor !== 1 ? 's' : ''}
+                    </Text>
                   ) : (
                     <Loader variant="dots" />
                   )}
@@ -293,7 +327,7 @@ export const AuctionInfo = () => {
                 }
               >
                 <Group spacing="sm" className="max-md:w-full">
-                  <Badge w={70}>
+                  <Badge className="max-md:w-[80px]">
                     <Text>Ends In</Text>
                     {/* todo does this say ended when its over? */}
                   </Badge>
