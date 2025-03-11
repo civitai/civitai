@@ -383,7 +383,7 @@ async function handleSuccess({
           disabled: shouldIgnore(x.tag, x.source ?? source),
         }));
 
-      await dbWrite.$queryRawUnsafe(`
+      await dbWrite.$queryRaw(`
         WITH to_insert AS (
           SELECT
             (value ->> 'imageId')::int as "imageId",
