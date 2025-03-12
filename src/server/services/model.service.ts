@@ -2672,6 +2672,12 @@ export async function migrateResourceToCollection({
     userId: model.userId,
   });
 
+  // Bust caches
+  await Promise.all([
+    dataForModelsCache.bust(modelIds),
+    bustMvCache(filteredVersions.map((v) => v.id)),
+  ]);
+
   modelMetrics
     .queueUpdate(modelIds)
     .catch((error) =>
