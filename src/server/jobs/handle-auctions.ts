@@ -233,7 +233,7 @@ const _handleWinnersForAuction = async (
     const filteredModelData: typeof validModelData = [];
     validModelData.forEach((md) => {
       if (!creatorsSeen.has(md.model.userId)) {
-        validModelData.push(md);
+        filteredModelData.push(md);
         creatorsSeen.add(md.model.userId);
       }
     });
