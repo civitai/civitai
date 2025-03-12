@@ -97,7 +97,7 @@ const PositionData = ({
         />
       )}
       <Text size="lg" weight="bold">
-        {position}
+        {position || '-'}
       </Text>
     </>
   );
@@ -127,7 +127,15 @@ const SectionPosition = ({
 
   return (
     <Link href={`/auctions/${slugHref.slug}`}>
-      <Tooltip label={`Go to ${slugHref.name}`} withinPortal>
+      <Tooltip
+        label={
+          <Stack className="text-center" spacing={4}>
+            <Text>Position: {position || 'N/A'}</Text>
+            <Text>Go to {slugHref.name}</Text>
+          </Stack>
+        }
+        withinPortal
+      >
         {el}
       </Tooltip>
     </Link>
