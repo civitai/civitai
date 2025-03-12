@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Center,
   CloseButton,
@@ -118,9 +119,9 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-const tabs = ['boosted', 'all', 'recent', 'liked', 'mine'] as const;
+const tabs = ['all', 'boosted', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
-const defaultTab: Tabs = 'boosted';
+const defaultTab: Tabs = 'all';
 
 const take = 20;
 
@@ -426,7 +427,12 @@ function ResourceSelectModalContent() {
               <SegmentedControl
                 value={selectedTab}
                 onChange={(v) => setSelectedTab(v as Tabs)}
-                data={allowedTabs.map((v) => ({ value: v, label: v.toUpperCase() }))}
+                data={allowedTabs.map((v) => ({
+                  value: v,
+                  label: (
+                    <Box className={v === 'boosted' ? 'text-yellow-7' : ''}>{v.toUpperCase()}</Box>
+                  ),
+                }))}
                 className="shrink-0 @sm:w-full"
               />
               <CategoryTagFilters />
