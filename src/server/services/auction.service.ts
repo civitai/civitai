@@ -99,7 +99,8 @@ export type PrepareBidsReturn = ReturnType<typeof prepareBids>;
 export const prepareBids = (
   a: Pick<AuctionSelectType, 'bids' | 'quantity'> & {
     bids: Pick<AuctionSelectType['bids'][number], 'deleted' | 'entityId' | 'amount'>[];
-  }
+  },
+  returnAll = false
 ) => {
   return Object.values(
     a.bids
@@ -115,7 +116,7 @@ export const prepareBids = (
       }, {} as Record<string, { entityId: number; totalAmount: number; count: number }>)
   )
     .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count)
-    .slice(0, a.quantity)
+    .slice(0, returnAll ? undefined : a.quantity)
     .map((b, idx) => ({
       ...b,
       position: idx + 1,

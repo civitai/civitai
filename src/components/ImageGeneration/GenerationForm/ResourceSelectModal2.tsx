@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Center,
   CloseButton,
@@ -118,9 +119,9 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-// TODO eventually move boosted to first
 const tabs = ['all', 'boosted', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
+const defaultTab: Tabs = 'all';
 
 const take = 20;
 
@@ -220,7 +221,7 @@ function ResourceSelectModalContent() {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const [selectedTab, setSelectedTab] = useState<Tabs>('all');
+  const [selectedTab, setSelectedTab] = useState<Tabs>(defaultTab);
   // const availableBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
   // const _selectedFilters = selectedFilters.filter((x) => availableBaseModels.includes)
 
@@ -426,12 +427,17 @@ function ResourceSelectModalContent() {
               <SegmentedControl
                 value={selectedTab}
                 onChange={(v) => setSelectedTab(v as Tabs)}
-                data={allowedTabs.map((v) => ({ value: v, label: v.toUpperCase() }))}
+                data={allowedTabs.map((v) => ({
+                  value: v,
+                  label: (
+                    <Box className={v === 'boosted' ? 'text-yellow-7' : ''}>{v.toUpperCase()}</Box>
+                  ),
+                }))}
                 className="shrink-0 @sm:w-full"
               />
               <CategoryTagFilters />
               <div className="flex shrink-0 flex-row items-center justify-end gap-3">
-                <ResourceSelectSort />
+                {selectedTab !== 'boosted' && <ResourceSelectSort />}
                 <ResourceSelectFiltersDropdown />
                 <GenerationSettingsPopover>
                   <ActionIcon>

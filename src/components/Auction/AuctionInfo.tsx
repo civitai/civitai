@@ -548,7 +548,12 @@ export const AuctionInfo = () => {
             <Stack>
               {bidsAbove.length ? (
                 bidsAbove.map((b) => (
-                  <ModelPlacementCard key={b.entityId} data={b} addBidFn={addBidFn} />
+                  <ModelPlacementCard
+                    key={b.entityId}
+                    data={b}
+                    aboveThreshold={true}
+                    addBidFn={addBidFn}
+                  />
                 ))
               ) : (
                 <Center>
@@ -559,7 +564,12 @@ export const AuctionInfo = () => {
                 <>
                   <Divider label="Below Threshold" labelPosition="center" />
                   {bidsBelow.map((b) => (
-                    <ModelPlacementCard key={b.entityId} data={b} addBidFn={addBidFn} />
+                    <ModelPlacementCard
+                      key={b.entityId}
+                      data={b}
+                      aboveThreshold={false}
+                      addBidFn={addBidFn}
+                    />
                   ))}
                 </>
               )}
