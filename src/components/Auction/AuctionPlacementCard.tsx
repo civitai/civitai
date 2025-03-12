@@ -64,10 +64,16 @@ type ModelMyRecurringBidData = GetMyRecurringBidsReturn[number];
 
 const IMAGE_HEIGHT = 100;
 
-const PositionData = ({ position }: { position: number }) => {
+const PositionData = ({
+  position,
+  aboveThreshold,
+}: {
+  position: number;
+  aboveThreshold: boolean;
+}) => {
   const theme = useMantineTheme();
 
-  const isTop3 = !!position && position <= 3;
+  const isTop3 = !!position && aboveThreshold && position <= 3;
   const iconColor = [
     theme.colors.yellow[5], // Gold
     theme.colors.gray[5], // Silver
@@ -99,9 +105,11 @@ const PositionData = ({ position }: { position: number }) => {
 
 const SectionPosition = ({
   position,
+  aboveThreshold,
   slugHref,
 }: {
   position: number;
+  aboveThreshold: boolean;
   slugHref?: AuctionBaseData;
 }) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
@@ -111,7 +119,7 @@ const SectionPosition = ({
 
   const el = (
     <Stack align="center" spacing={0} className="relative md:w-[100px]" px={px} mr={mr}>
-      <PositionData position={position} />
+      <PositionData position={position} aboveThreshold={aboveThreshold} />
     </Stack>
   );
 
@@ -263,6 +271,7 @@ const SectionModelInfo = ({ entityData }: { entityData: ModelData['entityData'] 
 const SectionBidInfo = ({
   amount,
   position,
+  aboveThreshold,
   currencyTooltip,
   top,
   right,
@@ -272,6 +281,7 @@ const SectionBidInfo = ({
 }: {
   amount: number;
   position?: number;
+  aboveThreshold: boolean;
   currencyTooltip?: string;
   top?: React.ReactNode;
   right?: React.ReactNode;
@@ -318,7 +328,13 @@ const SectionBidInfo = ({
         {right}
       </Group>
       <Group>
-        {mobile && position && <SectionPosition position={position} slugHref={slugHref} />}
+        {mobile && position && (
+          <SectionPosition
+            position={position}
+            slugHref={slugHref}
+            aboveThreshold={aboveThreshold}
+          />
+        )}
         {bottom}
       </Group>
     </Stack>
@@ -385,7 +401,11 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
       <Stack spacing={0}>
         <Group className="gap-y-2 max-md:flex-col">
           {!mobile && (
-            <SectionPosition position={data.position} slugHref={data.auction.auctionBase} />
+            <SectionPosition
+              position={data.position}
+              aboveThreshold={data.aboveThreshold}
+              slugHref={data.auction.auctionBase}
+            />
           )}
           <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
@@ -397,6 +417,7 @@ export const ModelMyBidCard = ({ data }: { data: ModelMyBidData }) => {
           <SectionBidInfo
             amount={data.amount}
             position={data.position}
+            aboveThreshold={data.aboveThreshold}
             slugHref={data.auction.auctionBase}
             currencyTooltip={`Total: ⚡${formatCurrencyForDisplay(
               data.totalAmount,
@@ -560,6 +581,7 @@ export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidDat
 
           <SectionBidInfo
             amount={data.amount}
+            aboveThreshold={false}
             top={
               <Group spacing={4} className="absolute right-1 top-1 z-10">
                 <Tooltip
@@ -616,9 +638,11 @@ export const ModelMyRecurringBidCard = ({ data }: { data: ModelMyRecurringBidDat
 
 export const ModelPlacementCard = ({
   data,
+  aboveThreshold,
   addBidFn,
 }: {
   data: ModelData;
+  aboveThreshold: boolean;
   addBidFn: (r: GenerationResource) => void;
 }) => {
   const mobile = useIsMobile({ breakpoint: 'md' });
@@ -661,10 +685,10 @@ export const ModelPlacementCard = ({
   return (
     <div
       className={clsx({
-        [cardClasses.winnerFirst]: data.position === 1,
-        [cardClasses.winnerSecond]: data.position === 2,
-        [cardClasses.winnerThird]: data.position === 3,
-        'before:blur-sm': !!data.position && data.position <= 3,
+        [cardClasses.winnerFirst]: aboveThreshold && data.position === 1,
+        [cardClasses.winnerSecond]: aboveThreshold && data.position === 2,
+        [cardClasses.winnerThird]: aboveThreshold && data.position === 3,
+        'before:blur-sm': aboveThreshold && !!data.position && data.position <= 3,
       })}
     >
       <CosmeticCard
@@ -674,7 +698,7 @@ export const ModelPlacementCard = ({
         ref={animatedRef}
       >
         <Group className="gap-y-2 max-md:flex-col">
-          {!mobile && <SectionPosition position={data.position} />}
+          {!mobile && <SectionPosition position={data.position} aboveThreshold={aboveThreshold} />}
           <Group className="flex gap-y-2 py-2 max-md:w-full max-md:px-2 md:flex-[10]">
             <SectionModelImage image={data.entityData?.image} />
             <SectionModelInfo entityData={data.entityData} />
@@ -685,6 +709,7 @@ export const ModelPlacementCard = ({
           <SectionBidInfo
             amount={data.totalAmount}
             position={data.position}
+            aboveThreshold={aboveThreshold}
             right={
               !!data.entityData ? (
                 <Tooltip label="Support this model" position="top" withinPortal>

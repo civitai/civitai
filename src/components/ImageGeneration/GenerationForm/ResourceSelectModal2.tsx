@@ -431,7 +431,7 @@ function ResourceSelectModalContent() {
               />
               <CategoryTagFilters />
               <div className="flex shrink-0 flex-row items-center justify-end gap-3">
-                <ResourceSelectSort />
+                {selectedTab !== 'boosted' && <ResourceSelectSort />}
                 <ResourceSelectFiltersDropdown />
                 <GenerationSettingsPopover>
                   <ActionIcon>
