@@ -3,6 +3,9 @@ import chalk from 'chalk';
 import { env } from '~/env/server';
 import { isDev } from '~/env/other';
 
+/**
+ * @deprecated use logToAxiom instead
+ */
 export async function logToDb(event: string, details: object) {
   if (isDev) return; // Don't log in dev
   try {

@@ -17,7 +17,6 @@ import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getComputedTags } from '~/server/utils/tag-rules';
 import { ImageIngestionStatus, TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
-import { logToDb } from '~/utils/logging';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -398,7 +397,12 @@ async function handleSuccess({
         FROM to_insert
       `;
     } else {
-      logToAxiom({ type: 'image-scan-result', message: 'No tags found', imageId: id, source });
+      await logToAxiom({
+        type: 'image-scan-result',
+        message: 'No tags found',
+        imageId: id,
+        source,
+      });
     }
 
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
@@ -584,12 +588,7 @@ async function logScanResultError({
   error?: any;
   message?: any;
 }) {
-  await logToDb('image-scan-result', {
-    type: 'error',
-    imageId: id,
-    message,
-    error,
-  });
+  await logToAxiom({ name: 'image-scan-result', type: 'error', imageId: id, message, error });
 }
 
 // Tag Preprocessing
