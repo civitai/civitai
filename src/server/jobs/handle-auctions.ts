@@ -117,7 +117,7 @@ const handlePreviousAuctions = async (now: Dayjs) => {
   for (const auctionRow of allAuctionsWithBids) {
     log('====== processing auction', auctionRow.id);
     if (auctionRow.bids.length > 0) {
-      const sortedBids = prepareBids(auctionRow);
+      const sortedBids = prepareBids(auctionRow, true);
 
       const { winners, losers } = sortedBids.reduce(
         (result, r) => {
@@ -126,7 +126,7 @@ const handlePreviousAuctions = async (now: Dayjs) => {
             .map((b) => b.userId);
           const bidDetails = { ...r, userIds: matchUserIds, auctionId: auctionRow.id };
 
-          if (r.totalAmount >= auctionRow.minPrice) {
+          if (r.totalAmount >= auctionRow.minPrice && r.position <= auctionRow.quantity) {
             result.winners.push(bidDetails);
           } else {
             result.losers.push(bidDetails);
@@ -137,15 +137,21 @@ const handlePreviousAuctions = async (now: Dayjs) => {
       );
 
       log('winners', winners.length, 'losers', losers.length);
+      log('winnerIds', winners.map((x) => `id:${x.entityId}|uids:${x.userIds.length}`).join(','));
+      log('loserIds', losers.map((x) => `id:${x.entityId}|uids:${x.userIds.length}`).join(','));
 
       // Feature the winners
       if (winners.length > 0) {
         await _handleWinnersForAuction(auctionRow, winners, creatorsSeen);
+      } else {
+        log('No winners.');
       }
 
       // Refund the losers
       if (losers.length > 0) {
         await _refundLosersForAuction(auctionRow, losers);
+      } else {
+        log('No losers.');
       }
     } else {
       log('No bids, skipping.');
