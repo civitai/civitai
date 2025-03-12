@@ -66,6 +66,7 @@ import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   ImagesForModelVersions,
+  queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
@@ -1773,12 +1774,10 @@ export const unpublishModelById = async ({
   // Remove this model from search index as it's been unpublished.
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   // Remove all affected images from search index
-  await imagesSearchIndex.queueUpdate(
-    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
-  await imagesMetricsSearchIndex.queueUpdate(
-    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
-  );
+  await queueImageSearchIndexUpdate({
+    ids: images.map((x) => x.id),
+    action: SearchIndexUpdateQueueAction.Delete,
+  });
 
   await deleteBidsForModel({ modelId: id });
 

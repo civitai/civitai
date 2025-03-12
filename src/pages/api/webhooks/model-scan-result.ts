@@ -1,13 +1,15 @@
 import { NextApiRequest, NextApiResponse } from 'next';
+import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { modelScanResultSchema } from '~/server/schema/model-flag.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
 import { upsertModelFlag } from '~/server/services/model-flag.service';
 import { getModelModRules, unpublishModelById } from '~/server/services/model.service';
+import { createNotification } from '~/server/services/notification.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
-import { ModerationRuleAction } from '~/shared/utils/prisma/enums';
+import { ModelStatus, ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom({ name: 'model-scan-result', type: 'error', ...data }, 'webhooks').catch(() => null);
@@ -40,7 +42,17 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
   try {
     const model = await dbRead.model.findUnique({
       where: { id: data.user_declared.content.id },
-      select: { id: true, name: true, description: true, meta: true },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        meta: true,
+        userId: true,
+        modelVersions: {
+          where: { status: { in: [ModelStatus.Published, ModelStatus.Scheduled] } },
+          select: { id: true, baseModel: true, name: true, description: true },
+        },
+      },
     });
     if (!model) {
       logWebhook({
@@ -57,9 +69,23 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
 
       switch (appliedRule?.action) {
         case ModerationRuleAction.Hold:
-          await upsertModelFlag({
-            modelId: model.id,
-            details: { rule: appliedRule.definition },
+          await unpublishModelById({
+            id: model.id,
+            userId: -1,
+            reason: 'other',
+            customMessage: 'Model put on hold by moderation rule',
+            meta: { ...(model.meta as ModelMeta), needsReview: true },
+            isModerator: true,
+          });
+          await createNotification({
+            category: NotificationCategory.System,
+            key: `model-hold:${model.id}`,
+            type: 'system-message',
+            userId: model.userId,
+            details: {
+              message: `Your model "${model.name}" has been put on hold due to a moderation rule violation and it's being reviewed by one of our moderators. It will be available once it has been approved.`,
+              url: `/models/${model.id}`,
+            },
           });
           break;
         case ModerationRuleAction.Block:
@@ -69,7 +95,19 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
             reason: 'other',
             customMessage: 'Model blocked by moderation rule',
             meta: model.meta as ModelMeta,
+            isModerator: true,
           });
+          await createNotification({
+            category: NotificationCategory.System,
+            key: `model-blocked:${model.id}`,
+            type: 'system-message',
+            userId: model.userId,
+            details: {
+              message: `Your model "${model.name}" has been blocked due to a moderation rule violation. Please reach to one of our moderators if you think this is a mistake.`,
+              url: `/models/${model.id}`,
+            },
+          }).catch(() => null);
+          break;
         default:
           break;
       }
