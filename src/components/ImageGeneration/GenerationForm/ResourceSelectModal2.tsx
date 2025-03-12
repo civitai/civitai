@@ -118,9 +118,9 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-// TODO eventually move boosted to first
-const tabs = ['all', 'boosted', 'recent', 'liked', 'mine'] as const;
+const tabs = ['boosted', 'all', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
+const defaultTab: Tabs = 'boosted';
 
 const take = 20;
 
@@ -220,7 +220,7 @@ function ResourceSelectModalContent() {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const [selectedTab, setSelectedTab] = useState<Tabs>('all');
+  const [selectedTab, setSelectedTab] = useState<Tabs>(defaultTab);
   // const availableBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
   // const _selectedFilters = selectedFilters.filter((x) => availableBaseModels.includes)
 
