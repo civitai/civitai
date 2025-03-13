@@ -3456,23 +3456,6 @@ model FeaturedModelVersion {
   position       Int
 }
 
-enum ModerationRuleAction {
-  Approved
-  Block
-  Hold
-}
-
-model ModerationRule {
-  id         Int                  @id @default(autoincrement())
-  entityType EntityType
-  definition Json
-  action     ModerationRuleAction
-  createdAt  DateTime             @default(now())
-  updatedAt  DateTime             @updatedAt
-  enabled    Boolean              @default(true)
-  order      Int?
-}
-
 /// @view
 model QuestionRank {
   questionId              Int      @id
