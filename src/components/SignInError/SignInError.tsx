@@ -12,6 +12,7 @@ const errors: Record<string, string> = {
   EmailSignin: 'Check your email address.',
   CredentialsSignin: 'Sign in failed. Check the details you provided are correct.',
   NoExtraEmails: 'Creating new accounts with + in email is not allowed.',
+  TooManyRequests: 'You have attempted to sign in too many times. Try again later.',
   default: 'Unable to sign in. Please try again later.',
 };
 

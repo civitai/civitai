@@ -22,6 +22,7 @@ import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { bustFeaturedModelsCache } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { withRetries } from '~/server/utils/errorHandling';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { AuctionType, BuzzAccountType, HomeBlockType } from '~/shared/utils/prisma/enums';
@@ -52,7 +53,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
 
   try {
     if (currentStep <= 0) {
-      await cleanOldCollectionItems();
+      await cleanOldCollectionItems(now);
       log('-----------');
     }
 
@@ -90,7 +91,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
   }
 });
 
-const cleanOldCollectionItems = async () => {
+const cleanOldCollectionItems = async (now: Dayjs) => {
   // Remove old auction winners from collection
   const deletedFromCollection = await dbWrite.collectionItem.deleteMany({
     where: {
@@ -100,6 +101,21 @@ const cleanOldCollectionItems = async () => {
   });
 
   log(deletedFromCollection.count, 'removed from collection');
+
+  const nowDate = now.subtract(1, 'day').toDate();
+  const oldFeatured = await dbWrite.featuredModelVersion.findMany({
+    where: {
+      validFrom: { lte: nowDate },
+      validTo: { gt: nowDate },
+    },
+    select: {
+      modelVersionId: true,
+    },
+  });
+  const oldIds = oldFeatured.map((f) => f.modelVersionId);
+
+  await bustOrchestratorModelCache(oldIds);
+  log(oldIds.length, 'busted old cache');
 
   await dbKV.set(kvKey, 1);
 };
@@ -114,10 +130,11 @@ const handlePreviousAuctions = async (now: Dayjs) => {
   // Insert the winners into the featured table and the collection
   // Refund people who didn't make the cutoff
   // Mark auctions as finalized
+
   for (const auctionRow of allAuctionsWithBids) {
     log('====== processing auction', auctionRow.id);
     if (auctionRow.bids.length > 0) {
-      const sortedBids = prepareBids(auctionRow);
+      const sortedBids = prepareBids(auctionRow, true);
 
       const { winners, losers } = sortedBids.reduce(
         (result, r) => {
@@ -126,7 +143,7 @@ const handlePreviousAuctions = async (now: Dayjs) => {
             .map((b) => b.userId);
           const bidDetails = { ...r, userIds: matchUserIds, auctionId: auctionRow.id };
 
-          if (r.totalAmount >= auctionRow.minPrice) {
+          if (r.totalAmount >= auctionRow.minPrice && r.position <= auctionRow.quantity) {
             result.winners.push(bidDetails);
           } else {
             result.losers.push(bidDetails);
@@ -137,15 +154,21 @@ const handlePreviousAuctions = async (now: Dayjs) => {
       );
 
       log('winners', winners.length, 'losers', losers.length);
+      log('winnerIds', winners.map((x) => `id:${x.entityId}|uids:${x.userIds.length}`).join(','));
+      log('loserIds', losers.map((x) => `id:${x.entityId}|uids:${x.userIds.length}`).join(','));
 
       // Feature the winners
       if (winners.length > 0) {
         await _handleWinnersForAuction(auctionRow, winners, creatorsSeen);
+      } else {
+        log('No winners.');
       }
 
       // Refund the losers
       if (losers.length > 0) {
         await _refundLosersForAuction(auctionRow, losers);
+      } else {
+        log('No losers.');
       }
     } else {
       log('No bids, skipping.');
@@ -233,7 +256,7 @@ const _handleWinnersForAuction = async (
     const filteredModelData: typeof validModelData = [];
     validModelData.forEach((md) => {
       if (!creatorsSeen.has(md.model.userId)) {
-        validModelData.push(md);
+        filteredModelData.push(md);
         creatorsSeen.add(md.model.userId);
       }
     });
@@ -271,6 +294,9 @@ const _handleWinnersForAuction = async (
     await homeBlockCacheBust(HomeBlockType.Collection, FEATURED_MODEL_COLLECTION_ID);
     await bustFeaturedModelsCache();
     await modelVersionResourceCache.bust(winnerIds);
+    await bustOrchestratorModelCache(winnerIds);
+
+    log('busted cache', winnerIds.length);
   }
 
   // Send notifications to each auction's contributing winners

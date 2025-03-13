@@ -65,7 +65,6 @@ import {
   ModelType,
   ModelVersionEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 
@@ -1584,7 +1583,7 @@ export const createModelVersionPostFromTraining = async ({
 
 export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
   const resp = await modelVersionResourceCache.fetch([id]);
-  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false };
+  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false, isNew: false };
 };
 
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {

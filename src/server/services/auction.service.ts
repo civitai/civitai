@@ -80,10 +80,11 @@ export async function getAllAuctions() {
 
   return aData.map((ad) => {
     const bids = prepareBids(ad);
+    const winningBids = bids.filter((w) => w.totalAmount >= ad.minPrice);
     const lowestBidRequired =
-      bids.length > 0
-        ? bids.length >= ad.quantity
-          ? bids[bids.length - 1].totalAmount + 1
+      winningBids.length > 0
+        ? winningBids.length >= ad.quantity
+          ? winningBids[winningBids.length - 1].totalAmount + 1
           : ad.minPrice
         : ad.minPrice;
     return {
@@ -98,7 +99,8 @@ export type PrepareBidsReturn = ReturnType<typeof prepareBids>;
 export const prepareBids = (
   a: Pick<AuctionSelectType, 'bids' | 'quantity'> & {
     bids: Pick<AuctionSelectType['bids'][number], 'deleted' | 'entityId' | 'amount'>[];
-  }
+  },
+  returnAll = false
 ) => {
   return Object.values(
     a.bids
@@ -114,7 +116,7 @@ export const prepareBids = (
       }, {} as Record<string, { entityId: number; totalAmount: number; count: number }>)
   )
     .sort((a, b) => b.totalAmount - a.totalAmount || b.count - a.count)
-    .slice(0, a.quantity)
+    .slice(0, returnAll ? undefined : a.quantity)
     .map((b, idx) => ({
       ...b,
       position: idx + 1,
