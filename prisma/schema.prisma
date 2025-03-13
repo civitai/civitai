@@ -1628,16 +1628,16 @@ model TagsOnImage {
   createdAt   DateTime  @default(now())
   automated   Boolean   @default(false)
   confidence  Int?
-  disabled    Boolean   @default(false)
+  // disabled    Boolean   @default(false)
   disabledAt  DateTime?
   needsReview Boolean   @default(false)
   source      TagSource @default(User)
+  // @@index([disabled])
 
   @@id([tagId, imageId])
   @@index([imageId], type: Hash)
   @@index([automated])
   @@index([source])
-  @@index([disabled])
 }
 
 model TagsOnImageNew {

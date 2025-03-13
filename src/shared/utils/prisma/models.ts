@@ -1258,7 +1258,6 @@ export interface TagsOnImage {
   createdAt: Date;
   automated: boolean;
   confidence: number | null;
-  disabled: boolean;
   disabledAt: Date | null;
   needsReview: boolean;
   source: TagSource;
