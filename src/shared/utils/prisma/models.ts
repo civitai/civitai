@@ -1258,7 +1258,6 @@ export interface TagsOnImage {
   createdAt: Date;
   automated: boolean;
   confidence: number | null;
-  disabled: boolean;
   disabledAt: Date | null;
   needsReview: boolean;
   source: TagSource;
@@ -1432,13 +1431,6 @@ export interface CommentReaction {
   reaction: ReviewReactions;
   createdAt: Date;
   updatedAt: Date;
-}
-
-export interface Log {
-  id: string;
-  event: string;
-  details: JsonValue | null;
-  createdAt: Date;
 }
 
 export interface UserNotificationSettings {

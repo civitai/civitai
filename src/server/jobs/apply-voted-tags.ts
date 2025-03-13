@@ -76,7 +76,7 @@ async function applyUpvotes() {
         AND applied."disabledAt" IS NOT NULL
         AND vote.vote > 5
     )
-    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null, "createdAt" = ${now}
+    UPDATE "TagsOnImage" SET "disabledAt" = null, "createdAt" = ${now}
     WHERE ("tagId", "imageId") IN (
       SELECT "tagId", "imageId" FROM affected
     )
@@ -243,7 +243,7 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= 0
     )
-    UPDATE "TagsOnImage" SET "disabled" = true, "needsReview" = false, "disabledAt" = ${now}
+    UPDATE "TagsOnImage" SET "needsReview" = false, "disabledAt" = ${now}
     WHERE ("tagId", "imageId") IN (
       SELECT
         "tagId",

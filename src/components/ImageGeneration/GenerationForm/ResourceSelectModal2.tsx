@@ -1075,7 +1075,7 @@ function ResourceSelectCard({
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                     <Group className="absolute bottom-2 left-2 flex items-center gap-1">
-                      {selectSource === 'generation' && (
+                      {selectSource === 'generation' && data.type === ModelType.Checkpoint && (
                         <Badge variant="light" radius="xl" size="sm">
                           <ModelVersionPopularity
                             versionId={selectedVersion.id}
