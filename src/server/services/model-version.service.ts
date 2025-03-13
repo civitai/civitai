@@ -1402,20 +1402,14 @@ export const bustMvCache = async (ids: number | number[], userId?: number) => {
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   const modelVersion = await dbRead.modelVersion.findFirst({
-    where: {
-      id,
-    },
+    where: { id },
     select: {
       id: true,
       files: {
-        select: {
-          id: true,
-          metadata: true,
-        },
+        select: { id: true, metadata: true },
       },
     },
   });
-
   if (!modelVersion) return null;
 
   const modelFile = modelVersion.files?.[0];
@@ -1425,7 +1419,6 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   if (!metadata) return null;
 
   const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
-
   return trainingResults.workflowId ?? null;
 };
 
