@@ -110,20 +110,35 @@ async function getArticleScore(ctx: Context) {
 }
 
 async function getImageScore(ctx: Context) {
-  await getScores(ctx, 'images')`
-      SELECT
-      "userId",
+  const affected = await ctx.ch.$query<{ userId: number; score: number }>`
+    WITH affected AS (
+      SELECT DISTINCT i.userId as userId
+      FROM images_created i
+      JOIN entityMetricEvents em ON em.entityId = i.id
+      WHERE em.entityType = 'Image'
+        AND i.userId != -1
+        AND em.createdAt > ${ctx.lastUpdate}
+    )
+    SELECT
+      i.userId as userId,
       (
-          SUM(im."viewCount") * ${ctx.scoreMultipliers.images.views}
-        + SUM(im."commentCount") * ${ctx.scoreMultipliers.images.comments}
-        + SUM(im."likeCount"+im."heartCount"+im."laughCount"+im."cryCount") * ${ctx.scoreMultipliers.images.reactions}
+        SUM(
+          if(em.metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry'), em.metricValue, 0)
+        ) * ${ctx.scoreMultipliers.images.reactions}
+        + SUM(if(em.metricType = 'Comment', em.metricValue, 0)) * ${ctx.scoreMultipliers.images.comments}
       ) as score
-    FROM "ImageMetric" im
-    JOIN "Image" i ON i.id = im."imageId"
-    WHERE im.timeframe = 'AllTime'
-    GROUP BY 1
-    HAVING BOOL_OR(im."updatedAt" > '${ctx.lastUpdate}')
+    FROM entityMetricEvents em
+    JOIN images_created i ON i.id = em.entityId
+    WHERE em.entityType = 'Image'
+      AND em.metricType NOT IN ('Collection', 'Buzz')
+      AND i.id NOT IN (SELECT imageId FROM "images" ix WHERE ix.type IN ('Delete', 'DeleteTOS'))
+      AND i.userId IN (SELECT * FROM affected)
+    GROUP BY userId
   `;
+
+  for (const { userId, score } of affected) {
+    ctx.setScore(userId, 'images', score);
+  }
 }
 
 async function getUserScore(ctx: Context) {
