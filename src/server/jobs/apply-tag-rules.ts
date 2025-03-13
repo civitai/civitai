@@ -179,7 +179,7 @@ async function deleteTag({ toId }: TagRule, maxImageId: number, since?: Date) {
     return async () => {
       // TODO.TagsOnImage - remove this after the migration
       const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-        UPDATE "TagsOnImage" SET disabled = true, "disabledAt" = now(), "disabledReason" = 'Replaced'
+        UPDATE "TagsOnImage" SET disabled = true, "disabledAt" = now()
         WHERE "tagId" = ${toId} AND "disabledAt" IS NULL
           AND "imageId" >= ${start}
           AND "imageId" < ${end}
