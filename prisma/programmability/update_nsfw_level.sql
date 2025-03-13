@@ -5,12 +5,6 @@ BEGIN
     SELECT
       toi."imageId",
       CASE
-        WHEN bool_or(t.nsfw = 'X') THEN 'X'::"NsfwLevel"
-        WHEN bool_or(t.nsfw = 'Mature') THEN 'Mature'::"NsfwLevel"
-        WHEN bool_or(t.nsfw = 'Soft') THEN 'Soft'::"NsfwLevel"
-        ELSE 'None'::"NsfwLevel"
-      END "nsfw",
-      CASE
         WHEN bool_or(t."nsfwLevel" = 32) THEN 32
         WHEN bool_or(t."nsfwLevel" = 16) THEN 16
         WHEN bool_or(t."nsfwLevel" = 8) THEN 8
@@ -18,13 +12,12 @@ BEGIN
         WHEN bool_or(t."nsfwLevel" = 2) THEN 2
         ELSE 1
       END "nsfwLevel"
-    FROM "TagsOnImage" toi
-    LEFT JOIN "Tag" t ON t.id = toi."tagId" AND (t.nsfw != 'None' OR t."nsfwLevel" > 1)
-    WHERE toi."imageId" = ANY(image_ids) AND toi."disabledAt" IS NULL
+    FROM "TagsOnImageDetails" toi
+    LEFT JOIN "Tag" t ON t.id = toi."tagId" AND t."nsfwLevel" > 1
+    WHERE toi."imageId" = ANY(image_ids) AND toi."disabled" = false
     GROUP BY toi."imageId"
   )
   UPDATE "Image" i SET
-    nsfw = il.nsfw,
     "nsfwLevel" = il."nsfwLevel",
     "needsReview" = CASE
       WHEN (i."scanJobs"->'hasMinor')::boolean AND il."nsfwLevel" > 1 AND il."nsfwLevel" < 32
@@ -32,7 +25,7 @@ BEGIN
         ELSE i."needsReview"
       END
   FROM image_level il
-  WHERE il."imageId" = i.id AND NOT i."nsfwLevelLocked" AND (il."nsfwLevel" != i."nsfwLevel" OR il.nsfw != i.nsfw) AND i.ingestion = 'Scanned' AND i."nsfwLevel" != 32;
+  WHERE il."imageId" = i.id AND NOT i."nsfwLevelLocked" AND il."nsfwLevel" != i."nsfwLevel" AND i.ingestion = 'Scanned';
 END;
 $$ LANGUAGE plpgsql;
 ---

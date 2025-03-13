@@ -354,24 +354,6 @@ async function handleSuccess({
   try {
     if (tags.length > 0) {
       const uniqTags = uniqBy(tags, (x) => x.id);
-      // TODO.TagsOnImage - remove this after the migration
-      await dbWrite.$executeRawUnsafe(`
-        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source", "disabledAt")
-        VALUES ${uniqTags
-          .filter((x) => x.id)
-          .map(
-            (x) =>
-              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(
-                x.tag,
-                x.source ?? source
-              )}, '${x.source ?? source}', ${
-                shouldIgnore(x.tag, x.source ?? source) ? 'NOW()' : null
-              })`
-          )
-          .join(', ')}
-        ON CONFLICT ("imageId", "tagId") DO UPDATE SET "confidence" = EXCLUDED."confidence";
-      `);
-
       const toInsert = uniqTags
         .filter((x) => x.id)
         .map((x) => ({
@@ -394,7 +376,7 @@ async function handleSuccess({
             (value ->> 'disabled')::boolean as "disabled"
           FROM json_array_elements(${JSON.stringify(toInsert)}::json)
         )
-        SELECT upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", "disabled")
+        SELECT (upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", "disabled")).*
         FROM to_insert
       `;
     } else {

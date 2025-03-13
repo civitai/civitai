@@ -484,30 +484,12 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       ON CONFLICT DO NOTHING
     `);
   } else if (entityType === 'image') {
-    // TODO.TagsOnImage - remove this after the migration
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
-      SELECT i."id",
-             t."id",
-              ${0}
+    await dbWrite.$queryRaw`
+      SELECT (upsert_tag_on_image(i."id",  t."id", null, null, false, false, false)).*
       FROM "Image" i
              JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
-      WHERE i."id" IN (${entityIds.join(', ')})
-      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled"    = false,
-                                                     "needsReview" = false,
-                                                     automated     = false
-      RETURNING "tagId", "imageId";
-    `);
-    await dbWrite.$queryRaw`
-      WITH to_update AS (
-        SELECT
-          (value ->> 'imageId')::int as "imageId",
-          (value ->> 'tagId')::int as "tagId"
-        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
-      )
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, null, true)
-      FROM to_update;
-  `;
+      WHERE i."id" IN (${entityIds.join(', ')});
+    `;
     updateImageNSFWLevels(entityIds);
   } else if (entityType === 'article') {
     await dbWrite.$executeRawUnsafe(`
@@ -634,7 +616,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
           (value ->> 'tagId')::int as "tagId"
         FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
       )
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+      SELECT (upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)).*
       FROM to_update;
   `;
     updateImageNSFWLevels(entityIds);
@@ -682,7 +664,7 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
           (value ->> 'tagId')::int as "tagId"
         FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
       )
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, false, ${disable}, false)
+      SELECT (upsert_tag_on_image("imageId", "tagId", null, null, false, ${disable}, false)).*
       FROM to_update;
   `;
 

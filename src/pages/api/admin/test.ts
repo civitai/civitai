@@ -70,9 +70,14 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   entityId: 10936,
     //   entityType: 'article',
     // });
-    const data = await dbRead.tagsOnImage.findMany({ where: { imageId: 150224 } });
 
-    res.status(200).send(data);
+    const result = await dbWrite.$queryRaw<string[]>`
+      SELECT (upsert_tag_on_image("imageId", "tagId", null, null, null, true)).*
+      FROM "TagsOnImageDetails" where "imageId" = 127 and "tagId" = 1;
+    `;
+    console.log({ result });
+
+    res.status(200).send(result);
   } catch (e) {
     console.log(e);
     res.status(400).end();

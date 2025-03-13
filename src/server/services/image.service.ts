@@ -385,7 +385,7 @@ export const moderateImages = async ({
           (value ->> 'tagId')::int as "tagId"
         FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
       )
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
+      SELECT (upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)).*
       FROM to_insert;
     `;
 
@@ -493,7 +493,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
         (value ->> 'tagId')::int as "tagId"
       FROM json_array_elements(${JSON.stringify(results)}::json)
     )
-    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, false)
+    SELECT (upsert_tag_on_image("imageId", "tagId", null, null, null, false)).*
     FROM to_insert;
   `;
 

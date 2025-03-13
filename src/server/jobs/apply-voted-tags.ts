@@ -22,13 +22,12 @@ async function applyUpvotes() {
 
   // Apply tags over the threshold
   // --------------------------------------------
-  // TODO.TagsOnImage - remove this after the migration
   const addedImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Apply voted tags
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
-      LEFT JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
+      LEFT JOIN "TagsOnImageDetails" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
       WHERE
           vote.vote > 0
         AND vote."createdAt" > ${lastApplied}
@@ -42,55 +41,24 @@ async function applyUpvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) >= ${UPVOTE_TAG_THRESHOLD}
     )
-    INSERT INTO "TagsOnImage"("tagId", "imageId", "createdAt", "confidence")
-    SELECT
-      "tagId",
-      "imageId",
-      ${now},
-      ${0}
-    FROM over_threshold
-    ON CONFLICT ("tagId", "imageId") DO NOTHING
-    RETURNING "tagId", "imageId";
-  `;
-  await dbWrite.$queryRaw`
-    WITH to_insert AS (
-      SELECT
-        (value ->> 'imageId')::int as "imageId",
-        (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements(${JSON.stringify(addedImageTags)}::json)
-    )
-    SELECT upsert_tag_on_image("imageId", "tagId")
-    FROM to_insert;
+    SELECT (insert_tag_on_image("imageId", "tagId", 'User')).*
+    FROM over_threshold;
   `;
 
   // Bring back disabled tag where voted by moderator
   // --------------------------------------------
-  // TODO.TagsOnImage - remove this after the migration
   const restoredImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Enable upvoted moderation tags if voted by mod
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
-      JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
+      JOIN "TagsOnImageDetails" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
       WHERE vote."createdAt" > ${lastApplied}
-        AND applied."disabledAt" IS NOT NULL
+        AND applied."disabled"
         AND vote.vote > 5
     )
-    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null, "createdAt" = ${now}
-    WHERE ("tagId", "imageId") IN (
-      SELECT "tagId", "imageId" FROM affected
-    )
-    RETURNING "tagId", "imageId";
-  `;
-  await dbWrite.$queryRaw`
-    WITH to_insert AS (
-      SELECT
-        (value ->> 'imageId')::int as "imageId",
-        (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements(${JSON.stringify(restoredImageTags)}::json)
-    )
-    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, false)
-    FROM to_insert;
+    SELECT (upsert_tag_on_image("imageId", "tagId", null, null, null, false)).*
+    FROM affected;
   `;
 
   // Get affected images to update search index, cache, and votes
@@ -103,11 +71,13 @@ async function applyUpvotes() {
   const affectedImageResults = [...new Set(affectedImageTags.map(({ imageId }) => imageId))];
 
   // Update votes
-  await dbWrite.$executeRaw`
+  await dbWrite.$queryRaw`
     -- Update image tag votes
-    with affected AS (
-      SELECT "imageId", "tagId" FROM "TagsOnImage"
-      WHERE "createdAt" = ${now}
+    WITH affected AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements('${JSON.stringify(affectedImageTags)}'::json)
     )
     UPDATE "TagsOnImageVote" SET "applied" = true
     WHERE ("imageId", "tagId") IN (SELECT "imageId", "tagId" FROM affected)
@@ -135,12 +105,12 @@ async function applyUpvotes() {
       FROM "Image" i
       -- if any moderation tags were applied since last run
       WHERE EXISTS (
-        SELECT 1 FROM "TagsOnImage" toi
+        SELECT 1 FROM "TagsOnImageDetails" toi
         JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
         WHERE
           toi."imageId" = i.id
           AND toi."createdAt" > ${lastApplied} - INTERVAL '1 minute'
-          AND toi."disabledAt" IS NULL
+          AND toi."disabled" = FALSE
       )
     `
   ).map(({ id }) => id);
@@ -174,17 +144,16 @@ async function applyDownvotes() {
 
   // Delete tags under the threshold (not moderation)
   // --------------------------------------------
-  // TODO.TagsOnImage - remove this after the migration
   const deletedImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Delete downvoted tags (not moderation)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
-      JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
+      JOIN "TagsOnImageDetails" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
       WHERE
           vote.vote < 0
         AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
-        AND applied."disabledAt" IS NULL
+        AND applied."disabled" = FALSE
         AND applied."needsReview" = FALSE
         AND applied."automated" = TRUE
     ), under_threshold AS (
@@ -196,7 +165,7 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= ${DOWNVOTE_TAG_THRESHOLD}
     )
-    DELETE FROM "TagsOnImage" WHERE ("tagId", "imageId") IN (
+    DELETE FROM "TagsOnImageNew" WHERE ("tagId", "imageId") IN (
       SELECT
         "tagId",
         "imageId"
@@ -221,17 +190,16 @@ async function applyDownvotes() {
 
   // Disable tags under the threshold (moderation) where voted by moderator
   // --------------------------------------------
-  // TODO.TagsOnImage - remove this after the migration
   const disabledImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Disable downvoted moderation tags if voted by mod
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
-      JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
+      JOIN "TagsOnImageDetails" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
       WHERE
           vote.vote < 0
         AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
-        AND applied."disabledAt" IS NULL
+        AND applied."disabled" = FALSE
     ), under_threshold AS (
       SELECT
         a."imageId",
@@ -243,42 +211,24 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= 0
     )
-    UPDATE "TagsOnImage" SET "disabled" = true, "needsReview" = false, "disabledAt" = ${now}
-    WHERE ("tagId", "imageId") IN (
-      SELECT
-        "tagId",
-        "imageId"
-      FROM under_threshold ut
-      JOIN "Tag" t ON t.id = ut."tagId"
-      WHERE t.type = 'Moderation' AND ut."heavyVotes" > 0
-    )
-    RETURNING "tagId", "imageId";
-  `;
-
-  await dbWrite.$queryRaw`
-    WITH to_insert AS (
-      SELECT
-        (value ->> 'imageId')::int as "imageId",
-        (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements(${JSON.stringify(disabledImageTags)}::json)
-    )
-    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
-    FROM to_insert;
+    SELECT (upsert_tag_on_image(ut."imageId", ut."tagId", null, null, null, true, false)).*
+    FROM under_threshold ut
+    JOIN "Tag" t ON t.id = ut."tagId"
+    WHERE t.type = 'Moderation' AND ut."heavyVotes" > 0;
   `;
 
   // Add "Needs Review" to tags under the threshold (moderation)
   // --------------------------------------------
-  // TODO.TagsOnImage - remove this after the migration
-  const needsReviewImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+  await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Send downvoted tags for review (moderation)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
       FROM "TagsOnImageVote" vote
-      JOIN "TagsOnImage" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
+      JOIN "TagsOnImageDetails" applied ON applied."imageId" = vote."imageId" AND applied."tagId" = vote."tagId"
       WHERE
           vote.vote < 0
         AND vote."createdAt" > (${lastApplied} - INTERVAL '1 minute')
-        AND applied."disabledAt" IS NULL
+        AND applied."disabled" = FALSE
         AND applied."needsReview" = FALSE
     ), under_threshold AS (
       SELECT
@@ -289,26 +239,10 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= ${UPVOTE_TAG_THRESHOLD}
     )
-    UPDATE "TagsOnImage" SET "needsReview" = TRUE WHERE ("tagId", "imageId") IN (
-      SELECT
-        "tagId",
-        "imageId"
-      FROM under_threshold ut
-      JOIN "Tag" t ON t.id = ut."tagId"
-      WHERE t.type = 'Moderation'
-    )
-    RETURNING "tagId", "imageId";
-  `;
-
-  await dbWrite.$queryRaw`
-    WITH to_insert AS (
-      SELECT
-        (value ->> 'imageId')::int as "imageId",
-        (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements(${JSON.stringify(needsReviewImageTags)}::json)
-    )
-    SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, null, true)
-    FROM to_insert;
+    SELECT (upsert_tag_on_image("imageId", "tagId", null, null, null, null, true)).*
+    FROM under_threshold ut
+    JOIN "Tag" t ON t.id = ut."tagId"
+    WHERE t.type = 'Moderation';
   `;
 
   // Get affected images to update search index

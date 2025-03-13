@@ -19,7 +19,7 @@ export default ModEndpoint(
       SELECT
         t.name "tag",
         toi."imageId"
-      FROM "TagsOnImage" toi
+      FROM "TagsOnImageDetails" toi
       JOIN "Tag" t ON toi."tagId" = t.id
       WHERE toi."imageId" IN (${Prisma.join(imageIds)})
     `;
@@ -47,38 +47,17 @@ export default ModEndpoint(
       );
       const json = JSON.stringify(batch);
 
-      // TODO.TagsOnImage - remove this after the migration
-      const toInsert = await dbWrite.$queryRaw<
-        { imageId: number; tagId: number; source: string }[]
-      >`
+      // TODO.TagsOnImage - create a function that accepst the result of `insert_tag_on_image` and `upsert_tag_on_image` and calls update_nsfw_levels with the resulting image ids
+      await dbWrite.$queryRaw`
         WITH image_tags AS (
           SELECT
             (value ->> 'imageId')::int AS id,
             value ->> 'tag' AS tag
           FROM json_array_elements(${json}::json)
         )
-        INSERT INTO "TagsOnImage" ("imageId", "tagId", "automated", "confidence", "source")
-        SELECT
-          it.id "imageId",
-          t.id "tagId",
-          true "automated",
-          70 "confidence",
-          'Computed' "source"
+        SELECT (insert_tag_on_image(it.id, t.id, 'Computed', 70, true)).*
         FROM image_tags it
-        JOIN "Tag" t ON t.name = it.tag
-        ON CONFLICT ("imageId", "tagId") DO NOTHING
-        RETURNING "imageId", "tagId";
-      `;
-
-      await dbWrite.$queryRaw`
-        WITH to_update AS (
-          SELECT
-            (value ->> 'imageId')::int as "imageId",
-            (value ->> 'tagId')::int as "tagId"
-          FROM json_array_elements(${JSON.stringify(toInsert)}::json)
-        )
-        SELECT insert_tag_on_image("imageId", "tagId", 'Computed', 70, true)
-        FROM to_update;
+        JOIN "Tag" t ON t.name = it.tag;
       `;
 
       // Recompute the nsfw level

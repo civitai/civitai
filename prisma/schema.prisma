@@ -1379,6 +1379,7 @@ model Image {
   CosmeticShopSection CosmeticShopSection[]
   flags               ImageFlag[]
   ratingRequests      ImageRatingRequest[]
+  tagsNew             TagsOnImageNew[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1642,8 +1643,9 @@ model TagsOnImage {
 
 model TagsOnImageNew {
   imageId    Int
+  image      Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
   tagId      Int
-  attributes Int @db.SmallInt()
+  attributes Int   @db.SmallInt()
 
   @@id([imageId, tagId])
   @@index([imageId])

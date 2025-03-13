@@ -26,7 +26,6 @@ export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', a
   const postTagIds = Prisma.join(postTags.map((t) => t.id));
   // Apply tags to images
   // --------------------------------------------
-  // TODO.TagsOnImage - remove this after the migration
   const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Apply contest tags
     WITH affected AS (
@@ -42,28 +41,11 @@ export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', a
       JOIN "Image" i ON i."postId" = top."postId"
       WHERE top."tagId" IN (${postTagIds}) AND top."createdAt" > ${lastApplied}
     )
-    INSERT INTO "TagsOnImage"("tagId", "imageId", "confidence","automated")
-    SELECT
-      t.id,
-      a.id,
-      100,
-      true
+    SELECT (upsert_tag_on_image(a.id, t.id, 'User', 100, true)).*
     FROM affected a
     JOIN "Tag" t ON t.id IN (${postTagIds})
     ON CONFLICT ("tagId", "imageId") DO NOTHING
     RETURNING "tagId", "imageId";
-  `;
-
-  await dbWrite.$queryRaw`
-    -- Apply contest tags
-    WITH to_insert AS (
-      SELECT
-        (value ->> 'imageId')::int as "imageId",
-        (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements(${JSON.stringify(results)}::json)
-    )
-    SELECT upsert_tag_on_image("imageId", "tagId", 'User', 100, true)
-    FROM to_insert;
   `;
 
   // Update the last sent time
