@@ -1629,16 +1629,16 @@ model TagsOnImage {
   createdAt   DateTime  @default(now())
   automated   Boolean   @default(false)
   confidence  Int?
-  disabled    Boolean   @default(false)
+  // disabled    Boolean   @default(false)
   disabledAt  DateTime?
   needsReview Boolean   @default(false)
   source      TagSource @default(User)
+  // @@index([disabled])
 
   @@id([tagId, imageId])
   @@index([imageId], type: Hash)
   @@index([automated])
   @@index([source])
-  @@index([disabled])
 }
 
 model TagsOnImageNew {
@@ -1648,7 +1648,7 @@ model TagsOnImageNew {
   attributes Int   @db.SmallInt()
 
   @@id([imageId, tagId])
-  @@index([imageId])
+  @@index([tagId])
 }
 
 model TagsOnImageVote {
@@ -1858,13 +1858,6 @@ model CommentReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([commentId, userId, reaction])
-}
-
-model Log {
-  id        String   @id @default(cuid())
-  event     String
-  details   Json?
-  createdAt DateTime @default(now())
 }
 
 model UserNotificationSettings {

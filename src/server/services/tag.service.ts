@@ -598,8 +598,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
     // TODO.TagsOnImage - remove this after the migration
     const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
       UPDATE "TagsOnImage"
-      SET "disabled"    = true,
-          "needsReview" = false,
+      SET "needsReview" = false,
           "disabledAt"  = NOW()
       WHERE "imageId" IN (${entityIds.join(', ')})
         ${
@@ -648,8 +647,7 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
     // TODO.TagsOnImage - remove this after the migration
     const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
       UPDATE "TagsOnImage"
-      SET "disabled"    = ${disable},
-          "needsReview" = false,
+      SET "needsReview" = false,
           "automated"   = false,
           "disabledAt"  = ${disable ? 'NOW()' : 'null'}
       WHERE "needsReview" = true

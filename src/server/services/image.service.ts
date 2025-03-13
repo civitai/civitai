@@ -126,8 +126,7 @@ import {
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
 import { ImageResource } from '~/shared/utils/prisma/models';
-import { fetchBlob, getBase64 } from '~/utils/file-utils';
-import { logToDb } from '~/utils/logging';
+import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -143,7 +142,6 @@ import {
 } from './../schema/image.schema';
 import { uniqBy } from 'lodash-es';
 import { withRetries } from '~/utils/errorHandling';
-// TODO.ingestion - logToDb something something 'axiom'
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -373,7 +371,7 @@ export const moderateImages = async ({
 
     // TODO.TagsOnImage - remove this after the migration
     const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-      UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+      UPDATE "TagsOnImage" SET "disabledAt" = null
       WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
       RETURNING "imageId", "tagId";
     `;
@@ -481,7 +479,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 
   // TODO.TagsOnImage - remove this after the migration
   const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+    UPDATE "TagsOnImage" SET "disabledAt" = null
     WHERE "imageId" = ${images[0].id} AND "disabledAt" IS NOT NULL
     RETURNING "imageId", "tagId";
   `;
@@ -585,10 +583,12 @@ export const ingestImage = async ({
 
     return true;
   } else {
-    await logToDb('image-ingestion', {
+    await logToAxiom({
+      name: 'image-ingestion',
       type: 'error',
       imageId: id,
       url,
+      responseStatus: response.status,
     });
 
     return false;
