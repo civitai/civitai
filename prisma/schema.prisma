@@ -1646,7 +1646,7 @@ model TagsOnImageNew {
   attributes Int @db.SmallInt()
 
   @@id([imageId, tagId])
-  @@index([imageId])
+  @@index([tagId])
 }
 
 model TagsOnImageVote {
@@ -1856,13 +1856,6 @@ model CommentReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([commentId, userId, reaction])
-}
-
-model Log {
-  id        String   @id @default(cuid())
-  event     String
-  details   Json?
-  createdAt DateTime @default(now())
 }
 
 model UserNotificationSettings {

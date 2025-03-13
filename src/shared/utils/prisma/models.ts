@@ -1434,13 +1434,6 @@ export interface CommentReaction {
   updatedAt: Date;
 }
 
-export interface Log {
-  id: string;
-  event: string;
-  details: JsonValue | null;
-  createdAt: Date;
-}
-
 export interface UserNotificationSettings {
   id: number;
   userId: number;
