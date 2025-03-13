@@ -15,7 +15,14 @@ export const generationSchema = z.discriminatedUnion('type', [
   }),
   baseGenerationSchema.extend({
     type: z.literal('image'),
-    data: z.record(z.any()),
+    data: z
+      .object({
+        workflow: z.string(),
+        type: z.enum(['txt2img', 'img2img']),
+        prompt: z.string().catch(''),
+        seed: z.number().optional(),
+      })
+      .passthrough(),
   }),
 ]);
 
