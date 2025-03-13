@@ -20,7 +20,6 @@ import {
   deleteImageById,
   getAllImagesIndex,
   getPostDetailByImageId,
-  queueImageSearchIndexUpdate,
   setVideoThumbnail,
   updateImageMinor,
   updateImageReportStatusByReason,
@@ -233,7 +232,11 @@ export const setTosViolationHandler = async ({
     });
 
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
-    await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
+
+    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+    await imagesMetricsSearchIndex.queueUpdate([
+      { id, action: SearchIndexUpdateQueueAction.Delete },
+    ]);
 
     const imageTags = await getTagNamesForImages([id]);
     const imageResources = await getResourceIdsForImages([id]);

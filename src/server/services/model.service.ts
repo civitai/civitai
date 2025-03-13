@@ -66,7 +66,6 @@ import {
   getImagesForModelVersion,
   getImagesForModelVersionCache,
   ImagesForModelVersions,
-  queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import {
@@ -101,7 +100,6 @@ import {
   AuctionType,
   Availability,
   CommercialUse,
-  EntityType,
   MetricTimeframe,
   ModelModifier,
   ModelStatus,
@@ -120,7 +118,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { RuleDefinition } from '~/server/utils/mod-rules';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -1774,10 +1771,12 @@ export const unpublishModelById = async ({
   // Remove this model from search index as it's been unpublished.
   await modelsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
   // Remove all affected images from search index
-  await queueImageSearchIndexUpdate({
-    ids: images.map((x) => x.id),
-    action: SearchIndexUpdateQueueAction.Delete,
-  });
+  await imagesSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
+  await imagesMetricsSearchIndex.queueUpdate(
+    images.map((x) => ({ id: x.id, action: SearchIndexUpdateQueueAction.Delete }))
+  );
 
   await deleteBidsForModel({ modelId: id });
 
@@ -2830,27 +2829,6 @@ export async function getFeaturedModels() {
 
 export async function bustFeaturedModelsCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS);
-}
-
-export async function getModelModRules() {
-  const modRules = await fetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.MODELS, async () => {
-    const rules = await dbRead.moderationRule.findMany({
-      where: { entityType: EntityType.Model, enabled: true },
-      select: { definition: true, action: true },
-      orderBy: [{ order: 'asc' }],
-    });
-
-    return rules.map(({ definition, ...rule }) => ({
-      ...rule,
-      definition: definition as RuleDefinition,
-    }));
-  });
-
-  return modRules;
-}
-
-export async function bustModelModRulesCache() {
-  await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.MODELS);
 }
 
 export const getPrivateModelCount = async ({ userId }: { userId: number }) => {
