@@ -13,7 +13,7 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { tagCache, tagIdsForImagesCache } from '~/server/redis/caches';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import {
   getImagesModRules,
@@ -652,25 +652,19 @@ async function applyModerationRules(image: IngestedImage) {
   if (imageModRules.length) {
     const appliedRule = evaluateRules(imageModRules, { ...image, tags: tags[image.id] });
 
-    switch (appliedRule?.action) {
-      case ModerationRuleAction.Block:
-        await dbWrite.image.update({
-          where: { id: image.id },
-          data: {
-            ingestion: ImageIngestionStatus.Blocked,
-            nsfwLevel: NsfwLevel.Blocked,
-            blockedFor: BlockedReason.Moderated,
-          },
-        });
-        break;
-      case ModerationRuleAction.Hold:
-        await dbWrite.image.update({
-          where: { id: image.id },
-          data: { needsReview: 'blocked' },
-        });
-        break;
-      default:
-        break;
+    if (appliedRule) {
+      const data =
+        appliedRule.action === ModerationRuleAction.Block
+          ? {
+              ingestion: ImageIngestionStatus.Blocked,
+              nsfwLevel: NsfwLevel.Blocked,
+              blockedFor: BlockedReason.Moderated,
+            }
+          : appliedRule.action === ModerationRuleAction.Hold
+          ? { needsReview: 'blocked' }
+          : undefined;
+
+      if (data) await dbWrite.image.update({ where: { id: image.id }, data });
     }
   }
 }
