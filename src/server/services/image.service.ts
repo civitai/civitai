@@ -39,7 +39,7 @@ import {
   thumbnailCache,
   userContentOverviewCache,
 } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
@@ -142,6 +142,8 @@ import {
 } from './../schema/image.schema';
 import { uniqBy } from 'lodash-es';
 import { withRetries } from '~/utils/errorHandling';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { RuleDefinition } from '~/server/utils/mod-rules';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -4851,3 +4853,24 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
 
   return response;
 };
+
+export async function getImagesModRules() {
+  const modRules = await fetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES, async () => {
+    const rules = await dbRead.moderationRule.findMany({
+      where: { entityType: EntityType.Image, enabled: true },
+      select: { definition: true, action: true },
+      orderBy: [{ order: 'asc' }],
+    });
+
+    return rules.map(({ definition, ...rule }) => ({
+      ...rule,
+      definition: definition as RuleDefinition,
+    }));
+  });
+
+  return modRules;
+}
+
+export async function bustImageModRulesCache() {
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
+}

@@ -5,18 +5,34 @@ import { env } from '~/env/server';
 import { tagsNeedingReview as minorTags, tagsToIgnore } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
-import { NsfwLevel, SearchIndexUpdateQueueAction, SignalMessages } from '~/server/common/enums';
+import {
+  BlockedReason,
+  NsfwLevel,
+  SearchIndexUpdateQueueAction,
+  SignalMessages,
+} from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import {
+  getImagesModRules,
+  getTagNamesForImages,
+  queueImageSearchIndexUpdate,
+} from '~/server/services/image.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { evaluateRules } from '~/server/utils/mod-rules';
 import { getComputedTags } from '~/server/utils/tag-rules';
-import { ImageIngestionStatus, TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
+import {
+  ImageIngestionStatus,
+  ModerationRuleAction,
+  TagSource,
+  TagTarget,
+  TagType,
+} from '~/shared/utils/prisma/enums';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -28,7 +44,7 @@ import { signalClient } from '~/utils/signal-client';
 
 const REQUIRED_SCANS = 2;
 
-const tagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
+const localTagCache: Record<string, { id: number; blocked?: true; ignored?: true }> = {};
 
 enum Status {
   Success = 0,
@@ -296,7 +312,7 @@ async function handleSuccess({
   const tagsToFind: string[] = [];
   let hasBlockedTag = false;
   for (const tag of tags) {
-    const cachedTag = tagCache[tag.tag];
+    const cachedTag = localTagCache[tag.tag];
     if (!cachedTag) tagsToFind.push(tag.tag);
     else {
       tag.id = cachedTag.id;
@@ -313,13 +329,13 @@ async function handleSuccess({
 
     // Cache found tags and add ids to tags
     for (const tag of foundTags) {
-      tagCache[tag.name] = { id: tag.id };
-      if (tag.nsfwLevel === NsfwLevel.Blocked) tagCache[tag.name].blocked = true;
-      if (shouldIgnore(tag.name, source)) tagCache[tag.name].ignored = true;
+      localTagCache[tag.name] = { id: tag.id };
+      if (tag.nsfwLevel === NsfwLevel.Blocked) localTagCache[tag.name].blocked = true;
+      if (shouldIgnore(tag.name, source)) localTagCache[tag.name].ignored = true;
     }
 
     for (const tag of tags) {
-      const cachedTag = tagCache[tag.tag];
+      const cachedTag = localTagCache[tag.tag];
       if (!cachedTag) continue;
       tag.id = cachedTag.id;
       if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
@@ -344,7 +360,7 @@ async function handleSuccess({
       select: { id: true, name: true, nsfwLevel: true },
     });
     for (const tag of newFoundTags) {
-      tagCache[tag.name] = { id: tag.id };
+      localTagCache[tag.name] = { id: tag.id };
       const match = tags.find((x) => x.tag === tag.name);
       if (match) match.id = tag.id;
     }
@@ -537,6 +553,7 @@ async function handleSuccess({
       if (ingestion === 'Scanned') {
         // Clear cached image tags after completing scans
         await tagIdsForImagesCache.refresh(id);
+        await applyModerationRules({ ...image, prompt });
 
         const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
         const isProfilePicture = imageMetadata?.profilePicture === true;
@@ -548,18 +565,10 @@ async function handleSuccess({
         if (image.postId) await updatePostNsfwLevel(image.postId);
 
         // Update search index
-        await imagesSearchIndex.queueUpdate([
-          {
-            id,
-            action: SearchIndexUpdateQueueAction.Update,
-          },
-        ]);
-        await imagesMetricsSearchIndex.queueUpdate([
-          {
-            id,
-            action: SearchIndexUpdateQueueAction.Update,
-          },
-        ]);
+        await queueImageSearchIndexUpdate({
+          ids: [id],
+          action: SearchIndexUpdateQueueAction.Update,
+        });
       }
     }
 
@@ -625,4 +634,34 @@ function processHiveTags(tags: IncomingTag[]) {
     results.push(tag);
   }
   return results;
+}
+
+type IngestedImage = {
+  id: number;
+  userId: number;
+  prompt: string | null;
+};
+
+async function applyModerationRules(image: IngestedImage) {
+  const imageModRules = await getImagesModRules();
+  const tags = await getTagNamesForImages([image.id]);
+
+  if (imageModRules.length) {
+    const appliedRule = evaluateRules(imageModRules, { ...image, tags: tags[image.id] });
+
+    if (appliedRule) {
+      const data =
+        appliedRule.action === ModerationRuleAction.Block
+          ? {
+              ingestion: ImageIngestionStatus.Blocked,
+              nsfwLevel: NsfwLevel.Blocked,
+              blockedFor: BlockedReason.Moderated,
+            }
+          : appliedRule.action === ModerationRuleAction.Hold
+          ? { needsReview: 'blocked' }
+          : undefined;
+
+      if (data) await dbWrite.image.update({ where: { id: image.id }, data });
+    }
+  }
 }
