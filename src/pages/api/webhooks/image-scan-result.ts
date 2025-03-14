@@ -7,6 +7,7 @@ import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
 import {
   BlockedReason,
+  NotificationCategory,
   NsfwLevel,
   SearchIndexUpdateQueueAction,
   SignalMessages,
@@ -20,6 +21,7 @@ import {
   getTagNamesForImages,
   queueImageSearchIndexUpdate,
 } from '~/server/services/image.service';
+import { createNotification } from '~/server/services/notification.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
@@ -659,12 +661,40 @@ async function applyModerationRules(image: IngestedImage) {
               ingestion: ImageIngestionStatus.Blocked,
               nsfwLevel: NsfwLevel.Blocked,
               blockedFor: BlockedReason.Moderated,
+              needsReview: null,
             }
           : appliedRule.action === ModerationRuleAction.Hold
-          ? { needsReview: 'tag' }
+          ? { needsReview: 'modRule' }
           : undefined;
-
       if (data) await dbWrite.image.update({ where: { id: image.id }, data });
+
+      // Send notification to user if auto blocked
+      if (appliedRule.action === ModerationRuleAction.Block) {
+        await createNotification({
+          category: NotificationCategory.System,
+          key: `image-block:${image.id}`,
+          type: 'system-message',
+          userId: image.userId,
+          details: {
+            message: `One of your images has been blocked due to a moderation rule violation${
+              appliedRule.reason ? ` by the following reason: ${appliedRule.reason}` : ''
+            }. If you believe this is a mistake, you can appeal this decision.`,
+            url: `/images/${image.id}`,
+          },
+        }).catch((error) =>
+          logToAxiom({
+            name: 'image-scan-result',
+            type: 'error',
+            message: 'Could not create notification when blocking image',
+            data: {
+              imageId: image.id,
+              error: error.message,
+              cause: error.cause,
+              stack: error.stack,
+            },
+          })
+        );
+      }
 
       return appliedRule;
     }

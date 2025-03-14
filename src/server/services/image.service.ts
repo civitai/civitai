@@ -4860,7 +4860,7 @@ export async function getImagesModRules() {
     async () => {
       const rules = await dbRead.moderationRule.findMany({
         where: { entityType: EntityType.Image, enabled: true },
-        select: { definition: true, action: true },
+        select: { definition: true, action: true, reason: true },
         orderBy: [{ order: 'asc' }],
       });
 

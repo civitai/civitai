@@ -11,7 +11,6 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
   addBlockedImage,
@@ -68,6 +67,7 @@ const reviewTypeToBlockedReason = {
   tag: BlockImageReason.TOS,
   newUser: BlockImageReason.Ownership,
   appeal: BlockImageReason.TOS,
+  modRule: BlockImageReason.TOS,
 } as const;
 export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
   string,

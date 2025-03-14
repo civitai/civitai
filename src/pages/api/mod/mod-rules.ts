@@ -14,6 +14,7 @@ const payloadSchema = z.object({
   entityType: z.enum(['Model', 'Image']),
   enabled: z.boolean().optional().default(true),
   order: z.number().optional(),
+  reason: z.string().optional(),
 });
 
 const deleteQuerySchema = z.object({

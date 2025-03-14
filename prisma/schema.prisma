@@ -3471,6 +3471,7 @@ model ModerationRule {
   updatedAt  DateTime             @updatedAt
   enabled    Boolean              @default(true)
   order      Int?
+  reason     String?
 }
 
 /// @view

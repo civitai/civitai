@@ -2612,6 +2612,7 @@ export interface ModerationRule {
   updatedAt: Date;
   enabled: boolean;
   order: number | null;
+  reason: string | null;
 }
 
 export interface QuestionRank {

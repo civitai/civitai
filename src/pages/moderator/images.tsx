@@ -114,9 +114,12 @@ const ImageReviewType = {
   reported: 'Reported',
   csam: 'CSAM',
   appeal: 'Appeals',
+  modRule: 'Rule Violations',
 } as const;
 
 type ImageReviewType = keyof typeof ImageReviewType;
+
+// TODO.modRule: Implement mod rule review
 
 export default function Images() {
   // const queryUtils = trpc.useContext();

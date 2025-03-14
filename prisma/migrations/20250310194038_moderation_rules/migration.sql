@@ -11,6 +11,7 @@ CREATE TABLE "ModerationRule" (
     "updatedAt" TIMESTAMP(3) NOT NULL,
     "enabled" BOOLEAN NOT NULL DEFAULT true,
     "order" INTEGER,
+    "reason" TEXT,
 
     CONSTRAINT "ModerationRule_pkey" PRIMARY KEY ("id")
 );

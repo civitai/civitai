@@ -30,7 +30,7 @@ export type PropertyRule = {
 };
 
 export type RuleDefinition = AndRule | OrRule | ContentRule | TagRule | PropertyRule;
-type ModRule = { definition: RuleDefinition; action: ModerationRuleAction };
+type ModRule = { definition: RuleDefinition; action: ModerationRuleAction; reason?: string | null };
 
 export function evaluateRules(rules: ModRule[], obj: any) {
   for (const rule of rules) {
@@ -47,8 +47,8 @@ export function evaluateRule(rule: RuleDefinition, obj: any): boolean {
       return rule.rules.some((subRule) => evaluateRule(subRule, obj));
     case 'content':
       const regex = new RegExp(
-        rule.match.slice(1, rule.match.lastIndexOf('/')),
-        rule.match.slice(rule.match.lastIndexOf('/') + 1)
+        rule.match.startsWith('/') ? rule.match.slice(1, rule.match.lastIndexOf('/')) : rule.match,
+        rule.match.endsWith('/') ? rule.match.slice(rule.match.lastIndexOf('/') + 1) : 'gmi'
       );
 
       return rule.target.some((target) => {

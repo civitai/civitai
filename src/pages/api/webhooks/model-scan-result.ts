@@ -75,7 +75,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
             id: model.id,
             userId: -1,
             reason: 'other',
-            customMessage: 'Model put on hold by moderation rule',
+            customMessage: `Model put on hold by moderation rule: ${appliedRule.reason}`,
             meta: { ...(model.meta as ModelMeta), needsReview: true },
             isModerator: true,
           });
@@ -85,7 +85,11 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
             type: 'system-message',
             userId: model.userId,
             details: {
-              message: `Your model "${model.name}" has been put on hold due to a moderation rule violation and it's being reviewed by one of our moderators. It will be available once it has been approved.`,
+              message: `Your model "${
+                model.name
+              }" has been put on hold due to a moderation rule violation${
+                appliedRule.reason ? ` by the following reason: ${appliedRule.reason}` : ''
+              }. It's being reviewed by one of our moderators and it will be available once it has been approved.`,
               url: `/models/${model.id}`,
             },
           }).catch((error) =>
@@ -105,7 +109,7 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
             id: model.id,
             userId: -1,
             reason: 'other',
-            customMessage: 'Model blocked by moderation rule',
+            customMessage: `Model blocked by moderation rule: ${appliedRule.reason}`,
             meta: model.meta as ModelMeta,
             isModerator: true,
           });
@@ -115,7 +119,11 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
             type: 'system-message',
             userId: model.userId,
             details: {
-              message: `Your model "${model.name}" has been blocked due to a moderation rule violation. Please reach to one of our moderators if you think this is a mistake.`,
+              message: `Your model "${
+                model.name
+              }" has been blocked due to a moderation rule violation${
+                appliedRule.reason ? ` by the following reason: ${appliedRule.reason}` : ''
+              }. It's being reviewed by one of our moderators and it will be available once it has been approved.`,
               url: `/models/${model.id}`,
             },
           }).catch((error) =>

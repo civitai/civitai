@@ -200,7 +200,17 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   needsReview: z.string().nullish(),
   reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked', 'tag', 'newUser', 'appeal']),
+  reviewType: z.enum([
+    'minor',
+    'poi',
+    'reported',
+    'csam',
+    'blocked',
+    'tag',
+    'newUser',
+    'appeal',
+    'modRule',
+  ]),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 
