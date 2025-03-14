@@ -188,7 +188,7 @@ export async function getAuctionBySlug({ slug }: GetAuctionBySlugInput) {
 
   if (!auction) throw throwNotFoundError('Auction not found.');
 
-  const sortedBids = prepareBids(auction);
+  const sortedBids = prepareBids(auction, true);
 
   // TODO typescript is driving me crazy, but we need an if (auction.auctionBase.type === AuctionType.Model)
   //  and then conditionally return the relevant entity data
@@ -227,7 +227,7 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
 
     const now = new Date();
     const enhancedData = bids.map((b) => {
-      const sortedBids = prepareBids(b.auction);
+      const sortedBids = prepareBids(b.auction, true);
       const match = sortedBids.find((sb) => sb.entityId === b.entityId);
 
       let position, aboveThreshold, additionalPriceNeeded, totalAmount, isActive;
@@ -241,7 +241,9 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
         position = match.position;
         aboveThreshold = match.totalAmount >= b.auction.minPrice;
 
-        const bidsAbove = sortedBids.filter((sb) => sb.totalAmount >= b.auction.minPrice);
+        const bidsAbove = sortedBids
+          .slice(0, b.auction.quantity)
+          .filter((sb) => sb.totalAmount >= b.auction.minPrice);
 
         const lowestPrice =
           bidsAbove.length > 0
@@ -683,6 +685,120 @@ export const deleteBidsForModel = async ({ modelId }: { modelId: number }) => {
       category: NotificationCategory.System,
       type: 'canceled-bid-auction',
       key: `canceled-bid-auction:recurring:${modelId}:${formatDate(now, 'YYYY-MM-DD')}`,
+      details,
+    });
+
+    deletedRecurringIds = recToDelete.map((d) => d.id);
+  }
+
+  for (const a of aData) {
+    const signalData = await getAuctionBySlug({ slug: a.auctionBase.slug });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.Auction}:${a.id}`,
+        target: SignalMessages.AuctionBidChange,
+        data: signalData,
+      })
+      .catch();
+  }
+
+  return {
+    bidsDeleted: deletedIds,
+    recurringBidsDeleted: deletedRecurringIds,
+  };
+};
+
+export const deleteBidsForModelVersion = async ({ modelVersionId }: { modelVersionId: number }) => {
+  // TODO combine this function with one above
+  const now = new Date();
+
+  const aData = await dbWrite.auction.findMany({
+    where: { startAt: { lte: now }, endAt: { gt: now } },
+    select: {
+      id: true,
+      auctionBase: {
+        select: {
+          slug: true,
+        },
+      },
+    },
+  });
+  const aIds = aData.map((a) => a.id);
+
+  let deletedIds: number[] = [];
+  let deletedRecurringIds: number[] = [];
+
+  if (aIds.length > 0) {
+    // we could reverse the logic here and refund first
+    const deleted = await dbWrite.bid.updateManyAndReturn({
+      where: { auctionId: { in: aIds }, entityId: modelVersionId },
+      data: {
+        deleted: true,
+      },
+      select: {
+        id: true,
+        userId: true,
+        transactionIds: true,
+      },
+    });
+
+    for (const bid of deleted) {
+      for (const transactionId of bid.transactionIds) {
+        try {
+          await withRetries(() =>
+            refundTransaction(transactionId, 'Deleted bid - model not available.')
+          );
+        } catch (e) {
+          const error = e as Error;
+          logToAxiom({
+            name: 'handle-auctions',
+            type: 'error',
+            message: `Failed to refund user for removed bid`,
+            stack: error.stack,
+            cause: error.cause,
+            data: { transactionId, message: error.message },
+          }).catch();
+        }
+      }
+    }
+
+    if (deleted.length > 0) {
+      const details: DetailsCanceledBid = {
+        name: 'a model',
+        reason: 'Model not available',
+        recurring: false,
+      };
+      await createNotification({
+        userIds: uniq(deleted.map((d) => d.userId)),
+        category: NotificationCategory.System,
+        type: 'canceled-bid-auction',
+        key: `canceled-bid-auction:${modelVersionId}:${formatDate(now, 'YYYY-MM-DD')}`,
+        details,
+      });
+
+      deletedIds = deleted.map((d) => d.id);
+    }
+  }
+
+  const recToDelete = await dbWrite.bidRecurring.findMany({
+    where: { entityId: modelVersionId },
+    select: { id: true, userId: true },
+  });
+
+  if (recToDelete.length > 0) {
+    await dbWrite.bidRecurring.deleteMany({
+      where: { id: { in: recToDelete.map((r) => r.id) } },
+    });
+    const details: DetailsCanceledBid = {
+      name: 'a model',
+      reason: 'Model no longer available',
+      recurring: true,
+    };
+    await createNotification({
+      userIds: uniq(recToDelete.map((d) => d.userId)),
+      category: NotificationCategory.System,
+      type: 'canceled-bid-auction',
+      key: `canceled-bid-auction:recurring:${modelVersionId}:${formatDate(now, 'YYYY-MM-DD')}`,
       details,
     });
 

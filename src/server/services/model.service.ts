@@ -2764,8 +2764,8 @@ export type GetFeaturedModels = AsyncReturnType<typeof getFeaturedModels>;
 export async function getFeaturedModels() {
   try {
     return await fetchThroughCache(REDIS_KEYS.CACHES.FEATURED_MODELS, async () => {
-      // subtract 2 minutes for the job to finish
-      const now = dayjs().subtract(2, 'minute');
+      // was trying to subtract 2 minutes
+      const now = dayjs();
 
       // TODO we're featuring modelVersions, but showing models due to how collections and meili works
 

@@ -371,15 +371,12 @@ async function handleSuccess({
       const uniqTags = uniqBy(tags, (x) => x.id);
       // TODO.TagsOnImage - remove this after the migration
       await dbWrite.$executeRawUnsafe(`
-        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "disabled", "source", "disabledAt")
+        INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence", "automated", "source", "disabledAt")
         VALUES ${uniqTags
           .filter((x) => x.id)
           .map(
             (x) =>
-              `(${id}, ${x.id}, ${x.confidence}, true, ${shouldIgnore(
-                x.tag,
-                x.source ?? source
-              )}, '${x.source ?? source}', ${
+              `(${id}, ${x.id}, ${x.confidence}, true, '${x.source ?? source}', ${
                 shouldIgnore(x.tag, x.source ?? source) ? 'NOW()' : null
               })`
           )
