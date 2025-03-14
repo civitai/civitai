@@ -93,9 +93,6 @@ async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[])
   const moderatedTagIds = await getModeratedTags().then((data) => data.map((x) => x.id));
   const imageIds = args.filter((x) => moderatedTagIds.includes(x.tagId)).map((x) => x.imageId);
 
-  console.log(args);
-  console.log({ imageIds });
-
   await Limiter().process(imageIds, async (imageIds) => {
     await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels_new(ARRAY[${imageIds.join(',')}])`);
     await thumbnailCache.bust(imageIds);
