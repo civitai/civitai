@@ -23,10 +23,10 @@ export default WebhookEndpoint(async (req, res) => {
     params,
     runContext: res,
     rangeFetcher: async (context) => {
-      // const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
-      //   Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
-      // );
-      return { ...context, end: 40000000 };
+      const [{ max }] = await dbRead.$queryRaw<{ max: number }[]>(
+        Prisma.sql`SELECT MAX(id) "max" FROM "Image";`
+      );
+      return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
       const { cancel, result } = await pgDbWrite.cancellableQuery<{

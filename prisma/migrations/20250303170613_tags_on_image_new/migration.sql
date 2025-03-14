@@ -14,8 +14,9 @@ ALTER TABLE "TagsOnImageNew" ADD CONSTRAINT "TagsOnImageNew_imageId_fkey" FOREIG
 CREATE INDEX "TagsOnImageNew_tagId_idx" ON "TagsOnImageNew"("tagId");
 CREATE INDEX "TagsOnImageNew_needsReview_idx" ON "TagsOnImageNew" ("attributes") WHERE ("attributes" & 1 << 09) != 0;
 CREATE INDEX "TagsOnImageNew_disabled_idx" ON "TagsOnImageNew" ("attributes") WHERE ("attributes" & 1 << 10) != 0;
+CREATE INDEX "Tag_moderated_idx" ON "Tag" ("nsfwLevel") WHERE "nsfwLevel" > 1;
 
-CREATE TYPE tag_on_image_return AS ("imageId" integer, "tagId" integer)
+-- CREATE TYPE tag_on_image_return AS ("imageId" integer, "tagId" integer)
 
 CREATE OR REPLACE FUNCTION manipulate_bits_boolean(attributes integer, "offset" integer, value boolean default null)
 RETURNS INTEGER AS $$
@@ -105,7 +106,7 @@ CREATE OR REPLACE FUNCTION upsert_tag_on_image(
   disabled bool default null,
   needsReview bool default null
 )
-RETURNS tag_on_image_return AS $$
+RETURNS void AS $$
 DECLARE
     packed_attributes SMALLINT;
 BEGIN
@@ -123,7 +124,6 @@ BEGIN
                             ), 10, disabled
                           ), 11, automated
                         );  -- Replace the attributes on conflict
-	RETURN (targetImageId, targetTagId)::tag_on_image_return;
 END;
 $$
 LANGUAGE plpgsql;
@@ -137,7 +137,7 @@ CREATE OR REPLACE FUNCTION insert_tag_on_image(
   disabled bool default null,
   needsReview bool default null
 )
-RETURNS tag_on_image_return AS $$
+RETURNS void AS $$
 DECLARE
     packed_attributes SMALLINT;
 BEGIN
@@ -147,7 +147,6 @@ BEGIN
     INSERT INTO "TagsOnImageNew" ("imageId", "tagId", "attributes")
     VALUES (targetImageId, targetTagId, packed_attributes)
     ON CONFLICT ("imageId", "tagId") DO NOTHING;
-    RETURN (targetImageId, targetTagId)::tag_on_image_return;
 END;
 $$
 LANGUAGE plpgsql;

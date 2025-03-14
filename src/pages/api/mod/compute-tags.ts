@@ -4,8 +4,9 @@ import { z } from 'zod';
 import { ModEndpoint } from '~/server/utils/endpoint-helpers';
 import { Prisma } from '@prisma/client';
 import { TagSource } from '~/shared/utils/prisma/enums';
-import { chunk } from 'lodash-es';
 import { getComputedTags } from '~/server/utils/tag-rules';
+import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import { Limiter } from '~/server/utils/concurrency-helpers';
 
 const importSchema = z.object({
   imageIds: z.string().transform((s) => s.split(',').map(Number)),
@@ -38,36 +39,31 @@ export default ModEndpoint(
       toAdd.push(...computedTags.map((tag) => ({ imageId: Number(imageId), tag })));
     }
 
-    const batchSize = 1000;
-    const batches = chunk(toAdd, batchSize);
-    let i = 0;
-    for (const batch of batches) {
-      console.log(
-        `Adding batch ${i} to ${Math.min(i + batchSize, toAdd.length)} of ${toAdd.length} tags`
-      );
-      const json = JSON.stringify(batch);
+    const toInsert = await Limiter().process(
+      toAdd,
+      (batch) => dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+      WITH image_tags AS (
+        SELECT
+          (value ->> 'imageId')::int AS id,
+          value ->> 'tag' AS tag
+        FROM json_array_elements(${JSON.stringify(batch)}::json)
+      )
+      SELECT it.id as "imageId", t.id as "tagId"
+      FROM image_tags it
+      JOIN "Tag" t ON t.name = it.tag;
+    `
+    );
 
-      // TODO.TagsOnImage - create a function that accepst the result of `insert_tag_on_image` and `upsert_tag_on_image` and calls update_nsfw_levels with the resulting image ids
-      await dbWrite.$queryRaw`
-        WITH image_tags AS (
-          SELECT
-            (value ->> 'imageId')::int AS id,
-            value ->> 'tag' AS tag
-          FROM json_array_elements(${json}::json)
-        )
-        SELECT (insert_tag_on_image(it.id, t.id, 'Computed', 70, true)).*
-        FROM image_tags it
-        JOIN "Tag" t ON t.name = it.tag;
-      `;
+    await insertTagsOnImageNew(
+      toInsert.map(({ imageId, tagId }) => ({
+        imageId,
+        tagId,
+        source: 'Computed',
+        confidence: 70,
+        automated: true,
+      }))
+    );
 
-      // Recompute the nsfw level
-      const imageIds = batch.map((x) => x.imageId);
-      await dbWrite.$executeRawUnsafe(
-        `SELECT update_nsfw_levels('{${imageIds.join(',')}}'::int[]);`
-      );
-
-      i += batchSize;
-    }
     console.log('Done adding computed tags!');
 
     if (wait) res.status(200).json({ images: imageIds.length });

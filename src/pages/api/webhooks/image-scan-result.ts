@@ -388,19 +388,18 @@ async function handleSuccess({
     }
 
     // Mark image as scanned and set the nsfw field based on the presence of automated tags with type 'Moderation'
-    const tagsOnImage =
-      (
-        await dbWrite.tagsOnImage.findMany({
-          where: { imageId: id, automated: true, disabledAt: null },
-          select: { tag: { select: { type: true, name: true } } },
-        })
-      )?.map((x) => x.tag) ?? [];
+    const tagsFromTagsOnImageDetails = await dbWrite.$queryRaw<{ type: TagType; name: string }[]>`
+      SELECT t.type, t.name
+      FROM "TagsOnImageDetails" toi
+      JOIN "Tag" t ON t.id = toi."tagId"
+      WHERE toi."imageId" = ${id} AND toi.automated AND NOT toi.disabled
+    `;
 
     let hasAdultTag = false,
       hasMinorTag = false,
       hasCartoonTag = false,
       nsfw = false;
-    for (const { name, type } of tagsOnImage) {
+    for (const { name, type } of tagsFromTagsOnImageDetails) {
       if (type === TagType.Moderation) nsfw = true;
       if (minorTags.includes(name)) hasMinorTag = true;
       else if (constants.imageTags.styles.includes(name)) hasCartoonTag = true;
@@ -529,7 +528,7 @@ async function handleSuccess({
           await deleteUserProfilePictureCache(image.userId);
         }
 
-        await dbWrite.$executeRaw`SELECT update_nsfw_level(${id}::int);`;
+        await dbWrite.$executeRaw`SELECT update_nsfw_level_new(${id}::int);`;
         if (image.postId) await updatePostNsfwLevel(image.postId);
 
         // Update search index

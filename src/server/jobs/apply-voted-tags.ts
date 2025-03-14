@@ -1,11 +1,12 @@
-import { Prisma } from '@prisma/client';
-import { chunk, uniqBy } from 'lodash-es';
+import { uniqBy } from 'lodash-es';
 import { constants } from '~/server/common/constants';
-import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
-import { tagIdsForImagesCache } from '~/server/redis/caches';
-import { imagesSearchIndex } from '~/server/search-index';
 import { createJob, getJobDate } from './job';
+import {
+  deleteTagsOnImageNew,
+  insertTagsOnImageNew,
+  upsertTagsOnImageNew,
+} from '~/server/services/tagsOnImageNew.service';
 
 const UPVOTE_TAG_THRESHOLD = constants.tagVoting.upvoteThreshold;
 const DOWNVOTE_TAG_THRESHOLD = 0;
@@ -18,11 +19,10 @@ async function applyUpvotes() {
   // Get the last sent time
   // --------------------------------------------
   const [lastApplied, setLastApplied] = await getJobDate('last-tags-applied');
-  const now = new Date();
 
   // Apply tags over the threshold
   // --------------------------------------------
-  const addedImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+  const toAdd = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Apply voted tags
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -41,13 +41,16 @@ async function applyUpvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) >= ${UPVOTE_TAG_THRESHOLD}
     )
-    SELECT (insert_tag_on_image("imageId", "tagId", 'User')).*
+    SELECT "imageId", "tagId"
     FROM over_threshold;
   `;
+  await insertTagsOnImageNew(
+    toAdd.map(({ imageId, tagId }) => ({ imageId, tagId, source: 'User' }))
+  );
 
   // Bring back disabled tag where voted by moderator
   // --------------------------------------------
-  const restoredImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+  const toRestore = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Enable upvoted moderation tags if voted by mod
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -57,18 +60,20 @@ async function applyUpvotes() {
         AND applied."disabled"
         AND vote.vote > 5
     )
-    SELECT (upsert_tag_on_image("imageId", "tagId", null, null, null, false)).*
+    SELECT "imageId", "tagId"
     FROM affected;
   `;
+
+  await upsertTagsOnImageNew(
+    toAdd.map(({ imageId, tagId }) => ({ imageId, tagId, disabled: false }))
+  );
 
   // Get affected images to update search index, cache, and votes
   // --------------------------------------------
   const affectedImageTags = uniqBy(
-    [...addedImageTags, ...restoredImageTags],
+    [...toAdd, ...toRestore],
     ({ imageId, tagId }) => `${imageId}-${tagId}`
   );
-
-  const affectedImageResults = [...new Set(affectedImageTags.map(({ imageId }) => imageId))];
 
   // Update votes
   await dbWrite.$queryRaw`
@@ -84,53 +89,6 @@ async function applyUpvotes() {
       AND vote > 0;
   `;
 
-  // Bust cache
-  await tagIdsForImagesCache.refresh(affectedImageResults);
-
-  // Update search index
-  await imagesSearchIndex.queueUpdate(
-    affectedImageResults.map((imageId) => ({
-      id: imageId,
-      action: SearchIndexUpdateQueueAction.Update,
-    }))
-  );
-  // - no need to update imagesMetricsSearchIndex here
-
-  // Update NSFW baseline
-  // --------------------------------------------
-  const toUpdate = (
-    await dbWrite.$queryRaw<{ id: number }[]>`
-      -- Get updated images
-      SELECT DISTINCT i.id
-      FROM "Image" i
-      -- if any moderation tags were applied since last run
-      WHERE EXISTS (
-        SELECT 1 FROM "TagsOnImageDetails" toi
-        JOIN "Tag" t ON t.id = toi."tagId" AND t.type = 'Moderation'
-        WHERE
-          toi."imageId" = i.id
-          AND toi."createdAt" > ${lastApplied} - INTERVAL '1 minute'
-          AND toi."disabled" = FALSE
-      )
-    `
-  ).map(({ id }) => id);
-
-  const batches = chunk(toUpdate, 500);
-  for (const batch of batches) {
-    // Update NSFW baseline - images
-    await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${batch.join(',')}])`);
-    // Update NSFW baseline - posts
-    await dbWrite.$executeRaw`
-      WITH to_update AS (
-        SELECT array_agg(DISTINCT i."postId") ids
-        FROM "Image" i
-        WHERE i.id IN (${Prisma.join(batch)})
-      )
-      SELECT update_post_nsfw_levels(ids)
-      FROM to_update;
-    `;
-  }
-
   // Update the last sent time
   // --------------------------------------------
   await setLastApplied();
@@ -140,11 +98,10 @@ async function applyDownvotes() {
   // Get the last sent time
   // --------------------------------------------
   const [lastApplied, setLastApplied] = await getJobDate('last-tags-disabled');
-  const now = new Date();
 
   // Delete tags under the threshold (not moderation)
   // --------------------------------------------
-  const deletedImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+  const toDelete = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Delete downvoted tags (not moderation)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -165,32 +122,18 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= ${DOWNVOTE_TAG_THRESHOLD}
     )
-    DELETE FROM "TagsOnImageNew" WHERE ("tagId", "imageId") IN (
-      SELECT
+    SELECT
         "tagId",
         "imageId"
       FROM under_threshold ut
       JOIN "Tag" t ON t.id = ut."tagId"
-      WHERE t.type != 'Moderation'
-    )
-    RETURNING "tagId", "imageId";
+      WHERE t.type != 'Moderation';
   `;
-
-  await dbWrite.$queryRaw`
-    WITH to_delete AS (
-      SELECT
-        (value ->> 'imageId')::int as "imageId",
-        (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements(${JSON.stringify(deletedImageTags)}::json)
-    )
-    DELETE FROM "TagsOnImageNew" WHERE ("imageId", "tagId") IN  (
-      SELECT * FROM to_delete
-    );
-  `;
+  await deleteTagsOnImageNew(toDelete);
 
   // Disable tags under the threshold (moderation) where voted by moderator
   // --------------------------------------------
-  const disabledImageTags = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+  const toDisable = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Disable downvoted moderation tags if voted by mod
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -211,7 +154,7 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= 0
     )
-    SELECT (upsert_tag_on_image(ut."imageId", ut."tagId", null, null, null, true, false)).*
+    SELECT ut."imageId", ut."tagId"
     FROM under_threshold ut
     JOIN "Tag" t ON t.id = ut."tagId"
     WHERE t.type = 'Moderation' AND ut."heavyVotes" > 0;
@@ -219,7 +162,7 @@ async function applyDownvotes() {
 
   // Add "Needs Review" to tags under the threshold (moderation)
   // --------------------------------------------
-  await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+  const toReview = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Send downvoted tags for review (moderation)
     WITH affected AS (
       SELECT DISTINCT vote."imageId", vote."tagId"
@@ -239,78 +182,39 @@ async function applyDownvotes() {
       GROUP BY a."imageId", a."tagId"
       HAVING SUM(votes.vote) <= ${UPVOTE_TAG_THRESHOLD}
     )
-    SELECT (upsert_tag_on_image("imageId", "tagId", null, null, null, null, true)).*
+    SELECT "imageId", "tagId"
     FROM under_threshold ut
     JOIN "Tag" t ON t.id = ut."tagId"
     WHERE t.type = 'Moderation';
   `;
 
-  // Get affected images to update search index
-  // --------------------------------------------
-  const affectedImageResults = [
-    ...new Set([...disabledImageTags, ...deletedImageTags].map((x) => x.imageId)),
-  ];
+  await upsertTagsOnImageNew([
+    ...toDisable.map(({ imageId, tagId }) => ({
+      imageId,
+      tagId,
+      disabled: true,
+      needsReview: false,
+    })),
+    ...toReview.map(({ imageId, tagId }) => ({ imageId, tagId, needsReview: true })),
+  ]);
 
-  // TODO.TagsOnImage - add to action queue when TagsOnImageNew.disabled is set to true
+  const affectedImageTags = uniqBy(
+    [...toDelete, ...toDisable],
+    ({ imageId, tagId }) => `${imageId}-${tagId}`
+  );
+
   // Update votes
   await dbWrite.$executeRaw`
-    -- Update image tag votes (unapply)
-    with affected AS (
-      SELECT "imageId", "tagId" FROM "TagsOnImage"
-      WHERE "disabledAt" = ${now}
+    WITH affected AS (
+      SELECT
+        (value ->> 'imageId')::int as "imageId",
+        (value ->> 'tagId')::int as "tagId"
+      FROM json_array_elements('${JSON.stringify(affectedImageTags)}'::json)
     )
-    UPDATE "TagsOnImageVote" SET "applied" = false
+    UPDATE "TagsOnImageVote" SET "applied" = true
     WHERE ("imageId", "tagId") IN (SELECT "imageId", "tagId" FROM affected)
       AND vote > 0;
   `;
-
-  // Bust cache
-  await tagIdsForImagesCache.refresh(affectedImageResults);
-
-  // Update search index
-  await imagesSearchIndex.queueUpdate(
-    affectedImageResults.map((imageId) => ({
-      id: imageId,
-      action: SearchIndexUpdateQueueAction.Update,
-    }))
-  );
-  // - no need to update imagesMetricsSearchIndex here
-
-  // TODO.TagsOnImage - add to action queue when TagsOnImageNew.disabled is set to true
-  // Update NSFW baseline
-  // --------------------------------------------
-  const toUpdate = (
-    await dbWrite.$queryRaw<{ id: number }[]>`
-      -- Get updated images
-      SELECT DISTINCT i.id
-      FROM "Image" i
-      WHERE nsfw != 'None'
-      -- If any moderation tags were disabled since last run, update
-      AND EXISTS (
-        SELECT 1 FROM "TagsOnImage" toi
-        JOIN "Tag" t ON t.id = toi."tagId"
-        WHERE
-          toi."imageId" = i.id AND toi."disabledAt" IS NOT NULL AND t.type = 'Moderation'
-          AND toi."disabledAt" > ${lastApplied} - INTERVAL '1 minute'
-      )
-    `
-  ).map(({ id }) => id);
-
-  const batches = chunk(toUpdate, 500);
-  for (const batch of batches) {
-    // Update NSFW baseline - images
-    await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${batch.join(',')}])`);
-    // Update NSFW baseline - posts
-    await dbWrite.$executeRaw`
-      WITH to_update AS (
-        SELECT array_agg(DISTINCT i."postId") ids
-        FROM "Image" i
-        WHERE i.id IN (${Prisma.join(batch)})
-      )
-      SELECT update_post_nsfw_levels(ids)
-      FROM to_update;
-    `;
-  }
 
   // Update the last sent time
   // --------------------------------------------

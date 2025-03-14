@@ -356,23 +356,23 @@ async function migrateModelVersions(req: NextApiRequest, res: NextApiResponse) {
             mv.id,
             CASE
               WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
-              WHEN m."userId" = -1 THEN (
-                SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
-                FROM (
-                  SELECT
-                  ir."imageId" id,
-                  ir."modelVersionId",
-                  row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num,
-                  i."nsfwLevel"
-                  FROM "ImageResource" ir
-                  JOIN "Image" i ON i.id = ir."imageId"
-                  JOIN "Post" p ON p.id = i."postId"
-                  JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
-                  WHERE ir."modelVersionId" = mv.id
-                  AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
-                ) AS ranked
-                WHERE ranked.row_num <= 20
-              )
+              -- WHEN m."userId" = -1 THEN (
+              --   SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
+              --   FROM (
+              --     SELECT
+              --     ir."imageId" id,
+              --     ir."modelVersionId",
+              --     row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num,
+              --     i."nsfwLevel"
+              --     FROM "ImageResource" ir
+              --     JOIN "Image" i ON i.id = ir."imageId"
+              --     JOIN "Post" p ON p.id = i."postId"
+              --     JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
+              --     WHERE ir."modelVersionId" = mv.id
+              --     AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+              --   ) AS ranked
+              --   WHERE ranked.row_num <= 20
+              -- )
               WHEN m."userId" != -1 THEN (
                 SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
                 FROM (
