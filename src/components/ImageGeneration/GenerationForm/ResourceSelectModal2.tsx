@@ -37,6 +37,7 @@ import {
   Configure,
   InstantSearch,
   InstantSearchProps,
+  useClearRefinements,
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
@@ -124,6 +125,7 @@ type Tabs = (typeof tabs)[number];
 const defaultTab: Tabs = 'all';
 
 const take = 20;
+const hitsPerPage = 20;
 
 // TODO - ResourceSelectProvider with filter so that we only show relevant model versions to select
 
@@ -210,8 +212,32 @@ function ResourceSelectProvider({
 export default function ResourceSelectModal(props: ResourceSelectModalProps) {
   return (
     <ResourceSelectProvider {...props}>
-      <ResourceSelectModalContent />
+      <ResourceSelectModalWrapper />
     </ResourceSelectProvider>
+  );
+}
+
+function ResourceSelectModalWrapper() {
+  const dialog = useDialogContext();
+  const { onClose } = useResourceSelectContext();
+
+  function handleClose() {
+    dialog.onClose();
+    onClose?.();
+  }
+
+  return (
+    <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
+      <div className="flex size-full max-h-full max-w-full flex-col">
+        <InstantSearch
+          searchClient={searchClient}
+          indexName={searchIndexMap.models}
+          future={{ preserveSharedStateOnUnmount: true }}
+        >
+          <ResourceSelectModalContent />
+        </InstantSearch>
+      </div>
+    </Modal>
   );
 }
 
@@ -222,6 +248,9 @@ function ResourceSelectModalContent() {
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
   const [selectedTab, setSelectedTab] = useState<Tabs>(defaultTab);
+  const { refine } = useClearRefinements();
+  // TODO this refine isn't working perfectly
+
   // const availableBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
   // const _selectedFilters = selectedFilters.filter((x) => availableBaseModels.includes)
 
@@ -402,70 +431,66 @@ function ResourceSelectModalContent() {
     onClose?.();
   }
 
+  // TODO there is still an issue with meili sorting boosted results its own way, so we are simply returning 100 records right now
+
   return (
-    <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
-      <div className="flex size-full max-h-full max-w-full flex-col">
-        <InstantSearch
-          searchClient={searchClient}
-          indexName={searchIndexMap.models}
-          future={{ preserveSharedStateOnUnmount: true }}
-        >
-          <Configure hitsPerPage={20} filters={totalFilters} />
+    <>
+      <Configure
+        hitsPerPage={selectedTab === 'boosted' ? 100 : hitsPerPage}
+        filters={totalFilters}
+      />
 
-          <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
-            <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
-              <Text>{title}</Text>
-              <CustomSearchBox
-                isMobile={isMobile}
-                autoFocus
-                className="order-last w-full grow sm:order-none sm:w-auto"
-              />
-              <CloseButton onClick={handleClose} />
-            </div>
+      <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
+        <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
+          <Text>{title}</Text>
+          <CustomSearchBox
+            isMobile={isMobile}
+            autoFocus
+            className="order-last w-full grow sm:order-none sm:w-auto"
+          />
+          <CloseButton onClick={handleClose} />
+        </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between sm:gap-10">
-              <SegmentedControl
-                value={selectedTab}
-                onChange={(v) => setSelectedTab(v as Tabs)}
-                data={allowedTabs.map((v) => ({
-                  value: v,
-                  label: (
-                    <Box className={v === 'boosted' ? 'text-yellow-7' : ''}>{v.toUpperCase()}</Box>
-                  ),
-                }))}
-                className="shrink-0 @sm:w-full"
-              />
-              <CategoryTagFilters />
-              <div className="flex shrink-0 flex-row items-center justify-end gap-3">
-                {selectedTab !== 'boosted' && <ResourceSelectSort />}
-                <ResourceSelectFiltersDropdown />
-                <GenerationSettingsPopover>
-                  <ActionIcon>
-                    <IconSettings />
-                  </ActionIcon>
-                </GenerationSettingsPopover>
-              </div>
-            </div>
-
-            <Divider />
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between sm:gap-10">
+          <SegmentedControl
+            value={selectedTab}
+            onChange={(v) => {
+              setSelectedTab(v as Tabs);
+              refine();
+            }}
+            data={allowedTabs.map((v) => ({
+              value: v,
+              label: (
+                <Box className={v === 'boosted' ? 'text-yellow-7' : ''}>{v.toUpperCase()}</Box>
+              ),
+            }))}
+            className="shrink-0 @sm:w-full"
+          />
+          <CategoryTagFilters />
+          <div className="flex shrink-0 flex-row items-center justify-end gap-3">
+            {selectedTab !== 'boosted' && <ResourceSelectSort />}
+            <ResourceSelectFiltersDropdown />
+            <GenerationSettingsPopover>
+              <ActionIcon>
+                <IconSettings />
+              </ActionIcon>
+            </GenerationSettingsPopover>
           </div>
+        </div>
 
-          {isLoadingExtra ? (
-            <div className="p-3 py-5">
-              <Center mt="md">
-                <Loader />
-              </Center>
-            </div>
-          ) : (
-            <ResourceHitList
-              likes={likedModels}
-              featured={featuredModels}
-              selectedTab={selectedTab}
-            />
-          )}
-        </InstantSearch>
+        <Divider />
       </div>
-    </Modal>
+
+      {isLoadingExtra ? (
+        <div className="p-3 py-5">
+          <Center mt="md">
+            <Loader />
+          </Center>
+        </div>
+      ) : (
+        <ResourceHitList likes={likedModels} featured={featuredModels} selectedTab={selectedTab} />
+      )}
+    </>
   );
 }
 

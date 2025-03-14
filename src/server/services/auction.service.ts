@@ -188,7 +188,7 @@ export async function getAuctionBySlug({ slug }: GetAuctionBySlugInput) {
 
   if (!auction) throw throwNotFoundError('Auction not found.');
 
-  const sortedBids = prepareBids(auction);
+  const sortedBids = prepareBids(auction, true);
 
   // TODO typescript is driving me crazy, but we need an if (auction.auctionBase.type === AuctionType.Model)
   //  and then conditionally return the relevant entity data
@@ -227,7 +227,7 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
 
     const now = new Date();
     const enhancedData = bids.map((b) => {
-      const sortedBids = prepareBids(b.auction);
+      const sortedBids = prepareBids(b.auction, true);
       const match = sortedBids.find((sb) => sb.entityId === b.entityId);
 
       let position, aboveThreshold, additionalPriceNeeded, totalAmount, isActive;
@@ -241,7 +241,9 @@ export const getMyBids = async ({ userId }: { userId: number }) => {
         position = match.position;
         aboveThreshold = match.totalAmount >= b.auction.minPrice;
 
-        const bidsAbove = sortedBids.filter((sb) => sb.totalAmount >= b.auction.minPrice);
+        const bidsAbove = sortedBids
+          .slice(0, b.auction.quantity)
+          .filter((sb) => sb.totalAmount >= b.auction.minPrice);
 
         const lowestPrice =
           bidsAbove.length > 0
