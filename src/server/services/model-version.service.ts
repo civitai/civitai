@@ -43,6 +43,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
@@ -488,6 +489,7 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
     await bustMvCache(deleted.id);
+    await deleteBidsForModelVersion({ modelVersionId: id });
 
     return deleted;
   });
