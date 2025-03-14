@@ -612,11 +612,11 @@ function formatTextToImageStep({
     if (triggerWord) {
       if (item?.triggerType === 'negative')
         // while (negativePrompt.startsWith(triggerWord)) {
-        negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+        negativePrompt = negativePrompt.replaceAll(`${triggerWord}, `, '');
       // }
       if (item?.triggerType === 'positive')
         // while (prompt.startsWith(triggerWord)) {
-        prompt = prompt.replace(`${triggerWord}, `, '');
+        prompt = prompt.replaceAll(`${triggerWord}, `, '');
       // }
     }
   }
