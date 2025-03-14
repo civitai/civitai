@@ -120,7 +120,7 @@ async function getImageScore(ctx: Context) {
       AND em.createdAt > ${ctx.lastUpdate}
     )
     SELECT
-      ic.userId,
+      ic.userId as userId,
       (
         sumIf(em.metricValue, em.metricType in ('ReactionLike', 'ReactionHeart', 'ReactionLaugh', 'ReactionCry')) * ${ctx.scoreMultipliers.images.reactions}
         + sumIf(em.metricValue, em.metricType = 'Comment') * ${ctx.scoreMultipliers.images.comments}
