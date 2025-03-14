@@ -556,7 +556,7 @@ async function handleSuccess({
       if (ingestion === 'Scanned') {
         // Clear cached image tags after completing scans
         await tagIdsForImagesCache.refresh(id);
-        await applyModerationRules({ ...image, prompt });
+        const appliedRule = await applyModerationRules({ ...image, prompt });
 
         const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
         const isProfilePicture = imageMetadata?.profilePicture === true;
@@ -568,10 +568,13 @@ async function handleSuccess({
         if (image.postId) await updatePostNsfwLevel(image.postId);
 
         // Update search index
-        await queueImageSearchIndexUpdate({
-          ids: [id],
-          action: SearchIndexUpdateQueueAction.Update,
-        });
+        const action =
+          appliedRule?.action === ModerationRuleAction.Block ||
+          appliedRule?.action === ModerationRuleAction.Hold
+            ? SearchIndexUpdateQueueAction.Delete
+            : SearchIndexUpdateQueueAction.Update;
+
+        await queueImageSearchIndexUpdate({ ids: [id], action });
       }
     }
 
@@ -661,10 +664,12 @@ async function applyModerationRules(image: IngestedImage) {
               blockedFor: BlockedReason.Moderated,
             }
           : appliedRule.action === ModerationRuleAction.Hold
-          ? { needsReview: 'blocked' }
+          ? { needsReview: 'tag' }
           : undefined;
 
       if (data) await dbWrite.image.update({ where: { id: image.id }, data });
+
+      return appliedRule;
     }
   }
 }

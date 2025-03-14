@@ -17,7 +17,7 @@ const payloadSchema = z.object({
 });
 
 const deleteQuerySchema = z.object({
-  id: z.number(),
+  id: z.coerce.number(),
 });
 
 export default ModEndpoint(

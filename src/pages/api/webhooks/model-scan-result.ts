@@ -1,9 +1,11 @@
 import { NextApiRequest, NextApiResponse } from 'next';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { dataForModelsCache } from '~/server/redis/caches';
 import { modelScanResultSchema } from '~/server/schema/model-flag.schema';
 import { ModelMeta } from '~/server/schema/model.schema';
+import { modelsSearchIndex } from '~/server/search-index';
 import { upsertModelFlag } from '~/server/services/model-flag.service';
 import { getModelModRules, unpublishModelById } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -86,7 +88,17 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
               message: `Your model "${model.name}" has been put on hold due to a moderation rule violation and it's being reviewed by one of our moderators. It will be available once it has been approved.`,
               url: `/models/${model.id}`,
             },
-          });
+          }).catch((error) =>
+            logWebhook({
+              message: 'Could not create notification when marking model as hold',
+              data: {
+                modelId: model.id,
+                error: error.message,
+                cause: error.cause,
+                stack: error.stack,
+              },
+            })
+          );
           break;
         case ModerationRuleAction.Block:
           await unpublishModelById({
@@ -106,7 +118,17 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
               message: `Your model "${model.name}" has been blocked due to a moderation rule violation. Please reach to one of our moderators if you think this is a mistake.`,
               url: `/models/${model.id}`,
             },
-          }).catch(() => null);
+          }).catch((error) =>
+            logWebhook({
+              message: 'Could not create notification when marking model as blocked',
+              data: {
+                modelId: model.id,
+                error: error.message,
+                cause: error.cause,
+                stack: error.stack,
+              },
+            })
+          );
           break;
         default:
           break;
@@ -114,9 +136,10 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
     }
 
     // Check scan results and handle accordingly
-    await dbWrite.model.update({
+    const updatedModel = await dbWrite.model.update({
       where: { id: model.id },
       data: { scannedAt: new Date() },
+      select: { status: true },
     });
 
     await upsertModelFlag({
@@ -130,6 +153,18 @@ export default WebhookEndpoint(async function handler(req: NextApiRequest, res: 
       },
       details: data.llm_interrogation,
     });
+
+    await dataForModelsCache.bust(model.id);
+    await modelsSearchIndex.queueUpdate([
+      {
+        id: model.id,
+        action:
+          updatedModel.status === ModelStatus.Unpublished ||
+          updatedModel.status === ModelStatus.UnpublishedViolation
+            ? SearchIndexUpdateQueueAction.Delete
+            : SearchIndexUpdateQueueAction.Update,
+      },
+    ]);
 
     return res.status(200).json({ ok: true });
   } catch (error) {

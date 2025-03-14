@@ -2833,18 +2833,22 @@ export async function bustFeaturedModelsCache() {
 }
 
 export async function getModelModRules() {
-  const modRules = await fetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.MODELS, async () => {
-    const rules = await dbRead.moderationRule.findMany({
-      where: { entityType: EntityType.Model, enabled: true },
-      select: { definition: true, action: true },
-      orderBy: [{ order: 'asc' }],
-    });
+  const modRules = await fetchThroughCache(
+    REDIS_KEYS.CACHES.MOD_RULES.MODELS,
+    async () => {
+      const rules = await dbRead.moderationRule.findMany({
+        where: { entityType: EntityType.Model, enabled: true },
+        select: { definition: true, action: true },
+        orderBy: [{ order: 'asc' }],
+      });
 
-    return rules.map(({ definition, ...rule }) => ({
-      ...rule,
-      definition: definition as RuleDefinition,
-    }));
-  });
+      return rules.map(({ definition, ...rule }) => ({
+        ...rule,
+        definition: definition as RuleDefinition,
+      }));
+    },
+    { ttl: CacheTTL.day }
+  );
 
   return modRules;
 }

@@ -46,17 +46,20 @@ export function evaluateRule(rule: RuleDefinition, obj: any): boolean {
     case 'or':
       return rule.rules.some((subRule) => evaluateRule(subRule, obj));
     case 'content':
+      const regex = new RegExp(
+        rule.match.slice(1, rule.match.lastIndexOf('/')),
+        rule.match.slice(rule.match.lastIndexOf('/') + 1)
+      );
+
       return rule.target.some((target) => {
         const value: string = obj[target];
-        return value.match(rule.match) !== null;
+        return regex.test(value);
       });
     case 'tag':
       const tags = obj.tags || [];
-      if (rule.match === 'all') {
-        return rule.tags.every((tag) => tags.includes(tag));
-      } else {
-        return rule.tags.some((tag) => tags.includes(tag));
-      }
+
+      if (rule.match === 'all') return rule.tags.every((tag) => tags.includes(tag));
+      else return rule.tags.some((tag) => tags.includes(tag));
     case 'property':
       return evaluateCondition(rule.condition, obj);
     default:
