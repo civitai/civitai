@@ -65,7 +65,7 @@ import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
-    // TODO switch to URL (to include stage, and optionally internal URL)
+    baseUrl: env.ORCHESTRATOR_ENDPOINT,
     env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
     auth: token,
   });
