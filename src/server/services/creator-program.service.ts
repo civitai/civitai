@@ -121,7 +121,7 @@ export const userCapCache = createCachedObject<UserCapCacheItem>({
       })
     );
   },
-  ttl: CacheTTL.month,
+  ttl: CacheTTL.day,
 });
 
 export async function getBankCap(userId: number) {
@@ -147,7 +147,7 @@ export async function getBanked(userId: number) {
 
       return data.totalBalance;
     },
-    { ttl: CacheTTL.month }
+    { ttl: CacheTTL.day }
   );
 
   return {
@@ -279,7 +279,7 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
   const value = await fetchThroughCache(
     REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE,
     async () => await getPoolValue(),
-    { ttl: CacheTTL.month }
+    { ttl: CacheTTL.day }
   );
 
   // Since it hits the buzz service, no need to cache this.
@@ -288,7 +288,7 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
   const forecasted = await fetchThroughCache(
     REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
     async () => await getPoolForecast(),
-    { ttl: CacheTTL.month }
+    { ttl: CacheTTL.day }
   );
 
   return {
