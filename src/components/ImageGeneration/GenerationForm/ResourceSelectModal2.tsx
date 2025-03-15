@@ -546,7 +546,7 @@ function ResourceHitList({
   const filtered = useMemo(() => {
     if (!canGenerate && !resources.length) return models;
 
-    return models
+    const ret = models
       .map((model) => {
         const resourceType = resources.find((x) => x.type === model.type);
         if (!resourceType) return null;
@@ -564,7 +564,19 @@ function ResourceHitList({
       })
       .filter(isDefined)
       .filter((model) => model.versions.length > 0);
-  }, [canGenerate, excludedIds, models, resources]);
+
+    if (selectedTab === 'boosted') {
+      ret.sort((a, b) => {
+        const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
+        const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
+        if (!aPos) return 1;
+        if (!bPos) return -1;
+        return aPos - bPos;
+      });
+    }
+
+    return ret;
+  }, [canGenerate, excludedIds, featured, models, resources, selectedTab]);
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
