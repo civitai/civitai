@@ -182,8 +182,8 @@ async function transformParams(
   let negativePrompt = data.negativePrompt ?? '';
 
   if (remixOf && new Date(remixOf.createdAt) < stripWeightDate) {
-    prompt = prompt.replace(/\(([^():,]+)(?::[0-9.]+)?\)/g, `$1`);
-    negativePrompt = negativePrompt.replace(/\(([^():,]+)(?::[0-9.]+)?\)/g, `$1`);
+    prompt = prompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
+    negativePrompt = negativePrompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
   }
 
   return {

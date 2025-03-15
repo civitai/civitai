@@ -657,7 +657,10 @@ export function GenerationFormContent() {
                 )}
 
                 <div className="flex flex-col">
-                  <Watch {...form} fields={['remixSimilarity', 'remixOfId', 'remixPrompt', 'remixNegativePrompt']}>
+                  <Watch
+                    {...form}
+                    fields={['remixSimilarity', 'remixOfId', 'remixPrompt', 'remixNegativePrompt']}
+                  >
                     {({ remixSimilarity, remixOfId, remixPrompt, remixNegativePrompt }) => {
                       if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
 
@@ -706,8 +709,20 @@ export function GenerationFormContent() {
                                         <Button
                                           variant="default"
                                           onClick={() => {
-                                            form.setValue('prompt', remixPrompt.replace(/\(([^():,]+)(?::[0-9.]+)?\)/g, `$1`))
-                                            form.setValue('negativePrompt', remixNegativePrompt?.replace(/\(([^():,]+)(?::[0-9.]+)?\)/g, `$1`))
+                                            form.setValue(
+                                              'prompt',
+                                              remixPrompt.replace(
+                                                /\(*([^():,]+)(?::[0-9.]+)?\)*/g,
+                                                `$1`
+                                              )
+                                            );
+                                            form.setValue(
+                                              'negativePrompt',
+                                              remixNegativePrompt?.replace(
+                                                /\(*([^():,]+)(?::[0-9.]+)?\)*/g,
+                                                `$1`
+                                              )
+                                            );
                                           }}
                                           size="xs"
                                           color="default"
@@ -734,10 +749,21 @@ export function GenerationFormContent() {
                                         </Button>
                                       </Group>
                                     </>
-                                  ) : (<Text variant="link" className="cursor-pointer" size="xs" lh={1.2} mb={6} onClick={() => {
-                                    form.setValue('prompt', remixPrompt);
-                                    form.setValue('negativePrompt', remixNegativePrompt);
-                                  }}>Restore original prompt weights</Text>)}
+                                  ) : (
+                                    <Text
+                                      variant="link"
+                                      className="cursor-pointer"
+                                      size="xs"
+                                      lh={1.2}
+                                      mb={6}
+                                      onClick={() => {
+                                        form.setValue('prompt', remixPrompt);
+                                        form.setValue('negativePrompt', remixNegativePrompt);
+                                      }}
+                                    >
+                                      Restore original prompt weights
+                                    </Text>
+                                  )}
                                 </Stack>
                               </Alert>
                             </div>
