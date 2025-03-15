@@ -657,8 +657,8 @@ export function GenerationFormContent() {
                 )}
 
                 <div className="flex flex-col">
-                  <Watch {...form} fields={['remixSimilarity', 'remixOfId', 'remixPrompt']}>
-                    {({ remixSimilarity, remixOfId, remixPrompt }) => {
+                  <Watch {...form} fields={['remixSimilarity', 'remixOfId', 'remixPrompt', 'remixNegativePrompt']}>
+                    {({ remixSimilarity, remixOfId, remixPrompt, remixNegativePrompt }) => {
                       if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
 
                       return (
@@ -695,7 +695,7 @@ export function GenerationFormContent() {
                                       {remixPrompt}
                                     </Text>
                                   )}
-                                  {remixSimilarity < 0.75 && (
+                                  {remixSimilarity < 0.75 ? (
                                     <>
                                       <Text size="xs" lh={1.2} mb={6}>
                                         Your prompt has deviated sufficiently from the original that
@@ -705,7 +705,10 @@ export function GenerationFormContent() {
                                       <Group spacing="xs" grow noWrap>
                                         <Button
                                           variant="default"
-                                          onClick={() => form.setValue('prompt', remixPrompt)}
+                                          onClick={() => {
+                                            form.setValue('prompt', remixPrompt.replace(/\(([^():,]+)(?::[0-9.]+)?\)/g, `$1`))
+                                            form.setValue('negativePrompt', remixNegativePrompt?.replace(/\(([^():,]+)(?::[0-9.]+)?\)/g, `$1`))
+                                          }}
                                           size="xs"
                                           color="default"
                                           fullWidth
@@ -731,7 +734,10 @@ export function GenerationFormContent() {
                                         </Button>
                                       </Group>
                                     </>
-                                  )}
+                                  ) : (<Text variant="link" className="cursor-pointer" size="xs" lh={1.2} mb={6} onClick={() => {
+                                    form.setValue('prompt', remixPrompt);
+                                    form.setValue('negativePrompt', remixNegativePrompt);
+                                  }}>Restore original prompt weights</Text>)}
                                 </Stack>
                               </Alert>
                             </div>
@@ -896,13 +902,13 @@ export function GenerationFormContent() {
 
                 {!isFlux && !isSD3 && featureFlags.canViewNsfw && (
                   <div className="my-2 flex flex-wrap justify-between gap-3">
-                    <InputSwitch
+                    {/* <InputSwitch
                       name="nsfw"
                       label="Mature content"
                       labelPosition="left"
                       disabled={hasMinorResources}
                       checked={hasMinorResources ? false : undefined}
-                    />
+                    /> */}
                     {features.draft && (
                       <InputSwitch
                         name="draft"
@@ -1140,6 +1146,11 @@ export function GenerationFormContent() {
                             />
                           )}
                         </div>
+                        {/* <Text variant="link" onClick={() => {
+                          const {prompt = '', negativePrompt = ''}= useGenerationStore.getState().data?.originalParams ?? {};
+                          form.setValue('prompt', prompt)
+                          form.setValue('negativePrompt', negativePrompt)
+                        }}>Restore original prompt with weights?</Text> */}
                       </Accordion.Panel>
                     </Accordion.Item>
                   </PersistentAccordion>

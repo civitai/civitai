@@ -222,6 +222,7 @@ export type RemixOfProps = {
   url?: string;
   type: MediaType;
   similarity?: number;
+  createdAt: Date;
 };
 export type GenerationData = {
   remixOfId?: number;
@@ -278,6 +279,7 @@ async function getMediaGenerationData({
       meta: true,
       height: true,
       width: true,
+      createdAt: true,
     },
   });
   if (!media) throw throwNotFoundError();
@@ -289,6 +291,7 @@ async function getMediaGenerationData({
     type: media.type,
     url: media.url,
     similarity: 1,
+    createdAt: media.createdAt,
   };
 
   const { prompt, negativePrompt } = cleanPrompt(media.meta as Record<string, any>);
