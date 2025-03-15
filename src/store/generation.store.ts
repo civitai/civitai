@@ -178,17 +178,16 @@ async function transformParams(
   } else if ('sourceImage' in data && typeof data.sourceImage === 'string')
     sourceImage = await getSourceImageFromUrl({ url: data.sourceImage });
 
+  const params: Record<string, any> = { ...data, sourceImage };
+
   if (remixOf && new Date(remixOf.createdAt) < stripWeightDate) {
-    if (data.prompt) data.prompt = data.prompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
+    if (data.prompt) params.prompt = data.prompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
     if (data.negativePrompt)
-      data.negativePrompt = data.negativePrompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
+      params.negativePrompt = data.negativePrompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
   }
 
   return {
-    params: {
-      ...data,
-      sourceImage,
-    },
+    params,
   };
 }
 
