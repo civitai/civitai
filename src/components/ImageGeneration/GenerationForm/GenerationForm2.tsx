@@ -740,6 +740,7 @@ export function GenerationFormContent() {
                                             form.setValue('remixOfId', undefined);
                                             form.setValue('remixSimilarity', undefined);
                                             form.setValue('remixPrompt', undefined);
+                                            form.setValue('remixNegativePrompt', undefined);
                                           }}
                                           fullWidth
                                           h={30}
