@@ -212,7 +212,7 @@ type ProfileImage = Prisma.ImageGetPayload<{
 
 const imageTagSelect = { imageId: true, tagId: true, tag: { select: { name: true } } };
 
-type ImageTag = Prisma.TagsOnImageGetPayload<{
+type ImageTag = Prisma.TagsOnImageDetailsGetPayload<{
   select: typeof imageTagSelect;
 }>;
 
@@ -384,10 +384,25 @@ export const bountiesSearchIndex = createSearchIndexUpdateProcessor({
       .filter(isDefined)
       .map((i) => i.id);
 
-    const imageTags = await dbRead.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabledAt: null },
-      select: imageTagSelect,
-    });
+    const imageTags = await dbRead.$queryRaw<{
+      imageId: number;
+      tagId: number;
+      tag: { name: string };
+    }>`
+      SELECT
+      toi."imageId",
+      toi."tagId",
+      (
+        SELECT to_json(obj)
+        FROM (
+          SELECT t."name"
+          FROM "Tag" t
+          WHERE t.id = toi."tagId"
+        ) as obj
+      ) AS "tag"
+      FROM "TagsOnImageDetails" toi
+      WHERE toi."imageId" IN (${Prisma.join(imageIds)}) AND NOT toi."disabled"
+    `;
 
     const profilePictures = await db.image.findMany({
       where: { id: { in: bounties.map((b) => b.user.profilePictureId).filter(isDefined) } },

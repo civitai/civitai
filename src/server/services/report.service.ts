@@ -509,19 +509,18 @@ export async function resolveEntityAppeal({
     switch (appeal.entityType) {
       case EntityType.Image:
         // Update entity with needsReview = null
-        const image = await dbWrite.image.update({
+        await dbWrite.image.update({
           where: { id: appeal.entityId },
           data: approved
             ? {
                 needsReview: null,
                 blockedFor: null,
                 ingestion: ImageIngestionStatus.Scanned,
-                nsfwLevel: 0,
               }
             : { needsReview: null },
         });
 
-        if (approved) await updateNsfwLevel(image.id);
+        if (approved) await updateNsfwLevel(appeal.entityId);
 
         await queueImageSearchIndexUpdate({
           ids: [appeal.entityId],

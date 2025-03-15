@@ -1,3 +1,6 @@
+import { chunk } from 'lodash-es';
+import pLimit from 'p-limit';
+
 export type Task = () => Promise<unknown>;
 type TaskGenerator = () => Task | null;
 
@@ -65,4 +68,19 @@ export function limitConcurrency(
 
 export function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export function Limiter(args?: { batchSize?: number; limit?: number }) {
+  const { limit = 5, batchSize = 500 } = args ?? {};
+  const limiter = pLimit(limit);
+
+  async function process<T, R>(args: T[], fn: (args: T[]) => R | Promise<R>) {
+    return await Promise.all(
+      chunk(args, batchSize).map((chunked) => limiter(async () => fn(chunked)))
+    ).then((res) => res.flat());
+  }
+
+  return {
+    process,
+  };
 }

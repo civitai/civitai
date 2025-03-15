@@ -13,6 +13,7 @@ import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import { Prisma } from '@prisma/client';
 import { getCommentsThreadDetails2 } from '~/server/services/commentsv2.service';
+import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 
 type Row = {
   userId: number;
@@ -70,9 +71,22 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   entityId: 10936,
     //   entityType: 'article',
     // });
-    const data = await dbRead.tagsOnImage.findMany({ where: { imageId: 150224 } });
 
-    res.status(200).send(data);
+    await upsertTagsOnImageNew([
+      {
+        imageId: 1,
+        tagId: 1,
+        // source: 'User',
+        confidence: 70,
+        // automated: true,
+        // disabled: false,
+        // needsReview: false,
+      },
+    ]);
+
+    const result = await dbWrite.$queryRaw`select * from "TagsOnImageDetails" where "imageId" = 1`;
+
+    res.status(200).send(result);
   } catch (e) {
     console.log(e);
     res.status(400).end();

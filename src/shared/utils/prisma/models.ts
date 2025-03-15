@@ -1072,7 +1072,7 @@ export interface Image {
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   thread?: Thread | null;
-  tags?: TagsOnImage[];
+  tags?: TagsOnImageDetails[];
   tagVotes?: TagsOnImageVote[];
   tagComposites?: ImageTag[];
   metrics?: ImageMetric[];
@@ -1097,6 +1097,7 @@ export interface Image {
   CosmeticShopSection?: CosmeticShopSection[];
   flags?: ImageFlag[];
   ratingRequests?: ImageRatingRequest[];
+  tagsNew?: TagsOnImageNew[];
 }
 
 export interface ImageFlag {
@@ -1198,7 +1199,6 @@ export interface Tag {
   tagsOnModels?: TagsOnModels[];
   tagsOnModelsVotes?: TagsOnModelsVote[];
   tagsOnQuestion?: TagsOnQuestions[];
-  tagsOnImage?: TagsOnImage[];
   tagsOnImageVotes?: TagsOnImageVote[];
   tagsOnPosts?: TagsOnPost[];
   tagsOnArticles?: TagsOnArticle[];
@@ -1213,6 +1213,7 @@ export interface Tag {
   tagsOnPostVotes?: TagsOnPostVote[];
   tagsOnBounties?: TagsOnBounty[];
   CollectionItem?: CollectionItem[];
+  tagsOnImage?: TagsOnImageDetails[];
 }
 
 export interface TagsOnTags {
@@ -1250,21 +1251,9 @@ export interface TagsOnQuestions {
   tagId: number;
 }
 
-export interface TagsOnImage {
-  imageId: number;
-  image?: Image;
-  tagId: number;
-  tag?: Tag;
-  createdAt: Date;
-  automated: boolean;
-  confidence: number | null;
-  disabledAt: Date | null;
-  needsReview: boolean;
-  source: TagSource;
-}
-
 export interface TagsOnImageNew {
   imageId: number;
+  image?: Image;
   tagId: number;
   attributes: number;
 }
@@ -3561,8 +3550,10 @@ export interface EntityMetricImage {
 
 export interface TagsOnImageDetails {
   imageId: number;
+  image?: Image;
   tagId: number;
-  sourceId: TagSource;
+  tag?: Tag;
+  source: TagSource;
   automated: boolean;
   disabled: boolean;
   needsReview: boolean;

@@ -38,7 +38,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       const query = await pgDbWrite.cancellableQuery<{ id: number }>(`
         SELECT
           "imageId" as id
-        FROM "TagsOnImage"
+        FROM "TagsOnImageDetails"
         WHERE "tagId" IN (${tagIds.join(', ')})
       `);
       const results = await query.result();
@@ -52,10 +52,10 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
         UPDATE "Image" i
           SET "nsfwLevel" = (
             SELECT COALESCE(MAX(t."nsfwLevel"), 0)
-            FROM "TagsOnImage" toi
+            FROM "TagsOnImageDetails" toi
             JOIN "Tag" t ON t.id = toi."tagId"
             WHERE toi."imageId" = i.id
-              AND toi."disabledAt" IS NULL
+              AND toi."disabled" IS FALSE
           ),
           "updatedAt" = NOW()
         WHERE id IN (${batch})

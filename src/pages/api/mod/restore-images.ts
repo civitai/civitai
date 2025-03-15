@@ -36,7 +36,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     });
     const imageTags = await dbRead.$queryRaw<{ imageId: number; tag: string }[]>`
       SELECT "imageId", t."name" as "tag"
-      FROM "TagsOnImage" toi
+      FROM "TagsOnImageNew" toi
       JOIN "Tag" t ON toi."tagId" = t."id"
       WHERE toi."imageId" IN (${Prisma.join(imageIds)})
     `;

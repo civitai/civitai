@@ -28,7 +28,7 @@ export const imageSelect = Prisma.validator<Prisma.ImageSelect>()({
       automated: true,
       needsReview: true,
     },
-    where: { disabledAt: null },
+    where: { disabled: false },
   },
 });
 
