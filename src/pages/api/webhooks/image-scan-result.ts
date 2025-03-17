@@ -13,6 +13,7 @@ import { scanJobsSchema } from '~/server/schema/image.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
+import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { getComputedTags } from '~/server/utils/tag-rules';
@@ -357,27 +358,14 @@ async function handleSuccess({
         .filter((x) => x.id)
         .map((x) => ({
           imageId: id,
-          tagId: x.id,
-          tagSource: x.source ?? source,
+          tagId: x.id!,
+          source: x.source ?? source,
           automated: true,
           confidence: x.confidence,
           disabled: shouldIgnore(x.tag, x.source ?? source),
         }));
 
-      await dbWrite.$queryRaw`
-        WITH to_insert AS (
-          SELECT
-            (value ->> 'imageId')::int as "imageId",
-            (value ->> 'tagId')::int as "tagId",
-            (value ->> 'tagSource')::"TagSource" as "tagSource",
-            (value ->> 'automated')::boolean as "automated",
-            (value ->> 'confidence')::int as "confidence",
-            (value ->> 'disabled')::boolean as "disabled"
-          FROM json_array_elements(${JSON.stringify(toInsert)}::json)
-        )
-        SELECT upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", "disabled")
-        FROM to_insert
-      `;
+      await insertTagsOnImageNew(toInsert);
     } else {
       await logToAxiom({
         type: 'image-scan-result',
