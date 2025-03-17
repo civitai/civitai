@@ -375,7 +375,7 @@ async function handleSuccess({
             (value ->> 'disabled')::boolean as "disabled"
           FROM json_array_elements(${JSON.stringify(toInsert)}::json)
         )
-        SELECT (upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", "disabled")).*
+        SELECT upsert_tag_on_image("imageId", "tagId", "tagSource",  "confidence", "automated", "disabled")
         FROM to_insert
       `;
     } else {
