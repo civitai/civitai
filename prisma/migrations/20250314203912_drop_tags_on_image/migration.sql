@@ -50,7 +50,7 @@ CREATE OR REPLACE VIEW "ImageTag" AS
          LIMIT 1) t
   WHERE t.unlisted IS FALSE AND NOT toi."disabled";
 
-
+DROP VIEW "PostImageTag";
 CREATE OR REPLACE VIEW "PostImageTag" AS
 SELECT DISTINCT i."postId" AS post_id,
   toi."tagId" AS tag_id
