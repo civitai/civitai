@@ -534,6 +534,7 @@ export type GenerationResource = GenerationResourceBase & {
     jobId: string;
     fileName: string;
     epochNumber: number;
+    isExpired: boolean;
   };
   substitute?: GenerationResourceBase;
 };
