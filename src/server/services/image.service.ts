@@ -371,7 +371,7 @@ export const moderateImages = async ({
 
     // TODO.TagsOnImage - remove this after the migration
     const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-      UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+      UPDATE "TagsOnImage" SET "disabledAt" = null
       WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
       RETURNING "imageId", "tagId";
     `;
@@ -479,7 +479,7 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 
   // TODO.TagsOnImage - remove this after the migration
   const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
-    UPDATE "TagsOnImage" SET "disabled" = false, "disabledAt" = null
+    UPDATE "TagsOnImage" SET "disabledAt" = null
     WHERE "imageId" = ${images[0].id} AND "disabledAt" IS NOT NULL
     RETURNING "imageId", "tagId";
   `;

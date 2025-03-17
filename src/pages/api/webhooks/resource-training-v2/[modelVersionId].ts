@@ -244,16 +244,20 @@ export async function updateRecords(workflow: Workflow, status: WorkflowStatus) 
   }
 
   if (trainingStatus === TrainingStatus.InReview) {
-    await trainingCompleteEmail.send({
-      model,
-      mName: modelVersion.name,
-      user: model.user,
-    });
+    trainingCompleteEmail
+      .send({
+        model,
+        mName: modelVersion.name,
+        user: model.user,
+      })
+      .catch((error) => logWebhook({ message: 'Failed to send training complete email', error }));
   } else if (trainingStatus === TrainingStatus.Failed || trainingStatus === TrainingStatus.Denied) {
-    await trainingFailEmail.send({
-      model,
-      mName: modelVersion.name,
-      user: model.user,
-    });
+    trainingFailEmail
+      .send({
+        model,
+        mName: modelVersion.name,
+        user: model.user,
+      })
+      .catch((error) => logWebhook({ message: 'Failed to send training fail email', error }));
   }
 }

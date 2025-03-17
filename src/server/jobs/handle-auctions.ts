@@ -268,7 +268,7 @@ const _handleWinnersForAuction = async (
           const matchB = winners.find((w) => w.entityId === b.id);
           if (!matchA) return 1;
           if (!matchB) return -1;
-          return matchB.position - matchA.position;
+          return matchA.position - matchB.position;
         })
         // Pick top models to add to the collection
         .map((m) => m.modelId)
