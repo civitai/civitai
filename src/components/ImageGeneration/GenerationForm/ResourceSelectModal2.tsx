@@ -105,6 +105,7 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { useStorage } from '~/hooks/useStorage';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -247,7 +248,12 @@ function ResourceSelectModalContent() {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const [selectedTab, setSelectedTab] = useState<Tabs>(defaultTab);
+  const [selectedTab, setSelectedTab] = useStorage<Tabs>({
+    type: 'localStorage',
+    key: 'resource-select-tab',
+    defaultValue: defaultTab,
+    getInitialValueInEffect: false,
+  });
   const { refine } = useClearRefinements();
   // TODO this refine isn't working perfectly
 
@@ -522,7 +528,7 @@ function ResourceHitList({
 }: ResourceSelectOptions & {
   likes: number[] | undefined;
   featured: GetFeaturedModels | undefined;
-  selectedTab: Tabs;
+  selectedTab?: Tabs;
 }) {
   const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
   const startedRef = useRef(false);

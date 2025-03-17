@@ -741,7 +741,7 @@ export const getAllImages = async (
     collectionId, // TODO - call this from separate method?
     modelId,
     modelVersionId,
-    imageId, // TODO - remove, not in use
+    imageId, // used in public API
     username,
     period,
     periodMode,
@@ -917,7 +917,6 @@ export const getAllImages = async (
   if (!!postIds?.length) AND.push(Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`);
 
   // Filter to a specific image
-  // [x] not needed
   if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
 
   if (sort === ImageSort.Random && !collectionId) {
