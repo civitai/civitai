@@ -406,50 +406,6 @@ export default function ModelDetailsV2({
     });
   };
 
-  const deleteVersionMutation = trpc.modelVersion.delete.useMutation({
-    async onMutate(payload) {
-      await queryUtils.model.getById.cancel({ id });
-
-      const previousData = queryUtils.model.getById.getData({ id });
-      if (previousData) {
-        const filteredVersions = previousData.modelVersions.filter((v) => v.id !== payload.id);
-
-        queryUtils.model.getById.setData(
-          { id },
-          { ...previousData, modelVersions: filteredVersions }
-        );
-      }
-
-      return { previousData };
-    },
-    async onSuccess() {
-      const nextLatestVersion = queryUtils.model.getById.getData({ id })?.modelVersions[0];
-      if (nextLatestVersion) router.replace(`/models/${id}?modelVersionId=${nextLatestVersion.id}`);
-      closeAllModals();
-    },
-    onError(error, _variables, context) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Unable to delete version',
-        reason: error.message ?? 'An unexpected error occurred, please try again',
-      });
-      if (context?.previousData?.id)
-        queryUtils.model.getById.setData({ id: context?.previousData?.id }, context?.previousData);
-    },
-  });
-  const handleDeleteVersion = (versionId: number) => {
-    openConfirmModal({
-      title: 'Delete Version',
-      children:
-        'Are you sure you want to delete this version? This action is destructive and cannot be reverted.',
-      centered: true,
-      labels: { confirm: 'Delete Version', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', loading: deleteVersionMutation.isLoading },
-      closeOnConfirm: false,
-      onConfirm: () => deleteVersionMutation.mutate({ id: versionId }),
-    });
-  };
-
   const changeModeMutation = trpc.model.changeMode.useMutation();
   const handleChangeMode = async (mode: ModelModifier | null) => {
     const prevModel = queryUtils.model.getById.getData({ id });
@@ -1175,9 +1131,8 @@ export default function ModelDetailsV2({
                     // });
                   }
                 }}
-                onDeleteClick={handleDeleteVersion}
                 showExtraIcons={isOwner || isModerator}
-                showToggleCoverage={model.type === ModelType.Checkpoint}
+                // showToggleCoverage={model.type === ModelType.Checkpoint}
               />
             </Group>
             {!!selectedVersion && (
