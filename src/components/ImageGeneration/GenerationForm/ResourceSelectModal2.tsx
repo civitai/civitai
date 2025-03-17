@@ -105,6 +105,7 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { useStorage } from '~/hooks/useStorage';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -247,7 +248,12 @@ function ResourceSelectModalContent() {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const [selectedTab, setSelectedTab] = useState<Tabs>(defaultTab);
+  const [selectedTab, setSelectedTab] = useStorage<Tabs>({
+    type: 'localStorage',
+    key: 'resource-select-tab',
+    defaultValue: defaultTab,
+    getInitialValueInEffect: false,
+  });
   const { refine } = useClearRefinements();
   // TODO this refine isn't working perfectly
 
@@ -522,7 +528,7 @@ function ResourceHitList({
 }: ResourceSelectOptions & {
   likes: number[] | undefined;
   featured: GetFeaturedModels | undefined;
-  selectedTab: Tabs;
+  selectedTab?: Tabs;
 }) {
   const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
   const startedRef = useRef(false);
@@ -546,7 +552,7 @@ function ResourceHitList({
   const filtered = useMemo(() => {
     if (!canGenerate && !resources.length) return models;
 
-    return models
+    const ret = models
       .map((model) => {
         const resourceType = resources.find((x) => x.type === model.type);
         if (!resourceType) return null;
@@ -564,7 +570,19 @@ function ResourceHitList({
       })
       .filter(isDefined)
       .filter((model) => model.versions.length > 0);
-  }, [canGenerate, excludedIds, models, resources]);
+
+    if (selectedTab === 'boosted') {
+      ret.sort((a, b) => {
+        const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
+        const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
+        if (!aPos) return 1;
+        if (!bPos) return -1;
+        return aPos - bPos;
+      });
+    }
+
+    return ret;
+  }, [canGenerate, excludedIds, featured, models, resources, selectedTab]);
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;

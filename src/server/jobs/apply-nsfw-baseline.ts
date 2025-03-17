@@ -14,7 +14,7 @@ export const applyNsfwBaseline = createJob('apply-nsfw-baseline', '* * * * *', a
       WHERE "scannedAt" > ${lastRun}
         AND ingestion = 'Scanned'
     )
-    SELECT update_nsfw_levels(ids)
+    SELECT update_nsfw_levels_new(ids)
     FROM to_update;
   `;
 

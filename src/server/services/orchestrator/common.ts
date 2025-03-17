@@ -65,7 +65,7 @@ import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
   return createCivitaiClient({
-    // TODO switch to URL (to include stage, and optionally internal URL)
+    baseUrl: env.ORCHESTRATOR_ENDPOINT,
     env: env.ORCHESTRATOR_MODE === 'dev' ? 'dev' : 'prod',
     auth: token,
   });
@@ -269,13 +269,13 @@ export async function parseGenerateImageInput({
     if (params.draft && injectableResources.draft) {
       injectable.push(injectableResources.draft);
     }
-    if (isPromptNsfw && status.minorFallback) {
-      injectable.push(injectableResources.safe_pos);
-      injectable.push(injectableResources.safe_neg);
-    }
-    if (!params.nsfw && status.sfwEmbed) {
-      injectable.push(injectableResources.civit_nsfw);
-    }
+    // if (isPromptNsfw && status.minorFallback) {
+    //   injectable.push(injectableResources.safe_pos);
+    //   injectable.push(injectableResources.safe_neg);
+    // }
+    // if (!params.nsfw && status.sfwEmbed) {
+    //   injectable.push(injectableResources.civit_nsfw);
+    // }
   }
 
   const positivePrompts = [params.prompt];
@@ -612,11 +612,11 @@ function formatTextToImageStep({
     if (triggerWord) {
       if (item?.triggerType === 'negative')
         // while (negativePrompt.startsWith(triggerWord)) {
-        negativePrompt = negativePrompt.replace(`${triggerWord}, `, '');
+        negativePrompt = negativePrompt.replaceAll(`${triggerWord}, `, '');
       // }
       if (item?.triggerType === 'positive')
         // while (prompt.startsWith(triggerWord)) {
-        prompt = prompt.replace(`${triggerWord}, `, '');
+        prompt = prompt.replaceAll(`${triggerWord}, `, '');
       // }
     }
   }

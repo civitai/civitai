@@ -1,4 +1,9 @@
-import { CollectionType, ModelHashType, ModelModifier } from '~/shared/utils/prisma/enums';
+import {
+  CollectionType,
+  ModelFileVisibility,
+  ModelHashType,
+  ModelModifier,
+} from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Session } from 'next-auth';
 import { z } from 'zod';
@@ -141,22 +146,24 @@ export default MixedAuthEndpoint(async function handler(
               ...version,
               supportsGeneration: covered,
               files: includeDownloadUrl
-                ? castedFiles.map(({ hashes, ...file }) => ({
-                    ...file,
-                    name: safeDecodeURIComponent(
-                      getDownloadFilename({ model, modelVersion: version, file })
-                    ),
-                    hashes: hashesAsObject(hashes),
-                    downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-                      versionId: version.id,
-                      type: file.type,
-                      meta: file.metadata,
-                      primary: primaryFile.id === file.id,
-                    })}`,
-                    primary: primaryFile.id === file.id ? true : undefined,
-                    url: undefined,
-                    visibility: undefined,
-                  }))
+                ? castedFiles
+                    .filter((file) => file.visibility === ModelFileVisibility.Public)
+                    .map(({ hashes, ...file }) => ({
+                      ...file,
+                      name: safeDecodeURIComponent(
+                        getDownloadFilename({ model, modelVersion: version, file })
+                      ),
+                      hashes: hashesAsObject(hashes),
+                      downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+                        versionId: version.id,
+                        type: file.type,
+                        meta: file.metadata,
+                        primary: primaryFile.id === file.id,
+                      })}`,
+                      primary: primaryFile.id === file.id ? true : undefined,
+                      url: undefined,
+                      visibility: undefined,
+                    }))
                 : [],
               images: includeImages
                 ? images

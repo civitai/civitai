@@ -2,6 +2,7 @@ import { createJob, getJobDate } from './job';
 import { dbWrite } from '~/server/db/client';
 import { getSystemTags } from '~/server/services/system-cache';
 import { Prisma } from '@prisma/client';
+import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 
 export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', async () => {
   // Get the last sent time
@@ -26,8 +27,7 @@ export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', a
   const postTagIds = Prisma.join(postTags.map((t) => t.id));
   // Apply tags to images
   // --------------------------------------------
-  // TODO.TagsOnImage - remove this after the migration
-  const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+  const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
     -- Apply contest tags
     WITH affected AS (
       SELECT DISTINCT i.id
@@ -42,29 +42,20 @@ export const applyContestTags = createJob('apply-contest-tags', '*/2 * * * *', a
       JOIN "Image" i ON i."postId" = top."postId"
       WHERE top."tagId" IN (${postTagIds}) AND top."createdAt" > ${lastApplied}
     )
-    INSERT INTO "TagsOnImage"("tagId", "imageId", "confidence","automated")
-    SELECT
-      t.id,
-      a.id,
-      100,
-      true
+    SELECT a.id as "imageId", t.id as "tagId"
     FROM affected a
-    JOIN "Tag" t ON t.id IN (${postTagIds})
-    ON CONFLICT ("tagId", "imageId") DO NOTHING
-    RETURNING "tagId", "imageId";
+    JOIN "Tag" t ON t.id IN (${postTagIds});
   `;
 
-  await dbWrite.$queryRaw`
-    -- Apply contest tags
-    WITH to_insert AS (
-      SELECT
-        (value ->> 'imageId')::int as "imageId",
-        (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements(${JSON.stringify(results)}::json)
-    )
-    SELECT upsert_tag_on_image("imageId", "tagId", 'User', 100, true)
-    FROM to_insert;
-  `;
+  await insertTagsOnImageNew(
+    toUpdate.map(({ imageId, tagId }) => ({
+      imageId,
+      tagId,
+      source: 'User',
+      confidence: 100,
+      automated: true,
+    }))
+  );
 
   // Update the last sent time
   // --------------------------------------------
