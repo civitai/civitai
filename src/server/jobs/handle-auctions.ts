@@ -19,6 +19,7 @@ import {
   type PrepareBidsReturn,
 } from '~/server/services/auction.service';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
+import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { bustFeaturedModelsCache } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -143,11 +144,15 @@ const handlePreviousAuctions = async (now: Dayjs) => {
             .map((b) => b.userId);
           const bidDetails = { ...r, userIds: matchUserIds, auctionId: auctionRow.id };
 
-          if (r.totalAmount >= auctionRow.minPrice && r.position <= auctionRow.quantity) {
-            result.winners.push(bidDetails);
-          } else {
-            result.losers.push(bidDetails);
-          }
+          // TODO remove when we re-enable auctions
+          result.losers.push(bidDetails);
+
+          // TODO re-enable once we turn auctions back on
+          // if (r.totalAmount >= auctionRow.minPrice && r.position <= auctionRow.quantity) {
+          //   result.winners.push(bidDetails);
+          // } else {
+          //   result.losers.push(bidDetails);
+          // }
           return result;
         },
         { winners: [] as WinnerType[], losers: [] as WinnerType[] }
