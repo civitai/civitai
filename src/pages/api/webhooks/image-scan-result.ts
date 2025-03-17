@@ -545,8 +545,7 @@ async function handleSuccess({
 
         // Update search index
         const action =
-          appliedRule?.action === ModerationRuleAction.Block ||
-          appliedRule?.action === ModerationRuleAction.Hold
+          appliedRule?.action === ModerationRuleAction.Block
             ? SearchIndexUpdateQueueAction.Delete
             : SearchIndexUpdateQueueAction.Update;
 
