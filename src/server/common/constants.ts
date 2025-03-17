@@ -217,6 +217,7 @@ export const constants = {
       notified: 5,
       muted: 8,
     },
+    epochGenerationTimeLimit: 15, // In days
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,

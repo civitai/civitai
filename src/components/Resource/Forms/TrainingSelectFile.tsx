@@ -25,6 +25,7 @@ import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants } from '~/server/common/constants';
 import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
@@ -423,13 +424,20 @@ export default function TrainingSelectFile({
             >
               <Stack>
                 <Text size="xs">
-                  You have up to 15 days to generate with your training epochs. After that, you are
-                  required to either publish the model to keep generating, or make it into a private
-                  model for yourself.
+                  You have up to {constants.imageGeneration.epochGenerationTimeLimit} days to
+                  generate with your training epochs. After that, you are required to either publish
+                  the model to keep generating, or make it into a private model for yourself.
                 </Text>
                 <Text size="xs">
-                  You have until {formatDate(dayjs(completeDate).add(15, 'day'))} to generate with
-                  the epochs of this model. Epoch generation is only available for Civitai members.
+                  You have until{' '}
+                  {formatDate(
+                    dayjs(completeDate).add(
+                      constants.imageGeneration.epochGenerationTimeLimit,
+                      'day'
+                    )
+                  )}{' '}
+                  to generate with the epochs of this model. Epoch generation is only available for
+                  Civitai members.
                 </Text>
               </Stack>
             </DismissibleAlert>

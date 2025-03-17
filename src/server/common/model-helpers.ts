@@ -1,5 +1,5 @@
 import { ImageGenerationProcess, ModelStatus, TrainingStatus } from '~/shared/utils/prisma/enums';
-import { ModelFileType } from '~/server/common/constants';
+import { constants, ModelFileType } from '~/server/common/constants';
 import { MyDraftModelGetAll, MyTrainingModelGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 import dayjs from 'dayjs';
@@ -74,6 +74,8 @@ export const canGenerateWithEpoch = (trainingCompletedAt?: string | Date | null)
   }
 
   // Check that the epoch is not older than 15 days.
-  const isValid = dayjs(trainingCompletedAt).add(15, 'days').isAfter(dayjs());
+  const isValid = dayjs(trainingCompletedAt)
+    .add(constants.imageGeneration.epochGenerationTimeLimit, 'days')
+    .isAfter(dayjs());
   return isValid;
 };
