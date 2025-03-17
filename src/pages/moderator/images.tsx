@@ -119,8 +119,6 @@ const ImageReviewType = {
 
 type ImageReviewType = keyof typeof ImageReviewType;
 
-// TODO.modRule: Implement mod rule review
-
 export default function Images() {
   // const queryUtils = trpc.useContext();
   // const selectMany = useStore((state) => state.selectMany);
