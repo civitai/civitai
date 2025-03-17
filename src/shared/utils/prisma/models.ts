@@ -160,7 +160,7 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected";
 
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
-export type ModerationRuleAction = "Approved" | "Block" | "Hold";
+export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
 export type EntityMetric_EntityType_Type = "Image";
 

@@ -750,7 +750,7 @@ export const AuctionType = {
 export type AuctionType = (typeof AuctionType)[keyof typeof AuctionType];
 
 export const ModerationRuleAction = {
-  Approved: 'Approved',
+  Approve: 'Approve',
   Block: 'Block',
   Hold: 'Hold',
 } as const;
