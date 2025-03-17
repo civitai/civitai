@@ -17,6 +17,7 @@ import {
 } from '~/server/schema/tag.schema';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
+import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   HiddenImages,
   HiddenModels,
@@ -56,11 +57,11 @@ export const getTag = ({ id }: { id: number }) => {
 export const getTagCountForImages = async (imageIds: number[]) => {
   if (!imageIds.length) return {};
   const results = await dbRead.$queryRaw<{ imageId: number; count: number }[]>`
-    SELECT "public"."TagsOnImage"."imageId",
-           CAST(COUNT("public"."TagsOnImage"."tagId") AS INTEGER) as count
-    FROM "public"."TagsOnImage"
-    WHERE "public"."TagsOnImage"."imageId" IN (${Prisma.join(imageIds)})
-    GROUP BY "public"."TagsOnImage"."imageId"
+    SELECT "public"."TagsOnImageDetails"."imageId",
+           CAST(COUNT("public"."TagsOnImageDetails"."tagId") AS INTEGER) as count
+    FROM "public"."TagsOnImageDetails"
+    WHERE "public"."TagsOnImageDetails"."imageId" IN (${Prisma.join(imageIds)})
+    GROUP BY "public"."TagsOnImageDetails"."imageId"
   `;
 
   return results.reduce((acc, { imageId, count }) => {
@@ -484,31 +485,21 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       ON CONFLICT DO NOTHING
     `);
   } else if (entityType === 'image') {
-    // TODO.TagsOnImage - remove this after the migration
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
-      SELECT i."id",
-             t."id",
-              ${0}
+    const result = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+      SELECT i."id" AS "imageId",  t."id" AS "tagId"
       FROM "Image" i
-             JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
-      WHERE i."id" IN (${entityIds.join(', ')})
-      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabledAt"    = null,
-                                                     "needsReview" = false,
-                                                     automated     = false
-      RETURNING "tagId", "imageId";
-    `);
-    await dbWrite.$queryRaw`
-      WITH to_update AS (
-        SELECT
-          (value ->> 'imageId')::int as "imageId",
-          (value ->> 'tagId')::int as "tagId"
-        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
-      )
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, null, true)
-      FROM to_update;
-  `;
-    updateImageNSFWLevels(entityIds);
+      JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
+      WHERE i."id" IN (${entityIds.join(', ')});
+    `;
+    await upsertTagsOnImageNew(
+      result.map(({ imageId, tagId }) => ({
+        imageId,
+        tagId,
+        automated: false,
+        disabled: false,
+        needsReview: false,
+      }))
+    );
   } else if (entityType === 'article') {
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "TagsOnArticle" ("articleId", "tagId")
@@ -613,31 +604,20 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
         }
     `);
   } else if (entityType === 'image') {
-    // TODO.TagsOnImage - remove this after the migration
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
-      UPDATE "TagsOnImage"
-      SET "needsReview" = false,
-          "disabledAt"  = NOW()
+    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
+      SELECT "imageId", "tagId"
+      FROM "TagsOnImageDetails"
       WHERE "imageId" IN (${entityIds.join(', ')})
         ${
           isTagIds
             ? `AND "tagId" IN (${tagIn})`
             : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
         }
-      RETURNING "tagId", "imageId";
     `);
-    await dbWrite.$queryRaw`
-      WITH to_update AS (
-        SELECT
-          (value ->> 'imageId')::int as "imageId",
-          (value ->> 'tagId')::int as "tagId"
-        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
-      )
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, null, true, false)
-      FROM to_update;
-  `;
-    updateImageNSFWLevels(entityIds);
-    await tagIdsForImagesCache.bust(entityIds);
+
+    await upsertTagsOnImageNew(
+      toUpdate.map(({ imageId, tagId }) => ({ imageId, tagId, disabled: true, needsReview: false }))
+    );
   } else if (entityType === 'tag') {
     await dbWrite.$executeRawUnsafe(`
       DELETE
@@ -662,39 +642,23 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
     //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
     // `);
   } else if (entityType === 'image') {
-    // TODO.TagsOnImage - remove this after the migration
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }>(`
-      UPDATE "TagsOnImage"
-      SET "needsReview" = false,
-          "automated"   = false,
-          "disabledAt"  = ${disable ? 'NOW()' : 'null'}
+    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
+      SELECT "imageId", "tagId"
+      FROM "TagsOnImageDetails"
       WHERE "needsReview" = true
-        AND "imageId" IN (${entityIds.join(', ')})
-      RETURNING "tagId", "imageId";
+        AND "imageId" IN (${entityIds.join(', ')});
     `);
 
-    await dbWrite.$queryRaw`
-      WITH to_update AS (
-        SELECT
-          (value ->> 'imageId')::int as "imageId",
-          (value ->> 'tagId')::int as "tagId"
-        FROM json_array_elements(${JSON.stringify(toUpdate)}::json)
-      )
-      SELECT upsert_tag_on_image("imageId", "tagId", null, null, false, ${disable}, false)
-      FROM to_update;
-  `;
-
-    // Update nsfw baseline
-    if (disable) updateImageNSFWLevels(entityIds);
-    await tagIdsForImagesCache.bust(entityIds);
+    await upsertTagsOnImageNew(
+      toUpdate.map(({ imageId, tagId }) => ({
+        imageId,
+        tagId,
+        automated: false,
+        disabled: disable,
+        needsReview: false,
+      }))
+    );
   }
-};
-
-const updateImageNSFWLevels = async (imageIds: number[]) => {
-  await dbWrite.$executeRawUnsafe(`
-    -- Update NSFW baseline
-    SELECT update_nsfw_levels(ARRAY[${imageIds.join(',')}]);
-  `);
 };
 
 export const deleteTags = async ({ tags }: DeleteTagsSchema) => {

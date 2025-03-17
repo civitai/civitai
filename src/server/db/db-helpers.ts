@@ -201,7 +201,11 @@ export async function dataProcessor({
     cursor++; // To avoid batch overlap
 
     return async () => {
-      await processor({ ...context, start, end });
+      try {
+        await processor({ ...context, start, end });
+      } catch (e) {
+        console.log({ start, end, message: (e as Error).message });
+      }
     };
   }, concurrency);
 }
