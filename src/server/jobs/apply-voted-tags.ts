@@ -75,6 +75,8 @@ async function applyUpvotes() {
     ({ imageId, tagId }) => `${imageId}-${tagId}`
   );
 
+  console.log(affectedImageTags);
+
   // Update votes
   await dbWrite.$queryRaw`
     -- Update image tag votes
@@ -82,7 +84,7 @@ async function applyUpvotes() {
       SELECT
         (value ->> 'imageId')::int as "imageId",
         (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements('${JSON.stringify(affectedImageTags)}'::json)
+      FROM json_array_elements(${JSON.stringify(affectedImageTags)}::json)
     )
     UPDATE "TagsOnImageVote" SET "applied" = true
     WHERE ("imageId", "tagId") IN (SELECT "imageId", "tagId" FROM affected)
@@ -209,7 +211,7 @@ async function applyDownvotes() {
       SELECT
         (value ->> 'imageId')::int as "imageId",
         (value ->> 'tagId')::int as "tagId"
-      FROM json_array_elements('${JSON.stringify(affectedImageTags)}'::json)
+      FROM json_array_elements(${JSON.stringify(affectedImageTags)}::json)
     )
     UPDATE "TagsOnImageVote" SET "applied" = true
     WHERE ("imageId", "tagId") IN (SELECT "imageId", "tagId" FROM affected)
