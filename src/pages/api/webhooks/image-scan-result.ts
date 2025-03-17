@@ -16,6 +16,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
+import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import {
   getImagesModRules,
   getTagNamesForImages,
@@ -527,7 +528,11 @@ async function handleSuccess({
       if (ingestion === 'Scanned') {
         // Clear cached image tags after completing scans
         await tagIdsForImagesCache.refresh(id);
-        const appliedRule = await applyModerationRules({ ...image, prompt });
+        const appliedRule = await applyModerationRules({
+          ...image,
+          prompt,
+          metadata: image.metadata as ImageMetadata | VideoMetadata,
+        });
 
         const imageMetadata = image.metadata as Prisma.JsonObject | undefined;
         const isProfilePicture = imageMetadata?.profilePicture === true;
@@ -617,6 +622,7 @@ type IngestedImage = {
   id: number;
   userId: number;
   prompt: string | null;
+  metadata?: ImageMetadata | VideoMetadata | null;
 };
 
 async function applyModerationRules(image: IngestedImage) {
@@ -638,7 +644,14 @@ async function applyModerationRules(image: IngestedImage) {
           : appliedRule.action === ModerationRuleAction.Hold
           ? { needsReview: 'modRule' }
           : undefined;
-      if (data) await dbWrite.image.update({ where: { id: image.id }, data });
+      if (data)
+        await dbWrite.image.update({
+          where: { id: image.id },
+          data: {
+            ...data,
+            metadata: { ...image.metadata, ruleId: appliedRule.id, ruleReason: appliedRule.reason },
+          },
+        });
 
       // Send notification to user if auto blocked
       if (appliedRule.action === ModerationRuleAction.Block) {

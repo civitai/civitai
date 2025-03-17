@@ -293,12 +293,7 @@ export const moderateImages = async ({
       },
     });
 
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete });
 
     for (const img of affected) {
       await createNotification({
@@ -317,30 +312,22 @@ export const moderateImages = async ({
     return affected;
   } else if (reviewAction === 'removeName') {
     await removeNameReference(ids);
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else if (reviewAction === 'mistake') {
     // Remove needsReview status
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: { needsReview: null, ingestion: 'Scanned' },
     });
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else {
     // Approve
     await dbWrite.$queryRaw`
         UPDATE "Image" SET
           "needsReview" = ${needsReview},
           "blockedFor" = NULL,
+          -- Remove ruleId and ruleReason from metadata
+          "metadata" = "metadata" - 'ruleId' - 'ruleReason',
           "ingestion" = 'Scanned',
           -- if image was created within 72 hrs, set scannedAt to now
           "scannedAt" = CASE
@@ -3712,7 +3699,7 @@ export const getImageModerationReviewQueue = async ({
       modelVersionId?: number | null;
       entityType?: string | null;
       entityId?: number | null;
-      metadata?: MixedObject | null;
+      metadata?: ImageMetadata | VideoMetadata | null;
       removedAt?: Date | null;
       tosReason?: string | null;
       minor: boolean;
@@ -3741,7 +3728,7 @@ export const getImageModerationReviewQueue = async ({
       ...i
     }) => ({
       ...i,
-      metadata: i.metadata as MixedObject,
+      metadata: i.metadata as ImageMetadata | VideoMetadata | null,
       user: {
         id: creatorId,
         username,
@@ -3778,10 +3765,7 @@ export const getImageModerationReviewQueue = async ({
     })
   );
 
-  return {
-    nextCursor,
-    items: images,
-  };
+  return { nextCursor, items: images };
 };
 
 export async function get404Images() {
@@ -4806,7 +4790,7 @@ export async function getImagesModRules() {
     async () => {
       const rules = await dbRead.moderationRule.findMany({
         where: { entityType: EntityType.Image, enabled: true },
-        select: { definition: true, action: true, reason: true },
+        select: { id: true, definition: true, action: true, reason: true },
         orderBy: [{ order: 'asc' }],
       });
 

@@ -2838,7 +2838,7 @@ export async function getModelModRules() {
     async () => {
       const rules = await dbRead.moderationRule.findMany({
         where: { entityType: EntityType.Model, enabled: true },
-        select: { definition: true, action: true },
+        select: { id: true, definition: true, action: true },
         orderBy: [{ order: 'asc' }],
       });
 

@@ -1,6 +1,50 @@
 import { logToAxiom } from '~/server/logging/client';
 import { ModerationRuleAction, TagSource } from '~/shared/utils/prisma/enums';
 
+/**
+ * Moderation rules are used to automatically moderate content based on certain conditions.
+ * The rules are evaluated in order, and the first rule that matches will be applied.
+ *
+ * @example
+ * const rule: RuleDefinition[] = {
+ *   type: 'and',
+ *   rules: [
+ *     {
+ *       type: 'content',
+ *       target: ['prompt'],
+ *       match: '/\\b(?:nsfw|18\\+|adult)\\b/gmi',
+ *     },
+ *     {
+ *       type: 'tag',
+ *       tags: ['nsfw'],
+ *       match: 'any',
+ *     },
+ *     {
+ *      type: 'property',
+ *      condition: '$.modelVersion.baseModel === 'LTX',
+ *     },
+ *   ],
+ * };
+ */
+
+export type ContentRule = {
+  type: 'content';
+  target: ('prompt' | 'title' | 'description')[];
+  match: string; // Can be a regex (i.e.: /robot/gmi) or a simple string
+};
+
+export type TagRule = {
+  type: 'tag';
+  tags: string[];
+  match: 'all' | 'any';
+  sources?: TagSource[];
+};
+
+export type PropertyRule = {
+  type: 'property';
+  condition: string; // i.e.: $.metadata.width > 400
+};
+
 export type AndRule = {
   type: 'and';
   rules: RuleDefinition[];
@@ -11,26 +55,13 @@ export type OrRule = {
   rules: RuleDefinition[];
 };
 
-export type ContentRule = {
-  type: 'content';
-  target: ('prompt' | 'title' | 'description')[];
-  match: string;
-};
-
-export type TagRule = {
-  type: 'tag';
-  tags: string[];
-  match: 'all' | 'any';
-  sources: TagSource[];
-};
-
-export type PropertyRule = {
-  type: 'property';
-  condition: string;
-};
-
 export type RuleDefinition = AndRule | OrRule | ContentRule | TagRule | PropertyRule;
-type ModRule = { definition: RuleDefinition; action: ModerationRuleAction; reason?: string | null };
+type ModRule = {
+  id: number;
+  definition: RuleDefinition;
+  action: ModerationRuleAction;
+  reason?: string | null;
+};
 
 export function evaluateRules(rules: ModRule[], obj: any) {
   for (const rule of rules) {

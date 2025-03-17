@@ -3439,7 +3439,7 @@ model FeaturedModelVersion {
 }
 
 enum ModerationRuleAction {
-  Approved
+  Approve
   Block
   Hold
 }

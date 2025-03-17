@@ -1,5 +1,5 @@
 -- CreateEnum
-CREATE TYPE "ModerationRuleAction" AS ENUM ('Approved', 'Block', 'Hold');
+CREATE TYPE "ModerationRuleAction" AS ENUM ('Approve', 'Block', 'Hold');
 
 -- CreateTable
 CREATE TABLE "ModerationRule" (
