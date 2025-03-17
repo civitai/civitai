@@ -11,7 +11,6 @@ import { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { reportAcceptedReward } from '~/server/rewards';
 import { GetByIdInput } from '~/server/schema/base.schema';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import { getUserCollectionPermissionsById } from '~/server/services/collection.service';
 import {
   addBlockedImage,
@@ -20,6 +19,7 @@ import {
   deleteImageById,
   getAllImagesIndex,
   getPostDetailByImageId,
+  queueImageSearchIndexUpdate,
   setVideoThumbnail,
   updateImageMinor,
   updateImageReportStatusByReason,
@@ -67,6 +67,7 @@ const reviewTypeToBlockedReason = {
   tag: BlockImageReason.TOS,
   newUser: BlockImageReason.Ownership,
   appeal: BlockImageReason.TOS,
+  modRule: BlockImageReason.TOS,
 } as const;
 export const reviewTypeToBlockedReasonKeys = Object.keys(reviewTypeToBlockedReason) as [
   string,
@@ -232,11 +233,7 @@ export const setTosViolationHandler = async ({
     });
 
     if (image.pHash) await addBlockedImage({ hash: image.pHash, reason: BlockImageReason.TOS });
-
-    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await imagesMetricsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
+    await queueImageSearchIndexUpdate({ ids: [id], action: SearchIndexUpdateQueueAction.Delete });
 
     const imageTags = await getTagNamesForImages([id]);
     const imageResources = await getResourceIdsForImages([id]);
