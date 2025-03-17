@@ -1,38 +1,18 @@
-import {
-  ActionIcon,
-  Box,
-  Button,
-  createStyles,
-  Group,
-  Loader,
-  Menu,
-  ScrollArea,
-  ThemeIcon,
-} from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { ActionIcon, Box, Button, createStyles, Group, ScrollArea, ThemeIcon } from '@mantine/core';
 import {
   IconAlertTriangle,
-  IconBan,
   IconBolt,
   IconBrush,
   IconChevronLeft,
   IconChevronRight,
   IconClock,
-  IconDotsVertical,
-  IconEdit,
-  IconFileSettings,
-  IconPhotoEdit,
-  IconPhotoPlus,
-  IconTrash,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { useEffect, useRef, useState } from 'react';
-import { triggerRoutedDialog } from '~/components/Dialog/RoutedDialogProvider';
-import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelById } from '~/types/router';
+import { ModelVersionMenu } from '../ModelVersions/ModelVersionMenu';
 
 const useStyles = createStyles((theme) => ({
   scrollContainer: { position: 'relative' },
@@ -88,14 +68,7 @@ type State = {
   largerThanViewport: boolean;
 };
 
-export function ModelVersionList({
-  versions,
-  selected,
-  showExtraIcons,
-  showToggleCoverage,
-  onVersionClick,
-  onDeleteClick,
-}: Props) {
+export function ModelVersionList({ versions, selected, showExtraIcons, onVersionClick }: Props) {
   const { classes, cx, theme } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -111,18 +84,6 @@ export function ModelVersionList({
 
   const scrollLeft = () => viewportRef.current?.scrollBy({ left: -200, behavior: 'smooth' });
   const scrollRight = () => viewportRef.current?.scrollBy({ left: 200, behavior: 'smooth' });
-
-  const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
-  const handleToggleCoverage = async ({
-    modelId,
-    versionId,
-  }: {
-    modelId: number;
-    versionId: number;
-  }) => {
-    // Error is handled at the hook level
-    await toggle({ id: modelId, versionId }).catch(() => null);
-  };
 
   useEffect(() => {
     if (viewportRef.current) {
@@ -278,7 +239,15 @@ export function ModelVersionList({
             <Button.Group key={version.id}>
               {versionButton}
               {isEarlyAccess && earlyAccessButton}
-              <Menu withinPortal>
+              <ModelVersionMenu
+                modelVersionId={version.id}
+                modelId={version.modelId}
+                postId={version.posts?.[0].id}
+                canDelete={versions.length > 1}
+                active={active}
+                published={published}
+              />
+              {/* <Menu withinPortal>
                 <Menu.Target>
                   <Button
                     variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
@@ -382,7 +351,7 @@ export function ModelVersionList({
                     </>
                   )}
                 </Menu.Dropdown>
-              </Menu>
+              </Menu> */}
             </Button.Group>
           );
         })}
@@ -409,8 +378,6 @@ export function ModelVersionList({
 type Props = {
   versions: ModelById['modelVersions'];
   onVersionClick: (version: ModelById['modelVersions'][number]) => void;
-  onDeleteClick: (versionId: number) => void;
   selected?: number;
   showExtraIcons?: boolean;
-  showToggleCoverage?: boolean;
 };

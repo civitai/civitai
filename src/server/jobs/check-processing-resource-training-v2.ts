@@ -6,6 +6,11 @@ import { logToAxiom } from '~/server/logging/client';
 import { getWorkflowIdFromModelVersion } from '~/server/services/model-version.service';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createJob } from './job';
+import { createLogger } from '~/utils/logging';
+import { chunk } from 'lodash-es';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+
+const log = createLogger('check-processing-resource-training');
 
 const logWebhook = (data: MixedObject) => {
   logToAxiom(
@@ -22,9 +27,7 @@ export const checkProcessingResourceTrainingV2 = createJob(
   'check-processing-resource-training-v2',
   '3 * * * *',
   async () => {
-    if (!env.ORCHESTRATOR_ACCESS_TOKEN) {
-      return;
-    }
+    if (!env.ORCHESTRATOR_ACCESS_TOKEN) return;
 
     const processingVersions = await dbRead.modelVersion.findMany({
       where: {
@@ -32,37 +35,39 @@ export const checkProcessingResourceTrainingV2 = createJob(
           in: [TrainingStatus.Processing, TrainingStatus.Submitted],
         },
       },
-      select: {
-        id: true,
-      },
+      select: { id: true },
     });
 
-    for (const modelVersion of processingVersions) {
-      const workflowId = await getWorkflowIdFromModelVersion({ id: modelVersion.id });
+    const tasks = chunk(processingVersions, 10).map((versions, i) => async () => {
+      log(`Processing ${i + 1} of ${tasks.length}`);
 
-      if (!workflowId) {
-        continue;
+      for (const modelVersion of versions) {
+        const workflowId = await getWorkflowIdFromModelVersion({ id: modelVersion.id });
+        if (!workflowId) continue;
+
+        try {
+          const workflow = await getWorkflow({
+            token: env.ORCHESTRATOR_ACCESS_TOKEN as string,
+            path: { workflowId },
+          });
+
+          await updateRecords(workflow, workflow.status ?? 'preparing');
+        } catch (e: unknown) {
+          const err = e as Error | undefined;
+          logWebhook({
+            message: 'Failed to update record',
+            data: {
+              error: err?.message,
+              cause: err?.cause,
+              stack: err?.stack,
+              workflowId,
+            },
+          });
+        }
       }
 
-      try {
-        const workflow = await getWorkflow({
-          token: env.ORCHESTRATOR_ACCESS_TOKEN,
-          path: { workflowId },
-        });
-
-        await updateRecords(workflow, workflow.status ?? 'preparing');
-      } catch (e: unknown) {
-        const err = e as Error | undefined;
-        logWebhook({
-          message: 'Failed to update record',
-          data: {
-            error: err?.message,
-            cause: err?.cause,
-            stack: err?.stack,
-            workflowId,
-          },
-        });
-      }
-    }
+      log(`Updated ${i + 1} of ${tasks.length} :: done`);
+    });
+    await limitConcurrency(tasks, 5);
   }
 );
