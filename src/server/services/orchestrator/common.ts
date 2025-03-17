@@ -195,6 +195,12 @@ export async function parseGenerateImageInput({
       throw throwBadRequestError('Using Private resources require an active subscription.');
   }
 
+  if (resourceData.resources.some((x) => x.epochDetails && x.epochDetails.isExpired)) {
+    throw throwBadRequestError(
+      'One of the epochs you are trying to generate with has expired. Make it a private model to continue using it.'
+    );
+  }
+
   if (
     resourceData.resources.filter((x) => x.model.type !== 'Checkpoint' && x.model.type !== 'VAE')
       .length > resourceLimit

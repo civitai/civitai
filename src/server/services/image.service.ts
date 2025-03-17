@@ -39,7 +39,7 @@ import {
   thumbnailCache,
   userContentOverviewCache,
 } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
@@ -143,6 +143,8 @@ import {
 import { uniqBy } from 'lodash-es';
 import { withRetries } from '~/utils/errorHandling';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { RuleDefinition } from '~/server/utils/mod-rules';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -291,12 +293,7 @@ export const moderateImages = async ({
       },
     });
 
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete });
 
     for (const img of affected) {
       await createNotification({
@@ -315,30 +312,22 @@ export const moderateImages = async ({
     return affected;
   } else if (reviewAction === 'removeName') {
     await removeNameReference(ids);
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else if (reviewAction === 'mistake') {
     // Remove needsReview status
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: { needsReview: null, ingestion: 'Scanned' },
     });
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else {
     // Approve
     await dbWrite.$queryRaw`
         UPDATE "Image" SET
           "needsReview" = ${needsReview},
           "blockedFor" = NULL,
+          -- Remove ruleId and ruleReason from metadata
+          "metadata" = "metadata" - 'ruleId' - 'ruleReason',
           "ingestion" = 'Scanned',
           -- if image was created within 72 hrs, set scannedAt to now
           "scannedAt" = CASE
@@ -3710,7 +3699,7 @@ export const getImageModerationReviewQueue = async ({
       modelVersionId?: number | null;
       entityType?: string | null;
       entityId?: number | null;
-      metadata?: MixedObject | null;
+      metadata?: ImageMetadata | VideoMetadata | null;
       removedAt?: Date | null;
       tosReason?: string | null;
       minor: boolean;
@@ -3739,7 +3728,7 @@ export const getImageModerationReviewQueue = async ({
       ...i
     }) => ({
       ...i,
-      metadata: i.metadata as MixedObject,
+      metadata: i.metadata as ImageMetadata | VideoMetadata | null,
       user: {
         id: creatorId,
         username,
@@ -3776,10 +3765,7 @@ export const getImageModerationReviewQueue = async ({
     })
   );
 
-  return {
-    nextCursor,
-    items: images,
-  };
+  return { nextCursor, items: images };
 };
 
 export async function get404Images() {
@@ -4797,3 +4783,28 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
 
   return response;
 };
+
+export async function getImagesModRules() {
+  const modRules = await fetchThroughCache(
+    REDIS_KEYS.CACHES.MOD_RULES.IMAGES,
+    async () => {
+      const rules = await dbRead.moderationRule.findMany({
+        where: { entityType: EntityType.Image, enabled: true },
+        select: { id: true, definition: true, action: true, reason: true },
+        orderBy: [{ order: 'asc' }],
+      });
+
+      return rules.map(({ definition, ...rule }) => ({
+        ...rule,
+        definition: definition as RuleDefinition,
+      }));
+    },
+    { ttl: CacheTTL.day }
+  );
+
+  return modRules;
+}
+
+export async function bustImageModRulesCache() {
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
+}
