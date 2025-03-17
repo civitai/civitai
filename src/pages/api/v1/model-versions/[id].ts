@@ -1,4 +1,4 @@
-import { ModelHashType, ModelModifier } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ModelHashType, ModelModifier } from '~/shared/utils/prisma/enums';
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
 
@@ -83,19 +83,23 @@ export async function prepareModelVersionResponse(
     },
     model: { ...model, mode: model.mode == null ? undefined : model.mode },
     files: includeDownloadUrl
-      ? castedFiles.map(({ hashes, url, visibility, metadata, modelVersionId, ...file }) => ({
-          ...file,
-          metadata: reduceToBasicFileMetadata(metadata),
-          hashes: hashesAsObject(hashes),
-          name: safeDecodeURIComponent(getDownloadFilename({ model, modelVersion: version, file })),
-          primary: primaryFile.id === file.id,
-          downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-            versionId: version.id,
-            type: file.type,
-            meta: metadata,
+      ? castedFiles
+          .filter((file) => file.visibility === ModelFileVisibility.Public)
+          .map(({ hashes, url, visibility, metadata, modelVersionId, ...file }) => ({
+            ...file,
+            metadata: reduceToBasicFileMetadata(metadata),
+            hashes: hashesAsObject(hashes),
+            name: safeDecodeURIComponent(
+              getDownloadFilename({ model, modelVersion: version, file })
+            ),
             primary: primaryFile.id === file.id,
-          })}`,
-        }))
+            downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
+              versionId: version.id,
+              type: file.type,
+              meta: metadata,
+              primary: primaryFile.id === file.id,
+            })}`,
+          }))
       : [],
     images: includeImages
       ? images.map(({ url, id, userId, name, modelVersionId, ...image }) => ({
