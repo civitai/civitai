@@ -122,7 +122,7 @@ export default function Test() {
         <Content />
       </ComponentWithSlots> */}
       <div className="container flex max-w-sm flex-col gap-3">
-        <GenerationSettingsPopover>
+        {/* <GenerationSettingsPopover>
           <Button>Popover</Button>
         </GenerationSettingsPopover>
         <Button
@@ -149,7 +149,11 @@ export default function Test() {
         <Example />
         <ExampleSelect />
 
-        <ExamplePopover />
+        <ExamplePopover /> */}
+        {/* <AspectRatio /> */}
+        <br />
+        <br />
+        <CustomAspectRatio minResolution={512} maxResolution={1024} defaultResolution={768} />
       </div>
     </IsClient>
   );
@@ -443,6 +447,7 @@ function ExampleSelect() {
 }
 
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
+import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatio';
 
 function ExamplePopover() {
   return (

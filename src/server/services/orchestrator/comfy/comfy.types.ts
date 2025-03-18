@@ -10,6 +10,7 @@ export type WorkflowDefinition = {
   template: string;
   features?: (typeof workflowDefinitionFeatures)[number][];
   status?: 'mod-only' | 'published' | 'disabled';
+  memberOnly?: boolean;
 };
 
 export const workflowDefinitionLabel: Record<WorkflowDefinitionType, string> = {
