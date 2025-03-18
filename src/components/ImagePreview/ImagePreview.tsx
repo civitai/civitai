@@ -1,4 +1,4 @@
-import { createStyles, MantineNumberSize } from '@mantine/core';
+import { MantineNumberSize } from '@mantine/core';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { CSSProperties } from 'react';
 import { EdgeMedia2, EdgeMediaProps } from '~/components/EdgeMedia/EdgeMedia';
@@ -31,7 +31,7 @@ export function ImagePreview({
   style,
   onClick,
   className,
-  radius = 0,
+  radius,
   ...props
 }: ImagePreviewProps) {
   aspectRatio ??= Math.max((width ?? 16) / (height ?? 9), 9 / 16);
@@ -48,6 +48,7 @@ export function ImagePreview({
     ...edgeImageProps.style,
     maxHeight: '100%',
     maxWidth: '100%',
+    objectFit: 'cover',
   };
   if (style?.height || style?.maxHeight) edgeImageStyle.maxHeight = '100%';
 
