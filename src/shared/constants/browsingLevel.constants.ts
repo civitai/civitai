@@ -174,7 +174,19 @@ export const toggleableBrowsingCategories = [
 ];
 
 export const browsingModeDefaults = {
-  showNsfw: false,
-  blurNsfw: true,
-  browsingLevel: publicBrowsingLevelsFlag,
+  green: {
+    showNsfw: false,
+    blurNsfw: true,
+    browsingLevel: publicBrowsingLevelsFlag,
+  },
+  blue: {
+    showNsfw: true,
+    blurNsfw: true,
+    browsingLevel: blueBrowsingLevelsFlag,
+  },
+  red: {
+    showNsfw: true,
+    blurNsfw: false,
+    browsingLevel: redBrowsingLevelsFlag,
+  },
 };

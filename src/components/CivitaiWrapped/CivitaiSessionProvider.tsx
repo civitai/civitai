@@ -1,9 +1,11 @@
 import type { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useMemo } from 'react';
+import { useDomainColor } from '~/hooks/useDomainColor';
 
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ColorDomain } from '~/server/common/constants';
 import { UserMeta } from '~/server/schema/user.schema';
 import { browsingModeDefaults } from '~/shared/constants/browsingLevel.constants';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
@@ -20,14 +22,15 @@ export function CivitaiSessionProvider({
 }) {
   const { data, update, status } = useSession();
   const user = data?.user;
-  const { canViewNsfw } = useFeatureFlags();
+  const { canChangeBrowsingLevel } = useFeatureFlags();
   useDomainSync(data?.user as SessionUser, status);
+  const domain = useDomainColor();
 
   const sessionUser = useMemo(() => {
     if (!user)
       return {
         type: 'unauthed',
-        settings: publicContentSettings,
+        settings: publicContentSettings[domain],
       } as UnauthedUser;
 
     const isMember = user.tier != null;
@@ -48,7 +51,9 @@ export function CivitaiSessionProvider({
         blurNsfw: user.blurNsfw,
       },
     };
-    if (!canViewNsfw) currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
+
+    if (!canChangeBrowsingLevel)
+      currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults[domain] };
     return currentUser;
   }, [data?.expires, disableHidden, canViewNsfw]);
 
@@ -114,9 +119,23 @@ export const useCivitaiSessionContext = () => {
   return context;
 };
 
-const publicContentSettings: BrowsingSettings = {
-  ...browsingModeDefaults,
-  disableHidden: true,
-  allowAds: true,
-  autoplayGifs: true,
+const publicContentSettings: Record<ColorDomain, BrowsingSettings> = {
+  green: {
+    ...browsingModeDefaults['green'],
+    disableHidden: true,
+    allowAds: true,
+    autoplayGifs: true,
+  },
+  blue: {
+    ...browsingModeDefaults['blue'],
+    disableHidden: true,
+    allowAds: true,
+    autoplayGifs: true,
+  },
+  red: {
+    ...browsingModeDefaults['red'],
+    disableHidden: true,
+    allowAds: false,
+    autoplayGifs: true,
+  },
 };
