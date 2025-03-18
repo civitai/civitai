@@ -172,9 +172,9 @@ export function QueueItem({
   const completedCount = images.filter((x) => x.status === 'succeeded').length;
   const processingCount = images.filter((x) => x.status === 'processing').length;
 
-  const canRemix = !['img2img-upscale', 'img2img-background-removal'].includes(
-    step.params.workflow
-  );
+  const canRemix =
+    step.params.workflow &&
+    !['img2img-upscale', 'img2img-background-removal'].includes(step.params.workflow);
 
   const { data: workflowDefinitions } = trpc.generation.getWorkflowDefinitions.useQuery();
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === params.workflow);
