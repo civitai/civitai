@@ -160,6 +160,8 @@ export type AppealStatus = "Pending" | "Approved" | "Rejected";
 
 export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
+export type ModerationRuleAction = "Approve" | "Block" | "Hold";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -405,6 +407,7 @@ export interface User {
   cashWithdrawals?: CashWithdrawal[];
   bids?: Bid[];
   recurringBids?: BidRecurring[];
+  moderationRules?: ModerationRule[];
 }
 
 export interface CustomerSubscription {
@@ -2588,6 +2591,20 @@ export interface FeaturedModelVersion {
   validFrom: Date;
   validTo: Date;
   position: number;
+}
+
+export interface ModerationRule {
+  id: number;
+  entityType: EntityType;
+  definition: JsonValue;
+  action: ModerationRuleAction;
+  createdAt: Date;
+  updatedAt: Date;
+  enabled: boolean;
+  order: number | null;
+  reason: string | null;
+  createdById: number;
+  createdBy?: User;
 }
 
 export interface QuestionRank {

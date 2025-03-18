@@ -346,6 +346,7 @@ model User {
   cashWithdrawals            CashWithdrawal[]
   bids                       Bid[]
   recurringBids              BidRecurring[]
+  moderationRules            ModerationRule[]
 
   @@index([deletedAt])
 }
@@ -3436,6 +3437,27 @@ model FeaturedModelVersion {
   validFrom      DateTime
   validTo        DateTime
   position       Int
+}
+
+enum ModerationRuleAction {
+  Approve
+  Block
+  Hold
+}
+
+model ModerationRule {
+  id         Int                  @id @default(autoincrement())
+  entityType EntityType
+  definition Json
+  action     ModerationRuleAction
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+  enabled    Boolean              @default(true)
+  order      Int?
+  reason     String?
+
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
 }
 
 /// @view

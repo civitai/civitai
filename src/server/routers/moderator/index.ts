@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { queryModelVersionsForModeratorHandler } from '~/server/controllers/model-version.controller';
 import { getModelsPagedSimpleHandler } from '~/server/controllers/model.controller';
 import {
@@ -8,8 +9,12 @@ import { getByIdSchema, getByIdsSchema } from '~/server/schema/base.schema';
 import { getFlaggedModelsSchema } from '~/server/schema/model-flag.schema';
 import { queryModelVersionsSchema } from '~/server/schema/model-version.schema';
 import { getAllModelsSchema } from '~/server/schema/model.schema';
+import { getImagesModRules } from '~/server/services/image.service';
 import { getFlaggedModels, resolveFlaggedModel } from '~/server/services/model-flag.service';
+import { getModelModRules } from '~/server/services/model.service';
 import { moderatorProcedure, router } from '~/server/trpc';
+import { throwDbError } from '~/server/utils/errorHandling';
+import { ModerationRule } from '~/shared/utils/prisma/models';
 
 export const modRouter = router({
   models: router({
@@ -29,6 +34,25 @@ export const modRouter = router({
   trainingData: router({
     approve: moderatorProcedure.input(getByIdSchema).mutation(handleApproveTrainingData),
     deny: moderatorProcedure.input(getByIdSchema).mutation(handleDenyTrainingData),
+  }),
+  rules: router({
+    getById: moderatorProcedure
+      .input(getByIdSchema.extend({ entityType: z.enum(['Model', 'Image']) }))
+      .query(async ({ input }) => {
+        const { id, entityType } = input;
+        let modRule: Pick<ModerationRule, 'id' | 'action' | 'definition'> | undefined;
+
+        if (entityType === 'Model') {
+          const modelModRules = await getModelModRules();
+          modRule = modelModRules.find((rule) => rule.id === id);
+        } else {
+          const imageModRules = await getImagesModRules();
+          modRule = imageModRules.find((rule) => rule.id === id);
+        }
+
+        if (!modRule) throw throwDbError('Rule not found');
+        return modRule;
+      }),
   }),
 });
 
