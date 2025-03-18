@@ -367,6 +367,7 @@ export const REDIS_SYS_KEYS = {
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
     DISABLED_HEALTHCHECKS: 'disabled-healthchecks',
     FEATURE_STATUS: 'system:feature-status',
+    DOMAIN_SETTINGS: 'system:domain-settings',
   },
   INDEX_UPDATES: {
     IMAGE_METRIC: 'index-updates:image-metric',

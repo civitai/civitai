@@ -710,6 +710,14 @@ export const getModelsRaw = async ({
         // If not getting full details, only return the latest version
         if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
 
+        if (!!input.excludedTagIds && input.excludedTagIds.length) {
+          // Support for excluded tags
+          const hasExcludedTag = data.tags.some((tag) =>
+            (input.excludedTagIds ?? []).includes(tag.tagId)
+          );
+          if (hasExcludedTag) return null;
+        }
+
         return {
           ...model,
           rank: {
