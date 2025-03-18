@@ -179,11 +179,11 @@ async function transformParams(
 
   const params: Record<string, any> = { ...data, sourceImage };
 
-  if (remixOf && new Date(remixOf.createdAt) < stripWeightDate) {
-    if (data.prompt) params.prompt = data.prompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
-    if (data.negativePrompt)
-      params.negativePrompt = data.negativePrompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
-  }
+  // if (remixOf && new Date(remixOf.createdAt) < stripWeightDate) {
+  //   if (data.prompt) params.prompt = data.prompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
+  //   if (data.negativePrompt)
+  //     params.negativePrompt = data.negativePrompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
+  // }
 
   return {
     params,

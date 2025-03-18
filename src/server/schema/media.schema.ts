@@ -1,21 +1,24 @@
 import { z } from 'zod';
 
-export type ImageMetadata = z.infer<typeof imageMetadataSchema>;
-export const imageMetadataSchema = z.object({
+const sharedMetadata = z.object({
   height: z.number(),
   width: z.number(),
   hash: z.string().optional(),
   size: z.number().optional(),
+  ruleId: z.number().optional(),
+  ruleReason: z.string().optional(),
+  profilePicture: z.boolean().optional(),
+  username: z.string().optional(),
+  userId: z.number().optional(),
 });
 
+export type ImageMetadata = z.infer<typeof imageMetadataSchema>;
+export const imageMetadataSchema = sharedMetadata.extend({});
+
 export type VideoMetadata = z.infer<typeof videoMetadataSchema>;
-export const videoMetadataSchema = z.object({
-  height: z.number(),
-  width: z.number(),
-  hash: z.string().optional(), // first frame of video
+export const videoMetadataSchema = sharedMetadata.extend({
   duration: z.number().optional(),
   audio: z.boolean().optional(),
-  size: z.number().optional(),
   thumbnailFrame: z.number().nullish(),
   youtubeVideoId: z.string().optional(),
   youtubeUploadAttempt: z.number().optional(),
