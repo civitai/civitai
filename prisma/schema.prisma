@@ -346,6 +346,7 @@ model User {
   cashWithdrawals            CashWithdrawal[]
   bids                       Bid[]
   recurringBids              BidRecurring[]
+  moderationRules            ModerationRule[]
 
   @@index([deletedAt])
 }
@@ -3454,6 +3455,9 @@ model ModerationRule {
   enabled    Boolean              @default(true)
   order      Int?
   reason     String?
+
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
 }
 
 /// @view

@@ -3,13 +3,14 @@ import { z } from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { bustImageModRulesCache } from '~/server/services/image.service';
 import { bustModelModRulesCache } from '~/server/services/model.service';
-import { handleEndpointError, ModEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { EntityType, ModerationRuleAction } from '~/shared/utils/prisma/enums';
 
 const payloadSchema = z.object({
   id: z.number(),
   definition: z.object({}).passthrough(),
+  userId: z.number(),
   action: z.nativeEnum(ModerationRuleAction),
   entityType: z.enum(['Model', 'Image']),
   enabled: z.boolean().optional().default(true),
@@ -17,28 +18,26 @@ const payloadSchema = z.object({
   reason: z.string().optional(),
 });
 
-const deleteQuerySchema = z.object({
-  id: z.coerce.number(),
-});
+const deleteQuerySchema = z.object({ id: z.coerce.number() });
 
-export default ModEndpoint(
-  async function handler(req, res) {
-    try {
-      switch (req.method) {
-        case 'POST':
-          return upsertModRule(req, res);
-        case 'DELETE':
-          return deleteModRule(req, res);
-        default: {
-          return res.status(405).json({ error: 'Method Not Allowed' });
-        }
+export default WebhookEndpoint(async function handler(req, res) {
+  if (req.method && ['POST', 'DELETE'].includes(req.method))
+    return res.status(405).json({ error: 'Method Not Allowed' });
+
+  try {
+    switch (req.method) {
+      case 'POST':
+        return upsertModRule(req, res);
+      case 'DELETE':
+        return deleteModRule(req, res);
+      default: {
+        return res.status(405).json({ error: 'Method Not Allowed' });
       }
-    } catch (error) {
-      return handleEndpointError(res, error);
     }
-  },
-  ['POST', 'DELETE']
-);
+  } catch (error) {
+    return handleEndpointError(res, error);
+  }
+});
 
 async function upsertModRule(req: NextApiRequest, res: NextApiResponse) {
   if (req.body.id) {
@@ -47,7 +46,7 @@ async function upsertModRule(req: NextApiRequest, res: NextApiResponse) {
       return res.status(400).json({ error: 'Bad Request', details: schemaResult.error.format() });
 
     try {
-      const { id, ...data } = schemaResult.data;
+      const { id, userId, ...data } = schemaResult.data;
       await dbWrite.moderationRule.update({ where: { id }, data });
     } catch (error) {
       return res.status(500).json({ error: 'Could not update rule', details: error });
@@ -58,8 +57,8 @@ async function upsertModRule(req: NextApiRequest, res: NextApiResponse) {
       return res.status(400).json({ error: 'Bad Request', details: schemaResult.error.format });
 
     try {
-      const data = schemaResult.data;
-      await dbWrite.moderationRule.create({ data });
+      const { userId: createdById, ...data } = schemaResult.data;
+      await dbWrite.moderationRule.create({ data: { ...data, createdById } });
     } catch (error) {
       return res.status(500).json({ error: 'Could not create rule', details: error });
     }

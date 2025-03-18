@@ -407,6 +407,7 @@ export interface User {
   cashWithdrawals?: CashWithdrawal[];
   bids?: Bid[];
   recurringBids?: BidRecurring[];
+  moderationRules?: ModerationRule[];
 }
 
 export interface CustomerSubscription {
@@ -2602,6 +2603,8 @@ export interface ModerationRule {
   enabled: boolean;
   order: number | null;
   reason: string | null;
+  createdById: number;
+  createdBy?: User;
 }
 
 export interface QuestionRank {
