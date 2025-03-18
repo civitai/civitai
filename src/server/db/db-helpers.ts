@@ -129,6 +129,7 @@ type LaggingType =
   | 'postImages'
   | 'article';
 
+// TODO move these functions so we dont import redis when getting pgdb
 export async function getDbWithoutLag(type: LaggingType, id?: number) {
   if (env.REPLICATION_LAG_DELAY <= 0 || !id) return dbRead;
   const value = await redis.get(`${REDIS_KEYS.LAG_HELPER}:${type}:${id}`);

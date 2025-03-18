@@ -1,4 +1,2 @@
 -- DropTable
 DROP TABLE "Log";
-
-
