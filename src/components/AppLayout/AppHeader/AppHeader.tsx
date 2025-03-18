@@ -57,6 +57,8 @@ export function AppHeader({
       zIndex={199}
       className={clsx({
         ['border-green-8 border-b-[3px]']: features.isGreen,
+        ['border-red-8 border-b-[3px]']: features.isRed,
+        ['border-blue-8 border-b-[3px]']: features.isBlue,
       })}
     >
       <div className={clsx('h-full', { ['hidden']: !showSearch })}>

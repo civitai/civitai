@@ -52,10 +52,11 @@ export function CivitaiSessionProvider({
       },
     };
 
+    // The reason we force this is because the user has 0 control here.
     if (!canChangeBrowsingLevel)
       currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults[domain] };
     return currentUser;
-  }, [data?.expires, disableHidden, canViewNsfw]);
+  }, [data?.expires, disableHidden, canChangeBrowsingLevel]);
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();
