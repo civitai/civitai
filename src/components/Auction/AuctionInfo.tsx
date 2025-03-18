@@ -390,7 +390,7 @@ export const AuctionInfo = () => {
                     fullWidth: mobile,
                   }}
                   groupPosition={!mobile ? 'left' : 'apart'}
-                  showAsCheckpoint={true}
+                  showAsCheckpoint
                 />
 
                 {!mobile && <Divider orientation="vertical" />}

@@ -59,6 +59,7 @@ const generationResourceSchemaBase = z.object({
       jobId: z.string(),
       epochNumber: z.number(),
       fileName: z.string(),
+      isExpired: z.boolean(),
     })
     .optional(),
 });

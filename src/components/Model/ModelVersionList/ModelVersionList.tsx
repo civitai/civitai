@@ -242,7 +242,7 @@ export function ModelVersionList({ versions, selected, showExtraIcons, onVersion
               <ModelVersionMenu
                 modelVersionId={version.id}
                 modelId={version.modelId}
-                postId={version.posts?.[0].id}
+                postId={version.posts?.[0]?.id}
                 canDelete={versions.length > 1}
                 active={active}
                 published={published}

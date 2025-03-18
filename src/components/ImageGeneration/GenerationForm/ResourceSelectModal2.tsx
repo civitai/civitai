@@ -85,6 +85,7 @@ import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useStorage } from '~/hooks/useStorage';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
@@ -247,7 +248,13 @@ function ResourceSelectModalContent() {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const [selectedTab, setSelectedTab] = useState<Tabs>(defaultTab);
+  const features = useFeatureFlags();
+  const [selectedTab, setSelectedTab] = useStorage<Tabs>({
+    type: 'localStorage',
+    key: 'resource-select-tab',
+    defaultValue: defaultTab,
+    getInitialValueInEffect: false,
+  });
   const { refine } = useClearRefinements();
   // TODO this refine isn't working perfectly
 
@@ -324,9 +331,12 @@ function ResourceSelectModalContent() {
 
   // TODO handle fetching errors from above
 
-  const allowedTabs = tabs.filter((t) => {
+  let allowedTabs = tabs.filter((t) => {
     return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
+  if (!features.auctions) {
+    allowedTabs = allowedTabs.filter((t) => t !== 'boosted');
+  }
 
   const meiliFilters: string[] = [
     // Default filter for visibility:
@@ -522,7 +532,7 @@ function ResourceHitList({
 }: ResourceSelectOptions & {
   likes: number[] | undefined;
   featured: GetFeaturedModels | undefined;
-  selectedTab: Tabs;
+  selectedTab?: Tabs;
 }) {
   const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
   const startedRef = useRef(false);

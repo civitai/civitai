@@ -463,6 +463,10 @@ export const REDIS_KEYS = {
     USER_FOLLOWS: 'packed:caches:user-follows',
     MODEL_TAGS: 'packed:caches:model-tags',
     MODEL_VERSION_RESOURCE_INFO: 'packed:caches:model-version-resource-info',
+    MOD_RULES: {
+      MODELS: 'packed:caches:mod-rules:models',
+      IMAGES: 'packed:caches:mod-rules:images',
+    },
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

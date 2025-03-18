@@ -749,6 +749,14 @@ export const AuctionType = {
 
 export type AuctionType = (typeof AuctionType)[keyof typeof AuctionType];
 
+export const ModerationRuleAction = {
+  Approve: 'Approve',
+  Block: 'Block',
+  Hold: 'Hold',
+} as const;
+
+export type ModerationRuleAction = (typeof ModerationRuleAction)[keyof typeof ModerationRuleAction];
+
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

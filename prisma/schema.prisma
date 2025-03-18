@@ -1354,7 +1354,7 @@ model Image {
   reports             ImageReport[]
   reactions           ImageReaction[]
   thread              Thread?
-  tags                TagsOnImage[]
+  tags                TagsOnImageDetails[]
   tagVotes            TagsOnImageVote[]
   tagComposites       ImageTag[]
   metrics             ImageMetric[]
@@ -1379,6 +1379,7 @@ model Image {
   CosmeticShopSection CosmeticShopSection[]
   flags               ImageFlag[]
   ratingRequests      ImageRatingRequest[]
+  tagsNew             TagsOnImageNew[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1531,12 +1532,11 @@ model Tag {
   isCategory Boolean     @default(false)
   adminOnly  Boolean     @default(false)
 
-  toTags               TagsOnTags[]       @relation("TagsOnTags_fromTag")
-  fromTags             TagsOnTags[]       @relation("TagsOnTags_toTag")
+  toTags               TagsOnTags[]         @relation("TagsOnTags_fromTag")
+  fromTags             TagsOnTags[]         @relation("TagsOnTags_toTag")
   tagsOnModels         TagsOnModels[]
   tagsOnModelsVotes    TagsOnModelsVote[]
   tagsOnQuestion       TagsOnQuestions[]
-  tagsOnImage          TagsOnImage[]
   tagsOnImageVotes     TagsOnImageVote[]
   tagsOnPosts          TagsOnPost[]
   tagsOnArticles       TagsOnArticle[]
@@ -1551,6 +1551,7 @@ model Tag {
   tagsOnPostVotes      TagsOnPostVote[]
   tagsOnBounties       TagsOnBounty[]
   CollectionItem       CollectionItem[]
+  tagsOnImage          TagsOnImageDetails[]
 
   @@unique([name])
 }
@@ -1620,30 +1621,11 @@ enum TagSource {
   HiveDemographics
 }
 
-model TagsOnImage {
-  imageId     Int
-  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId       Int
-  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  createdAt   DateTime  @default(now())
-  automated   Boolean   @default(false)
-  confidence  Int?
-  // disabled    Boolean   @default(false)
-  disabledAt  DateTime?
-  needsReview Boolean   @default(false)
-  source      TagSource @default(User)
-  // @@index([disabled])
-
-  @@id([tagId, imageId])
-  @@index([imageId], type: Hash)
-  @@index([automated])
-  @@index([source])
-}
-
 model TagsOnImageNew {
   imageId    Int
+  image      Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
   tagId      Int
-  attributes Int @db.SmallInt()
+  attributes Int   @db.SmallInt()
 
   @@id([imageId, tagId])
   @@index([tagId])
@@ -3456,6 +3438,24 @@ model FeaturedModelVersion {
   position       Int
 }
 
+enum ModerationRuleAction {
+  Approve
+  Block
+  Hold
+}
+
+model ModerationRule {
+  id         Int                  @id @default(autoincrement())
+  entityType EntityType
+  definition Json
+  action     ModerationRuleAction
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+  enabled    Boolean              @default(true)
+  order      Int?
+  reason     String?
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id
@@ -4480,8 +4480,10 @@ model EntityMetricImage {
 /// @view
 model TagsOnImageDetails {
   imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id])
   tagId       Int
-  sourceId    TagSource
+  tag         Tag       @relation(fields: [tagId], references: [id])
+  source      TagSource
   automated   Boolean
   disabled    Boolean
   needsReview Boolean
