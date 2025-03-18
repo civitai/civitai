@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState } from 'react';
 import {
+  greenBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -38,7 +39,7 @@ export function BrowsingLevelProvider({
   forcedBrowsingLevel?: number;
 }) {
   const ctx = useBrowsingLevelContext();
-  const { canViewNsfw } = useFeatureFlags();
+  const { canChangeBrowsingLevel, isGreen } = useFeatureFlags();
   const userBrowsingLevel = useBrowsingSettings((state) =>
     state.showNsfw ? state.browsingLevel : publicBrowsingLevelsFlag
   );
@@ -49,9 +50,11 @@ export function BrowsingLevelProvider({
   return (
     <BrowsingModeOverrideCtx.Provider
       value={{
-        forcedBrowsingLevel: !canViewNsfw
-          ? publicBrowsingLevelsFlag
-          : forcedBrowsingLevel ?? ctx.forcedBrowsingLevel,
+        forcedBrowsingLevel: canChangeBrowsingLevel
+          ? forcedBrowsingLevel ?? parentForcedBrowsingLevel
+          : isGreen
+          ? greenBrowsingLevelsFlag
+          : undefined,
         userBrowsingLevel: userBrowsingLevel,
         browsingLevelOverride:
           childBrowsingLevelOverride ?? parentBrowsingLevelOverride ?? ctx.browsingLevelOverride,

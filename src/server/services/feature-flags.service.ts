@@ -96,14 +96,16 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['public'],
   imageIndexFeed: ['public'],
+  // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
+  canChangeBrowsingLevel: ['public', 'blue'],
   canBuyBuzz: ['public', 'green'],
-  customPaymentProvider: ['public'],
-  // Temporarily disabled until we change ads provider -Manuel
   adsEnabled: ['public', 'blue'],
+  // #endregion
+  // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],
   announcements: ['granted'],
   blocklists: ['granted'],

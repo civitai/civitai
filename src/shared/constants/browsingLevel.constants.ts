@@ -56,6 +56,22 @@ export function getBrowsingLevelLabel(value: number) {
 }
 export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
 
+// #region Base Domain Browser Levels
+export const greenBrowsingLevelsArray: NsfwLevel[] = [NsfwLevel.PG];
+export const greenBrowsingLevelsFlag = flagifyBrowsingLevel(greenBrowsingLevelsArray);
+
+export const blueBrowsingLevelsArray: NsfwLevel[] = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R];
+export const blueBrowsingLevelsFlag = flagifyBrowsingLevel(blueBrowsingLevelsArray);
+
+export const redBrowsingLevelsArray: NsfwLevel[] = [
+  NsfwLevel.R,
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+  NsfwLevel.Blocked,
+];
+export const redBrowsingLevelsFlag = flagifyBrowsingLevel(redBrowsingLevelsArray);
+// #endregion
+
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
 
