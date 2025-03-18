@@ -1214,10 +1214,6 @@ export const getAllImages = async (
       LIMIT ${limit + 1}
   `;
 
-  console.log('----------------');
-  console.log(orderBy);
-  console.log('----------------');
-
   // Disable Prisma query
   // if (!env.IMAGE_QUERY_CACHING) cacheTime = 0;
   // const cacheable = queryCache(dbRead, 'getAllImages', 'v1');
