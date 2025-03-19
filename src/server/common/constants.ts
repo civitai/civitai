@@ -2,7 +2,7 @@ import type { MantineTheme } from '@mantine/core';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
-import { BanReasonCode, ModelSort } from '~/server/common/enums';
+import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { GenerationResource } from '~/server/services/generation/generation.service';
 import {
@@ -1104,6 +1104,8 @@ export type DomainSettings = {
   color: ColorDomain;
   excludedTags: number[];
   poiEnabled: boolean;
+  allowedNsfwLevels?: NsfwLevel[];
+  disableNsfwLevelControl?: boolean;
 };
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
