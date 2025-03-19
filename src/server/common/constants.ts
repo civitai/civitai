@@ -1100,12 +1100,37 @@ export const colorDomains = {
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
 export type ColorDomain = keyof typeof colorDomains;
+
 export type DomainSettings = {
   color: ColorDomain;
-  excludedTags: number[];
+  excludedTagIds: number[];
   poiEnabled: boolean;
   allowedNsfwLevels?: NsfwLevel[];
   disableNsfwLevelControl?: boolean;
+};
+
+export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
+  green: {
+    color: 'green',
+    excludedTagIds: [],
+    poiEnabled: true,
+    allowedNsfwLevels: [NsfwLevel.PG],
+    disableNsfwLevelControl: true,
+  },
+  blue: {
+    color: 'blue',
+    excludedTagIds: [],
+    poiEnabled: true,
+    allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R],
+    disableNsfwLevelControl: false,
+  },
+  red: {
+    color: 'red',
+    excludedTagIds: [],
+    poiEnabled: true,
+    allowedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    disableNsfwLevelControl: false,
+  },
 };
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {

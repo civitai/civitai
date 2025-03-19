@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
@@ -120,10 +121,19 @@ export const useQueryModels = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const _filters = filters ?? {};
+  const domainSettings = useDomainSettings();
+  const excludedTagIds = [
+    ...(_filters.excludedTagIds ?? []),
+    ...(domainSettings.excludedTagIds ?? []),
+  ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(
-    { ..._filters, browsingLevel },
+    {
+      ..._filters,
+      browsingLevel,
+      excludedTagIds,
+    },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -150,7 +160,7 @@ export const useQueryModels = (
     showHidden: !!_filters.hidden,
     showImageless: (_filters.status ?? []).includes(ModelStatus.Draft) || _filters.pending,
     isRefetching: rest.isRefetching,
-    hiddenTags: _filters.excludedTagIds,
+    hiddenTags: excludedTagIds,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };

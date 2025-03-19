@@ -7,7 +7,7 @@ import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
-import { ColorDomain, DomainSettings } from '../common/constants';
+import { ColorDomain, DEFAULT_DOMAIN_SETTINGS, DomainSettings } from '../common/constants';
 
 const log = createLogger('system-cache', 'green');
 
@@ -242,10 +242,5 @@ export async function getDomainSettings(domain: ColorDomain) {
   const cachedSettings = await sysRedis.get(`${REDIS_SYS_KEYS.SYSTEM.DOMAIN_SETTINGS}:${domain}`);
   if (cachedSettings) return JSON.parse(cachedSettings) as DomainSettings;
 
-  // Use some sort of default. Can be expanded as needed.
-  return {
-    excludedTags: [],
-    poiEnabled: true,
-    color: 'blue',
-  } as DomainSettings;
+  return DEFAULT_DOMAIN_SETTINGS[domain];
 }
