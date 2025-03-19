@@ -1100,6 +1100,11 @@ export const colorDomains = {
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
 export type ColorDomain = keyof typeof colorDomains;
+export type DomainSettings = {
+  color: ColorDomain;
+  excludedTags: number[];
+  poiEnabled: boolean;
+};
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
   const { host } = req.headers;
