@@ -8,6 +8,8 @@ import { getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
 import { createCallerFactory } from '@trpc/server';
 import { appRouter } from '~/server/routers';
 import { Fingerprint } from '~/server/utils/fingerprint';
+import { getDomainSettings } from '~/server/services/system-cache';
+import { DomainSettings, getRequestDomainColor } from '~/server/common/constants';
 
 type CacheSettings = {
   browserTTL?: number;
@@ -47,6 +49,9 @@ export const createContext = async ({
     skip: false,
   };
   const fingerprint = new Fingerprint((req.headers['x-fingerprint'] as string) ?? '');
+  const domainSettings: DomainSettings = await getDomainSettings(
+    getRequestDomainColor(req) ?? 'blue'
+  );
 
   return {
     user: session?.user,
@@ -56,14 +61,17 @@ export const createContext = async ({
     ip,
     cache,
     fingerprint,
+    domainSettings,
     res,
     req,
   };
 };
 
 const createCaller = createCallerFactory()(appRouter);
-export const publicApiContext2 = (req: NextApiRequest, res: NextApiResponse) =>
-  createCaller({
+export const publicApiContext2 = async (req: NextApiRequest, res: NextApiResponse) => {
+  const domainSettings = await getDomainSettings(getRequestDomainColor(req) ?? 'blue');
+
+  return createCaller({
     user: undefined,
     acceptableOrigin: true,
     features: getFeatureFlagsLazy({ req }),
@@ -77,26 +85,33 @@ export const publicApiContext2 = (req: NextApiRequest, res: NextApiResponse) =>
       canCache: true,
       skip: false,
     },
+    domainSettings,
     res,
     req,
   });
+};
 
-export const publicApiContext = (req: NextApiRequest, res: NextApiResponse) => ({
-  user: undefined,
-  acceptableOrigin: true,
-  features: getFeatureFlagsLazy({ req }),
-  track: new Tracker(req, res),
-  ip: requestIp.getClientIp(req) ?? '',
-  cache: {
-    browserCacheTTL: 3 * 60,
-    edgeCacheTTL: 3 * 60,
-    staleWhileRevalidate: 60,
-    canCache: true,
-    skip: false,
-  },
-  fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
-  res,
-  req,
-});
+export const publicApiContext = async (req: NextApiRequest, res: NextApiResponse) => {
+  const domainSettings = await getDomainSettings(getRequestDomainColor(req) ?? 'blue');
+
+  return {
+    user: undefined,
+    acceptableOrigin: true,
+    features: getFeatureFlagsLazy({ req }),
+    track: new Tracker(req, res),
+    ip: requestIp.getClientIp(req) ?? '',
+    cache: {
+      browserCacheTTL: 3 * 60,
+      edgeCacheTTL: 3 * 60,
+      staleWhileRevalidate: 60,
+      canCache: true,
+      skip: false,
+    },
+    fingerprint: new Fingerprint((req.headers['x-fingerprint'] as string) ?? ''),
+    domainSettings,
+    res,
+    req,
+  };
+};
 
 export type Context = AsyncReturnType<typeof createContext>;

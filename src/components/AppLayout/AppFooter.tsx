@@ -10,8 +10,11 @@ import { IconArrowUp } from '@tabler/icons-react';
 import { AssistantButton } from '~/components/Assistant/AssistantButton';
 import { ChatPortal } from '~/components/Chat/ChatProvider';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
+import { useDomainColor } from '~/hooks/useDomainColor';
+import { ColorDomain } from '~/server/common/constants';
 
 const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
+  domains?: ColorDomain[];
   features?: (features: FeatureAccess) => boolean;
 })[] = [
   {
@@ -65,6 +68,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
 
 export function AppFooter() {
   const features = useFeatureFlags();
+  const domain = useDomainColor();
   const footerRef = useRef<HTMLElement | null>(null);
 
   const [showFooter, setShowFooter] = useState(true);
@@ -98,8 +102,8 @@ export function AppFooter() {
         className={clsx(
           ' relative flex h-[var(--footer-height)] w-full items-center gap-2  overflow-x-auto bg-gray-0 p-1 px-2 @sm:gap-3 dark:bg-dark-7',
           {
-            ['border-t border-gray-3 dark:border-dark-4']: !features.isGreen,
-            ['border-green-8 border-t-[3px]']: features.isGreen,
+            ['border-t border-gray-3 dark:border-dark-4']: domain === 'blue',
+            [`border-${domain}-8 border-t-[3px]`]: domain !== 'blue',
           }
         )}
         style={{ scrollbarWidth: 'thin' }}
@@ -109,7 +113,12 @@ export function AppFooter() {
         </Text>
         <div className="flex items-center">
           {footerLinks
-            .filter((item) => !item.features || item.features?.(features))
+            .filter(
+              (item) =>
+                (!item.features && !item.domains) ||
+                item.features?.(features) ||
+                item.domains?.includes(domain)
+            )
             .map(({ features, ...props }, i) => (
               <Button
                 key={i}
