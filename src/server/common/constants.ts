@@ -1119,7 +1119,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
   },
   blue: {
     color: 'blue',
-    excludedTagIds: [],
+    excludedTagIds: [292],
     poiEnabled: true,
     allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R],
     disableNsfwLevelControl: false,

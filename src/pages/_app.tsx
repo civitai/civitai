@@ -113,20 +113,22 @@ function MyApp(props: CustomAppProps) {
 
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
-      <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
-        {Component.getLayout?.(page) ?? (
-          <AppLayout
-            left={Component.left}
-            right={Component.right}
-            subNav={Component.subNav}
-            scrollable={Component.scrollable}
-            footer={Component.footer}
-            announcements={Component.announcements}
-          >
-            {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
-          </AppLayout>
-        )}
-      </BrowsingLevelProviderOptional>
+      <DomainSettingsProvider>
+        <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
+          {Component.getLayout?.(page) ?? (
+            <AppLayout
+              left={Component.left}
+              right={Component.right}
+              subNav={Component.subNav}
+              scrollable={Component.scrollable}
+              footer={Component.footer}
+              announcements={Component.announcements}
+            >
+              {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+            </AppLayout>
+          )}
+        </BrowsingLevelProviderOptional>
+      </DomainSettingsProvider>
     </FeatureLayout>
   );
 

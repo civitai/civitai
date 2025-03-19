@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState } from 'react';
 import {
+  flagifyBrowsingLevel,
   greenBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
@@ -8,6 +9,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { Flags } from '~/shared/utils';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 
 type BrowsingModeProviderState = {
   forcedBrowsingLevel?: number;
@@ -39,10 +41,20 @@ export function BrowsingLevelProvider({
   forcedBrowsingLevel?: number;
 }) {
   const ctx = useBrowsingLevelContext();
-  const { canChangeBrowsingLevel, isGreen } = useFeatureFlags();
+  const domainSettings = useDomainSettings();
   const userBrowsingLevel = useBrowsingSettings((state) =>
     state.showNsfw ? state.browsingLevel : publicBrowsingLevelsFlag
   );
+  const allowedNsfwLevelsFlag = domainSettings?.allowedNsfwLevels
+    ? flagifyBrowsingLevel(domainSettings?.allowedNsfwLevels)
+    : 0;
+  const adjustedUserBrowsingLevel = domainSettings?.allowedNsfwLevels
+    ? domainSettings.disableNsfwLevelControl
+      ? allowedNsfwLevelsFlag
+      : Flags.intersection(userBrowsingLevel, allowedNsfwLevelsFlag) ||
+        // Ensures we fallback to a proper value if the intersection is 0
+        allowedNsfwLevelsFlag
+    : userBrowsingLevel;
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const [childBrowsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
   const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(parentForcedBrowsingLevel);
@@ -50,12 +62,11 @@ export function BrowsingLevelProvider({
   return (
     <BrowsingModeOverrideCtx.Provider
       value={{
-        forcedBrowsingLevel: canChangeBrowsingLevel
-          ? forcedBrowsingLevel ?? parentForcedBrowsingLevel
-          : isGreen
-          ? greenBrowsingLevelsFlag
-          : undefined,
-        userBrowsingLevel: userBrowsingLevel,
+        forcedBrowsingLevel:
+          domainSettings?.disableNsfwLevelControl && domainSettings.allowedNsfwLevels
+            ? allowedNsfwLevelsFlag
+            : forcedBrowsingLevel ?? parentForcedBrowsingLevel,
+        userBrowsingLevel: adjustedUserBrowsingLevel,
         browsingLevelOverride:
           childBrowsingLevelOverride ?? parentBrowsingLevelOverride ?? ctx.browsingLevelOverride,
         childBrowsingLevelOverride: childBrowsingLevelOverride ?? ctx.childBrowsingLevelOverride,

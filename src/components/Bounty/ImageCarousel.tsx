@@ -14,6 +14,7 @@ import {
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { DomainSettingsProvider } from '~/providers/DomainSettingsProvider';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -101,9 +102,11 @@ const useStyles = createStyles((theme) => ({
 
 export function ImageCarousel(props: Props) {
   return (
-    <BrowsingLevelProvider>
-      <ImageCarouselContent {...props} />
-    </BrowsingLevelProvider>
+    <DomainSettingsProvider>
+      <BrowsingLevelProvider>
+        <ImageCarouselContent {...props} />
+      </BrowsingLevelProvider>
+    </DomainSettingsProvider>
   );
 }
 

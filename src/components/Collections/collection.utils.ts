@@ -136,7 +136,7 @@ export const useQueryCollections = (
   const domainSettings = useDomainSettings();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(domainSettings.excludedTagIds ?? []),
+    ...(domainSettings?.excludedTagIds ?? []),
   ].filter(isDefined);
 
   const { data, isLoading, ...rest } = trpc.collection.getInfinite.useInfiniteQuery(

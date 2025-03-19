@@ -124,7 +124,7 @@ export const useQueryModels = (
   const domainSettings = useDomainSettings();
   const excludedTagIds = [
     ...(_filters.excludedTagIds ?? []),
-    ...(domainSettings.excludedTagIds ?? []),
+    ...(domainSettings?.excludedTagIds ?? []),
   ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();

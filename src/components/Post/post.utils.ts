@@ -48,7 +48,7 @@ export const useQueryPosts = (
   const domainSettings = useDomainSettings();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(domainSettings.excludedTagIds ?? []),
+    ...(domainSettings?.excludedTagIds ?? []),
   ].filter(isDefined);
   const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
     { ...filters, include: ['cosmetics'], browsingLevel, excludedTagIds },

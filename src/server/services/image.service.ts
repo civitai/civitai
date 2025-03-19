@@ -1638,6 +1638,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
+    excludedTagIds,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1748,6 +1749,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (nonRemixesOnly) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
+  }
+
+  if (excludedTagIds?.length) {
+    // Needed support for this in order to properly support multiple domains.
+    filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
   }
 
   /*
