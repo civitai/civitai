@@ -381,7 +381,7 @@ async function setCoverImageNsfwLevel() {
   const { rows: versionLevels } = await pgDbReadLong.query<NsfwLevelRow>(`
     -- get version nsfw image level based on post nsfw level
     WITH model_version_nsfw_level AS (
-      SELECT DISTINCT ON (mv.id) mv.id, p.metadata->>'imageNsfw' nsfw
+      SELECT DISTINCT ON (mv.id) mv.id, p.metadata->>'imageNsfwLevel' nsfw
       FROM "ModelVersion" mv
       JOIN "Model" m ON m.id = mv."modelId"
       JOIN "Post" p ON p."modelVersionId" = mv.id AND p."userId" = m."userId"
@@ -394,7 +394,7 @@ async function setCoverImageNsfwLevel() {
     WHERE
       level.nsfw IS NOT NULL AND (
         jsonb_typeof(mv.meta) = 'undefined'
-        OR (mv.meta->>'imageNsfw' IS DISTINCT FROM level.nsfw)
+        OR (mv.meta->>'imageNsfwLevel' IS DISTINCT FROM level.nsfw)
       );
   `);
   const tasks = chunk(versionLevels, 500).map((level) => async () => {
@@ -403,11 +403,11 @@ async function setCoverImageNsfwLevel() {
     const query = await pgDbWrite.cancellableQuery(`
       -- set version nsfw image level based on post nsfw level
       WITH model_version_nsfw_level AS (
-        SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw text)
+        SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw int)
       )
       UPDATE "ModelVersion" mv
       SET
-        meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfw}', to_jsonb(COALESCE(level.nsfw, 'None')))
+        meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfwLevel}', to_jsonb(COALESCE(level.nsfw, 1)))
       FROM model_version_nsfw_level level
       WHERE level.id = mv.id;
     `);
@@ -421,7 +421,7 @@ async function setCoverImageNsfwLevel() {
     WITH model_nsfw_level AS (
       SELECT DISTINCT ON (mv."modelId")
         mv."modelId" as "id",
-        mv.meta->>'imageNsfw' nsfw
+        mv.meta->>'imageNsfwLevel' nsfw
       FROM "ModelVersion" mv
       ORDER BY mv."modelId", mv.index
     )
@@ -431,7 +431,7 @@ async function setCoverImageNsfwLevel() {
     WHERE
       level.nsfw IS NOT NULL AND (
         jsonb_typeof(m.meta) = 'undefined'
-        OR (m.meta->>'imageNsfw' IS DISTINCT FROM level.nsfw)
+        OR (m.meta->>'imageNsfwLevel' IS DISTINCT FROM level.nsfw)
       );
   `);
   const modelTasks = chunk(modelLevels, 500).map((level) => async () => {
@@ -440,11 +440,11 @@ async function setCoverImageNsfwLevel() {
     const query = await pgDbWrite.cancellableQuery(`
       -- set model nsfw image level based on version nsfw level
       WITH model_nsfw_level AS (
-        SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw text)
+        SELECT * FROM jsonb_to_recordset('${levelJson}'::jsonb) AS s(id int, nsfw int)
       )
       UPDATE "Model" m
       SET
-        meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfw}', to_jsonb(COALESCE(level.nsfw, 'None')))
+        meta = jsonb_set(IIF(jsonb_typeof(meta) = 'null' OR meta IS NULL, '{}', meta), '{imageNsfwLevel}', to_jsonb(COALESCE(level.nsfw, 1)))
       FROM model_nsfw_level level
       WHERE level.id = m.id;
     `);
