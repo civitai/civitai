@@ -44,6 +44,18 @@ export function ModelVersionMenu({
     bustModelVersionCacheMutation.mutate({ id: modelVersionId });
   }
 
+  // const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
+  // const handleToggleCoverage = async ({
+  //   modelId,
+  //   versionId,
+  // }: {
+  //   modelId: number;
+  //   versionId: number;
+  // }) => {
+  //   // Error is handled at the hook level
+  //   await toggle({ id: modelId, versionId }).catch(() => null);
+  // };
+
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation({
     async onMutate(payload) {
       await queryUtils.model.getById.cancel({ id: modelId });
@@ -149,6 +161,26 @@ export function ModelVersionMenu({
             Bust Cache
           </Menu.Item>
         )}
+
+        {/* {currentUser?.isModerator && showToggleCoverage && (
+          <>
+            <Menu.Divider />
+            <Menu.Label>Moderation zone</Menu.Label>
+            <Menu.Item
+              disabled={isLoading}
+              icon={isLoading ? <Loader size="xs" /> : undefined}
+              onClick={() =>
+                handleToggleCoverage({
+                  modelId: version.modelId,
+                  versionId: version.id,
+                })
+              }
+              closeMenuOnClick={false}
+            >
+              {version.canGenerate ? 'Remove from generation' : 'Add to generation'}
+            </Menu.Item>
+          </>
+        )} */}
 
         <Menu.Item
           component={Link}
