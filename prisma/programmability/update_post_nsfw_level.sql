@@ -2,7 +2,7 @@ CREATE OR REPLACE FUNCTION update_post_nsfw_levels(post_ids INTEGER[])
 RETURNS VOID AS $$
 BEGIN
   WITH post_nsfw_level AS (
-	  SELECT DISTINCT ON (p.id) p.id, i.nsfw
+	  SELECT DISTINCT ON (p.id) p.id, i."nsfwLevel"
 		FROM "Post" p
 		JOIN "Image" i ON i."postId" = p.id
 		WHERE p.id = ANY(post_ids)
@@ -11,8 +11,8 @@ BEGIN
 	UPDATE "Post" p
 	SET
 	  metadata = CASE
-       WHEN jsonb_typeof(metadata) = 'null' OR metadata IS NULL THEN jsonb_build_object('imageNsfw', COALESCE(pnl.nsfw, 'None'))
-       ELSE p.metadata || jsonb_build_object('imageNsfw', COALESCE(pnl.nsfw, 'None'))
+       WHEN jsonb_typeof(metadata) = 'null' OR metadata IS NULL THEN jsonb_build_object('imageNsfwLevel', COALESCE(pnl."nsfwLevel", 1))
+       ELSE p.metadata || jsonb_build_object('imageNsfwLevel', COALESCE(pnl."nsfwLevel", 1))
 	  END
 	FROM post_nsfw_level pnl
 	WHERE pnl.id = p.id;
