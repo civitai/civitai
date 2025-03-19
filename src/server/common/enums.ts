@@ -218,6 +218,7 @@ export enum OnboardingSteps {
   Buzz = 8,
   CreatorProgram = 16,
   BannedCreatorProgram = 32,
+  RedTOS = 64,
 }
 
 export const OnboardingComplete =
