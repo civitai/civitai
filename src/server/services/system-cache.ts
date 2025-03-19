@@ -246,5 +246,6 @@ export async function getDomainSettings(domain: ColorDomain) {
   return {
     excludedTags: [],
     poiEnabled: true,
-  };
+    color: 'blue',
+  } as DomainSettings;
 }
