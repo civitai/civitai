@@ -24,7 +24,6 @@ import {
   IconCloudOff,
   IconDotsVertical,
   IconDownload,
-  IconHorse,
   IconInfoCircle,
   IconLock,
   IconSettings,
@@ -88,7 +87,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useStorage } from '~/hooks/useStorage';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
@@ -106,6 +105,7 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -1017,7 +1017,7 @@ function ResourceSelectCard({
       ),
       value: (
         <ModelURN
-          baseModel={selectedVersion.baseModel as BaseModel}
+          baseModel={selectedVersion.baseModel}
           type={data.type}
           modelId={data.id}
           modelVersionId={selectedVersion.id}
@@ -1081,27 +1081,11 @@ function ResourceSelectCard({
                     )}
                     <div className="absolute left-2 top-2 flex items-center gap-1">
                       <ImageGuard2.BlurToggle />
-                      <Badge
+                      <ModelTypeBadge
                         className={cx(classes.infoChip, classes.chip)}
-                        variant="light"
-                        radius="xl"
-                      >
-                        <Text color="white" size="xs" transform="capitalize">
-                          {getDisplayName(data.type)}
-                        </Text>
-                        {isSDXL && (
-                          <>
-                            <Divider orientation="vertical" />
-                            {isPony ? (
-                              <IconHorse size={16} strokeWidth={2.5} />
-                            ) : (
-                              <Text color="white" size="xs">
-                                XL
-                              </Text>
-                            )}
-                          </>
-                        )}
-                      </Badge>
+                        type={data.type}
+                        baseModel={data.version.baseModel}
+                      />
 
                       {(isNew || isUpdated) && (
                         <Badge

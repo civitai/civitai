@@ -411,7 +411,6 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         select: {
           id: true,
           modelVersion: { select: { id: true, name: true } },
-          name: true,
           detected: true,
         },
       },
@@ -4683,33 +4682,58 @@ export async function createImageResources({
   >`SELECT * FROM get_image_resources(${imageId}::int)`;
   if (!resources.length) return null;
 
-  const resourcesWithModelVersions = uniqBy(
-    resources.filter((x) => x.modelversionid),
-    'modelversionid'
-  );
+  const withModelVersionId = resources
+    .map((x) => {
+      x.modelVersionId = x.modelVersionId ?? x.modelversionid ?? null;
+      if (!x.modelVersionId) return null;
+      return x;
+    })
+    .filter(isDefined);
+  const resourcesWithModelVersions = uniqBy(withModelVersionId, 'modelversionid');
   const resourcesWithoutModelVersions = uniqBy(
     resources.filter((x) => !x.modelversionid),
     'name'
   );
 
-  const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
-    (r) => Prisma.sql`
-        (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
-      r.detected
-    })
-      `
-  );
+  const imageResources = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions];
+  if (imageResources.length) {
+    const values = Prisma.join(
+      imageResources.map(
+        (r) => Prisma.sql`
+          (${r.id}, ${r.modelVersionId}, ${r.name}, ${r.hash}, ${r.strength}, ${r.detected})
+        `
+      )
+    );
 
-  // Write the resources to the image
-  await dbClient.$executeRaw`
-    INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
-    VALUES ${Prisma.join(sql, ',')}
-    ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
-    SET
-      detected = excluded.detected,
-      hash = excluded.hash,
-      strength = excluded.strength;
-  `;
+    // Write the resources to the image
+    await dbClient.$queryRaw`
+      INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
+      VALUES ${values}
+      ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
+      SET
+        detected = excluded.detected,
+        hash = excluded.hash,
+        strength = excluded.strength;
+    `;
+  }
+
+  if (resourcesWithModelVersions.length) {
+    const values = Prisma.join(
+      resourcesWithModelVersions.map(
+        (r) => Prisma.sql`(${r.id}, ${r.modelVersionId}, ${r.hash}, ${r.strength}, ${r.detected})`
+      )
+    );
+
+    await dbClient.$queryRaw`
+      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", hash, strength, detected)
+      VALUES ${values}
+      ON CONFLICT ("imageId", "modelVersionId") DO UPDATE
+      SET
+        detected = excluded.detected,
+        hash = excluded.hash,
+        strength = excluded.strength;
+    `;
+  }
 
   return resources;
 }

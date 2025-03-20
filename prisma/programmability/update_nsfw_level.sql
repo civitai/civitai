@@ -12,9 +12,9 @@ BEGIN
         WHEN bool_or(t."nsfwLevel" = 2) THEN 2
         ELSE 1
       END "nsfwLevel"
-    FROM "TagsOnImage" toi
+    FROM "TagsOnImageDetails" toi
     LEFT JOIN "Tag" t ON t.id = toi."tagId" AND t."nsfwLevel" > 1
-    WHERE toi."imageId" = ANY(image_ids) AND toi."disabledAt" IS NULL
+    WHERE toi."imageId" = ANY(image_ids) AND NOT toi."disabled"
     GROUP BY toi."imageId"
   )
   UPDATE "Image" i SET

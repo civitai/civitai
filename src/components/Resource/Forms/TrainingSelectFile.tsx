@@ -416,7 +416,7 @@ export default function TrainingSelectFile({
               </Stack>
             </Stack>
           )}
-          {canGenerateWithEpochBool && (
+          {canGenerateWithEpochBool && features.privateModels && (
             <DismissibleAlert
               id={`epoch-generation-timeout-${modelVersion.id}`}
               color="yellow"

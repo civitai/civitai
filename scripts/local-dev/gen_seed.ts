@@ -4,7 +4,7 @@ import { capitalize, pull, range, without } from 'lodash-es';
 import format from 'pg-format';
 import { clickhouse } from '~/server/clickhouse/client';
 import { constants } from '~/server/common/constants';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { notifDbWrite } from '~/server/db/notifDb';
 import { pgDbWrite } from '~/server/db/pgDb';
@@ -25,7 +25,6 @@ import {
   ModelType,
   ModelUploadType,
   ModelVersionEngagementType,
-  NsfwLevel,
   ReviewReactions,
   ScanResultCode,
   TagEngagementType,
@@ -620,7 +619,7 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
       faker.number.int({ min: 1, max: 8 }), // index // TODO needs other indices?
       fbool(0.01), // inaccurate
       rand(constants.baseModels), // baseModel
-      rand(['{}', '{"imageNsfw": "None"}', '{"imageNsfw": "X"}']), // meta
+      rand(['{}', '{"imageNsfwLevel": 1}', '{"imageNsfwLevel": 8}']), // meta
       0, // earlyAccessTimeframe // TODO check model early access
       isPublished ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // publishedAt
       rand([null, 1, 2]), // clipSkip
@@ -1021,7 +1020,7 @@ const genPosts = (
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       !isPublished ? null : faker.date.between({ from: created, to: Date.now() }).toISOString(), // publishedAt
-      !isPublished ? null : `{"imageNsfw": "${rand(Object.values(NsfwLevel))}"}`, // metadata
+      !isPublished ? null : `{"imageNsfwLevel": "${rand(Object.values(NsfwLevel))}"}`, // metadata
       fbool(0.01), // tosViolation
       null, // collectionId // TODO
       randw([
@@ -2453,7 +2452,7 @@ Diminishing returns up to 120 entries`,
 	  AND mvm.timeframe = 'Month'
 	  AND mv.status = 'Published'
 	  AND m.status = 'Published'
-	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+	  AND (mv.meta->>'imageNsfwLevel')::int < 4
 ), entries_ranked AS (
 	SELECT
 		*,
@@ -2518,7 +2517,7 @@ This leaderboard is experimental and temporary`,
 	  AND mvm.timeframe = 'AllTime'
 	  AND mv.status = 'Published'
 	  AND m.status = 'Published'
-	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+	  AND (mv.meta->>'imageNsfwLevel')::int < 4
 ), entries_ranked AS (
 	SELECT
 		*,
@@ -2643,7 +2642,7 @@ First model added in the last 30 days`,
 	  AND mvm.timeframe = 'Month'
 	  AND mv.status = 'Published'
 	  AND m.status = 'Published'
-	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+	  AND (mv.meta->>'imageNsfwLevel')::int < 4
 		AND NOT EXISTS (
 			SELECT 1 FROM "Model" mo
 			WHERE
