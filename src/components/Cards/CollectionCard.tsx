@@ -19,7 +19,6 @@ import { abbreviateNumber } from '~/utils/number-helpers';
 type ImageProps = {
   id: number;
   nsfwLevel: NsfwLevel;
-  imageNsfw?: boolean;
   postId?: number | null;
   width?: number | null;
   height?: number | null;

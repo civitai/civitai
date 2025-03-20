@@ -38,7 +38,6 @@ export interface ImageProps {
   height: number | null;
   createdAt: Date | null;
   type: MediaType;
-  imageNsfw?: boolean;
   nsfwLevel: NsfwLevel;
   postId?: number | null;
   needsReview?: string | null;
