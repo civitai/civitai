@@ -34,7 +34,6 @@ export const workflowDefinitions: WorkflowDefinition[] = [
     key: 'img2img-background-removal',
     name: 'Background Removal',
     features: ['image'],
-    status: 'mod-only',
     selectable: false,
     memberOnly: true,
     template:
