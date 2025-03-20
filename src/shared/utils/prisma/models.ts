@@ -697,6 +697,7 @@ export interface ModelVersion {
   recommendedTo?: RecommendedResource[];
   DonationGoal?: DonationGoal[];
   featuredInfo?: FeaturedModelVersion[];
+  ImageResourceNew?: ImageResourceNew[];
 }
 
 export interface ModelVersionEngagement {
@@ -1101,6 +1102,7 @@ export interface Image {
   flags?: ImageFlag[];
   ratingRequests?: ImageRatingRequest[];
   tagsNew?: TagsOnImageNew[];
+  ImageResourceNew?: ImageResourceNew[];
 }
 
 export interface ImageFlag {
@@ -1140,6 +1142,16 @@ export interface ImageResource {
   hash: string | null;
   imageId: number;
   image?: Image;
+  strength: number | null;
+  detected: boolean;
+}
+
+export interface ImageResourceNew {
+  imageId: number;
+  image?: Image;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  hash: string | null;
   strength: number | null;
   detected: boolean;
 }
