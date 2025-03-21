@@ -72,8 +72,8 @@ export const getHomeBlocksHandler = async ({
       return true;
     });
 
-    if (homeBlocks.length === 0) {
-      // User might be on a diff. domain that doesn't allow their blocks and we should be able to figure this one out.
+    // User might be on a diff. domain that doesn't allow their blocks and we should be able to figure this one out on our end:
+    if (homeBlocks.length === 0 && domainSettings.systemHomeBlockIds) {
       homeBlocks = await getHomeBlocks({
         select: {
           id: true,
