@@ -24,7 +24,7 @@ import { SchedulePostModal } from '~/components/Post/EditV2/SchedulePostModal';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+// import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { CollectionType } from '~/shared/utils/prisma/enums';
@@ -32,13 +32,14 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { removeEmpty } from '~/utils/object-helpers';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const params = usePostEditParams();
-  const currentUser = useCurrentUser();
+  // const currentUser = useCurrentUser();
   const { runTour } = useTourContext();
   const features = useFeatureFlags();
 
@@ -92,9 +93,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
           });
           if (publishedAt && afterPublish) await afterPublish({ postId: id, publishedAt });
           else {
-            // router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
             if (returnUrl) router.push(returnUrl);
-            else router.push(`/user/${currentUser?.username}/posts`);
+            else router.push({ pathname: `/posts/${post.id}`, query: removeEmpty({ returnUrl }) });
+            // else router.push(`/user/${currentUser?.username}/posts`);
           }
           await queryUtils.image.getImagesAsPostsInfinite.invalidate();
         },
