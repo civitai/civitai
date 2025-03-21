@@ -1133,7 +1133,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     poiEnabled: false,
     allowedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disableNsfwLevelControl: true,
-    systemHomeBlockIds: [],
+    systemHomeBlockIds: [1],
   },
 };
 
