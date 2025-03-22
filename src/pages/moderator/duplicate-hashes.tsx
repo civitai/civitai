@@ -44,7 +44,7 @@ export const getServerSideProps = createServerSideProps({
       JOIN "ModelVersion" mv ON mf."modelVersionId" = mv.id
       JOIN "Model" m ON mv."modelId" = m.id
       WHERE mfh.type = 'AutoV2'
-      AND mv.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation')
+      AND m.status NOT IN ('Deleted', 'Unpublished', 'UnpublishedViolation')
       AND mfh.hash IN (SELECT * FROM model_file_hashes)
       ORDER BY mfh.hash, "createdAt"
     ),
@@ -95,14 +95,14 @@ export default function DuplicatHashesPage({
     status: 'All',
   });
 
-  const pageSize = 10;
-  const pages = Math.ceil(duplicates.length / pageSize);
-
   const items = useMemo(() => {
     return duplicates.filter(({ items }) =>
       filters.status !== 'All' ? items.some((x) => x.status === filters.status) : true
     );
   }, [duplicates, filters.status]);
+
+  const pageSize = 10;
+  const pages = Math.ceil(items.length / pageSize);
 
   function handleSetStatus(status: 'All' | 'Draft') {
     setFilters({ page: 1, status });
