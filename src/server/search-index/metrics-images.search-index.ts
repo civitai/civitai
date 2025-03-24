@@ -50,6 +50,7 @@ const filterableAttributes = [
   'flags.promptNsfw',
   'remixOfId',
   'availability',
+  'poi',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];

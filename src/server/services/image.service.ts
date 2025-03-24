@@ -704,6 +704,7 @@ type GetAllImagesRaw = {
   baseModel?: string;
   availability: Availability;
   minor: boolean;
+  poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
 };
@@ -755,6 +756,7 @@ export const getAllImages = async (
     baseModels,
     collectionTagId,
     excludedUserIds,
+    disablePoi,
   } = input;
   let { browsingLevel, userId: targetUserId } = input;
 
@@ -824,6 +826,10 @@ export const getAllImages = async (
 
   if (!isModerator) {
     AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+  }
+
+  if (disablePoi) {
+    // AND.push(Prisma.sql`(i."poi" IS NULL OR i."poi" = FALSE)`);
   }
 
   let from = 'FROM "Image" i';
@@ -1189,6 +1195,7 @@ export const getAllImages = async (
       u."deletedAt",
       p."availability",
       i.minor,
+      i.poi,
       ${Prisma.raw(
         include.includes('metaSelect')
           ? '(CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta",'
@@ -2216,6 +2223,7 @@ export const getImage = async ({
       i.metadata,
       i."nsfwLevel",
       i.minor,
+      i.poi,
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -2703,7 +2711,8 @@ export const getImagesForPosts = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      i.metadata->>'remixOfId' as "remixOfId"
+      i.metadata->>'remixOfId' as "remixOfId",
+      i.poi
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
@@ -3508,6 +3517,7 @@ type GetImageModerationReviewQueueRaw = {
   moderatorUsername?: string;
   removedAt?: Date;
   minor: boolean;
+  poi?: boolean;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3593,6 +3603,7 @@ export const getImageModerationReviewQueue = async ({
       p."title" "postTitle",
       i."index",
       i.minor,
+      i.poi,
       p."publishedAt",
       p."modelVersionId",
       u.username,

@@ -3,9 +3,11 @@ import { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'n
 import { Session } from 'next-auth';
 import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
+import { DomainSettings, getRequestDomainColor } from '~/server/common/constants';
 
 import { appRouter } from '~/server/routers';
 import { FeatureAccess, getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
+import { getDomainSettings } from '~/server/services/system-cache';
 import { getServerAuthSession } from '~/server/utils/get-server-auth-session';
 
 export const getServerProxySSGHelpers = async (
@@ -48,6 +50,7 @@ export function createServerSideProps<P>({
       ((context.req as any)['session'] as Session | null) ??
       (useSession || !isClient ? await getServerAuthSession(context) : null);
     const features = getFeatureFlagsLazy({ user: session?.user, req: context.req });
+    const domainSettings = await getDomainSettings(getRequestDomainColor(context.req) ?? 'blue');
 
     const ssg =
       useSSG && (prefetch === 'always' || !isClient)
@@ -60,6 +63,7 @@ export function createServerSideProps<P>({
       ssg,
       session,
       features,
+      domainSettings,
     })) ?? { props: {} }) as GetPropsFnResult<NonNullable<P>>;
 
     if (result.redirect) return { redirect: result.redirect };
@@ -76,6 +80,7 @@ export function createServerSideProps<P>({
         ...(props ?? {}),
         ...(ssg ? { trpcState: ssg.dehydrate() } : {}),
         session,
+        domainSettings,
       } as NonNullable<P>,
     };
   };
@@ -102,5 +107,6 @@ type CustomGetServerSidePropsContext = {
   ssg?: AsyncReturnType<typeof getServerProxySSGHelpers>;
   session?: Session | null;
   features?: FeatureAccess;
+  domainSettings?: DomainSettings;
   // browsingLevel: number;
 };

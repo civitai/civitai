@@ -89,7 +89,7 @@ function useImageGuard({ image, connectId, connectType }: UseImageGuardProps) {
   const showImage = useShowImagesStore(useCallback((state) => state[image.id], [image.id]));
   const key = getConnectionKey({ connectType, connectId });
   const { nsfwLevel = 0, ...rest } = useImageStore(image);
-  const blurNsfw = true || Flags.hasFlag(blurLevels, nsfwLevel); // TODO: Remove hardcoded value. Just don't wanna work in red without.
+  const blurNsfw = Flags.hasFlag(blurLevels, nsfwLevel);
 
   const showConnect = useShowConnectionStore(
     useCallback((state) => (key ? state[key] : undefined), [key])

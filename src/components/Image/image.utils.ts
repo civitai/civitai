@@ -102,7 +102,7 @@ export const useQueryImages = (
   ].filter(isDefined);
 
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { ...filters, excludedTagIds },
+    { ...filters, excludedTagIds, disablePoi: domainSettings?.disablePoi },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

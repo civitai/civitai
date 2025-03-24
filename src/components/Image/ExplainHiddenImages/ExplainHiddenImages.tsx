@@ -95,11 +95,12 @@ const useStyles = createStyles((theme) => ({
 }));
 
 export function useExplainHiddenImages<
-  T extends { id: number; nsfwLevel: number; tagIds?: number[] }
+  T extends { id: number; nsfwLevel: number; tagIds?: number[]; poi?: boolean }
 >(images?: T[]) {
   const browsingLevel = useBrowsingLevelDebounced();
   const hiddenPreferences = useHiddenPreferencesContext();
   const { canViewNsfw } = useFeatureFlags();
+  const domainSettings = useDomainSettings();
 
   return useMemo(() => {
     const browsingLevelBelowDict: Record<number, number> = {};
@@ -134,11 +135,13 @@ export function useExplainHiddenImages<
       tagId: Number(key),
       count,
     }));
+    const hiddenByPoi = images?.filter((x) => x.poi && domainSettings?.disablePoi);
 
     return {
       hiddenBelowBrowsingLevel: hiddenBelowBrowsingLevel,
       hiddenAboveBrowsingLevel,
       hiddenByTags,
+      hiddenByPoi,
       hasHidden: canViewNsfw
         ? !!hiddenBelowBrowsingLevel.length ||
           !!hiddenAboveBrowsingLevel.length ||

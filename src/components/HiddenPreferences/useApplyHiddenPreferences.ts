@@ -90,6 +90,7 @@ export function useApplyHiddenPreferences<
       currentUser,
       allowLowerLevels,
       canViewNsfw,
+      poiDisabled: domainSettings?.disablePoi,
     });
 
     return {
@@ -123,6 +124,7 @@ type FilterPreferencesProps<TKey, TData> = {
   currentUser: ReturnType<typeof useCurrentUser>;
   allowLowerLevels?: boolean;
   canViewNsfw: boolean;
+  poiDisabled?: boolean;
 };
 
 function filterPreferences<
@@ -139,6 +141,7 @@ function filterPreferences<
   currentUser,
   allowLowerLevels,
   canViewNsfw,
+  poiDisabled,
 }: FilterPreferencesProps<TKey, TData>) {
   const hidden = {
     unprocessed: 0,
@@ -148,6 +151,7 @@ function filterPreferences<
     tags: 0,
     users: 0,
     noImages: 0,
+    poi: 0,
   };
 
   if (!data || hiddenPreferences.hiddenLoading)
@@ -210,6 +214,11 @@ function filterPreferences<
               } else if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
               for (const tag of i.tags ?? []) if (hiddenTags.get(tag)) return false;
+              if (i.poi && poiDisabled) {
+                hidden.poi++;
+                return false;
+              }
+
               return true;
             }) ?? [];
 
@@ -248,6 +257,12 @@ function filterPreferences<
           hidden.browsingLevel++;
           return false;
         }
+
+        if (image.poi && poiDisabled) {
+          hidden.poi++;
+          return false;
+        }
+
         if (userId && hiddenUsers.get(userId)) {
           hidden.users++;
           return false;
@@ -291,6 +306,11 @@ function filterPreferences<
         if (article.coverImage) {
           if (hiddenImages.get(article.coverImage.id)) {
             hidden.images++;
+            return false;
+          }
+
+          if (article.coverImage.poi && poiDisabled) {
+            hidden.poi++;
             return false;
           }
           for (const tag of article.coverImage.tags)
@@ -340,6 +360,11 @@ function filterPreferences<
               if (hiddenTags.get(tag)) {
                 hidden.images++;
               }
+
+            if (collection.image.poi && poiDisabled) {
+              hidden.poi++;
+              return false;
+            }
           }
           return true;
         })
@@ -353,6 +378,10 @@ function filterPreferences<
               if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
               if (hiddenImages.get(i.id)) return false;
               for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+              if (i.poi && poiDisabled) {
+                hidden.poi++;
+                return false;
+              }
               return true;
             }) ?? [];
 
@@ -405,6 +434,10 @@ function filterPreferences<
             if (!Flags.intersects(i.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(i.id)) return false;
             for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+            if (i.poi && poiDisabled) {
+              hidden.poi++;
+              return false;
+            }
             return true;
           });
 
@@ -449,6 +482,10 @@ function filterPreferences<
             if (!Flags.intersects(image.nsfwLevel, browsingLevel)) return false;
             if (hiddenImages.get(image.id)) return false;
             for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
+            if (image.poi && poiDisabled) {
+              hidden.poi++;
+              return false;
+            }
             return true;
           });
 
@@ -503,12 +540,13 @@ type BaseImage = {
   user?: { id: number };
   tagIds?: number[];
   nsfwLevel: number;
+  poi?: boolean;
 };
 
 type BaseModel = {
   id: number;
   user: { id: number };
-  images: { id: number; tags?: number[]; nsfwLevel: number; userId?: number }[];
+  images: { id: number; tags?: number[]; nsfwLevel: number; userId?: number; poi?: boolean }[];
   tags?: number[];
   nsfwLevel: number;
   nsfw?: boolean;
@@ -528,6 +566,7 @@ type BaseArticle = {
     id: number;
     tags: number[];
     nsfwLevel: number;
+    poi?: boolean;
   };
 };
 
@@ -545,12 +584,14 @@ type BaseCollection = {
     tagIds?: number[];
     nsfwLevel: number;
     userId: number;
+    poi?: boolean;
   } | null;
   images: {
     id: number;
     tagIds?: number[];
     nsfwLevel: number;
     userId: number;
+    poi?: boolean;
   }[];
 };
 
@@ -566,6 +607,7 @@ type BaseBounty = {
     tagIds?: number[];
     nsfwLevel: number;
     userId: number;
+    poi?: boolean;
   }[];
 };
 
@@ -581,6 +623,7 @@ type BasePost = {
     nsfwLevel: number;
     userId?: number;
     user?: { id: number };
+    poi?: boolean;
   }[];
 };
 
