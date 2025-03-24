@@ -1457,7 +1457,6 @@ model ImageResourceNew {
   image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
   modelVersionId Int
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  hash           String?
   strength       Int?
   detected       Boolean      @default(false)
 

@@ -1151,7 +1151,6 @@ export interface ImageResourceNew {
   image?: Image;
   modelVersionId: number;
   modelVersion?: ModelVersion;
-  hash: string | null;
   strength: number | null;
   detected: boolean;
 }
