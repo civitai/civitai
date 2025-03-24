@@ -9,17 +9,17 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 const onboardingSteps: Record<string, OnboardingSteps[]> = {
   default: [
     OnboardingSteps.TOS,
-    OnboardingSteps.RedTOS,
     OnboardingSteps.Profile,
     OnboardingSteps.BrowsingLevels,
     OnboardingSteps.Buzz,
   ],
-  red: [
-    OnboardingSteps.RedTOS,
-    OnboardingSteps.Profile,
-    OnboardingSteps.BrowsingLevels,
-    OnboardingSteps.Buzz,
-  ],
+  // TODO: re-enable when we have a new TOS for Red.
+  // red: [
+  //   OnboardingSteps.RedTOS,
+  //   OnboardingSteps.Profile,
+  //   OnboardingSteps.BrowsingLevels,
+  //   OnboardingSteps.Buzz,
+  // ],
 };
 
 export const useGetRequiredOnboardingSteps = () => {
