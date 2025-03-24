@@ -107,6 +107,7 @@ import {
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import {
   Availability,
@@ -137,7 +138,13 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteClick }: Props) {
+export function ModelVersionDetails({
+  model,
+  version,
+  image,
+  onBrowseClick,
+  onFavoriteClick,
+}: Props) {
   const user = useCurrentUser();
   const { classes, cx } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -197,14 +204,14 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 
   const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();
   const earlyAccessConfig = version?.earlyAccessConfig;
-  const canGenerate =
+  const couldGenerate =
     isSelectableInGenerator &&
     features.imageGeneration &&
-    version.canGenerate &&
     (!isEarlyAccess ||
       !!earlyAccessConfig?.chargeForGeneration ||
       !!earlyAccessConfig?.freeGeneration ||
       hasGeneratePermissions);
+  const canGenerate = couldGenerate && version.canGenerate;
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -367,9 +374,13 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
             </IconBadge>
           )}
-          {version.canGenerate && (
+          {canGenerate ? (
             <GenerateButton
-              modelVersionId={version.id}
+              model={model}
+              version={version}
+              versionId={version.id}
+              image={image}
+              canGenerate={canGenerate}
               data-activity="create:version-stat"
               disabled={isLoadingAccess}
               generationPrice={
@@ -385,6 +396,10 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
               </IconBadge>
             </GenerateButton>
+          ) : (
+            <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+              <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
+            </IconBadge>
           )}
         </Group>
       ),
@@ -530,7 +545,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     showPop = false
   ) => (
     <Group position="apart" noWrap spacing={0}>
-      {showPop && version.canGenerate && (
+      {showPop && couldGenerate && (
         <ModelVersionPopularity
           versionId={version.id}
           isCheckpoint={model.type === ModelType.Checkpoint}
@@ -676,10 +691,14 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             </Button>
           ) : showPublishButton ? (
             <Stack spacing={4}>
-              {version.canGenerate && isOwnerOrMod && (
+              {couldGenerate && isOwnerOrMod && (
                 <GenerateButton
+                  model={model}
+                  version={version}
+                  versionId={version.id}
+                  image={image}
+                  canGenerate={canGenerate}
                   data-tour="model:create"
-                  modelVersionId={version.id}
                   data-activity="create:model"
                   py={8}
                 />
@@ -722,10 +741,14 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             <Stack spacing={4}>
               <Group spacing="xs" className={classes.ctaContainer}>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
-                  {canGenerate && (
+                  {couldGenerate && (
                     <GenerateButton
+                      model={model}
+                      version={version}
+                      versionId={version.id}
+                      image={image}
+                      canGenerate={canGenerate}
                       data-tour="model:create"
-                      modelVersionId={version.id}
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                       disabled={isLoadingAccess || !!model.mode}
@@ -1444,6 +1467,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 type Props = {
   version: ModelById['modelVersions'][number];
   model: ModelById;
+  image: ImagesInfiniteModel | undefined;
   onBrowseClick?: VoidFunction;
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
 };

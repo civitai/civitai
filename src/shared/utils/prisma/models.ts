@@ -118,7 +118,7 @@ export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
-export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop";
+export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion";
 
 export type Currency = "USD" | "BUZZ";
 
@@ -2549,6 +2549,8 @@ export interface AuctionBase {
   quantity: number;
   minPrice: number;
   active: boolean;
+  runForDays: number;
+  validForDays: number;
   auctions?: Auction[];
   recurringBids?: BidRecurring[];
 }

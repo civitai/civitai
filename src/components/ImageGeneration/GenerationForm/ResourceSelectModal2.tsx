@@ -67,6 +67,7 @@ import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { ReportMenuItem } from '~/components/MenuItems/ReportMenuItem';
 import { ModelHash } from '~/components/Model/ModelHash/ModelHash';
+import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 import { ModelURN, URNExplanation } from '~/components/Model/ModelURN/ModelURN';
 import { ModelVersionPopularity } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { ModelVersionReview } from '~/components/Model/ModelVersions/ModelVersionReview';
@@ -105,7 +106,6 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
-import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -1140,9 +1140,11 @@ function ResourceSelectCard({
                       )}
                       {selectSource !== 'auction' && (
                         <BidModelButton
-                          size="md"
-                          variant={theme.colorScheme === 'light' ? undefined : 'light'}
-                          px={4}
+                          actionIconProps={{
+                            size: 'md',
+                            variant: theme.colorScheme === 'light' ? undefined : 'light',
+                            px: 4,
+                          }}
                           entityData={{
                             ...selectedVersion,
                             model: {

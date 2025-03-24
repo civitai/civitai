@@ -11,6 +11,7 @@ const CACHE_EXPIRY = {
   [HomeBlockType.Social]: 60 * 3, // 3 min - doesn't actually do anything since this is from metadata
   [HomeBlockType.Event]: 60 * 3, // 3 min - doesn't actually do anything since this is from metadata
   [HomeBlockType.CosmeticShop]: 60 * 3, // 3 min
+  [HomeBlockType.FeaturedModelVersion]: 60 * 60, // 1 hour
 };
 
 type HomeBlockForCache = {
@@ -27,6 +28,7 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache) {
       return homeBlock.metadata.collection?.id;
     case HomeBlockType.Leaderboard:
     case HomeBlockType.Announcement:
+    case HomeBlockType.FeaturedModelVersion:
       return homeBlock.id;
     case HomeBlockType.CosmeticShop:
       return homeBlock.metadata.cosmeticShopSection?.id;

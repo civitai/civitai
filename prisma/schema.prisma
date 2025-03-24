@@ -2567,6 +2567,7 @@ enum HomeBlockType {
   Social
   Event
   CosmeticShop
+  FeaturedModelVersion
 }
 
 model HomeBlock {
@@ -3375,15 +3376,17 @@ enum AuctionType {
 }
 
 model AuctionBase {
-  id        Int         @id @default(autoincrement())
-  type      AuctionType
-  ecosystem String? // like Pony, SDXL, etc
-  name      String
-  slug      String
-  quantity  Int // propagates to individual item
-  minPrice  Int // propagates to individual item
+  id           Int         @id @default(autoincrement())
+  type         AuctionType
+  ecosystem    String? // like Pony, SDXL, etc
+  name         String
+  slug         String
+  quantity     Int // propagates to individual item
+  minPrice     Int // propagates to individual item
   // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
-  active    Boolean     @default(true)
+  active       Boolean     @default(true)
+  runForDays   Int         @default(1)
+  validForDays Int         @default(1)
 
   auctions      Auction[]
   recurringBids BidRecurring[]

@@ -1,4 +1,4 @@
-import { Badge, Group, Loader, Stack, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Group, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconTemperature } from '@tabler/icons-react';
 import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/model-version.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -61,11 +61,14 @@ export const ModelVersionPopularity = ({
   isCheckpoint: boolean;
   listenForUpdates: boolean;
 }) => {
-  const theme = useMantineTheme();
+  const theme = useMantineTheme(); // TODO improve colors
   const features = useFeatureFlags();
   useModelVersionTopicListener(listenForUpdates ? versionId : undefined);
 
-  const { data, isLoading } = trpc.modelVersion.getPopularity.useQuery({ id: versionId });
+  const { data, isLoading } = trpc.modelVersion.getPopularity.useQuery(
+    { id: versionId },
+    { enabled: features.auctions }
+  );
 
   if (!features.auctions) return <></>;
   // if we want to show this for non checkpoints, simply remove this line
@@ -74,10 +77,7 @@ export const ModelVersionPopularity = ({
 
   const popularity = data?.popularityRank ?? 0;
   const isFeatured = data?.isFeatured ?? false;
-  const isNew = data?.isNew ?? false;
-  // TODO check for isNew
-
-  const isDark = theme.colorScheme === 'dark';
+  // const isNew = data?.isNew ?? false; // TODO check for isNew
 
   const closestPopularityKey =
     ((Object.keys(popularityInfoMap) as Array<keyof typeof popularityInfoMap>)
@@ -87,30 +87,8 @@ export const ModelVersionPopularity = ({
       ?.toFixed(1) as keyof typeof popularityInfoMap) ?? '0.0';
   const closestPopularityInfo = isFeatured ? featureInfo : popularityInfoMap[closestPopularityKey];
 
-  const markup = Math.trunc(closestPopularityInfo.markup * 100);
-  const isMarkup = markup >= 0;
-
   return (
-    <Tooltip
-      multiline
-      withinPortal
-      label={
-        <Stack spacing={4}>
-          <Text>{closestPopularityInfo.description}</Text>
-          {isCheckpoint && (
-            <Group spacing="sm">
-              <Badge
-                color={isMarkup ? (isDark ? 'red.1' : 'red.9') : isDark ? 'green.1' : 'green.9'}
-                size="xs"
-              >
-                {isMarkup ? 'Markup' : 'Discount'}
-              </Badge>
-              <Text>{markup === 0 ? 'None' : `${Math.abs(markup)}%`}</Text>
-            </Group>
-          )}
-        </Stack>
-      }
-    >
+    <Tooltip multiline withinPortal label={<Text>{closestPopularityInfo.description}</Text>}>
       <Group
         spacing={4}
         style={{

@@ -1,21 +1,59 @@
 import { Badge, Button, ButtonProps, Group, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconBolt, IconBrush } from '@tabler/icons-react';
 import React from 'react';
+import { BidModelButton, getEntityDataForBidModelButton } from '~/components/Auction/AuctionUtils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
+import type { ModelById } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 export function GenerateButton({
   iconOnly,
-  modelVersionId,
   mode = 'replace',
   children,
   generationPrice,
   onPurchase,
   onClick,
   epochNumber,
+  versionId,
+  canGenerate,
+  model,
+  version,
+  image,
   ...buttonProps
 }: Props) {
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
+
+  const vId = versionId ?? version?.id;
+
+  const opened = useGenerationStore((state) => state.opened);
+  const onClickHandler = () => {
+    if (generationPrice) {
+      onPurchase?.();
+      return;
+    }
+    if (mode === 'toggle' && opened) return generationPanel.close();
+
+    vId
+      ? generationPanel.open({
+          type: 'modelVersion',
+          id: vId,
+          epochNumbers: epochNumber ? [`${vId}@${epochNumber}`] : undefined,
+        })
+      : generationPanel.open();
+
+    onClick?.();
+  };
+
+  if (children)
+    return React.cloneElement(children, {
+      ...buttonProps,
+      onClick: onClickHandler,
+      style: { cursor: 'pointer' },
+    });
+
   const purchaseIcon = (
     <Badge
       radius="sm"
@@ -38,68 +76,73 @@ export function GenerateButton({
     </Badge>
   );
 
-  const opened = useGenerationStore((state) => state.opened);
-  const onClickHandler = () => {
-    if (generationPrice) {
-      onPurchase?.();
-      return;
-    }
-    if (mode === 'toggle' && opened) return generationPanel.close();
+  const cannotPromote = model?.meta?.cannotPromote ?? false;
 
-    modelVersionId
-      ? generationPanel.open({
-          type: 'modelVersion',
-          id: modelVersionId,
-          epochNumbers: epochNumber ? [`${modelVersionId}@${epochNumber}`] : undefined,
-        })
-      : generationPanel.open();
-
-    onClick?.();
-  };
-
-  if (children)
-    return React.cloneElement(children, {
-      ...buttonProps,
-      onClick: onClickHandler,
-      style: { cursor: 'pointer' },
-    });
-
-  const button = (
-    <Button
-      variant="filled"
-      sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
-      onClick={onClickHandler}
-      {...buttonProps}
-    >
-      {generationPrice && <>{purchaseIcon}</>}
-      {iconOnly ? (
-        <IconBrush size={24} />
-      ) : (
-        <Group spacing={8} noWrap>
-          <IconBrush size={20} />
-          <Text inherit inline className="hide-mobile">
-            Create
-          </Text>
-        </Group>
-      )}
-    </Button>
-  );
+  const popButton =
+    !canGenerate && features.auctions && !cannotPromote ? (
+      <BidModelButton
+        entityData={getEntityDataForBidModelButton({
+          version,
+          model,
+          image,
+        })}
+        asButton
+        buttonProps={{
+          ...buttonProps,
+          className: 'pl-[8px] pr-[12px] w-full',
+          color: 'cyan',
+        }}
+        divProps={{ className: 'flex-[2]' }}
+      />
+    ) : (
+      <Button
+        variant="filled"
+        sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
+        onClick={onClickHandler}
+        {...buttonProps}
+      >
+        {generationPrice && <>{purchaseIcon}</>}
+        {iconOnly ? (
+          <IconBrush size={24} />
+        ) : (
+          <Group spacing={8} noWrap>
+            <IconBrush size={20} />
+            <Text inherit inline className="hide-mobile">
+              Create
+            </Text>
+          </Group>
+        )}
+      </Button>
+    );
 
   return iconOnly ? (
     <Tooltip label="Start Generating" withArrow>
-      {button}
+      {popButton}
     </Tooltip>
   ) : (
-    button
+    popButton
   );
 }
-type Props = Omit<ButtonProps, 'onClick' | 'children'> & {
+type PropsBase = Omit<ButtonProps, 'onClick' | 'children'> & {
   iconOnly?: boolean;
-  modelVersionId?: number;
   mode?: 'toggle' | 'replace';
   children?: React.ReactElement;
   generationPrice?: number;
   onPurchase?: () => void;
   onClick?: () => void;
   epochNumber?: number;
+  image?: ImagesInfiniteModel;
+  versionId?: number;
 };
+
+type Props =
+  | (PropsBase & {
+      canGenerate: true;
+      model?: ModelById;
+      version?: ModelById['modelVersions'][number];
+    })
+  | (PropsBase & {
+      canGenerate: false;
+      model: ModelById;
+      version: ModelById['modelVersions'][number];
+    });

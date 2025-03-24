@@ -57,7 +57,7 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
-import { BidModelButton } from '~/components/Auction/AuctionUtils';
+import { BidModelButton, getEntityDataForBidModelButton } from '~/components/Auction/AuctionUtils';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -119,7 +119,6 @@ import {
   CollectionType,
   ModelModifier,
   ModelStatus,
-  ModelType,
 } from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
@@ -657,9 +656,14 @@ export default function ModelDetailsV2({
                         {abbreviateNumber(model.rank?.downloadCountAllTime ?? 0)}
                       </Text>
                     </IconBadge>
-                    {model.canGenerate && latestGenerationVersion && (
+                    {/* TODO this isn't quite right, we need to check the other couldGenerate options */}
+                    {latestGenerationVersion && (
                       <GenerateButton
-                        modelVersionId={latestGenerationVersion.id}
+                        model={model}
+                        version={latestGenerationVersion}
+                        image={image}
+                        versionId={latestGenerationVersion.id}
+                        canGenerate={model.canGenerate}
                         data-activity="create:model-stat"
                       >
                         <IconBadge radius="sm" size="lg" icon={<IconBrush size={18} />}>
@@ -745,28 +749,14 @@ export default function ModelDetailsV2({
                     )}
                     {features.auctions && selectedVersion && (
                       <BidModelButton
-                        className={classes.headerButton}
-                        entityData={{
-                          // TODO these overrides are colossally stupid.
-                          ...selectedVersion,
-                          model: {
-                            ...model,
-                            cannotPromote: (model.meta as ModelMeta | null)?.cannotPromote ?? false,
-                          },
-                          image: !!image
-                            ? {
-                                ...image,
-                                userId: image.user.id,
-                                name: image.name ?? '',
-                                width: image.width ?? 0,
-                                height: image.height ?? 0,
-                                hash: image.hash ?? '',
-                                modelVersionId: image.modelVersionId ?? 0,
-                                tags: image.tags ? image.tags.map((t) => t.id) : [],
-                                availability: image.availability ?? Availability.Public,
-                              }
-                            : undefined,
+                        actionIconProps={{
+                          className: classes.headerButton,
                         }}
+                        entityData={getEntityDataForBidModelButton({
+                          version: selectedVersion,
+                          model,
+                          image,
+                        })}
                       />
                     )}
                     <ToggleModelNotification
@@ -1139,6 +1129,7 @@ export default function ModelDetailsV2({
               <ModelVersionDetails
                 model={model}
                 version={selectedVersion}
+                image={image}
                 onFavoriteClick={handleToggleFavorite}
                 onBrowseClick={() => {
                   gallerySectionRef.current?.scrollIntoView({ behavior: 'smooth' });
