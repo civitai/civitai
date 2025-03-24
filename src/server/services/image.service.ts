@@ -4720,7 +4720,7 @@ export async function createImageResources({
   if (resourcesWithModelVersions.length) {
     const values = Prisma.join(
       resourcesWithModelVersions.map(
-        (r) => Prisma.sql`(${r.id}, ${r.modelVersionId}, ${r.hash}, ${r.strength}, ${r.detected})`
+        (r) => Prisma.sql`(${r.id}, ${r.modelVersionId}, ${r.strength}, ${r.detected})`
       )
     );
 
