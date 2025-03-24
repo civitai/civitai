@@ -1638,6 +1638,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     remixesOnly,
     nonRemixesOnly,
     excludedTagIds,
+    disablePoi,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1654,6 +1655,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
+  }
+
+  if (disablePoi) {
+    filters.push(`(poi IS NULL OR poi = false)`);
   }
 
   // Filter

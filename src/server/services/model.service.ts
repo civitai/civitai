@@ -249,6 +249,7 @@ export const getModelsRaw = async ({
     excludedUserIds,
     collectionTagId,
     availability,
+    disablePoi,
   } = input;
 
   let pending = input.pending;
@@ -308,6 +309,10 @@ export const getModelsRaw = async ({
     AND.push(
       Prisma.sql`(m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier")`
     );
+  }
+
+  if (disablePoi) {
+    AND.push(Prisma.sql`m."poi" = false`);
   }
 
   if (needsReview && sessionUser?.isModerator) {

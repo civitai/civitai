@@ -1110,7 +1110,7 @@ export type ColorDomain = keyof typeof colorDomains;
 export type DomainSettings = {
   color: ColorDomain;
   excludedTagIds: number[];
-  poiEnabled: boolean;
+  disablePoi: boolean;
   allowedNsfwLevels: NsfwLevel[];
   disableNsfwLevelControl: boolean;
   systemHomeBlockIds: number[];
@@ -1120,7 +1120,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
   green: {
     color: 'green',
     excludedTagIds: [],
-    poiEnabled: true,
+    disablePoi: false,
     allowedNsfwLevels: [NsfwLevel.PG],
     disableNsfwLevelControl: true,
     systemHomeBlockIds: [],
@@ -1128,7 +1128,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
   blue: {
     color: 'blue',
     excludedTagIds: [],
-    poiEnabled: true,
+    disablePoi: false,
     allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R],
     disableNsfwLevelControl: false,
     systemHomeBlockIds: [],
@@ -1136,7 +1136,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
   red: {
     color: 'red',
     excludedTagIds: [],
-    poiEnabled: false,
+    disablePoi: true,
     allowedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disableNsfwLevelControl: true,
     systemHomeBlockIds: [1],

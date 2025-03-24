@@ -67,6 +67,7 @@ const modelQueryParamSchema = z
       .optional(),
     fromPlatform: booleanString().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    disablePoi: z.boolean().optional(),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;
@@ -133,6 +134,10 @@ export const useQueryModels = (
       ..._filters,
       browsingLevel,
       excludedTagIds,
+      disablePoi: domainSettings?.disablePoi
+        ? // Ensures we pass true explicitly
+          true
+        : undefined,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),

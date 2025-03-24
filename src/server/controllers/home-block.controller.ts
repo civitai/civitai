@@ -128,11 +128,7 @@ export const getSystemHomeBlocksHandler = async ({
       }
 
       // Now check if it's a system home block and the domain allows to show it:
-      if (homeBlock.userId === -1 || ('source' in homeBlock && homeBlock.source?.userId === -1)) {
-        return domainSettings.systemHomeBlockIds.includes(homeBlock.id);
-      }
-
-      return true;
+      return domainSettings.systemHomeBlockIds.includes(homeBlock.id);
     });
     return homeBlocks;
   } catch (error) {

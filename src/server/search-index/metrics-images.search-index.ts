@@ -145,6 +145,7 @@ export type SearchBaseImage = {
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
   availability?: Availability;
+  poi: boolean;
 };
 
 type Metrics = {
@@ -159,6 +160,7 @@ type ModelVersions = {
   baseModel: string;
   modelVersionIdsAuto: number[];
   modelVersionIdsManual: number[];
+  poi: boolean;
 };
 
 type ImageTool = {
@@ -193,12 +195,16 @@ const transformData = async ({
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
 
-      const { modelVersionIdsAuto, modelVersionIdsManual, baseModel } = modelVersions.find(
-        (mv) => mv.id === imageRecord.id
-      ) || {
+      const {
+        modelVersionIdsAuto,
+        modelVersionIdsManual,
+        baseModel,
+        poi: resourcePoi,
+      } = modelVersions.find((mv) => mv.id === imageRecord.id) || {
         modelVersionIdsAuto: [] as number[],
         modelVersionIdsManual: [] as number[],
         baseModel: '',
+        poi: false,
       };
 
       const imageMetrics = metrics.find((m) => m.id === imageRecord.id) ?? {
@@ -215,6 +221,8 @@ const transformData = async ({
       return {
         ...imageRecord,
         ...imageMetrics,
+        // Best way we currently have to detect current POI of processed images.
+        poi: imageRecord.poi ?? resourcePoi,
         combinedNsfwLevel: nsfwLevelLocked
           ? imageRecord.nsfwLevel
           : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
@@ -323,6 +331,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."needsReview",
         i."blockedFor",
         i.minor,
+        i.poi,
         p."publishedAt",
         p."availability",
         (
