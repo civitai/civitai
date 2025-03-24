@@ -2,15 +2,25 @@ import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { InferGetServerSidePropsType } from 'next';
 import { NextLink } from '~/components/NextLink/NextLink';
-import { Text, Pagination } from '@mantine/core';
-import { useState } from 'react';
+import { Text, Pagination, Badge, SegmentedControl } from '@mantine/core';
+import { useState, useMemo } from 'react';
+import { env } from '~/env/client';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ctx, ssg }) => {
+  resolver: async () => {
     const duplicates = await dbRead.$queryRaw<
-      { hash: string; items: { createdAt: string; modelId: number; modelVersionId: number }[] }[]
+      {
+        hash: string;
+        items: {
+          createdAt: string;
+          modelId: number;
+          modelVersionId: number;
+          status: ModelStatus;
+        }[];
+      }[]
     >`
     WITH model_file_hashes AS (
       SELECT
@@ -27,7 +37,8 @@ export const getServerSideProps = createServerSideProps({
         mfh.hash,
         mfh."createdAt",
         mv.id "modelVersionId",
-        m.id "modelId"
+        m.id "modelId",
+        mv.status
       FROM "ModelFileHash" mfh
       JOIN "ModelFile" mf ON mfh."fileId" = mf.id
       JOIN "ModelVersion" mv ON mf."modelVersionId" = mv.id
@@ -42,6 +53,7 @@ export const getServerSideProps = createServerSideProps({
         hash,
         json_agg(
           json_build_object(
+            'status', "status",
             'createdAt', "createdAt",
             'modelId', "modelId",
             'modelVersionId', "modelVersionId"
@@ -58,9 +70,10 @@ export const getServerSideProps = createServerSideProps({
 
     const items = duplicates.map(({ hash, items }) => ({
       hash,
-      items: items.map(({ createdAt, modelId, modelVersionId }) => ({
+      items: items.map(({ createdAt, modelId, modelVersionId, status }) => ({
         createdAt: createdAt,
-        url: `https://civitai.com/models/${modelId}?modelVersionId=${modelVersionId}`,
+        url: `${env.NEXT_PUBLIC_BASE_URL}/models/${modelId}?modelVersionId=${modelVersionId}`,
+        status,
       })),
     }));
 
@@ -77,25 +90,52 @@ export const getServerSideProps = createServerSideProps({
 export default function DuplicatHashesPage({
   duplicates,
 }: InferGetServerSidePropsType<typeof getServerSideProps>) {
-  const [page, setPage] = useState(1);
+  const [filters, setFilters] = useState<{ page: number; status: 'All' | 'Draft' }>({
+    page: 1,
+    status: 'All',
+  });
+
+  const items = useMemo(() => {
+    return duplicates.filter(({ items }) =>
+      filters.status !== 'All' ? items.some((x) => x.status === filters.status) : true
+    );
+  }, [duplicates, filters.status]);
 
   const pageSize = 10;
-  const pages = Math.ceil(duplicates.length / pageSize);
+  const pages = Math.ceil(items.length / pageSize);
 
-  const pageItems = duplicates.slice(pageSize * (page - 1), pageSize * page);
+  function handleSetStatus(status: 'All' | 'Draft') {
+    setFilters({ page: 1, status });
+  }
+
+  function handleSetPage(page: number) {
+    setFilters((state) => ({ ...state, page }));
+  }
+
+  const pageItems = items.slice(pageSize * (filters.page - 1), pageSize * filters.page);
 
   return (
     <div className="container max-w-sm">
       <h1 className="text-4xl font-bold">Duplicate Model Hashes</h1>
+      <SegmentedControl data={['All', 'Draft']} onChange={handleSetStatus} value={filters.status} />
       <ul role="list" className="divide-y divide-gray-4 dark:divide-dark-5">
         {pageItems.map(({ hash, items }) => (
           <li key={hash} className="flex flex-col gap-1 p-1 py-2">
             {items
-              .map(({ createdAt, url }) => ({ createdAt: new Date(createdAt), url }))
+              .map(({ createdAt, url, status }) => ({
+                createdAt: new Date(createdAt),
+                url,
+                status,
+              }))
               .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-              .map(({ url, createdAt }, index) => {
+              .map(({ url, createdAt, status }, index) => {
                 return (
                   <div key={index} className="flex gap-1">
+                    {status !== ModelStatus.Published && (
+                      <Badge color="yellow" radius="sm">
+                        {status}
+                      </Badge>
+                    )}
                     <Text size="sm">{createdAt.toLocaleDateString()}</Text>
                     <Text size="sm" variant="link" component={NextLink} href={url} target="_blank">
                       {url}
@@ -106,7 +146,7 @@ export default function DuplicatHashesPage({
           </li>
         ))}
       </ul>
-      <Pagination total={pages} page={page} onChange={setPage} />
+      <Pagination total={pages} page={filters.page} onChange={handleSetPage} />
     </div>
   );
 }
