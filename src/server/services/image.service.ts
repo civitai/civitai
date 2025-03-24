@@ -4720,17 +4720,16 @@ export async function createImageResources({
   if (resourcesWithModelVersions.length) {
     const values = Prisma.join(
       resourcesWithModelVersions.map(
-        (r) => Prisma.sql`(${r.id}, ${r.modelVersionId}, ${r.hash}, ${r.strength}, ${r.detected})`
+        (r) => Prisma.sql`(${r.id}, ${r.modelVersionId}, ${r.strength}, ${r.detected})`
       )
     );
 
     await dbClient.$queryRaw`
-      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", hash, strength, detected)
+      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", strength, detected)
       VALUES ${values}
       ON CONFLICT ("imageId", "modelVersionId") DO UPDATE
       SET
         detected = excluded.detected,
-        hash = excluded.hash,
         strength = excluded.strength;
     `;
   }
