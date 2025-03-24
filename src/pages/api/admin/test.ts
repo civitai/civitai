@@ -93,9 +93,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   setWorkflowDefinition(workflow.key, workflow);
     // }
 
-    // const result = await getWorkflowDefinitions();
+    const result = await getWorkflowDefinitions();
 
-    res.status(200).send({});
+    res.status(200).send(result);
   } catch (e) {
     console.log(e);
     res.status(400).end();
