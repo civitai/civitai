@@ -14,6 +14,12 @@ import { getResourceData } from '~/server/services/generation/generation.service
 import { Prisma } from '@prisma/client';
 import { getCommentsThreadDetails2 } from '~/server/services/commentsv2.service';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import {
+  getWorkflowDefinitions,
+  setWorkflowDefinition,
+} from '~/server/services/orchestrator/comfy/comfy.utils';
+import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { pgDbWrite } from '~/server/db/pgDb';
 
 type Row = {
   userId: number;
@@ -72,21 +78,24 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   entityType: 'article',
     // });
 
-    await upsertTagsOnImageNew([
-      {
-        imageId: 1,
-        tagId: 1,
-        // source: 'User',
-        confidence: 70,
-        // automated: true,
-        // disabled: false,
-        // needsReview: false,
-      },
-    ]);
+    // await upsertTagsOnImageNew([
+    //   {
+    //     imageId: 1,
+    //     tagId: 1,
+    //     // source: 'User',
+    //     confidence: 70,
+    //     // automated: true,
+    //     // disabled: false,
+    //     // needsReview: false,
+    //   },
+    // ]);
+    // for (const workflow of workflows) {
+    //   setWorkflowDefinition(workflow.key, workflow);
+    // }
 
-    const result = await dbWrite.$queryRaw`select * from "TagsOnImageDetails" where "imageId" = 1`;
+    // const result = await getWorkflowDefinitions();
 
-    res.status(200).send(result);
+    res.status(200).send({});
   } catch (e) {
     console.log(e);
     res.status(400).end();

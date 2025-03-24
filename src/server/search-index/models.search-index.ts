@@ -1,7 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import { TypoTolerance } from 'meilisearch';
-import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { BaseModel, MODELS_SEARCH_INDEX } from '~/server/common/constants';
 import { searchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { getOrCreateIndex } from '~/server/meilisearch/util';
 import { imagesForModelVersionsCache, modelTagCache } from '~/server/redis/caches';
@@ -210,6 +210,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           hashes: restVersion.hashes.map((hash) => hash.hash),
           hashData: restVersion.hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
           settings: restVersion.settings as RecommendedSettingsSchema,
+          baseModel: restVersion.baseModel as BaseModel,
         },
         versions: modelVersions.map(
           ({ generationCoverage, files, hashes, settings, metrics: vMetrics, ...x }) => ({
@@ -220,6 +221,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             canGenerate:
               generationCoverage?.covered && unavailableGenResources.indexOf(x.id) === -1,
             settings: settings as RecommendedSettingsSchema,
+            baseModel: x.baseModel as BaseModel,
           })
         ),
         triggerWords: [

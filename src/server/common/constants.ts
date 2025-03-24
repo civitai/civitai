@@ -813,6 +813,12 @@ export const generationConfig = {
       { label: 'Landscape', width: 1216, height: 832 },
       { label: 'Portrait', width: 832, height: 1216 },
     ],
+    // doesn't work for all illustrios models
+    // aspectRatios: [
+    //   { label: 'Square', width: 1536, height: 1536 },
+    //   { label: 'Landscape', width: 1920, height: 1280 },
+    //   { label: 'Portrait', width: 1280, height: 1920 },
+    // ],
     checkpoint: {
       id: 889818,
       name: 'v0.1',

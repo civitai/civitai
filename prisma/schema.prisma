@@ -804,6 +804,7 @@ model ModelVersion {
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
   DonationGoal            DonationGoal[]
   featuredInfo            FeaturedModelVersion[]
+  ImageResourceNew        ImageResourceNew[]
 
   @@index([modelId], type: Hash)
 }
@@ -1381,6 +1382,7 @@ model Image {
   flags               ImageFlag[]
   ratingRequests      ImageRatingRequest[]
   tagsNew             TagsOnImageNew[]
+  ImageResourceNew    ImageResourceNew[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1448,6 +1450,19 @@ model ImageResource {
   @@unique([modelVersionId, name, imageId])
   @@index([imageId], type: Hash)
   @@index([imageId, modelVersionId])
+}
+
+model ImageResourceNew {
+  imageId        Int
+  image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  hash           String?
+  strength       Int?
+  detected       Boolean      @default(false)
+
+  @@id([imageId, modelVersionId])
+  @@index([modelVersionId])
 }
 
 model ImageMetric {
@@ -1624,7 +1639,7 @@ enum TagSource {
 
 model TagsOnImageNew {
   imageId    Int
-  image      Image @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  image      Image @relation(fields: [imageId], references: [id])
   tagId      Int
   attributes Int   @db.SmallInt()
 

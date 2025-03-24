@@ -21,7 +21,7 @@ const payloadSchema = z.object({
 const deleteQuerySchema = z.object({ id: z.coerce.number() });
 
 export default WebhookEndpoint(async function handler(req, res) {
-  if (req.method && ['POST', 'DELETE'].includes(req.method))
+  if (req.method && !['POST', 'DELETE'].includes(req.method))
     return res.status(405).json({ error: 'Method Not Allowed' });
 
   try {
