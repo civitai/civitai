@@ -4725,12 +4725,11 @@ export async function createImageResources({
     );
 
     await dbClient.$queryRaw`
-      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", hash, strength, detected)
+      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", strength, detected)
       VALUES ${values}
       ON CONFLICT ("imageId", "modelVersionId") DO UPDATE
       SET
         detected = excluded.detected,
-        hash = excluded.hash,
         strength = excluded.strength;
     `;
   }

@@ -4,7 +4,6 @@
 CREATE TABLE "ImageResourceNew" (
     "imageId" INTEGER NOT NULL,
     "modelVersionId" INTEGER NOT NULL,
-    "hash" TEXT,
     "strength" INTEGER,
     "detected" BOOLEAN NOT NULL DEFAULT false,
 
