@@ -2599,6 +2599,7 @@ export const getImagesForPosts = async ({
   browsingLevel,
   user,
   pending,
+  disablePoi,
 }: {
   postIds: number | number[];
   // excludedIds?: number[];
@@ -2606,6 +2607,7 @@ export const getImagesForPosts = async ({
   browsingLevel?: number;
   user?: SessionUser;
   pending?: boolean;
+  disablePoi?: boolean;
 }) => {
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
@@ -2637,6 +2639,10 @@ export const getImagesForPosts = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
+  }
+
+  if (disablePoi) {
+    imageWhere.push(Prisma.sql`(i."poi" IS NULL OR i."poi" = false)`);
   }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);

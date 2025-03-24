@@ -29,7 +29,6 @@ export const useGetRequiredOnboardingSteps = () => {
   if (!currentUser) return [];
 
   const steps = onboardingSteps[domainColor] || onboardingSteps.default;
-  console.log(currentUser.onboarding);
   return steps.filter((step) => !Flags.hasFlag(currentUser.onboarding, step));
 };
 

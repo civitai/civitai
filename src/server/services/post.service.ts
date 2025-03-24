@@ -127,6 +127,7 @@ export const getPostsInfinite = async ({
   browsingLevel,
   pending,
   excludedTagIds,
+  disablePoi,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
@@ -375,6 +376,7 @@ export const getPostsInfinite = async ({
         user,
         browsingLevel,
         pending,
+        disablePoi,
       })
     : [];
 
