@@ -445,7 +445,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ir."imageId" as id,
             string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
             coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is true), '{}') as "modelVersionIdsAuto",
-            coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is not true), '{}') as "modelVersionIdsManual"
+            coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is not true), '{}') as "modelVersionIdsManual",
+            SUM(IIF(m.poi, 1, 0)) > 0 "poi"
           FROM "ImageResource" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"
