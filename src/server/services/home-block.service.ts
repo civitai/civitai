@@ -295,10 +295,21 @@ export const getHomeBlockData = async ({
         }
       });
 
+      const limitedData = filteredModelData
+        .sort((a, b) => {
+          const matchA = featured.find((f) => f.modelId === a.id);
+          const matchB = featured.find((f) => f.modelId === b.id);
+          if (!matchA || !matchA.position) return 1;
+          if (!matchB || !matchB.position) return -1;
+          return matchA.position - matchB.position;
+        })
+        .slice(0, input.limit);
+      // TODO optionally limit position to <= modelsToAddToCollection
+
       return {
         ...homeBlock,
         metadata,
-        featuredModels: filteredModelData,
+        featuredModels: limitedData,
       };
     }
     default:
