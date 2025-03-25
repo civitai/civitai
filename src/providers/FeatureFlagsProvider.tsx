@@ -19,12 +19,17 @@ export const FeatureFlagsProvider = ({
   flags?: FeatureAccess;
 }) => {
   const session = useSession();
+  // Ensures FE and BE feature flags are in sync for staging.
+  const host =
+    typeof location !== 'undefined'
+      ? (location?.host ?? '').replace('stage.', '').replace('dev.', '')
+      : '';
   const [flags, setFlags] = useState(
-    initialFlags ?? getFeatureFlags({ user: session.data?.user, host: location.host })
+    initialFlags ?? getFeatureFlags({ user: session.data?.user, host })
   );
 
   useEffect(() => {
-    setFlags(getFeatureFlags({ user: session.data?.user, host: location.host }));
+    setFlags(getFeatureFlags({ user: session.data?.user, host }));
   }, [session.data?.expires]);
 
   const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
