@@ -20,6 +20,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { env } from '~/env/client';
 import { isProd } from '~/env/other';
 import { useInView } from '~/hooks/useInView';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 import { ImageSort, ModelSort } from '~/server/common/enums';
 import {
   publicBrowsingLevelsFlag,
@@ -30,7 +31,11 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function Home() {
-  const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
+  const domainSettings = useDomainSettings();
+  const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery({
+    excludedSystemHomeBlockIds: domainSettings?.excludedSystemHomeBlockIds,
+    systemHomeBlockIds: domainSettings?.systemHomeBlockIds,
+  });
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
 

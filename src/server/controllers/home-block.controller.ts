@@ -38,8 +38,7 @@ export const getHomeBlocksHandler = async ({
   ctx: Context;
   input: GetHomeBlocksInputSchema;
 }): Promise<HomeBlockWithData[]> => {
-  const { ownedOnly } = input;
-  const { domainSettings } = ctx;
+  const { ownedOnly, excludedSystemHomeBlockIds, systemHomeBlockIds } = input;
 
   try {
     const _homeBlocks = await getHomeBlocks({
@@ -60,24 +59,24 @@ export const getHomeBlocksHandler = async ({
     });
 
     let homeBlocks = _homeBlocks.filter((homeBlock) => {
-      if ((domainSettings?.excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
+      if ((excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
         return false;
       }
 
-      if ((domainSettings?.systemHomeBlockIds ?? []).length === 0) {
+      if ((systemHomeBlockIds ?? []).length === 0) {
         return true; // Always allow.
       }
 
       // Now check if it's a system home block and the domain allows to show it:
       if (homeBlock.userId === -1 || ('source' in homeBlock && homeBlock.source?.userId === -1)) {
-        return domainSettings.systemHomeBlockIds.includes(homeBlock.id);
+        return (systemHomeBlockIds ?? []).includes(homeBlock.id);
       }
 
       return true;
     });
 
     // User might be on a diff. domain that doesn't allow their blocks and we should be able to figure this one out on our end:
-    if (homeBlocks.length === 0 && domainSettings.systemHomeBlockIds) {
+    if (homeBlocks.length === 0 && systemHomeBlockIds) {
       homeBlocks = await getHomeBlocks({
         select: {
           id: true,
@@ -91,7 +90,7 @@ export const getHomeBlocksHandler = async ({
             },
           },
         },
-        ids: domainSettings.systemHomeBlockIds,
+        ids: systemHomeBlockIds,
       });
     }
 
@@ -123,20 +122,20 @@ export const getSystemHomeBlocksHandler = async ({
   ctx: Context;
 }): Promise<HomeBlockWithData[]> => {
   try {
-    const { domainSettings } = ctx;
+    const { excludedSystemHomeBlockIds, systemHomeBlockIds } = input;
     const _homeBlocks = await getSystemHomeBlocks({ input });
 
     const homeBlocks = _homeBlocks.filter((homeBlock) => {
-      if ((domainSettings?.excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
+      if ((excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
         return false;
       }
 
-      if ((domainSettings?.systemHomeBlockIds ?? []).length === 0) {
+      if ((systemHomeBlockIds ?? []).length === 0) {
         return true; // Always allow.
       }
 
       // Now check if it's a system home block and the domain allows to show it:
-      return domainSettings.systemHomeBlockIds.includes(homeBlock.id);
+      return (systemHomeBlockIds ?? []).includes(homeBlock.id);
     });
     return homeBlocks;
   } catch (error) {
