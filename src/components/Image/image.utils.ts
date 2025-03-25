@@ -101,8 +101,6 @@ export const useQueryImages = (
     ...(domainSettings?.excludedTagIds ?? []),
   ].filter(isDefined);
 
-  console.log(domainSettings);
-
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
     { ...filters, excludedTagIds, disablePoi: domainSettings?.disablePoi },
     {

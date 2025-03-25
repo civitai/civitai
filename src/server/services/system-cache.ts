@@ -240,7 +240,6 @@ export async function getLiveNow() {
 
 export async function getDomainSettings(domain: ColorDomain) {
   const cachedSettings = await sysRedis.get(`${REDIS_SYS_KEYS.SYSTEM.DOMAIN_SETTINGS}:${domain}`);
-  console.log(cachedSettings);
   if (cachedSettings)
     return {
       // Ensures a bad setup doesn't screw us up:
