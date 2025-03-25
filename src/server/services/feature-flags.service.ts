@@ -101,7 +101,6 @@ const featureFlags = createFeatureFlags({
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
-  canChangeBrowsingLevel: ['public', 'blue'],
   canBuyBuzz: ['public', 'green'],
   adsEnabled: ['public', 'blue'],
   // #endregion

@@ -4,10 +4,15 @@ import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
 import { useDomainSync } from '~/hooks/useDomainSync';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ColorDomain } from '~/server/common/constants';
 import { UserMeta } from '~/server/schema/user.schema';
-import { browsingModeDefaults } from '~/shared/constants/browsingLevel.constants';
+import {
+  browsingModeDefaults,
+  flagifyBrowsingLevel,
+} from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,
@@ -22,7 +27,7 @@ export function CivitaiSessionProvider({
 }) {
   const { data, update, status } = useSession();
   const user = data?.user;
-  const { canChangeBrowsingLevel } = useFeatureFlags();
+  const domainSettings = useDomainSettings();
   useDomainSync(data?.user as SessionUser, status);
   const domain = useDomainColor();
 
@@ -52,11 +57,27 @@ export function CivitaiSessionProvider({
       },
     };
 
+    const allowedNsfwLevelsFlag = domainSettings?.allowedNsfwLevels
+      ? flagifyBrowsingLevel(domainSettings?.allowedNsfwLevels)
+      : 0;
     // The reason we force this is because the user has 0 control here.
-    if (!canChangeBrowsingLevel)
-      currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults[domain] };
+    if (!domainSettings?.disableNsfwLevelControl)
+      currentUser.settings = { ...currentUser.settings, browsingLevel: allowedNsfwLevelsFlag };
+    else
+      currentUser.settings = {
+        ...currentUser.settings,
+        browsingLevel:
+          Flags.intersection(currentUser.settings.browsingLevel, allowedNsfwLevelsFlag) ||
+          // In case no intersection is found
+          allowedNsfwLevelsFlag,
+      };
     return currentUser;
-  }, [data?.expires, disableHidden, canChangeBrowsingLevel]);
+  }, [
+    data?.expires,
+    disableHidden,
+    domainSettings?.disableNsfwLevelControl,
+    domainSettings?.allowedNsfwLevels,
+  ]);
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();

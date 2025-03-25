@@ -19,6 +19,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserMenu } from '~/components/AppLayout/AppHeader/UserMenu';
 import { CreateMenu } from '~/components/AppLayout/AppHeader/CreateMenu';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 
 const HEADER_HEIGHT = 60;
 
@@ -48,6 +49,7 @@ export function AppHeader({
   const searchRef = useRef<HTMLInputElement>(null);
   const isMuted = currentUser?.muted ?? false;
   const domain = useDomainColor();
+  const domainSettings = useDomainSettings();
 
   const [showSearch, setShowSearch] = useState(false);
   const onSearchDone = () => setShowSearch(false);
@@ -95,7 +97,7 @@ export function AppHeader({
                   <CivitaiLinkPopover />
                 </>
               )}
-              {currentUser && features.canChangeBrowsingLevel && <BrowsingModeIcon />}
+              {currentUser && !domainSettings?.disableNsfwLevelControl && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
               {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}

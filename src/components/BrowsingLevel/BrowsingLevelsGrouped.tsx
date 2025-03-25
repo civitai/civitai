@@ -29,10 +29,13 @@ function BrowsingLevelLabel({ level }: { level: NsfwLevel }) {
   const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const isSelected = Flags.hasFlag(browsingLevel, level);
   const toggleBrowsingLevel = useToggleBrowsingLevel();
+  const domainSettings = useDomainSettings();
   const { classes } = useStyles();
 
   // const browsingLevel = useStore((x) => x.browsingLevel);
-  const isDefaultBrowsingLevel = browsingLevel === 0 && level === NsfwLevel.PG;
+  const isDefaultBrowsingLevel = (domainSettings?.allowedNsfwLevels ?? []).length
+    ? browsingLevel === 0 && level === domainSettings?.allowedNsfwLevels[0]
+    : browsingLevel === 0 && level === NsfwLevel.PG;
 
   return (
     <Chip
