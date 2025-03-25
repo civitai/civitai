@@ -11,10 +11,11 @@ export const useDomainSettings = () => {
   return context;
 };
 export const DomainSettingsProvider = ({ children }: { children: React.ReactNode }) => {
-  const { data: domainSettings = {} as DomainSettings } = trpc.system.getDomainSettings.useQuery(
-    undefined,
-    { cacheTime: Infinity, staleTime: Infinity, retry: 0 }
-  );
+  const { data: domainSettings } = trpc.system.getDomainSettings.useQuery(undefined, {
+    cacheTime: Infinity,
+    staleTime: Infinity,
+    retry: 0,
+  });
 
   return (
     <DomainSettingsCtx.Provider value={domainSettings ?? DEFAULT_DOMAIN_SETTINGS.green}>

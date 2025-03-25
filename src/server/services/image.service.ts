@@ -829,7 +829,7 @@ export const getAllImages = async (
   }
 
   if (disablePoi) {
-    // AND.push(Prisma.sql`(i."poi" IS NULL OR i."poi" = FALSE)`);
+    AND.push(Prisma.sql`(i."poi" != TRUE)`);
   }
 
   let from = 'FROM "Image" i';
@@ -1665,7 +1665,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   }
 
   if (disablePoi) {
-    filters.push(`(poi IS NULL OR poi = false)`);
+    filters.push(`(NOT poi = true)`);
   }
 
   // Filter
@@ -2650,7 +2650,7 @@ export const getImagesForPosts = async ({
   }
 
   if (disablePoi) {
-    imageWhere.push(Prisma.sql`(i."poi" IS NULL OR i."poi" = false)`);
+    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL)`);
   }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
