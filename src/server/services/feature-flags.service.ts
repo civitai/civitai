@@ -149,8 +149,14 @@ const hasFeature = (
       ([key, domain]) => domain && availableServers.includes(key as ServerAvailability)
     );
 
-    serverMatch = domains.some(([key, domain]) => {
-      if (key === 'blue' && ['stage.civitai.com', 'dev.civitai.com'].includes(host)) return true;
+    serverMatch = domains.some(([color, domain]) => {
+      if (
+        color === 'blue' &&
+        ['stage.civitai.com', 'dev.civitai.com'].includes(host) &&
+        // No reason to forcefully enable `isBlue` if we can avoid it. The app doesn't rely on it for the most part.
+        key !== 'isBlue'
+      )
+        return true;
       return host === domain;
     });
     // if server doesn't match, return false regardless of other availability flags
