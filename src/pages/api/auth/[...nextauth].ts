@@ -19,6 +19,7 @@ import { CacheTTL, getRequestDomainColor } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { verificationEmail } from '~/server/email/templates';
+import { logToAxiom } from '~/server/logging/client';
 import { loginCounter, newUserCounter } from '~/server/prom/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { encryptedDataSchema } from '~/server/schema/civToken.schema';
@@ -129,6 +130,11 @@ export function createAuthOptions(req?: AuthedRequest): NextAuthOptions {
           // if we return a string and it's set to redirect: false
           if (alreadyExists) return true;
           else return false;
+        }
+
+        if (email?.verificationRequest && account && account.provider === 'email') {
+          const canSignIn = await isAllowedToSignIn({ email: account.providerAccountId });
+          return canSignIn;
         }
 
         return true;
@@ -414,21 +420,38 @@ async function sendVerificationRequest({
   url,
   theme,
 }: SendVerificationRequestParams) {
-  const emailDomain = to.split('@')[1];
-  const blockedDomains = await getBlockedEmailDomains();
-  if (blockedDomains.includes(emailDomain)) {
-    throw new Error(`Email domain ${emailDomain} is not allowed`);
+  try {
+    await verificationEmail.send({ to, url, theme });
+    await emailLimiter.increment(to).catch(() => null);
+  } catch (error) {
+    logToAxiom({
+      name: 'verification-email',
+      type: 'error',
+      message: 'Failed to send verification email',
+      error,
+    });
+    throw new Error('Failed to send verification email');
+  }
+}
+
+async function isAllowedToSignIn({ email }: { email: string }) {
+  try {
+    const emailDomain = email.split('@')[1];
+    const blockedDomains = await getBlockedEmailDomains();
+    if (blockedDomains.includes(emailDomain)) {
+      throw new Error(`Email domain ${emailDomain} is not allowed`);
+    }
+
+    if (await emailLimiter.hasExceededLimit(email)) {
+      const limitHitTime = await emailLimiter.getLimitHitTime(email);
+      let message = 'Too many verification emails sent to this address';
+      if (limitHitTime)
+        message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
+      throw new Error(message);
+    }
+  } catch (error) {
+    throw error;
   }
 
-  //Temporarily disabling; Redis not creating the counters
-  // if (await emailLimiter.hasExceededLimit(to)) {
-  //   const limitHitTime = await emailLimiter.getLimitHitTime(to);
-  //   let message = 'Too many verification emails sent to this address';
-  //   if (limitHitTime)
-  //     message += ` - Please try again ${dayjs(limitHitTime).add(1, 'day').fromNow()}.`;
-  //   throw new Error(message);
-  // }
-
-  await verificationEmail.send({ to, url, theme });
-  // await emailLimiter.increment(to);
+  return true;
 }

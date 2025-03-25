@@ -564,7 +564,9 @@ const EstimatedEarningsCard = () => {
             <p className="text-lg">
               <span className="font-bold">Your Current Value:</span> $
               {compensationPool
-                ? numberWithCommas(getCurrentValue(banked.total ?? 0, compensationPool))
+                ? numberWithCommas(
+                    formatToLeastDecimals(getCurrentValue(banked.total ?? 0, compensationPool))
+                  )
                 : 'N/A'}
             </p>
             <ActionIcon onClick={openEarningEstimateModal}>

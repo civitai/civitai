@@ -1,3 +1,4 @@
+import dayjs from 'dayjs';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { EntityAccessPermission, SignalMessages, SignalTopic } from '~/server/common/enums';
@@ -157,6 +158,7 @@ export const useModelVersionTopicListener = (modelVersionId?: number) => {
           versionId: data.versionId,
           popularityRank: data.popularityRank ?? 0,
           isFeatured: data.isFeatured ?? false,
+          isNew: data.isNew ?? false,
         };
       });
     }

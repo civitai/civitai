@@ -103,7 +103,6 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
       const forceRun = opts?.forceRun ?? state.forceRun;
       const currentTourData = getCurrentTourData(activeTour);
       const alreadyCompleted = currentTourData?.completed ?? false;
-
       if (alreadyCompleted && !forceRun) return;
 
       setState((old) => ({
@@ -116,9 +115,9 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
       }));
 
       if (opts?.step != null && activeTour && !alreadyCompleted) {
-        const tour = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
-        if (currentUser) updateUserSettingsMutation.mutate({ tour });
-        setLocalTour((old) => ({ ...old, ...tour }));
+        const tourSettings = { [activeTour]: { ...currentTourData, currentStep: opts.step } };
+        if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
+        setLocalTour((old) => ({ ...old, ...tourSettings }));
       }
     },
     [
@@ -138,11 +137,11 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         const alreadyCompleted = currentTourData?.completed ?? false;
 
         if (!alreadyCompleted) {
-          const tour = {
+          const tourSettings = {
             [state.activeTour]: { completed: opts?.reset ?? false, currentStep: state.currentStep },
           };
-          if (currentUser) updateUserSettingsMutation.mutate({ tour });
-          setLocalTour((old) => ({ ...old, ...tour }));
+          if (currentUser) updateUserSettingsMutation.mutate({ tourSettings });
+          setLocalTour((old) => ({ ...old, ...tourSettings }));
         }
       }
 
@@ -153,7 +152,14 @@ export function ToursProvider({ children }: { children: React.ReactNode }) {
         forceRun: opts?.reset ? false : old.forceRun,
       }));
     },
-    [state.activeTour, state.currentStep, currentUser, setLocalTour, updateUserSettingsMutation]
+    [
+      state.activeTour,
+      state.currentStep,
+      getCurrentTourData,
+      currentUser,
+      updateUserSettingsMutation,
+      setLocalTour,
+    ]
   );
 
   const setSteps = (steps: TourState['steps']) => {

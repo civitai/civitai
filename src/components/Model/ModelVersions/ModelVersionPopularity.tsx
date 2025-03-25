@@ -1,6 +1,7 @@
 import { Badge, Group, Loader, Stack, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconTemperature } from '@tabler/icons-react';
 import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/model-version.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 export const featureInfo = {
@@ -8,6 +9,11 @@ export const featureInfo = {
   description: 'Boosted by the community',
   markup: -0.2,
 } as const;
+const newInfo = {
+  name: 'New',
+  description: 'Newly available for generation',
+  markup: 0.2,
+};
 const popularityInfoMap = {
   '0.0': {
     name: 'Dormant',
@@ -56,12 +62,20 @@ export const ModelVersionPopularity = ({
   listenForUpdates: boolean;
 }) => {
   const theme = useMantineTheme();
+  const features = useFeatureFlags();
   useModelVersionTopicListener(listenForUpdates ? versionId : undefined);
 
   const { data, isLoading } = trpc.modelVersion.getPopularity.useQuery({ id: versionId });
 
+  if (!features.auctions) return <></>;
+  // if we want to show this for non checkpoints, simply remove this line
+  if (!isCheckpoint) return <></>;
+  if (isLoading) return <Loader size="xs" variant="bars" />;
+
   const popularity = data?.popularityRank ?? 0;
   const isFeatured = data?.isFeatured ?? false;
+  const isNew = data?.isNew ?? false;
+  // TODO check for isNew
 
   const isDark = theme.colorScheme === 'dark';
 
@@ -75,10 +89,6 @@ export const ModelVersionPopularity = ({
 
   const markup = Math.trunc(closestPopularityInfo.markup * 100);
   const isMarkup = markup >= 0;
-
-  // if we want to show this for non checkpoints, simply remove this line
-  if (!isCheckpoint) return <></>;
-  if (isLoading) return <Loader size="xs" variant="bars" />;
 
   return (
     <Tooltip

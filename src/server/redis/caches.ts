@@ -1,3 +1,4 @@
+import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
@@ -38,8 +39,8 @@ export const tagIdsForImagesCache = createCachedObject<{
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
 
-    const imageTags = await db.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabledAt: null },
+    const imageTags = await db.tagsOnImageDetails.findMany({
+      where: { imageId: { in: imageIds }, disabled: false },
       select: {
         imageId: true,
         source: true,
@@ -690,6 +691,7 @@ export type ModelVersionResourceCacheItem = {
   versionId: number;
   popularityRank: number | null;
   isFeatured: boolean;
+  isNew: boolean;
 };
 export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
   key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
@@ -717,11 +719,19 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
             return {
               popularityRank: 0,
               isFeatured: false,
+              isNew: false,
               id: v.id,
             };
 
+          const data: ResourceInfo = md.data;
+          const isNew = !!data.publishedAt
+            ? dayjs(data.publishedAt).isAfter(dayjs().subtract(7, 'day'))
+            : false;
+
           return {
-            ...md.data,
+            popularityRank: data.popularityRank ?? 0,
+            isFeatured: data.isFeatured ?? false,
+            isNew,
             id: v.id,
           };
         } catch (e) {
@@ -729,6 +739,7 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
           return {
             popularityRank: 0,
             isFeatured: false,
+            isNew: false,
             id: v.id,
           };
         }
@@ -742,6 +753,7 @@ export const modelVersionResourceCache = createCachedObject<ModelVersionResource
           versionId: vi.id,
           popularityRank: vi.popularityRank ?? 0,
           isFeatured: vi.isFeatured ?? false,
+          isNew: vi.isNew ?? false,
         },
       ])
     );

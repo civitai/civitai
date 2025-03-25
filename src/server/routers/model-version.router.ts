@@ -40,6 +40,7 @@ import {
   getModelVersionsPopularity,
   getVersionById,
   upsertExplorationPrompt,
+  bustMvCache,
 } from '~/server/services/model-version.service';
 import { getModel } from '~/server/services/model.service';
 import {
@@ -141,4 +142,5 @@ export const modelVersionRouter = router({
   publishPrivateModelVersion: guardedProcedure
     .input(getByIdSchema)
     .mutation(publishPrivateModelVersionHandler),
+  bustCache: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => bustMvCache(input.id)),
 });

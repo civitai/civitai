@@ -1,6 +1,6 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { z } from 'zod';
-import { ModelHashType, ModelModifier } from '~/shared/utils/prisma/enums';
+import { ModelFileVisibility, ModelHashType, ModelModifier } from '~/shared/utils/prisma/enums';
 
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ModelSort } from '~/server/common/enums';
@@ -79,23 +79,25 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
           return removeEmpty({
             ...version,
             files: includeDownloadUrl
-              ? castedFiles.map(({ hashes, metadata, ...file }) => ({
-                  ...file,
-                  metadata: removeEmpty(metadata),
-                  name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file })
-                  ),
-                  hashes: hashesAsObject(hashes),
-                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                    versionId: version.id,
-                    type: file.type,
-                    meta: metadata,
-                    primary: primaryFile.id === file.id,
-                  })}`,
-                  primary: primaryFile.id === file.id ? true : undefined,
-                  url: undefined,
-                  visibility: undefined,
-                }))
+              ? castedFiles
+                  .filter((file) => file.visibility === ModelFileVisibility.Public)
+                  .map(({ hashes, metadata, ...file }) => ({
+                    ...file,
+                    metadata: removeEmpty(metadata),
+                    name: safeDecodeURIComponent(
+                      getDownloadFilename({ model, modelVersion: version, file })
+                    ),
+                    hashes: hashesAsObject(hashes),
+                    downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
+                      versionId: version.id,
+                      type: file.type,
+                      meta: metadata,
+                      primary: primaryFile.id === file.id,
+                    })}`,
+                    primary: primaryFile.id === file.id ? true : undefined,
+                    url: undefined,
+                    visibility: undefined,
+                  }))
               : [],
             images: includeImages
               ? images.map(({ url, id, ...image }) => ({

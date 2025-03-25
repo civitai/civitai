@@ -24,8 +24,6 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
     async (data) => {
       const { status, type, action, index, step, lifecycle } = data;
 
-      console.log(data);
-
       if (action === ACTIONS.UPDATE && lifecycle === LIFECYCLE.TOOLTIP) {
         const target = document.querySelector(step?.target as string);
         if (target && step.placement !== 'center')
@@ -100,7 +98,6 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         showSkipButton
         showProgress
         continuous
-        debug
       />
     </IsClient>
   );

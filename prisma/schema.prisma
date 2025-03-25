@@ -346,6 +346,7 @@ model User {
   cashWithdrawals            CashWithdrawal[]
   bids                       Bid[]
   recurringBids              BidRecurring[]
+  moderationRules            ModerationRule[]
 
   @@index([deletedAt])
 }
@@ -803,6 +804,7 @@ model ModelVersion {
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
   DonationGoal            DonationGoal[]
   featuredInfo            FeaturedModelVersion[]
+  ImageResourceNew        ImageResourceNew[]
 
   @@index([modelId], type: Hash)
 }
@@ -1354,7 +1356,7 @@ model Image {
   reports             ImageReport[]
   reactions           ImageReaction[]
   thread              Thread?
-  tags                TagsOnImage[]
+  tags                TagsOnImageDetails[]
   tagVotes            TagsOnImageVote[]
   tagComposites       ImageTag[]
   metrics             ImageMetric[]
@@ -1379,6 +1381,8 @@ model Image {
   CosmeticShopSection CosmeticShopSection[]
   flags               ImageFlag[]
   ratingRequests      ImageRatingRequest[]
+  tagsNew             TagsOnImageNew[]
+  ImageResourceNew    ImageResourceNew[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1446,6 +1450,18 @@ model ImageResource {
   @@unique([modelVersionId, name, imageId])
   @@index([imageId], type: Hash)
   @@index([imageId, modelVersionId])
+}
+
+model ImageResourceNew {
+  imageId        Int
+  image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  strength       Int?
+  detected       Boolean      @default(false)
+
+  @@id([imageId, modelVersionId])
+  @@index([modelVersionId])
 }
 
 model ImageMetric {
@@ -1531,12 +1547,11 @@ model Tag {
   isCategory Boolean     @default(false)
   adminOnly  Boolean     @default(false)
 
-  toTags               TagsOnTags[]       @relation("TagsOnTags_fromTag")
-  fromTags             TagsOnTags[]       @relation("TagsOnTags_toTag")
+  toTags               TagsOnTags[]         @relation("TagsOnTags_fromTag")
+  fromTags             TagsOnTags[]         @relation("TagsOnTags_toTag")
   tagsOnModels         TagsOnModels[]
   tagsOnModelsVotes    TagsOnModelsVote[]
   tagsOnQuestion       TagsOnQuestions[]
-  tagsOnImage          TagsOnImage[]
   tagsOnImageVotes     TagsOnImageVote[]
   tagsOnPosts          TagsOnPost[]
   tagsOnArticles       TagsOnArticle[]
@@ -1551,6 +1566,7 @@ model Tag {
   tagsOnPostVotes      TagsOnPostVote[]
   tagsOnBounties       TagsOnBounty[]
   CollectionItem       CollectionItem[]
+  tagsOnImage          TagsOnImageDetails[]
 
   @@unique([name])
 }
@@ -1620,33 +1636,14 @@ enum TagSource {
   HiveDemographics
 }
 
-model TagsOnImage {
-  imageId     Int
-  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId       Int
-  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  createdAt   DateTime  @default(now())
-  automated   Boolean   @default(false)
-  confidence  Int?
-  disabled    Boolean   @default(false)
-  disabledAt  DateTime?
-  needsReview Boolean   @default(false)
-  source      TagSource @default(User)
-
-  @@id([tagId, imageId])
-  @@index([imageId], type: Hash)
-  @@index([automated])
-  @@index([source])
-  @@index([disabled])
-}
-
 model TagsOnImageNew {
   imageId    Int
+  image      Image @relation(fields: [imageId], references: [id])
   tagId      Int
-  attributes Int @db.SmallInt()
+  attributes Int   @db.SmallInt()
 
   @@id([imageId, tagId])
-  @@index([imageId])
+  @@index([tagId])
 }
 
 model TagsOnImageVote {
@@ -1856,13 +1853,6 @@ model CommentReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([commentId, userId, reaction])
-}
-
-model Log {
-  id        String   @id @default(cuid())
-  event     String
-  details   Json?
-  createdAt DateTime @default(now())
 }
 
 model UserNotificationSettings {
@@ -3463,6 +3453,27 @@ model FeaturedModelVersion {
   position       Int
 }
 
+enum ModerationRuleAction {
+  Approve
+  Block
+  Hold
+}
+
+model ModerationRule {
+  id         Int                  @id @default(autoincrement())
+  entityType EntityType
+  definition Json
+  action     ModerationRuleAction
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+  enabled    Boolean              @default(true)
+  order      Int?
+  reason     String?
+
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id
@@ -4487,8 +4498,10 @@ model EntityMetricImage {
 /// @view
 model TagsOnImageDetails {
   imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id])
   tagId       Int
-  sourceId    TagSource
+  tag         Tag       @relation(fields: [tagId], references: [id])
+  source      TagSource
   automated   Boolean
   disabled    Boolean
   needsReview Boolean

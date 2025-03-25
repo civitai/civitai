@@ -13,6 +13,13 @@ import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import { Prisma } from '@prisma/client';
 import { getCommentsThreadDetails2 } from '~/server/services/commentsv2.service';
+import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import {
+  getWorkflowDefinitions,
+  setWorkflowDefinition,
+} from '~/server/services/orchestrator/comfy/comfy.utils';
+import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { pgDbWrite } from '~/server/db/pgDb';
 
 type Row = {
   userId: number;
@@ -70,9 +77,25 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   entityId: 10936,
     //   entityType: 'article',
     // });
-    const data = await dbRead.tagsOnImage.findMany({ where: { imageId: 150224 } });
 
-    res.status(200).send(data);
+    // await upsertTagsOnImageNew([
+    //   {
+    //     imageId: 1,
+    //     tagId: 1,
+    //     // source: 'User',
+    //     confidence: 70,
+    //     // automated: true,
+    //     // disabled: false,
+    //     // needsReview: false,
+    //   },
+    // ]);
+    // for (const workflow of workflows) {
+    //   setWorkflowDefinition(workflow.key, workflow);
+    // }
+
+    const result = await getWorkflowDefinitions();
+
+    res.status(200).send(result);
   } catch (e) {
     console.log(e);
     res.status(400).end();

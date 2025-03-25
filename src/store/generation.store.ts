@@ -4,6 +4,7 @@ import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
+import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   GenerationData,
   GenerationResource,
@@ -71,7 +72,7 @@ export const useGenerationStore = create<GenerationState>()(
           try {
             const result = await fetchGenerationData(input);
             const { remixOf, ...data } = result;
-            const params = await transformParams(data.params);
+            const { params } = await transformParams(data.params, remixOf);
 
             if (isMedia) {
               useRemixStore.setState({
@@ -117,7 +118,7 @@ export const useGenerationStore = create<GenerationState>()(
         useGenerationFormStore.setState({ type, workflow });
         if (sourceImage) generationFormStore.setsourceImage(sourceImage);
         if (engine) useGenerationFormStore.setState({ engine });
-        const params = await transformParams(data.params);
+        const { params } = await transformParams(data.params);
         set((state) => {
           state.remixOf = remixOf;
           state.data = {
@@ -133,7 +134,6 @@ export const useGenerationStore = create<GenerationState>()(
       clearData: () =>
         set((state) => {
           state.data = undefined;
-          state.counter++;
         }),
     })),
     { name: 'generation-store' }
@@ -165,7 +165,11 @@ function withSubstitute(resources: GenerationResource[]) {
   });
 }
 
-async function transformParams(data: Record<string, any>) {
+const stripWeightDate = new Date('03-14-2025');
+async function transformParams(
+  data: Record<string, any>,
+  remixOf?: RemixOfProps
+): Promise<{ params: Record<string, any> }> {
   let sourceImage = data.sourceImage;
   if (!sourceImage) {
     if ('image' in data && typeof data.image === 'string')
@@ -173,7 +177,17 @@ async function transformParams(data: Record<string, any>) {
   } else if ('sourceImage' in data && typeof data.sourceImage === 'string')
     sourceImage = await getSourceImageFromUrl({ url: data.sourceImage });
 
-  return { ...data, sourceImage };
+  const params: Record<string, any> = { ...data, sourceImage };
+
+  // if (remixOf && new Date(remixOf.createdAt) < stripWeightDate) {
+  //   if (data.prompt) params.prompt = data.prompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
+  //   if (data.negativePrompt)
+  //     params.negativePrompt = data.negativePrompt.replace(/\(*([^():,]+)(?::[0-9.]+)?\)*/g, `$1`);
+  // }
+
+  return {
+    params,
+  };
 }
 
 const dictionary: Record<string, GenerationData> = {};
@@ -210,6 +224,7 @@ export const useGenerationFormStore = create<{
   sourceImage?: SourceImageProps | null;
   width?: number;
   height?: number;
+  originalPrompt?: string;
 }>()(persist((set) => ({ type: 'image' }), { name: 'generation-form', version: 1.2 }));
 
 export const generationFormStore = {

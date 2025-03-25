@@ -1,6 +1,7 @@
 import {
   ActionIcon,
   Badge,
+  Box,
   Button,
   Center,
   CloseButton,
@@ -23,7 +24,6 @@ import {
   IconCloudOff,
   IconDotsVertical,
   IconDownload,
-  IconHorse,
   IconInfoCircle,
   IconLock,
   IconSettings,
@@ -36,6 +36,7 @@ import {
   Configure,
   InstantSearch,
   InstantSearchProps,
+  useClearRefinements,
   useInstantSearch,
   useRefinementList,
 } from 'react-instantsearch';
@@ -83,9 +84,10 @@ import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { env } from '~/env/client';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useStorage } from '~/hooks/useStorage';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { BaseModel, constants } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
@@ -103,6 +105,7 @@ import {
   ResourceSelectOptions,
   ResourceSelectSource,
 } from './resource-select.types';
+import { ModelTypeBadge } from '~/components/Model/ModelTypeBadge/ModelTypeBadge';
 
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
@@ -118,11 +121,12 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-// TODO eventually move boosted to first
 const tabs = ['all', 'boosted', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
+const defaultTab: Tabs = 'all';
 
 const take = 20;
+const hitsPerPage = 20;
 
 // TODO - ResourceSelectProvider with filter so that we only show relevant model versions to select
 
@@ -209,8 +213,32 @@ function ResourceSelectProvider({
 export default function ResourceSelectModal(props: ResourceSelectModalProps) {
   return (
     <ResourceSelectProvider {...props}>
-      <ResourceSelectModalContent />
+      <ResourceSelectModalWrapper />
     </ResourceSelectProvider>
+  );
+}
+
+function ResourceSelectModalWrapper() {
+  const dialog = useDialogContext();
+  const { onClose } = useResourceSelectContext();
+
+  function handleClose() {
+    dialog.onClose();
+    onClose?.();
+  }
+
+  return (
+    <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
+      <div className="flex size-full max-h-full max-w-full flex-col">
+        <InstantSearch
+          searchClient={searchClient}
+          indexName={searchIndexMap.models}
+          future={{ preserveSharedStateOnUnmount: true }}
+        >
+          <ResourceSelectModalContent />
+        </InstantSearch>
+      </div>
+    </Modal>
   );
 }
 
@@ -220,7 +248,16 @@ function ResourceSelectModalContent() {
   const dialog = useDialogContext();
   const isMobile = useIsMobile();
   const currentUser = useCurrentUser();
-  const [selectedTab, setSelectedTab] = useState<Tabs>('all');
+  const features = useFeatureFlags();
+  const [selectedTab, setSelectedTab] = useStorage<Tabs>({
+    type: 'localStorage',
+    key: 'resource-select-tab',
+    defaultValue: defaultTab,
+    getInitialValueInEffect: false,
+  });
+  const { refine } = useClearRefinements();
+  // TODO this refine isn't working perfectly
+
   // const availableBaseModels = [...new Set(resources.flatMap((x) => x.baseModels))];
   // const _selectedFilters = selectedFilters.filter((x) => availableBaseModels.includes)
 
@@ -294,9 +331,12 @@ function ResourceSelectModalContent() {
 
   // TODO handle fetching errors from above
 
-  const allowedTabs = tabs.filter((t) => {
+  let allowedTabs = tabs.filter((t) => {
     return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
+  if (!features.auctions) {
+    allowedTabs = allowedTabs.filter((t) => t !== 'boosted');
+  }
 
   const meiliFilters: string[] = [
     // Default filter for visibility:
@@ -401,65 +441,66 @@ function ResourceSelectModalContent() {
     onClose?.();
   }
 
+  // TODO there is still an issue with meili sorting boosted results its own way, so we are simply returning 100 records right now
+
   return (
-    <Modal {...dialog} onClose={handleClose} size={1200} withCloseButton={false} padding={0}>
-      <div className="flex size-full max-h-full max-w-full flex-col">
-        <InstantSearch
-          searchClient={searchClient}
-          indexName={searchIndexMap.models}
-          future={{ preserveSharedStateOnUnmount: true }}
-        >
-          <Configure hitsPerPage={20} filters={totalFilters} />
+    <>
+      <Configure
+        hitsPerPage={selectedTab === 'boosted' ? 100 : hitsPerPage}
+        filters={totalFilters}
+      />
 
-          <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
-            <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
-              <Text>{title}</Text>
-              <CustomSearchBox
-                isMobile={isMobile}
-                autoFocus
-                className="order-last w-full grow sm:order-none sm:w-auto"
-              />
-              <CloseButton onClick={handleClose} />
-            </div>
+      <div className="sticky top-[-48px] z-30 flex flex-col gap-3 bg-gray-0 p-3 dark:bg-dark-7">
+        <div className="flex flex-wrap items-center justify-between gap-4 sm:gap-10">
+          <Text>{title}</Text>
+          <CustomSearchBox
+            isMobile={isMobile}
+            autoFocus
+            className="order-last w-full grow sm:order-none sm:w-auto"
+          />
+          <CloseButton onClick={handleClose} />
+        </div>
 
-            <div className="flex flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between sm:gap-10">
-              <SegmentedControl
-                value={selectedTab}
-                onChange={(v) => setSelectedTab(v as Tabs)}
-                data={allowedTabs.map((v) => ({ value: v, label: v.toUpperCase() }))}
-                className="shrink-0 @sm:w-full"
-              />
-              <CategoryTagFilters />
-              <div className="flex shrink-0 flex-row items-center justify-end gap-3">
-                <ResourceSelectSort />
-                <ResourceSelectFiltersDropdown />
-                <GenerationSettingsPopover>
-                  <ActionIcon>
-                    <IconSettings />
-                  </ActionIcon>
-                </GenerationSettingsPopover>
-              </div>
-            </div>
-
-            <Divider />
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-nowrap sm:items-center sm:justify-between sm:gap-10">
+          <SegmentedControl
+            value={selectedTab}
+            onChange={(v) => {
+              setSelectedTab(v as Tabs);
+              refine();
+            }}
+            data={allowedTabs.map((v) => ({
+              value: v,
+              label: (
+                <Box className={v === 'boosted' ? 'text-yellow-7' : ''}>{v.toUpperCase()}</Box>
+              ),
+            }))}
+            className="shrink-0 @sm:w-full"
+          />
+          <CategoryTagFilters />
+          <div className="flex shrink-0 flex-row items-center justify-end gap-3">
+            {selectedTab !== 'boosted' && <ResourceSelectSort />}
+            <ResourceSelectFiltersDropdown />
+            <GenerationSettingsPopover>
+              <ActionIcon>
+                <IconSettings />
+              </ActionIcon>
+            </GenerationSettingsPopover>
           </div>
+        </div>
 
-          {isLoadingExtra ? (
-            <div className="p-3 py-5">
-              <Center mt="md">
-                <Loader />
-              </Center>
-            </div>
-          ) : (
-            <ResourceHitList
-              likes={likedModels}
-              featured={featuredModels}
-              selectedTab={selectedTab}
-            />
-          )}
-        </InstantSearch>
+        <Divider />
       </div>
-    </Modal>
+
+      {isLoadingExtra ? (
+        <div className="p-3 py-5">
+          <Center mt="md">
+            <Loader />
+          </Center>
+        </div>
+      ) : (
+        <ResourceHitList likes={likedModels} featured={featuredModels} selectedTab={selectedTab} />
+      )}
+    </>
   );
 }
 
@@ -491,7 +532,7 @@ function ResourceHitList({
 }: ResourceSelectOptions & {
   likes: number[] | undefined;
   featured: GetFeaturedModels | undefined;
-  selectedTab: Tabs;
+  selectedTab?: Tabs;
 }) {
   const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
   const startedRef = useRef(false);
@@ -515,7 +556,7 @@ function ResourceHitList({
   const filtered = useMemo(() => {
     if (!canGenerate && !resources.length) return models;
 
-    return models
+    const ret = models
       .map((model) => {
         const resourceType = resources.find((x) => x.type === model.type);
         if (!resourceType) return null;
@@ -533,7 +574,19 @@ function ResourceHitList({
       })
       .filter(isDefined)
       .filter((model) => model.versions.length > 0);
-  }, [canGenerate, excludedIds, models, resources]);
+
+    if (selectedTab === 'boosted') {
+      ret.sort((a, b) => {
+        const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
+        const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
+        if (!aPos) return 1;
+        if (!bPos) return -1;
+        return aPos - bPos;
+      });
+    }
+
+    return ret;
+  }, [canGenerate, excludedIds, featured, models, resources, selectedTab]);
 
   useEffect(() => {
     if (!startedRef.current && status !== 'idle') startedRef.current = true;
@@ -964,7 +1017,7 @@ function ResourceSelectCard({
       ),
       value: (
         <ModelURN
-          baseModel={selectedVersion.baseModel as BaseModel}
+          baseModel={selectedVersion.baseModel}
           type={data.type}
           modelId={data.id}
           modelVersionId={selectedVersion.id}
@@ -1028,27 +1081,11 @@ function ResourceSelectCard({
                     )}
                     <div className="absolute left-2 top-2 flex items-center gap-1">
                       <ImageGuard2.BlurToggle />
-                      <Badge
+                      <ModelTypeBadge
                         className={cx(classes.infoChip, classes.chip)}
-                        variant="light"
-                        radius="xl"
-                      >
-                        <Text color="white" size="xs" transform="capitalize">
-                          {getDisplayName(data.type)}
-                        </Text>
-                        {isSDXL && (
-                          <>
-                            <Divider orientation="vertical" />
-                            {isPony ? (
-                              <IconHorse size={16} strokeWidth={2.5} />
-                            ) : (
-                              <Text color="white" size="xs">
-                                XL
-                              </Text>
-                            )}
-                          </>
-                        )}
-                      </Badge>
+                        type={data.type}
+                        baseModel={data.version.baseModel}
+                      />
 
                       {(isNew || isUpdated) && (
                         <Badge
@@ -1069,7 +1106,7 @@ function ResourceSelectCard({
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                     <Group className="absolute bottom-2 left-2 flex items-center gap-1">
-                      {selectSource === 'generation' && (
+                      {selectSource === 'generation' && data.type === ModelType.Checkpoint && (
                         <Badge variant="light" radius="xl" size="sm">
                           <ModelVersionPopularity
                             versionId={selectedVersion.id}

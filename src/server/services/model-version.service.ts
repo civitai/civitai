@@ -43,6 +43,7 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
@@ -65,7 +66,6 @@ import {
   ModelType,
   ModelVersionEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { maxDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
 
@@ -489,6 +489,7 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
     await bustMvCache(deleted.id);
+    await deleteBidsForModelVersion({ modelVersionId: id });
 
     return deleted;
   });
@@ -1403,20 +1404,14 @@ export const bustMvCache = async (ids: number | number[], userId?: number) => {
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   const modelVersion = await dbRead.modelVersion.findFirst({
-    where: {
-      id,
-    },
+    where: { id },
     select: {
       id: true,
       files: {
-        select: {
-          id: true,
-          metadata: true,
-        },
+        select: { id: true, metadata: true },
       },
     },
   });
-
   if (!modelVersion) return null;
 
   const modelFile = modelVersion.files?.[0];
@@ -1426,7 +1421,6 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   if (!metadata) return null;
 
   const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
-
   return trainingResults.workflowId ?? null;
 };
 
@@ -1584,7 +1578,7 @@ export const createModelVersionPostFromTraining = async ({
 
 export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
   const resp = await modelVersionResourceCache.fetch([id]);
-  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false };
+  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false, isNew: false };
 };
 
 export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {

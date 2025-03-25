@@ -13,21 +13,26 @@ import {
   Title,
 } from '@mantine/core';
 import { IconAlertCircle, IconArrowRight, IconFileDownload } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { saveAs } from 'file-saver';
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { constants } from '~/server/common/constants';
+import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import { ModelVersionUpsertInput } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.store';
 import { ModelVersionById } from '~/types/router';
+import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -63,6 +68,7 @@ const EpochRow = ({
   loading,
   incomplete,
   modelVersionId,
+  canGenerate,
 }: {
   epoch: TrainingResultsV2['epochs'][number];
   prompts: TrainingResultsV2['sampleImagesPrompts'];
@@ -71,8 +77,8 @@ const EpochRow = ({
   onPublishClick: (modelUrl: string) => void;
   loading?: boolean;
   incomplete?: boolean;
-
   modelVersionId?: number;
+  canGenerate?: boolean;
 }) => {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
@@ -109,7 +115,7 @@ const EpochRow = ({
                   : 'Download'}
               </Text>
             </DownloadButton>
-            {modelVersionId && features.privateModels && (
+            {canGenerate && (
               <SubscriptionRequiredBlock feature="private-models">
                 <GenerateButton
                   modelVersionId={modelVersionId}
@@ -180,6 +186,7 @@ export default function TrainingSelectFile({
   modelVersion: ModelWithTags['modelVersions'][number] | ModelVersionById;
   onNextClick: () => void;
 }) {
+  const features = useFeatureFlags();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
 
@@ -313,6 +320,7 @@ export default function TrainingSelectFile({
 
   let epochs: TrainingResultsV2['epochs'];
   let samplePrompts: string[];
+  let completeDate: string | null | undefined | Date;
 
   if (!trainingResults) {
     epochs = [];
@@ -325,6 +333,7 @@ export default function TrainingSelectFile({
     const tResults = trainingResults as unknown as TrainingResultsV2;
     epochs = tResults.epochs ?? [];
     samplePrompts = tResults.sampleImagesPrompts ?? [];
+    completeDate = tResults.completedAt;
   } else {
     epochs =
       trainingResults.epochs?.map((e) => ({
@@ -334,6 +343,7 @@ export default function TrainingSelectFile({
         sampleImages: e.sample_images?.map((s) => s.image_url) ?? [],
       })) ?? [];
     samplePrompts = trainingResults.epochs?.[0]?.sample_images?.map((s) => s.prompt) ?? [];
+    completeDate = trainingResults.end_time;
   }
   epochs = [...epochs].sort((a, b) => b.epochNumber - a.epochNumber);
 
@@ -365,6 +375,8 @@ export default function TrainingSelectFile({
 
     setDownloading(false);
   };
+
+  const canGenerateWithEpochBool = canGenerateWithEpoch(completeDate);
 
   return (
     <Stack>
@@ -404,6 +416,32 @@ export default function TrainingSelectFile({
               </Stack>
             </Stack>
           )}
+          {canGenerateWithEpochBool && features.privateModels && (
+            <DismissibleAlert
+              id={`epoch-generation-timeout-${modelVersion.id}`}
+              color="yellow"
+              title="Generating with Epochs"
+            >
+              <Stack>
+                <Text size="xs">
+                  You have up to {constants.imageGeneration.epochGenerationTimeLimit} days to
+                  generate with your training epochs. After that, you are required to either publish
+                  the model to keep generating, or make it into a private model for yourself.
+                </Text>
+                <Text size="xs">
+                  You have until{' '}
+                  {formatDate(
+                    dayjs(completeDate).add(
+                      constants.imageGeneration.epochGenerationTimeLimit,
+                      'day'
+                    )
+                  )}{' '}
+                  to generate with the epochs of this model. Epoch generation is only available for
+                  Civitai members.
+                </Text>
+              </Stack>
+            </DismissibleAlert>
+          )}
           <Flex justify="flex-end">
             <Button
               color="cyan"
@@ -426,6 +464,7 @@ export default function TrainingSelectFile({
             loading={awaitInvalidate}
             incomplete={resultsLoading}
             modelVersionId={modelVersion.id}
+            canGenerate={features.privateModels && !!modelVersion.id && canGenerateWithEpochBool}
           />
           {epochs.length > 1 && (
             <>
@@ -445,6 +484,9 @@ export default function TrainingSelectFile({
                   loading={awaitInvalidate}
                   incomplete={resultsLoading}
                   modelVersionId={modelVersion.id}
+                  canGenerate={
+                    features.privateModels && !!modelVersion.id && canGenerateWithEpochBool
+                  }
                 />
               ))}
             </>

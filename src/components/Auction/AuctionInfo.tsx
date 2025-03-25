@@ -185,12 +185,24 @@ export const AuctionInfo = () => {
 
   const { handleBuy, createLoading } = usePurchaseBid();
 
-  const bidsAbove = auctionData?.bids?.length
-    ? auctionData.bids.filter((b) => b.totalAmount >= auctionData.minPrice)
-    : [];
-  const bidsBelow = auctionData?.bids?.length
-    ? auctionData.bids.filter((b) => b.totalAmount < auctionData.minPrice)
-    : [];
+  const bidsAbove = useMemo(
+    () =>
+      auctionData?.bids?.length
+        ? auctionData.bids.filter(
+            (b) => b.totalAmount >= auctionData.minPrice && b.position <= auctionData.quantity
+          )
+        : [],
+    [auctionData]
+  );
+  const bidsBelow = useMemo(
+    () =>
+      auctionData?.bids?.length
+        ? auctionData.bids.filter(
+            (b) => b.totalAmount < auctionData.minPrice || b.position > auctionData.quantity
+          )
+        : [],
+    [auctionData]
+  );
 
   const getPosFromBid = (n: number) => {
     if (!auctionData) return -1;
@@ -199,6 +211,8 @@ export const AuctionInfo = () => {
 
     const bidAbove = bidsAbove.find((b) => n > b.totalAmount);
     if (bidAbove) return bidAbove.position;
+
+    if (bidsAbove.length >= auctionData.quantity) return -1;
 
     return bidsAbove.length + 1;
   };
@@ -376,7 +390,7 @@ export const AuctionInfo = () => {
                     fullWidth: mobile,
                   }}
                   groupPosition={!mobile ? 'left' : 'apart'}
-                  showAsCheckpoint={true}
+                  showAsCheckpoint
                 />
 
                 {!mobile && <Divider orientation="vertical" />}
@@ -416,7 +430,8 @@ export const AuctionInfo = () => {
                                 ? bidsAbove[bidsAbove.length - 1].totalAmount + 1
                                 : auctionData?.minPrice ?? 1
                               : auctionData?.minPrice ?? 1;
-                          setBidPrice(topBid);
+                          const requiredBid = topBid - selectedModelBid;
+                          setBidPrice(requiredBid);
                         }}
                       >
                         Last
@@ -548,7 +563,12 @@ export const AuctionInfo = () => {
             <Stack>
               {bidsAbove.length ? (
                 bidsAbove.map((b) => (
-                  <ModelPlacementCard key={b.entityId} data={b} addBidFn={addBidFn} />
+                  <ModelPlacementCard
+                    key={b.entityId}
+                    data={b}
+                    aboveThreshold={true}
+                    addBidFn={addBidFn}
+                  />
                 ))
               ) : (
                 <Center>
@@ -559,7 +579,12 @@ export const AuctionInfo = () => {
                 <>
                   <Divider label="Below Threshold" labelPosition="center" />
                   {bidsBelow.map((b) => (
-                    <ModelPlacementCard key={b.entityId} data={b} addBidFn={addBidFn} />
+                    <ModelPlacementCard
+                      key={b.entityId}
+                      data={b}
+                      aboveThreshold={false}
+                      addBidFn={addBidFn}
+                    />
                   ))}
                 </>
               )}
