@@ -60,6 +60,10 @@ export const getHomeBlocksHandler = async ({
     });
 
     let homeBlocks = _homeBlocks.filter((homeBlock) => {
+      if ((domainSettings?.excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
+        return false;
+      }
+
       if ((domainSettings?.systemHomeBlockIds ?? []).length === 0) {
         return true; // Always allow.
       }
@@ -123,6 +127,10 @@ export const getSystemHomeBlocksHandler = async ({
     const _homeBlocks = await getSystemHomeBlocks({ input });
 
     const homeBlocks = _homeBlocks.filter((homeBlock) => {
+      if ((domainSettings?.excludedSystemHomeBlockIds ?? []).includes(homeBlock.id)) {
+        return false;
+      }
+
       if ((domainSettings?.systemHomeBlockIds ?? []).length === 0) {
         return true; // Always allow.
       }

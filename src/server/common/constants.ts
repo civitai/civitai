@@ -1114,6 +1114,7 @@ export type DomainSettings = {
   allowedNsfwLevels: NsfwLevel[];
   disableNsfwLevelControl: boolean;
   systemHomeBlockIds: number[];
+  excludedSystemHomeBlockIds: number[];
 };
 
 export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
@@ -1124,6 +1125,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     allowedNsfwLevels: [NsfwLevel.PG],
     disableNsfwLevelControl: true,
     systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
   },
   blue: {
     color: 'blue',
@@ -1132,6 +1134,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R],
     disableNsfwLevelControl: false,
     systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
   },
   red: {
     color: 'red',
@@ -1139,7 +1142,8 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     disablePoi: true,
     allowedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disableNsfwLevelControl: true,
-    systemHomeBlockIds: [1],
+    systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
   },
 };
 
