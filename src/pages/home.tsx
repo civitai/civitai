@@ -73,7 +73,9 @@ export function Home() {
             },
           })}
         >
-          <BrowsingLevelProvider browsingLevel={sfwBrowsingLevelsFlag}>
+          <BrowsingLevelProvider
+            browsingLevel={domainSettings?.allowedNsfwLevels ?? sfwBrowsingLevelsFlag}
+          >
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 1 && i > 0;
               return (
@@ -107,7 +109,9 @@ export function Home() {
               );
             })}
           </BrowsingLevelProvider>
-          <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
+          <BrowsingLevelProvider
+            browsingLevel={domainSettings?.allowedNsfwLevels ?? publicBrowsingLevelsFlag}
+          >
             {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
               <Box ref={ref}>
                 <MasonryContainer py={32}>

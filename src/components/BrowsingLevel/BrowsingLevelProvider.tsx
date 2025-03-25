@@ -59,6 +59,8 @@ export function BrowsingLevelProvider({
   const [childBrowsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
   const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(parentForcedBrowsingLevel);
 
+  console.log({ adjustedUserBrowsingLevel, userBrowsingLevel });
+
   return (
     <BrowsingModeOverrideCtx.Provider
       value={{
