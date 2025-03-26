@@ -431,7 +431,7 @@ async function handleSuccess({
           SELECT
             SUM(IIF(m.poi, 1, 0)) > 0 "poi",
             SUM(IIF(m.minor, 1, 0)) > 0 "minor"
-          FROM "ImageResource" ir
+          FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
           JOIN "Model" m ON m.id = mv."modelId"
           WHERE ir."imageId" = ${image.id}

@@ -58,13 +58,12 @@ export type ImageModel = Prisma.ImageGetPayload<typeof image>;
 export type ImageModelWithIngestion = ImageModel & { ingestion: ImageIngestionStatus };
 
 export const imageResourceHelperSelect = Prisma.validator<Prisma.ImageResourceHelperSelect>()({
-  id: true,
+  imageId: true,
   reviewId: true,
   reviewRating: true,
   reviewDetails: true,
   reviewCreatedAt: true,
   name: true,
-  hash: true,
   modelVersionId: true,
   modelVersionName: true,
   modelVersionCreatedAt: true,

@@ -470,7 +470,7 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
     onSuccess: (resp) => {
       if (resp) {
         updateImage(image.id, (img) => {
-          remove(img.resourceHelper, (r) => r.id === resp.id);
+          remove(img.resourceHelper, (r) => r.modelVersionId === resp.modelVersionId);
         });
       }
     },

@@ -295,7 +295,7 @@ async function reviewEntries() {
       SELECT
       i.id,
       i."nsfwLevel" = 1 as "isSafe",
-      EXISTS (SELECT 1 FROM "ImageResource" ir WHERE ir."modelVersionId" IN (${Prisma.join(
+      EXISTS (SELECT 1 FROM "ImageResourceNew" ir WHERE ir."modelVersionId" IN (${Prisma.join(
         currentChallenge.modelVersionIds
       )}) AND ir."imageId" = i.id) as "hasResource"
       FROM "CollectionItem" ci

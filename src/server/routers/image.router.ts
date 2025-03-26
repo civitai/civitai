@@ -65,6 +65,7 @@ import {
   updateImageNsfwLevelSchema,
   updateImageTechniqueSchema,
   updateImageToolsSchema,
+  removeImageResourceSchema,
 } from './../schema/image.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -122,7 +123,7 @@ export const imageRouter = router({
     )
     .query(getImageResourcesHandler),
   removeResource: moderatorProcedure
-    .input(getByIdSchema)
+    .input(removeImageResourceSchema)
     .mutation(({ input }) => removeImageResource(input)),
   rescan: moderatorProcedure.input(getByIdSchema).mutation(({ input }) => ingestImageById(input)),
   getEntitiesCoverImage: publicProcedure
