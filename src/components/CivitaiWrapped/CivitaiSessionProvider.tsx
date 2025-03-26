@@ -57,11 +57,11 @@ export function CivitaiSessionProvider({
       },
     };
 
-    const allowedNsfwLevelsFlag = domainSettings?.allowedNsfwLevels
-      ? flagifyBrowsingLevel(domainSettings?.allowedNsfwLevels)
+    const allowedNsfwLevelsFlag = domainSettings.allowedNsfwLevels
+      ? flagifyBrowsingLevel(domainSettings.allowedNsfwLevels)
       : 0;
     // The reason we force this is because the user has 0 control here.
-    if (!domainSettings?.disableNsfwLevelControl)
+    if (!domainSettings.disableNsfwLevelControl)
       currentUser.settings = { ...currentUser.settings, browsingLevel: allowedNsfwLevelsFlag };
     else {
       const intersection = Flags.intersection(
@@ -83,8 +83,9 @@ export function CivitaiSessionProvider({
     domain,
     data?.expires,
     disableHidden,
-    domainSettings?.disableNsfwLevelControl,
-    domainSettings?.allowedNsfwLevels,
+    domainSettings.disableNsfwLevelControl,
+    domainSettings.allowedNsfwLevels,
+    domainSettings.isLoading,
   ]);
 
   useEffect(() => {

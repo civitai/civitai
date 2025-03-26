@@ -125,7 +125,7 @@ export const useQueryModels = (
   const domainSettings = useDomainSettings();
   const excludedTagIds = [
     ...(_filters.excludedTagIds ?? []),
-    ...(domainSettings?.excludedTagIds ?? []),
+    ...(domainSettings.excludedTagIds ?? []),
   ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -134,7 +134,7 @@ export const useQueryModels = (
       ..._filters,
       browsingLevel,
       excludedTagIds,
-      disablePoi: domainSettings?.disablePoi
+      disablePoi: domainSettings.disablePoi
         ? // Ensures we pass true explicitly
           true
         : undefined,

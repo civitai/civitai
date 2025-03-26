@@ -3,7 +3,10 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 import { DEFAULT_DOMAIN_SETTINGS, DomainSettings } from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 
-const DomainSettingsCtx = createContext<(DomainSettings & { isLoading: boolean }) | null>(null);
+const DomainSettingsCtx = createContext<DomainSettings & { isLoading: boolean }>({
+  ...DEFAULT_DOMAIN_SETTINGS.green,
+  isLoading: true,
+});
 
 export type UseDomainSettingsReturn = ReturnType<typeof useDomainSettings>;
 export const useDomainSettings = () => {

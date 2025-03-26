@@ -48,7 +48,7 @@ export const useQueryPosts = (
   const domainSettings = useDomainSettings();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(domainSettings?.excludedTagIds ?? []),
+    ...(domainSettings.excludedTagIds ?? []),
   ].filter(isDefined);
   const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
     {
@@ -56,7 +56,7 @@ export const useQueryPosts = (
       include: ['cosmetics'],
       browsingLevel,
       excludedTagIds,
-      disablePoi: domainSettings?.disablePoi,
+      disablePoi: domainSettings.disablePoi,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),

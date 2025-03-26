@@ -33,8 +33,8 @@ function BrowsingLevelLabel({ level }: { level: NsfwLevel }) {
   const { classes } = useStyles();
 
   // const browsingLevel = useStore((x) => x.browsingLevel);
-  const isDefaultBrowsingLevel = (domainSettings?.allowedNsfwLevels ?? []).length
-    ? browsingLevel === 0 && level === domainSettings?.allowedNsfwLevels[0]
+  const isDefaultBrowsingLevel = (domainSettings.allowedNsfwLevels ?? []).length
+    ? browsingLevel === 0 && level === domainSettings.allowedNsfwLevels[0]
     : browsingLevel === 0 && level === NsfwLevel.PG;
 
   return (

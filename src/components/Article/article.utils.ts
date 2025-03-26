@@ -61,7 +61,7 @@ export const useQueryArticles = (
   const domainSettings = useDomainSettings();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(domainSettings?.excludedTagIds ?? []),
+    ...(domainSettings.excludedTagIds ?? []),
   ].filter(isDefined);
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.article.getInfinite.useInfiniteQuery(

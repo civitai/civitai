@@ -34,7 +34,7 @@ export function ExplainHiddenImages({
   const totalHiddenByBrowsingLevel = hiddenByBrowsingLevel.length;
   const totalHiddenByTags = hiddenByTags.length;
   const showHiddenBrowsingLevels =
-    totalHiddenByBrowsingLevel > 0 && !domainSettings?.disableNsfwLevelControl;
+    totalHiddenByBrowsingLevel > 0 && !domainSettings.disableNsfwLevelControl;
 
   const handleShowAll = () => {
     const browsingLevelOverride = flagifyBrowsingLevel(
@@ -135,7 +135,7 @@ export function useExplainHiddenImages<
       tagId: Number(key),
       count,
     }));
-    const hiddenByPoi = images?.filter((x) => x.poi && domainSettings?.disablePoi);
+    const hiddenByPoi = images?.filter((x) => x.poi && domainSettings.disablePoi);
 
     return {
       hiddenBelowBrowsingLevel: hiddenBelowBrowsingLevel,

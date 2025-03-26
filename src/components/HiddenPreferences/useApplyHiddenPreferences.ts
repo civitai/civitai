@@ -72,10 +72,10 @@ export function useApplyHiddenPreferences<
     }
 
     // Handle domain specific hidden tags
-    if ((domainSettings?.excludedTagIds ?? []).length > 0) {
+    if ((domainSettings.excludedTagIds ?? []).length > 0) {
       preferences.hiddenTags = new Map([
         ...preferences.hiddenTags,
-        ...(domainSettings?.excludedTagIds ?? []).map((id): [number, boolean] => [id, true]),
+        ...(domainSettings.excludedTagIds ?? []).map((id): [number, boolean] => [id, true]),
       ]);
     }
 
@@ -90,7 +90,7 @@ export function useApplyHiddenPreferences<
       currentUser,
       allowLowerLevels,
       canViewNsfw,
-      poiDisabled: domainSettings?.disablePoi,
+      poiDisabled: domainSettings.disablePoi,
     });
 
     return {

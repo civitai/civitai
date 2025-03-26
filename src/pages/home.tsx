@@ -33,13 +33,13 @@ import { trpc } from '~/utils/trpc';
 
 export function Home() {
   const domainSettings = useDomainSettings();
-  const flag = domainSettings?.allowedNsfwLevels
-    ? flagifyBrowsingLevel(domainSettings?.publicNsfwLevels ?? domainSettings.allowedNsfwLevels)
+  const flag = domainSettings.allowedNsfwLevels
+    ? flagifyBrowsingLevel(domainSettings.publicNsfwLevels ?? domainSettings.allowedNsfwLevels)
     : 0;
   const { data: homeBlocks = [], isLoading: isLoadingHomeBlocks } =
     trpc.homeBlock.getHomeBlocks.useQuery({
-      excludedSystemHomeBlockIds: domainSettings?.excludedSystemHomeBlockIds,
-      systemHomeBlockIds: domainSettings?.systemHomeBlockIds,
+      excludedSystemHomeBlockIds: domainSettings.excludedSystemHomeBlockIds,
+      systemHomeBlockIds: domainSettings.systemHomeBlockIds,
     });
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });

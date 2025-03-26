@@ -58,14 +58,14 @@ function ManageHomeBlocks({ onClose }: Props) {
     trpc.homeBlock.getHomeBlocks.useQuery({
       withCoreData: true,
       ownedOnly: true,
-      excludedSystemHomeBlockIds: domainSettings?.excludedSystemHomeBlockIds,
-      systemHomeBlockIds: domainSettings?.systemHomeBlockIds,
+      excludedSystemHomeBlockIds: domainSettings.excludedSystemHomeBlockIds,
+      systemHomeBlockIds: domainSettings.systemHomeBlockIds,
     });
   const { data: systemHomeBlocks = [], isLoading: isLoadingSystemHomeBlocks } =
     trpc.homeBlock.getSystemHomeBlocks.useQuery({
       permanent: false,
-      excludedSystemHomeBlockIds: domainSettings?.excludedSystemHomeBlockIds,
-      systemHomeBlockIds: domainSettings?.systemHomeBlockIds,
+      excludedSystemHomeBlockIds: domainSettings.excludedSystemHomeBlockIds,
+      systemHomeBlockIds: domainSettings.systemHomeBlockIds,
     });
 
   const utils = trpc.useContext();

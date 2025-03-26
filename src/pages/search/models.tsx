@@ -47,7 +47,7 @@ const RenderFilters = () => {
       <ApplyCustomFilter
         filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}
       />
-      {domainSettings?.disablePoi && <ApplyCustomFilter filters={`(poi != true)`} />}
+      {domainSettings.disablePoi && <ApplyCustomFilter filters={`(poi != true)`} />}
       <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort models by"

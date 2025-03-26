@@ -218,7 +218,7 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      {isModels && domainSettings?.disablePoi && <ApplyCustomFilter filters={`(poi != true)`} />}
+      {isModels && domainSettings.disablePoi && <ApplyCustomFilter filters={`(poi != true)`} />}
       {isModels && !currentUser?.isModerator && (
         <ApplyCustomFilter
           filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}

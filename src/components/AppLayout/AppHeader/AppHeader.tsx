@@ -97,7 +97,7 @@ export function AppHeader({
                   <CivitaiLinkPopover />
                 </>
               )}
-              {currentUser && !domainSettings?.disableNsfwLevelControl && <BrowsingModeIcon />}
+              {currentUser && !domainSettings.disableNsfwLevelControl && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
               {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
