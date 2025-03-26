@@ -204,19 +204,18 @@ export const getServerSideProps = createServerSideProps({
     const isTraining = !!version?.trainingStatus;
     const draft = version?.status === 'Draft';
     const isOwner = version?.model.userId === session?.user?.id;
-
-    if (isTraining && isOwner) {
-      // Start checking whether to redirect:
-      // TODO: We might wanna redirect to all steps (?).
-      if (draft) {
-        return {
-          redirect: {
-            destination: `/models/${version.model.id}/model-versions/${version.id}/wizard?step=1`,
-            permanent: false,
-          },
-        };
-      }
-    }
+    // TODO: Commenting cause @ally found it's ideal to be able to enter a models' page even if it's unpublished.
+    // if (isTraining && isOwner) {
+    //   // Start checking whether to redirect:
+    //   if (draft) {
+    //     return {
+    //       redirect: {
+    //         destination: `/models/${version.model.id}/model-versions/${version.id}/wizard?step=1`,
+    //         permanent: false,
+    //       },
+    //     };
+    //   }
+    // }
 
     if (ssg) {
       // if (version)
