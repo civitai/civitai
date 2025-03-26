@@ -3284,7 +3284,6 @@ export interface ImageResourceHelper {
 }
 
 export interface PostResourceHelper {
-  id: number;
   postId: number;
   post?: Post;
   reviewId: number | null;
@@ -3293,7 +3292,8 @@ export interface PostResourceHelper {
   reviewDetails: string | null;
   reviewCreatedAt: Date | null;
   name: string | null;
-  modelVersionId: number | null;
+  imageId: number;
+  modelVersionId: number;
   modelVersionName: string | null;
   modelVersionCreatedAt: Date | null;
   modelId: number | null;
