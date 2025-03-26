@@ -437,7 +437,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
           --     SELECT
           --     ir."imageId" id,
           --     i."nsfwLevel"
-          --     FROM "ImageResource" ir
+          --     FROM "ImageResourceNew" ir
           --     JOIN "Image" i ON i.id = ir."imageId"
           --     JOIN "Post" p ON p.id = i."postId"
           --     JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"

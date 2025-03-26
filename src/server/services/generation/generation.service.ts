@@ -302,9 +302,9 @@ async function getMediaGenerationData({
 
   switch (media.type) {
     case 'image':
-      const imageResources = await dbRead.imageResource.findMany({
+      const imageResources = await dbRead.imageResourceNew.findMany({
         where: { imageId: id },
-        select: { imageId: true, modelVersionId: true, hash: true, strength: true },
+        select: { imageId: true, modelVersionId: true, strength: true },
       });
       const versionIds = [
         ...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined)),
@@ -315,7 +315,6 @@ async function getMediaGenerationData({
           const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
           return {
             ...item,
-            hash: imageResource?.hash ?? undefined,
             strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
           };
         })
@@ -342,22 +341,22 @@ async function getMediaGenerationData({
         ...meta
       } = imageGenerationSchema.parse(media.meta);
 
-      if (meta.hashes && meta.prompt) {
-        for (const [key, hash] of Object.entries(meta.hashes)) {
-          if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
+      // if (meta.hashes && meta.prompt) {
+      //   for (const [key, hash] of Object.entries(meta.hashes)) {
+      //     if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
 
-          // get the resource that matches the hash
-          const uHash = hash.toUpperCase();
-          const resource = resources.find((x) => x.hash === uHash);
-          if (!resource || resource.strength) continue;
+      //     // get the resource that matches the hash
+      //     const uHash = hash.toUpperCase();
+      //     const resource = resources.find((x) => x.hash === uHash);
+      //     if (!resource || resource.strength) continue;
 
-          // get everything that matches <key:{number}>
-          const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
-          if (!matches) continue;
+      //     // get everything that matches <key:{number}>
+      //     const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
+      //     if (!matches) continue;
 
-          resource.strength = parseFloat(matches[1]);
-        }
-      }
+      //     resource.strength = parseFloat(matches[1]);
+      //   }
+      // }
 
       return {
         remixOfId: media.id, // TODO - remove

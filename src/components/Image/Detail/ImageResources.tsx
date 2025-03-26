@@ -86,8 +86,8 @@ export function ImageResources({ imageId }: { imageId: number }) {
   }, [data, reviewedModels]);
 
   const { mutate, isLoading: removingResource } = trpc.image.removeResource.useMutation();
-  const handleRemoveResource = (resourceId: number) => {
-    setSelectedResource(resourceId);
+  const handleRemoveResource = (modelVersionId: number) => {
+    setSelectedResource(modelVersionId);
     openConfirmModal({
       centered: true,
       title: 'Remove Resource',
@@ -97,7 +97,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
       confirmProps: { color: 'red' },
       onConfirm: () =>
         mutate(
-          { id: resourceId },
+          { imageId, modelVersionId },
           {
             async onSuccess() {
               showSuccessNotification({
@@ -132,7 +132,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
       ) : (
         (showAll ? resources : resources.slice(0, LIMIT)).map(
           ({ key, hasReview, isAvailable, ...resource }) => {
-            const removing = selectedResource === resource.id && removingResource;
+            const removing = selectedResource === resource.modelVersionId && removingResource;
 
             return (
               <Wrapper resource={resource} key={key}>
@@ -160,7 +160,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                             {getDisplayName(resource.modelType)}
                           </Badge>
                         )}
-                        {!isAvailable && resource.hash && (
+                        {/* {!isAvailable && resource.hash && (
                           <CopyButton value={resource.hash}>
                             {({ copy, copied }) => (
                               <Badge
@@ -173,7 +173,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                               </Badge>
                             )}
                           </CopyButton>
-                        )}
+                        )} */}
                         {currentUser?.isModerator && (
                           <ActionIcon
                             size="xs"
@@ -183,7 +183,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                               e.preventDefault();
                               e.nativeEvent.stopImmediatePropagation();
 
-                              handleRemoveResource(resource.id);
+                              handleRemoveResource(resource.modelVersionId);
                             }}
                             disabled={removing}
                           >
