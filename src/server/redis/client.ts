@@ -467,6 +467,7 @@ export const REDIS_KEYS = {
       MODELS: 'packed:caches:mod-rules:models',
       IMAGES: 'packed:caches:mod-rules:images',
     },
+    RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

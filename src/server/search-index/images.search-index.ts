@@ -436,7 +436,7 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
           ir."imageId" as id,
           array_agg(COALESCE(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '')) as "baseModel",
           array_agg(mv."id") as "modelVersionIds"
-        FROM "ImageResource" ir
+        FROM "ImageResourceNew" ir
         JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
         JOIN "Model" m ON mv."modelId" = m."id"
         WHERE ir."imageId" IN (${Prisma.join(batch)})

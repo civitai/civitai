@@ -219,7 +219,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
 //     SELECT DISTINCT
 //       ir."modelVersionId" as id
 //     FROM "Image" i
-//     JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" IS NOT NULL
+//     JOIN "ImageResourceNew" ir ON ir."imageId" = i.id AND ir."modelVersionId" IS NOT NULL
 //     JOIN "Post" p ON i."postId" = p.id
 //     WHERE p."publishedAt" BETWEEN '${ctx.lastUpdate}' AND now();
 //   `;
@@ -240,7 +240,7 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
 //           p."publishedAt"
 //         FROM "ModelVersion" mv
 //         JOIN "Model" m ON m.id = mv."modelId"
-//         JOIN "ImageResource" ir ON mv.id = ir."modelVersionId"
+//         JOIN "ImageResourceNew" ir ON mv.id = ir."modelVersionId"
 //         JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
 //         JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
 //         WHERE
