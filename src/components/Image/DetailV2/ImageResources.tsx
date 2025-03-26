@@ -160,7 +160,13 @@ function RemoveResource({ imageId, modelVersionId }: { imageId: number; modelVer
                 title: 'Successfully removed resource',
                 message: 'The resource was removed from the image',
               });
-              await queryUtils.image.getResources.invalidate({ id: imageId });
+              await queryUtils.image.getGenerationData.setData({ id: imageId }, (old) => {
+                if (!old) return;
+                return {
+                  ...old,
+                  resources: old.resources.filter((x) => x.modelVersionId !== modelVersionId),
+                };
+              });
             },
             onError(error) {
               showErrorNotification({

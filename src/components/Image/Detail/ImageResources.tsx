@@ -104,7 +104,9 @@ export function ImageResources({ imageId }: { imageId: number }) {
                 title: 'Successfully removed resource',
                 message: 'The resource was removed from the image',
               });
-              await queryUtils.image.getResources.invalidate({ id: imageId });
+              await queryUtils.image.getResources.setData({ id: imageId }, (old = []) => {
+                return old.filter((x) => x.modelVersionId !== modelVersionId);
+              });
             },
             onError(error) {
               showErrorNotification({
