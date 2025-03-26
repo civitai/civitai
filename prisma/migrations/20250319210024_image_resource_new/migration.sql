@@ -82,3 +82,29 @@ JOIN "ImageResourceNew" ir ON ir."modelVersionId" = rr."modelVersionId"
 JOIN "Image" i ON i.id = ir."imageId" AND i."userId" = rr."userId"
 WHERE ir."modelVersionId" = rr."modelVersionId"
 GROUP BY rr.id;
+
+create view "PostResourceHelper" as
+SELECT DISTINCT ON ("ImageResourceHelper"."postId", "ImageResourceHelper".name, "ImageResourceHelper"."modelVersionId")
+	"ImageResourceHelper"."imageId",
+	"ImageResourceHelper"."reviewId",
+	"ImageResourceHelper"."reviewRating",
+	"ImageResourceHelper"."reviewRecommended",
+	"ImageResourceHelper"."reviewDetails",
+	"ImageResourceHelper"."reviewCreatedAt",
+	"ImageResourceHelper".name,
+	"ImageResourceHelper"."modelVersionId",
+	"ImageResourceHelper"."modelVersionName",
+	"ImageResourceHelper"."modelVersionCreatedAt",
+	"ImageResourceHelper"."modelId",
+	"ImageResourceHelper"."modelName",
+	"ImageResourceHelper"."modelThumbsUpCount",
+	"ImageResourceHelper"."modelThumbsDownCount",
+	"ImageResourceHelper"."modelDownloadCount",
+	"ImageResourceHelper"."modelCommentCount",
+	"ImageResourceHelper"."modelType",
+	"ImageResourceHelper"."postId",
+-- Leave deprecated fields for now
+  "ImageResourceHelper"."modelRating",
+  "ImageResourceHelper"."modelRatingCount",
+  "ImageResourceHelper"."modelFavoriteCount"
+FROM "ImageResourceHelper";

@@ -4168,7 +4168,6 @@ model ImageResourceHelper {
 
 /// @view
 model PostResourceHelper {
-  id                    Int        @id
   postId                Int
   post                  Post       @relation(fields: [postId], references: [id])
   reviewId              Int?
@@ -4177,7 +4176,8 @@ model PostResourceHelper {
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?
-  modelVersionId        Int?
+  imageId               Int
+  modelVersionId        Int
   modelVersionName      String?
   modelVersionCreatedAt DateTime?
   modelId               Int?
@@ -4188,6 +4188,7 @@ model PostResourceHelper {
   modelThumbsDownCount  Int?
   modelType             ModelType?
 
+  @@id([imageId, modelVersionId])
   @@unique([postId, name, modelVersionId])
 }
 
