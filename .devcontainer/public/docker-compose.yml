@@ -7,6 +7,37 @@ services:
     environment:
       NODE_ENV: development
 
+  signals-redis:
+    image: redis:7-bookworm
+    command: redis-server --requirepass "redis"
+    restart: unless-stopped
+    volumes:
+      - redis-sys:/data/redis
+
+  signals-silo:
+    image: ghcr.io/civitai/civitai-signals-silo:latest
+    depends_on:
+      - signals-redis
+    environment:
+      ConnectionStrings__Redis: signals-redis:6379,password=redis
+
+  signals-api:
+    image: ghcr.io/civitai/civitai-signals-api:latest
+    depends_on:
+      - signals-silo
+    ports:
+      - "8081:8080"
+    environment:
+      ConnectionStrings__Redis: signals-redis:6379,password=redis
+      ConnectionStrings__Silo: signals-silo:5000
+
+  buzz:
+    image: ghcr.io/civitai/civitai-buzz:latest
+    ports:
+      - "8082:8080"
+    environment:
+      ConnectionStrings__BuzzDbContext: Host=db;Port=5432;Database=buzz;Username=postgres;Password=postgres
+
   civitai:
     image: mcr.microsoft.com/devcontainers/typescript-node:1-20
     volumes:
@@ -19,6 +50,8 @@ services:
       - notification-db
       - redis
       - redis-sys
+      - signals-api
+      - buzz
     environment:
       DATABASE_URL: 'postgresql://postgres:postgres@db:5432/civitai'
       DATABASE_REPLICA_URL: 'postgresql://postgres:postgres@db:5432/civitai'
