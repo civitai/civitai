@@ -271,8 +271,8 @@ export const BidModelButton = ({
       label={
         destAuction
           ? isCheckpoint
-            ? 'Bid to boost and enable this model for generation'
-            : 'Bid to boost this model'
+            ? 'Bid to feature this model and enable it for generation'
+            : 'Bid to feature this model'
           : 'No auction available for this model'
       }
     >

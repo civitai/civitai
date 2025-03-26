@@ -587,6 +587,7 @@ export interface Model {
   collectionItems?: CollectionItem[];
   generationCoverage?: GenerationCoverage[];
   flags?: ModelFlag[];
+  coveredCheckpoints?: CoveredCheckpoint[];
 }
 
 export interface ModelFlag {
@@ -698,6 +699,7 @@ export interface ModelVersion {
   DonationGoal?: DonationGoal[];
   featuredInfo?: FeaturedModelVersion[];
   ImageResourceNew?: ImageResourceNew[];
+  coveredCheckpoints?: CoveredCheckpoint[];
 }
 
 export interface ModelVersionEngagement {
@@ -2604,6 +2606,13 @@ export interface FeaturedModelVersion {
   validFrom: Date;
   validTo: Date;
   position: number;
+}
+
+export interface CoveredCheckpoint {
+  model_id: number;
+  version_id: number;
+  model?: Model;
+  modelVersion?: ModelVersion;
 }
 
 export interface ModerationRule {

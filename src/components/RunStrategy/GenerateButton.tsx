@@ -4,6 +4,7 @@ import React from 'react';
 import { BidModelButton, getEntityDataForBidModelButton } from '~/components/Auction/AuctionUtils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesInfiniteModel } from '~/server/services/image.service';
+import { Availability, ModelStatus } from '~/shared/utils/prisma/enums';
 import { generationPanel, useGenerationStore } from '~/store/generation.store';
 import type { ModelById } from '~/types/router';
 import { abbreviateNumber } from '~/utils/number-helpers';
@@ -77,9 +78,11 @@ export function GenerateButton({
   );
 
   const cannotPromote = model?.meta?.cannotPromote ?? false;
+  const isAvailable = model?.availability !== Availability.Private;
+  const isPublished = model?.status === ModelStatus.Published;
 
   const popButton =
-    !canGenerate && features.auctions && !cannotPromote ? (
+    features.auctions && !canGenerate && isAvailable && isPublished && !cannotPromote ? (
       <BidModelButton
         entityData={getEntityDataForBidModelButton({
           version,

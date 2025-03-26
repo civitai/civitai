@@ -93,7 +93,6 @@ import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ReportEntity } from '~/server/schema/report.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
 import type { GetFeaturedModels } from '~/server/services/model.service';
-import { getIsSdxl } from '~/shared/constants/generation.constants';
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation.store';
 import { aDayAgo, formatDate } from '~/utils/date-helpers';
@@ -121,7 +120,7 @@ export type ResourceSelectModalProps = {
   selectSource?: ResourceSelectSource;
 };
 
-const tabs = ['all', 'boosted', 'recent', 'liked', 'mine'] as const;
+const tabs = ['all', 'featured', 'recent', 'liked', 'mine'] as const;
 type Tabs = (typeof tabs)[number];
 const defaultTab: Tabs = 'all';
 
@@ -321,7 +320,7 @@ function ResourceSelectModalContent() {
   );
 
   const isLoadingExtra =
-    (isLoadingFeatured && selectedTab === 'boosted') ||
+    (isLoadingFeatured && selectedTab === 'featured') ||
     ((isLoadingGenerations ||
       isLoadingTraining ||
       isLoadingManuallyAdded ||
@@ -335,7 +334,7 @@ function ResourceSelectModalContent() {
     return !(!currentUser && ['recent', 'liked', 'mine'].includes(t));
   });
   if (!features.auctions) {
-    allowedTabs = allowedTabs.filter((t) => t !== 'boosted');
+    allowedTabs = allowedTabs.filter((t) => t !== 'featured');
   }
 
   const meiliFilters: string[] = [
@@ -386,7 +385,7 @@ function ResourceSelectModalContent() {
     );
   }
 
-  if (selectedTab === 'boosted') {
+  if (selectedTab === 'featured') {
     if (!!featuredModels) {
       meiliFilters.push(`id IN [${featuredModels.map((fm) => fm.modelId).join(',')}]`);
     }
@@ -441,12 +440,12 @@ function ResourceSelectModalContent() {
     onClose?.();
   }
 
-  // TODO there is still an issue with meili sorting boosted results its own way, so we are simply returning 100 records right now
+  // TODO there is still an issue with meili sorting featured results its own way, so we are simply returning 200 records right now
 
   return (
     <>
       <Configure
-        hitsPerPage={selectedTab === 'boosted' ? 100 : hitsPerPage}
+        hitsPerPage={selectedTab === 'featured' ? 200 : hitsPerPage}
         filters={totalFilters}
       />
 
@@ -471,14 +470,14 @@ function ResourceSelectModalContent() {
             data={allowedTabs.map((v) => ({
               value: v,
               label: (
-                <Box className={v === 'boosted' ? 'text-yellow-7' : ''}>{v.toUpperCase()}</Box>
+                <Box className={v === 'featured' ? 'text-yellow-7' : ''}>{v.toUpperCase()}</Box>
               ),
             }))}
             className="shrink-0 @sm:w-full"
           />
           <CategoryTagFilters />
           <div className="flex shrink-0 flex-row items-center justify-end gap-3">
-            {selectedTab !== 'boosted' && <ResourceSelectSort />}
+            {selectedTab !== 'featured' && <ResourceSelectSort />}
             <ResourceSelectFiltersDropdown />
             <GenerationSettingsPopover>
               <ActionIcon>
@@ -575,7 +574,7 @@ function ResourceHitList({
       .filter(isDefined)
       .filter((model) => model.versions.length > 0);
 
-    if (selectedTab === 'boosted') {
+    if (selectedTab === 'featured') {
       ret.sort((a, b) => {
         const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
         const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
@@ -627,7 +626,7 @@ function ResourceHitList({
     );
 
   const filteredSorted =
-    selectedTab === 'boosted'
+    selectedTab === 'featured'
       ? filtered.sort((a, b) => {
           const aPos = featured?.find((fm) => fm.modelId === a.id)?.position;
           const bPos = featured?.find((fm) => fm.modelId === b.id)?.position;
@@ -636,8 +635,8 @@ function ResourceHitList({
           return aPos - bPos;
         })
       : filtered;
-  const topItems = selectedTab === 'boosted' ? filteredSorted.slice(0, 3) : [];
-  const restItems = selectedTab === 'boosted' ? filteredSorted.slice(3) : filteredSorted;
+  const topItems = selectedTab === 'featured' ? filteredSorted.slice(0, 3) : [];
+  const restItems = selectedTab === 'featured' ? filteredSorted.slice(3) : filteredSorted;
 
   return (
     // <ScrollArea id="resource-select-modal" className="flex-1 p-3">
@@ -898,8 +897,8 @@ function ResourceSelectCard({
     });
   };
 
-  const isSDXL = getIsSdxl(selectedVersion.baseModel);
-  const isPony = selectedVersion.baseModel === 'Pony';
+  // const isSDXL = getIsSdxl(selectedVersion.baseModel);
+  // const isPony = selectedVersion.baseModel === 'Pony';
   const isNew = data.publishedAt && data.publishedAt > aDayAgo;
   const isUpdated =
     data.lastVersionAt &&
@@ -944,6 +943,17 @@ function ResourceSelectCard({
           thumbsDownCount={selectedVersion.metrics?.thumbsDownCount ?? 0}
         />
       ),
+    },
+    {
+      label: 'Generation',
+      value: (
+        <ModelVersionPopularity
+          versionId={selectedVersion.id}
+          isCheckpoint={data.type === ModelType.Checkpoint}
+          listenForUpdates={false}
+        />
+      ),
+      visible: selectSource === 'generation' && data.type === ModelType.Checkpoint,
     },
     { label: 'Created', value: formatDate(selectedVersion.createdAt) },
     {
@@ -1105,17 +1115,6 @@ function ResourceSelectCard({
                       )}
                     </div>
                     <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
-                    <Group className="absolute bottom-2 left-2 flex items-center gap-1">
-                      {selectSource === 'generation' && data.type === ModelType.Checkpoint && (
-                        <Badge variant="light" radius="xl" size="sm">
-                          <ModelVersionPopularity
-                            versionId={selectedVersion.id}
-                            isCheckpoint={data.type === ModelType.Checkpoint}
-                            listenForUpdates={false}
-                          />
-                        </Badge>
-                      )}
-                    </Group>
                     <Group className="absolute bottom-2 right-2 flex items-center gap-1">
                       {data.availability === Availability.Private && (
                         <Tooltip

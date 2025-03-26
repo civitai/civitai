@@ -300,7 +300,7 @@ export const AuctionInfo = () => {
                 label={
                   auctionData ? (
                     <Stack spacing={4} align="end">
-                      <Text>Winning resources will be boosted:</Text>
+                      <Text>Winning resources will be featured:</Text>
                       <Text>
                         From: {formatDate(auctionData.validFrom, 'MMM DD, YYYY h:mm:ss a')}
                       </Text>
@@ -311,7 +311,7 @@ export const AuctionInfo = () => {
               >
                 <Group spacing="sm" className="max-md:w-full">
                   <Badge className="max-md:w-[80px]">
-                    <Text>Boosted</Text>
+                    <Text>Featured</Text>
                   </Badge>
 
                   {auctionData ? (

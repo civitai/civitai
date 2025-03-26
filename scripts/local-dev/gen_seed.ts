@@ -2402,7 +2402,7 @@ const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) =
       '2025-03-20 18:13:12.053', // createdAt
       null, // updatedAt
       -1, // userId
-      `{"link": "/models", "title": "Boosted Models", "linkText": "Explore all models", "withIcon": true, "meta": {"rows": 2, "limit": 8}, "description": "A list of all boosted models on the site. To view the complete model list, click Explore All Models."}`, // meta
+      `{"title": "Featured Models", "description": "A list of all featured models on the site."}`, // meta
       4, // index
       'FeaturedModelVersion', // type
       false, // permanent
@@ -2689,11 +2689,11 @@ const genAuctionBases = () => {
       1, // id
       'Model', // type
       null, // ecosystem
-      'Boosted Checkpoints', // name
+      'Featured Checkpoints', // name
       40, // quantity
       1000, // minPrice
       true, // active
-      'boosted-checkpoints', // slug
+      'featured-checkpoints', // slug
       7, // runForDays
       7, // validForDays
     ],
@@ -2701,11 +2701,11 @@ const genAuctionBases = () => {
       2, // id
       'Model', // type
       'Pony', // ecosystem
-      'Boosted Resources - Pony', // name
+      'Featured Resources - Pony', // name
       20, // quantity
       500, // minPrice
       true, // active
-      'boosted-resources-pony', // slug
+      'featured-resources-pony', // slug
       1, // runForDays
       1, // validForDays
     ],
@@ -2713,11 +2713,11 @@ const genAuctionBases = () => {
       3, // id
       'Model', // type
       'Illustrious', // ecosystem
-      'Boosted Resources - Illustrious', // name
+      'Featured Resources - Illustrious', // name
       20, // quantity
       500, // minPrice
       false, // active
-      'boosted-resources-illustrious', // slug
+      'featured-resources-illustrious', // slug
       1, // runForDays
       1, // validForDays
     ],
@@ -2725,11 +2725,11 @@ const genAuctionBases = () => {
       4, // id
       'Model', // type
       'Flux1', // ecosystem
-      'Boosted Resources - Flux', // name
+      'Featured Resources - Flux', // name
       10, // quantity
       200, // minPrice
       true, // active
-      'boosted-resources-flux', // slug
+      'featured-resources-flux', // slug
       1, // runForDays
       1, // validForDays
     ],
@@ -2737,11 +2737,11 @@ const genAuctionBases = () => {
       5, // id
       'Model', // type
       'SDXL', // ecosystem
-      'Boosted Resources - SDXL', // name
+      'Featured Resources - SDXL', // name
       40, // quantity
       500, // minPrice
       true, // active
-      'boosted-resources-sdxl', // slug
+      'featured-resources-sdxl', // slug
       1, // runForDays
       1, // validForDays
     ],
@@ -2749,11 +2749,11 @@ const genAuctionBases = () => {
       6, // id
       'Model', // type
       'SD1', // ecosystem
-      'Boosted Resources - SD1', // name
+      'Featured Resources - SD1', // name
       40, // quantity
       500, // minPrice
       true, // active
-      'boosted-resources-sd1', // slug
+      'featured-resources-sd1', // slug
       1, // runForDays
       1, // validForDays
     ],

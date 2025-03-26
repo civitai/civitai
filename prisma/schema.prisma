@@ -657,6 +657,7 @@ model Model {
   collectionItems    CollectionItem[]
   generationCoverage GenerationCoverage[]
   flags              ModelFlag[]
+  coveredCheckpoints CoveredCheckpoint[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -805,6 +806,7 @@ model ModelVersion {
   DonationGoal            DonationGoal[]
   featuredInfo            FeaturedModelVersion[]
   ImageResourceNew        ImageResourceNew[]
+  coveredCheckpoints      CoveredCheckpoint[]
 
   @@index([modelId], type: Hash)
 }
@@ -3454,6 +3456,15 @@ model FeaturedModelVersion {
   validFrom      DateTime
   validTo        DateTime
   position       Int
+}
+
+model CoveredCheckpoint {
+  model_id     Int
+  version_id   Int
+  model        Model        @relation(fields: [model_id], references: [id], onDelete: Cascade)
+  modelVersion ModelVersion @relation(fields: [version_id], references: [id], onDelete: Cascade)
+
+  @@unique([model_id, version_id])
 }
 
 enum ModerationRuleAction {

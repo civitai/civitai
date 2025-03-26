@@ -249,6 +249,7 @@ export const getModelsRaw = async ({
     excludedUserIds,
     collectionTagId,
     availability,
+    isFeatured,
   } = input;
 
   let pending = input.pending;
@@ -490,6 +491,16 @@ export const getModelsRaw = async ({
   if (supportsGeneration) {
     AND.push(
       Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc."covered" = true)`
+    );
+  }
+
+  if (isFeatured) {
+    const featuredModels = await getFeaturedModels();
+    AND.push(
+      Prisma.sql`m."id" IN (${Prisma.join(
+        featuredModels.map((m) => m.modelId),
+        ','
+      )})`
     );
   }
 

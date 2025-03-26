@@ -5,8 +5,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 export const featureInfo = {
-  name: 'Boosted',
-  description: 'Boosted by the community',
+  name: 'Featured',
+  description: 'Featured by the community',
   markup: -0.2,
 } as const;
 const newInfo = {
@@ -37,17 +37,17 @@ const popularityInfoMap = {
   },
   '0.4': {
     name: 'Taking Off',
-    description: 'Frequently generated with, growing demand',
+    description: 'Frequently generated with',
     markup: 0.0,
   },
   '0.6': {
     name: 'Crushing It',
-    description: 'Strong generation demand, many users',
+    description: 'Strong generation usage',
     markup: -0.1,
   },
   '0.8': {
     name: 'Buzzing!',
-    description: 'Extremely high generation usage, peak demand',
+    description: 'Extremely high generation usage',
     markup: -0.2,
   },
 } as const;

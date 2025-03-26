@@ -22,7 +22,12 @@ import { bustFeaturedModelsCache } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { withRetries } from '~/server/utils/errorHandling';
-import { AuctionType, BuzzAccountType, HomeBlockType } from '~/shared/utils/prisma/enums';
+import {
+  AuctionType,
+  BuzzAccountType,
+  HomeBlockType,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
 const jobName = 'handle-auctions';
@@ -222,6 +227,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
             poi: true,
             nsfw: true,
             userId: true,
+            type: true,
           },
         },
       },
@@ -232,9 +238,60 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
       entityNames[md.id] = md.model.name;
     });
 
+    if (!auctionRow.auctionBase.ecosystem) {
+      // update checkpoint coverage
+      const checkpoints = winners
+        .map((w) => {
+          const mv = modelData.find((m) => m.id === w.entityId);
+          return {
+            model_id: mv?.modelId,
+            version_id: mv?.id,
+            type: mv?.model.type,
+          };
+        })
+        .filter(
+          (
+            c
+          ): c is {
+            model_id: number;
+            version_id: number;
+            type: 'Checkpoint';
+          } => !!c.model_id && !!c.version_id && c.type === ModelType.Checkpoint
+        );
+
+      try {
+        await dbWrite.$transaction(async (tx) => {
+          await tx.$queryRaw`
+            TRUNCATE TABLE "CoveredCheckpoint"
+          `;
+
+          if (checkpoints.length) {
+            await tx.coveredCheckpoint.createMany({
+              data: checkpoints.map((c) => ({
+                model_id: c.model_id,
+                version_id: c.version_id,
+              })),
+              skipDuplicates: true,
+            });
+          }
+        });
+      } catch (error) {
+        const err = error as Error;
+        logToAxiom({
+          name: 'handle-auctions',
+          type: 'error',
+          message: `Failed to update checkpoint coverage`,
+          data: { checkpoints },
+          error: err.message,
+          cause: err.cause,
+          stack: err.stack,
+        }).catch();
+      }
+    }
+
     // Clear related caches
     await bustFeaturedModelsCache();
-    await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 7); // TODO get accurate ID here
+    await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
     await modelVersionResourceCache.bust(winnerIds);
     await bustOrchestratorModelCache(winnerIds);
 

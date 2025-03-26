@@ -405,6 +405,17 @@ export function ModelVersionDetails({
       ),
     },
     {
+      label: 'Generation',
+      value: (
+        <ModelVersionPopularity
+          versionId={version.id}
+          isCheckpoint={model.type === ModelType.Checkpoint}
+          listenForUpdates={true}
+        />
+      ),
+      visible: canGenerate && features.auctions && model.type === ModelType.Checkpoint,
+    },
+    {
       label: 'Reviews',
       value: (
         <ModelVersionReview
@@ -540,18 +551,8 @@ export function ModelVersionDetails({
     },
   ];
 
-  const getFileDetails = (
-    file: ModelById['modelVersions'][number]['files'][number],
-    showPop = false
-  ) => (
+  const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
     <Group position="apart" noWrap spacing={0}>
-      {showPop && couldGenerate && (
-        <ModelVersionPopularity
-          versionId={version.id}
-          isCheckpoint={model.type === ModelType.Checkpoint}
-          listenForUpdates={true}
-        />
-      )}
       <Group>
         <VerifiedText file={file} />
         <Group spacing={4}>
@@ -564,7 +565,7 @@ export function ModelVersionDetails({
       </Group>
     </Group>
   );
-  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile, true);
+  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile);
 
   const downloadMenuItems = filesVisible.map((file) =>
     !archived ? (
@@ -994,8 +995,8 @@ export function ModelVersionDetails({
             <AlertWithIcon color="blue" iconColor="blue" icon={<IconBrush size={16} />} size="sm">
               {isDownloadable && !isLoadingAccess ? (
                 <Text>
-                  You've set this model to Generation-Only. Other users will not be able to download
-                  this model. Click{' '}
+                  You&apos;ve set this model to Generation-Only. Other users will not be able to
+                  download this model. Click{' '}
                   <Text
                     component={Link}
                     variant="link"

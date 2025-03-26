@@ -28,10 +28,11 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache) {
       return homeBlock.metadata.collection?.id;
     case HomeBlockType.Leaderboard:
     case HomeBlockType.Announcement:
-    case HomeBlockType.FeaturedModelVersion:
       return homeBlock.id;
     case HomeBlockType.CosmeticShop:
       return homeBlock.metadata.cosmeticShopSection?.id;
+    case HomeBlockType.FeaturedModelVersion:
+      return 'default';
   }
 }
 
@@ -66,7 +67,7 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
   return parsedHomeBlock;
 }
 
-export async function homeBlockCacheBust(type: HomeBlockType, entityId: number) {
+export async function homeBlockCacheBust(type: HomeBlockType, entityId: number | string) {
   const redisString = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${type}:${entityId}` as const;
   log(`Cache busted: ${redisString}`);
   await redis.del(redisString);
