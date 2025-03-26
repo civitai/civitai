@@ -814,5 +814,7 @@ export async function publishPrivateModelVersionHandler({
     },
   });
 
+  await dataForModelsCache.bust(version.model.id);
+
   return modelVersion;
 }
