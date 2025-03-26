@@ -63,7 +63,7 @@ export function ImageResources({ imageId }: { imageId: number }) {
                 }`
               : undefined;
             return (
-              <li key={resource.id} className="flex flex-col">
+              <li key={`${resource.imageId}_${resource.modelVersionId}`} className="flex flex-col">
                 <div className="flex items-center justify-between gap-3">
                   <Wrapper resource={resource}>
                     <Text
@@ -82,7 +82,10 @@ export function ImageResources({ imageId }: { imageId: number }) {
                         </Badge>
                       )}
                       {currentUser?.isModerator && (
-                        <RemoveResource imageId={imageId} resourceId={resource.id} />
+                        <RemoveResource
+                          imageId={imageId}
+                          modelVersionId={resource.modelVersionId}
+                        />
                       )}
                     </div>
                   )}
@@ -137,7 +140,7 @@ const Wrapper = ({
   );
 };
 
-function RemoveResource({ imageId, resourceId }: { imageId: number; resourceId: number }) {
+function RemoveResource({ imageId, modelVersionId }: { imageId: number; modelVersionId: number }) {
   const queryUtils = trpc.useUtils();
   const { mutate, isLoading } = trpc.image.removeResource.useMutation();
   const handleRemoveResource = () => {
@@ -150,14 +153,20 @@ function RemoveResource({ imageId, resourceId }: { imageId: number; resourceId: 
       confirmProps: { color: 'red' },
       onConfirm: () =>
         mutate(
-          { id: resourceId },
+          { imageId, modelVersionId },
           {
             async onSuccess() {
               showSuccessNotification({
                 title: 'Successfully removed resource',
                 message: 'The resource was removed from the image',
               });
-              await queryUtils.image.getResources.invalidate({ id: imageId });
+              await queryUtils.image.getGenerationData.setData({ id: imageId }, (old) => {
+                if (!old) return;
+                return {
+                  ...old,
+                  resources: old.resources.filter((x) => x.modelVersionId !== modelVersionId),
+                };
+              });
             },
             onError(error) {
               showErrorNotification({

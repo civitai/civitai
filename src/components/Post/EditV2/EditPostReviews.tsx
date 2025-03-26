@@ -94,7 +94,7 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
           <div className="flex flex-col gap-3">
             {reviews.pending.map((resource, index) => (
               <EditResourceReview
-                key={resource.id ?? resource.name ?? index}
+                key={resource.name ?? index}
                 id={resource.reviewId}
                 rating={resource.reviewRating}
                 recommended={resource.reviewRecommended}
@@ -113,7 +113,7 @@ export function EditPostReviews({ post }: { post: PostDetailEditable }) {
                 <Divider label="Previously reviewed" />
                 {reviews.previous.map((resource, index) => (
                   <EditResourceReview
-                    key={resource.id ?? resource.name ?? index}
+                    key={resource.name ?? index}
                     id={resource.reviewId}
                     rating={resource.reviewRating}
                     recommended={resource.reviewRecommended}

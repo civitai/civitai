@@ -3,21 +3,20 @@ import { WorkflowDefinition, workflowDefinitionLabel } from '~/server/services/o
 import { ComfyNode } from '~/shared/types/generation.types';
 import { sortAlphabeticallyBy } from '~/utils/array-helpers';
 import { parseAIR } from '~/utils/string-helpers';
-
-const replacementWorkflows: Record<string, string> = {};
+import { workflowDefinitions } from '~/server/services/orchestrator/comfy/comfy.types';
+import { uniqBy } from 'lodash-es';
 
 export async function getWorkflowDefinitions() {
   const workflowsJsons = await sysRedis.hGetAll(REDIS_SYS_KEYS.GENERATION.WORKFLOWS);
   if (!workflowsJsons) throw new Error('No workflows found');
-  const workflows = Object.values(workflowsJsons).map((json) => {
-    const workflow = JSON.parse(json) as WorkflowDefinition;
-    if (workflow.key in replacementWorkflows)
-      workflow.template = replacementWorkflows[workflow.key];
-    return {
-      ...workflow,
-      label: `${workflowDefinitionLabel[workflow.type]} ${workflow.name}`.trim(),
-    };
-  });
+  const uniqueWorkflows = uniqBy(
+    [...Object.values(workflowsJsons).map((val) => JSON.parse(val)), ...workflowDefinitions],
+    'key'
+  ) as WorkflowDefinition[];
+  const workflows = uniqueWorkflows.map((workflow) => ({
+    ...workflow,
+    label: `${workflowDefinitionLabel[workflow.type]} ${workflow.name}`.trim(),
+  }));
 
   return sortAlphabeticallyBy(workflows, (x) => x.label);
 }
@@ -31,9 +30,10 @@ export async function clearWorkflowDefinitions() {
 
 export async function getWorkflowDefinition(key: string) {
   const workflowJson = await sysRedis.hGet(REDIS_SYS_KEYS.GENERATION.WORKFLOWS, key);
-  if (!workflowJson) throw new Error('Workflow not found');
-  const workflow = JSON.parse(workflowJson) as WorkflowDefinition;
-  if (workflow.key in replacementWorkflows) workflow.template = replacementWorkflows[workflow.key];
+  const workflow = workflowJson
+    ? (JSON.parse(workflowJson) as WorkflowDefinition)
+    : workflowDefinitions.find((x) => x.key === key);
+  if (!workflow) throw new Error('Workflow not found');
   return workflow;
 }
 
@@ -53,6 +53,9 @@ export async function populateWorkflowDefinition(key: string, data: any) {
   try {
     return JSON.parse(populated);
   } catch (e) {
+    console.log('-------------------');
+    console.log(e);
+    console.log('-------------------');
     throw new Error('Failed to populate workflow');
   }
 }

@@ -346,7 +346,7 @@ export const getImageSchema = z.object({
 export type RemoveImageResourceSchema = z.infer<typeof removeImageResourceSchema>;
 export const removeImageResourceSchema = z.object({
   imageId: z.number(),
-  resourceId: z.number(),
+  modelVersionId: z.number(),
 });
 
 export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;

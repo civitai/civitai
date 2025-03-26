@@ -1156,6 +1156,13 @@ export interface ImageResourceNew {
   detected: boolean;
 }
 
+export interface ResourceOverride {
+  hash: string;
+  modelVersionId: number;
+  type: ModelHashType;
+  createdAt: Date;
+}
+
 export interface ImageMetric {
   image?: Image;
   imageId: number;
@@ -3256,7 +3263,6 @@ export interface ModelTag {
 }
 
 export interface ImageResourceHelper {
-  id: number;
   imageId: number;
   image?: Image;
   reviewId: number | null;
@@ -3264,8 +3270,7 @@ export interface ImageResourceHelper {
   reviewDetails: string | null;
   reviewCreatedAt: Date | null;
   name: string | null;
-  hash: string | null;
-  modelVersionId: number | null;
+  modelVersionId: number;
   modelVersionName: string | null;
   modelVersionCreatedAt: Date | null;
   modelId: number | null;
@@ -3280,7 +3285,6 @@ export interface ImageResourceHelper {
 }
 
 export interface PostResourceHelper {
-  id: number;
   postId: number;
   post?: Post;
   reviewId: number | null;
@@ -3289,7 +3293,8 @@ export interface PostResourceHelper {
   reviewDetails: string | null;
   reviewCreatedAt: Date | null;
   name: string | null;
-  modelVersionId: number | null;
+  imageId: number;
+  modelVersionId: number;
   modelVersionName: string | null;
   modelVersionCreatedAt: Date | null;
   modelId: number | null;

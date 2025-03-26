@@ -457,7 +457,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is true), '{}') as "modelVersionIdsAuto",
             coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is not true), '{}') as "modelVersionIdsManual",
             SUM(IIF(m.poi, 1, 0)) > 0 "poi"
-          FROM "ImageResource" ir
+          FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"
           WHERE ir."imageId" IN (${Prisma.join(batch)})
