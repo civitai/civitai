@@ -23,6 +23,7 @@ import { useInView } from '~/hooks/useInView';
 import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 import { ImageSort, ModelSort } from '~/server/common/enums';
 import {
+  flagifyBrowsingLevel,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -32,6 +33,9 @@ import { trpc } from '~/utils/trpc';
 
 export function Home() {
   const domainSettings = useDomainSettings();
+  const flag = domainSettings?.allowedNsfwLevels
+    ? flagifyBrowsingLevel(domainSettings.allowedNsfwLevels)
+    : 0;
   const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery({
     excludedSystemHomeBlockIds: domainSettings?.excludedSystemHomeBlockIds,
     systemHomeBlockIds: domainSettings?.systemHomeBlockIds,
@@ -73,9 +77,7 @@ export function Home() {
             },
           })}
         >
-          <BrowsingLevelProvider
-            browsingLevel={domainSettings?.allowedNsfwLevels ?? sfwBrowsingLevelsFlag}
-          >
+          <BrowsingLevelProvider browsingLevel={flag || sfwBrowsingLevelsFlag}>
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 1 && i > 0;
               return (
@@ -109,9 +111,7 @@ export function Home() {
               );
             })}
           </BrowsingLevelProvider>
-          <BrowsingLevelProvider
-            browsingLevel={domainSettings?.allowedNsfwLevels ?? publicBrowsingLevelsFlag}
-          >
+          <BrowsingLevelProvider browsingLevel={flag || publicBrowsingLevelsFlag}>
             {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
               <Box ref={ref}>
                 <MasonryContainer py={32}>
