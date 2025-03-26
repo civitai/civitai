@@ -22,7 +22,7 @@ export const tempSetMissingNsfwLevel = createJob(
             --     ir."modelVersionId",
             --     row_number() OVER (PARTITION BY ir."modelVersionId" ORDER BY im."reactionCount" DESC) row_num,
             --     i."nsfwLevel"
-            --     FROM "ImageResource" ir
+            --     FROM "ImageResourceNew" ir
             --     JOIN "Image" i ON i.id = ir."imageId"
             --     JOIN "Post" p ON p.id = i."postId"
             --     JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
