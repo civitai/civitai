@@ -61,7 +61,7 @@ export function CivitaiSessionProvider({
       ? flagifyBrowsingLevel(domainSettings.allowedNsfwLevels)
       : 0;
     // The reason we force this is because the user has 0 control here.
-    if (!domainSettings.disableNsfwLevelControl)
+    if (domainSettings.disableNsfwLevelControl)
       currentUser.settings = { ...currentUser.settings, browsingLevel: allowedNsfwLevelsFlag };
     else {
       const intersection = Flags.intersection(

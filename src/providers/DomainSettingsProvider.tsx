@@ -1,6 +1,10 @@
 import { createContext, useContext } from 'react';
-import { useDomainColor } from '~/hooks/useDomainColor';
-import { DEFAULT_DOMAIN_SETTINGS, DomainSettings } from '~/server/common/constants';
+import {
+  ColorDomain,
+  colorDomains,
+  DEFAULT_DOMAIN_SETTINGS,
+  DomainSettings,
+} from '~/server/common/constants';
 import { trpc } from '~/utils/trpc';
 
 const DomainSettingsCtx = createContext<DomainSettings & { isLoading: boolean }>({
@@ -14,7 +18,6 @@ export const useDomainSettings = () => {
   return context;
 };
 export const DomainSettingsProvider = ({ children }: { children: React.ReactNode }) => {
-  const color = useDomainColor();
   const { data: domainSettings, isLoading } = trpc.system.getDomainSettings.useQuery(undefined, {
     cacheTime: Infinity,
     staleTime: Infinity,
@@ -24,7 +27,8 @@ export const DomainSettingsProvider = ({ children }: { children: React.ReactNode
   return (
     <DomainSettingsCtx.Provider
       value={{
-        ...DEFAULT_DOMAIN_SETTINGS[color ?? 'green'],
+        // We need a good way to determine the domain color from here since we don't have access to feature flags.
+        ...DEFAULT_DOMAIN_SETTINGS.green,
         ...domainSettings,
         isLoading,
       }}
