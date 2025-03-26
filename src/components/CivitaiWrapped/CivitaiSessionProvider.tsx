@@ -27,8 +27,8 @@ export function CivitaiSessionProvider({
 }) {
   const { data, update, status } = useSession();
   const user = data?.user;
-  const domainSettings = useDomainSettings();
   useDomainSync(data?.user as SessionUser, status);
+  const domainSettings = useDomainSettings();
   const domain = useDomainColor();
 
   const sessionUser = useMemo(() => {
@@ -63,16 +63,24 @@ export function CivitaiSessionProvider({
     // The reason we force this is because the user has 0 control here.
     if (!domainSettings?.disableNsfwLevelControl)
       currentUser.settings = { ...currentUser.settings, browsingLevel: allowedNsfwLevelsFlag };
-    else
+    else {
+      const intersection = Flags.intersection(
+        currentUser.settings.browsingLevel,
+        allowedNsfwLevelsFlag
+      );
+
       currentUser.settings = {
         ...currentUser.settings,
         browsingLevel:
-          Flags.intersection(currentUser.settings.browsingLevel, allowedNsfwLevelsFlag) ||
-          // In case no intersection is found
-          allowedNsfwLevelsFlag,
+          intersection !== 0
+            ? intersection
+            : // In case no intersection is found
+              allowedNsfwLevelsFlag,
       };
+    }
     return currentUser;
   }, [
+    domain,
     data?.expires,
     disableHidden,
     domainSettings?.disableNsfwLevelControl,

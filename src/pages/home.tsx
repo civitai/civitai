@@ -34,17 +34,20 @@ import { trpc } from '~/utils/trpc';
 export function Home() {
   const domainSettings = useDomainSettings();
   const flag = domainSettings?.allowedNsfwLevels
-    ? flagifyBrowsingLevel(domainSettings.allowedNsfwLevels)
+    ? flagifyBrowsingLevel(domainSettings?.publicNsfwLevels ?? domainSettings.allowedNsfwLevels)
     : 0;
-  const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery({
-    excludedSystemHomeBlockIds: domainSettings?.excludedSystemHomeBlockIds,
-    systemHomeBlockIds: domainSettings?.systemHomeBlockIds,
-  });
+  const { data: homeBlocks = [], isLoading: isLoadingHomeBlocks } =
+    trpc.homeBlock.getHomeBlocks.useQuery({
+      excludedSystemHomeBlockIds: domainSettings?.excludedSystemHomeBlockIds,
+      systemHomeBlockIds: domainSettings?.systemHomeBlockIds,
+    });
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
 
   const [displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed] = useState(false);
   const { ref, inView } = useInView();
+
+  const isLoading = isLoadingHomeBlocks || domainSettings.isLoading;
 
   useEffect(() => {
     if (inView && !displayModelsInfiniteFeed) {

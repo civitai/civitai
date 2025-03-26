@@ -1,3 +1,4 @@
+import { DEFAULT_DOMAIN_SETTINGS } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 
@@ -55,22 +56,6 @@ export function getBrowsingLevelLabel(value: number) {
   return browsingLevelLabels[value as keyof typeof browsingLevelLabels] ?? '?';
 }
 export const nsfwBrowsingLevelsFlag = flagifyBrowsingLevel(nsfwBrowsingLevelsArray);
-
-// #region Base Domain Browser Levels
-export const greenBrowsingLevelsArray: NsfwLevel[] = [NsfwLevel.PG];
-export const greenBrowsingLevelsFlag = flagifyBrowsingLevel(greenBrowsingLevelsArray);
-
-export const blueBrowsingLevelsArray: NsfwLevel[] = [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R];
-export const blueBrowsingLevelsFlag = flagifyBrowsingLevel(blueBrowsingLevelsArray);
-
-export const redBrowsingLevelsArray: NsfwLevel[] = [
-  NsfwLevel.R,
-  NsfwLevel.X,
-  NsfwLevel.XXX,
-  NsfwLevel.Blocked,
-];
-export const redBrowsingLevelsFlag = flagifyBrowsingLevel(redBrowsingLevelsArray);
-// #endregion
 
 // all browsing levels
 export const allBrowsingLevelsFlag = flagifyBrowsingLevel([...browsingLevels]);
@@ -177,16 +162,24 @@ export const browsingModeDefaults = {
   green: {
     showNsfw: false,
     blurNsfw: true,
-    browsingLevel: publicBrowsingLevelsFlag,
+    browsingLevel: flagifyBrowsingLevel(
+      DEFAULT_DOMAIN_SETTINGS.green.publicNsfwLevels ??
+        DEFAULT_DOMAIN_SETTINGS.green.allowedNsfwLevels
+    ),
   },
   blue: {
     showNsfw: true,
     blurNsfw: true,
-    browsingLevel: blueBrowsingLevelsFlag,
+    browsingLevel: flagifyBrowsingLevel(
+      DEFAULT_DOMAIN_SETTINGS.blue.publicNsfwLevels ??
+        DEFAULT_DOMAIN_SETTINGS.blue.allowedNsfwLevels
+    ),
   },
   red: {
     showNsfw: true,
     blurNsfw: false,
-    browsingLevel: redBrowsingLevelsFlag,
+    browsingLevel: flagifyBrowsingLevel(
+      DEFAULT_DOMAIN_SETTINGS.red.publicNsfwLevels ?? DEFAULT_DOMAIN_SETTINGS.red.allowedNsfwLevels
+    ),
   },
 };

@@ -1,7 +1,6 @@
 import React, { createContext, useContext, useState } from 'react';
 import {
   flagifyBrowsingLevel,
-  greenBrowsingLevelsFlag,
   nsfwBrowsingLevelsFlag,
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -48,18 +47,18 @@ export function BrowsingLevelProvider({
   const allowedNsfwLevelsFlag = domainSettings?.allowedNsfwLevels
     ? flagifyBrowsingLevel(domainSettings?.allowedNsfwLevels)
     : 0;
+  const intersection = Flags.intersection(userBrowsingLevel, allowedNsfwLevelsFlag);
   const adjustedUserBrowsingLevel = domainSettings?.allowedNsfwLevels
     ? domainSettings.disableNsfwLevelControl
       ? allowedNsfwLevelsFlag
-      : Flags.intersection(userBrowsingLevel, allowedNsfwLevelsFlag) ||
-        // Ensures we fallback to a proper value if the intersection is 0
+      : intersection !== 0
+      ? intersection
+      : // Ensures we fallback to a proper value if the intersection is 0
         allowedNsfwLevelsFlag
     : userBrowsingLevel;
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const [childBrowsingLevelOverride, setBrowsingLevelOverride] = useState<number | undefined>();
   const [forcedBrowsingLevel, setForcedBrowsingLevel] = useState(parentForcedBrowsingLevel);
-
-  console.log({ adjustedUserBrowsingLevel, userBrowsingLevel });
 
   return (
     <BrowsingModeOverrideCtx.Provider
