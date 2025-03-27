@@ -404,6 +404,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
   key: REDIS_KEYS.CACHES.DATA_FOR_MODEL,
   idKey: 'modelId',
   ttl: CacheTTL.day,
+  cacheNotFound: false,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
 

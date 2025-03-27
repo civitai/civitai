@@ -1894,7 +1894,7 @@ export const getRecentlyManuallyAdded = async ({
   take,
   userId,
 }: LimitOnly & { userId: number }) => {
-  const data = await dbRead.imageResource.findMany({
+  const data = await dbRead.imageResourceNew.findMany({
     select: { modelVersion: { select: { modelId: true } } },
     where: {
       detected: false,

@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.580",
+  "version": "5.0.584",
   "private": true,
   "scripts": {
     "start": "next start",
@@ -170,7 +170,7 @@
     "micro": "^10.0.1",
     "motion": "^11.11.17",
     "msgpackr": "^1.10.2",
-    "next": "^14.2.11",
+    "next": "^14.2.25",
     "next-auth": "^4.24.5",
     "next-plausible": "^3.12.0",
     "next-sitemap": "^4.2.3",
