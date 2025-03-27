@@ -81,42 +81,45 @@ export function GenerateButton({
   const isAvailable = model?.availability !== Availability.Private;
   const isPublished = model?.status === ModelStatus.Published;
 
-  const popButton =
-    features.auctions && !canGenerate && isAvailable && isPublished && !cannotPromote ? (
-      <BidModelButton
-        entityData={getEntityDataForBidModelButton({
-          version,
-          model,
-          image,
-        })}
-        asButton
-        buttonProps={{
-          ...buttonProps,
-          className: 'pl-[8px] pr-[12px] w-full',
-          color: 'cyan',
-        }}
-        divProps={{ className: 'flex-[2]' }}
-      />
-    ) : (
-      <Button
-        variant="filled"
-        sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
-        onClick={onClickHandler}
-        {...buttonProps}
-      >
-        {generationPrice && <>{purchaseIcon}</>}
-        {iconOnly ? (
-          <IconBrush size={24} />
-        ) : (
-          <Group spacing={8} noWrap>
-            <IconBrush size={20} />
-            <Text inherit inline className="hide-mobile">
-              Create
-            </Text>
-          </Group>
-        )}
-      </Button>
-    );
+  const showBid = features.auctions && !canGenerate && isAvailable && isPublished && !cannotPromote;
+
+  if (!showBid || !canGenerate) return null;
+
+  const popButton = showBid ? (
+    <BidModelButton
+      entityData={getEntityDataForBidModelButton({
+        version,
+        model,
+        image,
+      })}
+      asButton
+      buttonProps={{
+        ...buttonProps,
+        className: 'pl-[8px] pr-[12px] w-full',
+        color: 'cyan',
+      }}
+      divProps={{ className: 'flex-[2]' }}
+    />
+  ) : (
+    <Button
+      variant="filled"
+      sx={iconOnly ? { paddingRight: 0, paddingLeft: 0, width: 36 } : { flex: 1 }}
+      onClick={onClickHandler}
+      {...buttonProps}
+    >
+      {generationPrice && <>{purchaseIcon}</>}
+      {iconOnly ? (
+        <IconBrush size={24} />
+      ) : (
+        <Group spacing={8} noWrap>
+          <IconBrush size={20} />
+          <Text inherit inline className="hide-mobile">
+            Create
+          </Text>
+        </Group>
+      )}
+    </Button>
+  );
 
   return iconOnly ? (
     <Tooltip label="Start Generating" withArrow>

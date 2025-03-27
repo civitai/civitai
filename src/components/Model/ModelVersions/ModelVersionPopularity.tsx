@@ -1,4 +1,4 @@
-import { Group, Loader, Text, Tooltip, useMantineTheme } from '@mantine/core';
+import { Group, Loader, MantineColor, Text, Tooltip, useMantineTheme } from '@mantine/core';
 import { IconTemperature } from '@tabler/icons-react';
 import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/model-version.utils';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -75,6 +75,21 @@ export const ModelVersionPopularity = ({
   if (!isCheckpoint) return <></>;
   if (isLoading) return <Loader size="xs" variant="bars" />;
 
+  const popColors: {
+    [key in
+      | (typeof popularityInfoMap)[keyof typeof popularityInfoMap]['name']
+      | 'Featured']: MantineColor;
+  } = {
+    Dormant: theme.colors.red[7],
+    Quiet: theme.colors.orange[8],
+    'Underground Hit': theme.colors.orange[5],
+    'Getting Hype': theme.colors.yellow[5],
+    'Taking Off': theme.colors.lime[6],
+    'Crushing It': theme.colors.lime[9],
+    'Buzzing!': theme.colors.green[7],
+    Featured: theme.colors.teal[7],
+  };
+
   const popularity = data?.popularityRank ?? 0;
   const isFeatured = data?.isFeatured ?? false;
   // const isNew = data?.isNew ?? false; // TODO check for isNew
@@ -92,9 +107,7 @@ export const ModelVersionPopularity = ({
       <Group
         spacing={4}
         style={{
-          color: isFeatured
-            ? theme.colors.green[7]
-            : `rgb(${Math.round(255 * (1 - popularity))}, ${Math.round(255 * popularity)}, 0)`,
+          color: popColors[closestPopularityInfo.name],
         }}
         noWrap
         className="cursor-default"
