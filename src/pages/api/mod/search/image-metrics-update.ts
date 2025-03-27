@@ -138,7 +138,7 @@ const updateBaseModel = async () => {
             ir."imageId" as id,
             string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
             array_agg(mv."id") as "modelVersionIds"
-          FROM "ImageResource" ir
+          FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"
           WHERE ir."imageId" BETWEEN ${start} AND ${end}

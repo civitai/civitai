@@ -1458,12 +1458,20 @@ model ImageResourceNew {
   image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
   modelVersionId Int
   modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
-  hash           String?
   strength       Int?
   detected       Boolean      @default(false)
 
   @@id([imageId, modelVersionId])
   @@index([modelVersionId])
+}
+
+model ResourceOverride {
+  hash           String
+  modelVersionId Int
+  type           ModelHashType
+  createdAt      DateTime      @default(now())
+
+  @@id([hash])
 }
 
 model ImageMetric {
@@ -4172,7 +4180,6 @@ model ModelTag {
 
 /// @view
 model ImageResourceHelper {
-  id                    Int        @id
   imageId               Int
   image                 Image      @relation(fields: [imageId], references: [id])
   reviewId              Int?
@@ -4180,8 +4187,7 @@ model ImageResourceHelper {
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?
-  hash                  String?
-  modelVersionId        Int?
+  modelVersionId        Int
   modelVersionName      String?
   modelVersionCreatedAt DateTime?
   modelId               Int?
@@ -4194,12 +4200,11 @@ model ImageResourceHelper {
   modelVersionBaseModel String?
   detected              Boolean?
 
-  @@unique([imageId, name, modelVersionId])
+  @@id([imageId, modelVersionId])
 }
 
 /// @view
 model PostResourceHelper {
-  id                    Int        @id
   postId                Int
   post                  Post       @relation(fields: [postId], references: [id])
   reviewId              Int?
@@ -4208,7 +4213,8 @@ model PostResourceHelper {
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?
-  modelVersionId        Int?
+  imageId               Int
+  modelVersionId        Int
   modelVersionName      String?
   modelVersionCreatedAt DateTime?
   modelId               Int?
@@ -4219,6 +4225,7 @@ model PostResourceHelper {
   modelThumbsDownCount  Int?
   modelType             ModelType?
 
+  @@id([imageId, modelVersionId])
   @@unique([postId, name, modelVersionId])
 }
 

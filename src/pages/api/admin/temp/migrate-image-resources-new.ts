@@ -5,6 +5,7 @@ import { dataProcessor } from '~/server/db/db-helpers';
 import { pgDbRead, pgDbWrite } from '~/server/db/pgDb';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { dbRead } from '~/server/db/client';
+import { sleep } from '~/server/utils/concurrency-helpers';
 
 const schema = z.object({
   concurrency: z.coerce.number().min(1).max(50).optional().default(15),
@@ -15,12 +16,12 @@ const schema = z.object({
 
 export default WebhookEndpoint(async (req, res) => {
   console.time('MIGRATION_TIMER');
-  await migrateTagLevels(req, res);
+  await migrateImageResources(req, res);
   console.timeEnd('MIGRATION_TIMER');
   res.status(200).json({ finished: true });
 });
 
-async function migrateTagLevels(req: NextApiRequest, res: NextApiResponse) {
+async function migrateImageResources(req: NextApiRequest, res: NextApiResponse) {
   const params = schema.parse(req.query);
   await dataProcessor({
     params,
@@ -32,16 +33,16 @@ async function migrateTagLevels(req: NextApiRequest, res: NextApiResponse) {
       return { ...context, end: max };
     },
     processor: async ({ start, end, cancelFns }) => {
+      await sleep(1000);
       const { cancel, result } = await pgDbWrite.cancellableQuery(`
-        INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", "hash", "strength", "detected")
+        INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", "strength", "detected")
         SELECT
           DISTINCT ON ("imageId", "modelVersionId")
           "imageId",
           "modelVersionId",
-          "hash",
           "strength",
           "detected"
-        FROM "ImageResource" WHERE "imageId" between 1 and 1000
+        FROM "ImageResource" WHERE "imageId" between ${start} and ${end}
         AND "modelVersionId" IS NOT NULL
         ON CONFLICT DO NOTHING;
       `);

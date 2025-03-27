@@ -36,15 +36,7 @@ export const generationRouter = router({
           if (x.status === 'mod-only' && !ctx.user?.isModerator) return false;
           return true;
         })
-        .map(({ type, key, name, features, description, selectable, label }) => ({
-          type,
-          key,
-          name,
-          features,
-          description,
-          selectable,
-          label,
-        }))
+        .map(({ template, ...rest }) => rest)
     )
   ),
   setWorkflowDefinition: moderatorProcedure
