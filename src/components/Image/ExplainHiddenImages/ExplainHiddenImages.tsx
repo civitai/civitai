@@ -32,14 +32,21 @@ export function ExplainHiddenImages({
 
   const totalHiddenByBrowsingLevel = hiddenByBrowsingLevel.length;
   const totalHiddenByTags = hiddenByTags.length;
+  const hiddenByBrowsingLevelFlag = flagifyBrowsingLevel(
+    hiddenByBrowsingLevel.map((x) => x.browsingLevel)
+  );
   const showHiddenBrowsingLevels =
-    totalHiddenByBrowsingLevel > 0 && !domainSettings.disableNsfwLevelControl;
+    totalHiddenByBrowsingLevel.length > 0 &&
+    !domainSettings.disableNsfwLevelControl &&
+    Flags.intersection(domainSettings.allowedNsfwLevelsFlag, hiddenByBrowsingLevelFlag) !== 0;
 
   const handleShowAll = () => {
-    const browsingLevelOverride = flagifyBrowsingLevel(
-      hiddenByBrowsingLevel.map((x) => x.browsingLevel)
+    setBrowsingLevelOverride?.(
+      Flag.intersection(
+        Flags.addFlag(hiddenByBrowsingLevelFlag, browsingLevel),
+        domainSettings.allowedNsfwLevelsFlag
+      )
     );
-    setBrowsingLevelOverride?.(Flags.addFlag(browsingLevelOverride, browsingLevel));
   };
 
   return (

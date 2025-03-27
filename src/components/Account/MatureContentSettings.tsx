@@ -1,4 +1,4 @@
-import { Text, Stack } from '@mantine/core';
+import { Text, Stack, Center, Loader } from '@mantine/core';
 import { BrowsingLevelsStacked } from '~/components/BrowsingLevel/BrowsingLevelsStacked';
 import { ToggleList } from '~/components/ToggleList/ToggleList';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
@@ -15,6 +15,16 @@ export function MatureContentSettings() {
   const domainSettings = useDomainSettings();
   const isRed = domainSettings.color === 'red';
   const showNsfw = _showNsfw || isRed;
+
+  if (domainSettings.isLoading) {
+    return (
+      <Stack>
+        <Center>
+          <Loader />
+        </Center>
+      </Stack>
+    );
+  }
 
   return (
     <Stack>
