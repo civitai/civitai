@@ -25,7 +25,6 @@ export function ExplainHiddenImages({
   const { classes } = useStyles();
   const { data } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
-  // const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const browsingLevel = useBrowsingLevelDebounced();
   const domainSettings = useDomainSettings();
   const { setBrowsingLevelOverride } = useBrowsingLevelContext();

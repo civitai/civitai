@@ -804,7 +804,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     clubId,
   } = input;
 
-  const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
   let isPrivate = false;

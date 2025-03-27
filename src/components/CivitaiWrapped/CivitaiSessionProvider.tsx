@@ -48,7 +48,8 @@ export function CivitaiSessionProvider({
       memberInBadState: user.memberInBadState,
       refresh: update,
       settings: {
-        showNsfw: user.showNsfw,
+        // Always shwo NSFW if the domain is red
+        showNsfw: user.showNsfw || domainSettings.color === 'red',
         browsingLevel: user.browsingLevel,
         disableHidden: disableHidden ?? true,
         allowAds: user.allowAds ?? !isMember ? true : false,
