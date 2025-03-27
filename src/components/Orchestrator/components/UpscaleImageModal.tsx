@@ -1,4 +1,4 @@
-import { Modal, Divider } from '@mantine/core';
+import { Divider, Modal } from '@mantine/core';
 import { z } from 'zod';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -14,6 +14,7 @@ import { GenerationResource } from '~/server/services/generation/generation.serv
 import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/generation.constants';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -58,7 +59,7 @@ function UpscalImageForm({
     generationConfig[getBaseModelSetType(params.baseModel) as keyof typeof generationConfig]
       ?.checkpoint ?? resources[0];
 
-  const { data, isLoading, isInitialLoading, isError } = trpc.orchestrator.getImageWhatIf.useQuery(
+  const whatIf = trpc.orchestrator.getImageWhatIf.useQuery(
     {
       resources: [{ id: defaultModel.id }],
       params: {
@@ -78,7 +79,7 @@ function UpscalImageForm({
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
     type: 'Generation',
   });
@@ -95,24 +96,25 @@ function UpscalImageForm({
       });
       dialog.onClose();
     }
-    conditionalPerformTransaction(data?.cost?.total ?? 0, performTransaction);
+    conditionalPerformTransaction(whatIf.data?.cost?.total ?? 0, performTransaction);
   }
 
   return (
     <GenerationProvider>
       <Form form={form} className="flex flex-col gap-3" onSubmit={handleSubmit}>
-        <InputSourceImageUpload name="sourceImage" removable={false} upscale />
+        <InputSourceImageUpload
+          name="sourceImage"
+          removable={false}
+          upscaleMultiplier
+          upscaleResolution
+        />
         <Divider />
+        <WhatIfAlert error={whatIf.error} />
         <GenerateButton
           type="submit"
-          // onClick={handleSubmit}
-          loading={isLoading || generateImage.isLoading}
-          cost={data?.cost?.total ?? 0}
-          error={
-            !isInitialLoading && isError
-              ? 'Error calculating cost. Please try updating your values'
-              : undefined
-          }
+          loading={whatIf.isInitialLoading || generateImage.isLoading}
+          cost={whatIf.data?.cost?.total ?? 0}
+          disabled={whatIf.isError}
         >
           Upscale
         </GenerateButton>

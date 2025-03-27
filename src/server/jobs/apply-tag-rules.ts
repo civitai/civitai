@@ -3,10 +3,8 @@ import { getTagRules, TagRule } from '~/server/services/system-cache';
 import { dbWrite } from '~/server/db/client';
 import { Prisma } from '@prisma/client';
 import { createLogger } from '~/utils/logging';
-import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 
 const log = createLogger('jobs:apply-tag-rules', 'cyan');
-const IMAGE_BATCH_SIZE = 100000;
 
 export const applyTagRules = createJob('apply-tag-rules', '*/5 * * * *', async () => {
   const [lastApplied, setLastApplied] = await getJobDate('apply-tag-rules');
@@ -72,33 +70,6 @@ async function appendTag({ fromId, toId }: TagRule, maxImageId: number, since?: 
     WHERE "tagId" = ${toId} ${sinceClause}
     ON CONFLICT ("collectionId", "tagId") DO NOTHING;
   `;
-
-  log('Updating images');
-  // Break into batches so that we can handle large numbers of images
-  let cursor = 0;
-  const batchSize = since ? 100 * IMAGE_BATCH_SIZE : IMAGE_BATCH_SIZE;
-  await limitConcurrency(() => {
-    if (cursor > maxImageId) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += batchSize;
-    const end = cursor;
-    log(`Updating images ${start} - ${end}`);
-    return async () => {
-      await dbWrite.$executeRaw`
-        INSERT INTO "TagsOnImage"("imageId", "tagId", automated, confidence, "needsReview", source)
-        SELECT "imageId", ${fromId}, automated, confidence, toi."needsReview", source
-        FROM "TagsOnImage" toi
-        WHERE "tagId" = ${toId}
-          AND "disabledAt" IS NULL
-          AND "imageId" >= ${start}
-          AND "imageId" < ${end}
-          AND EXISTS (SELECT 1 FROM "Image" WHERE id = toi."imageId") -- Ensure image exists
-          ${sinceClause}
-        ON CONFLICT ("imageId", "tagId") DO UPDATE SET confidence = excluded.confidence, source = excluded.source;
-      `;
-    };
-  }, 3);
 }
 
 async function deleteTag({ toId }: TagRule, maxImageId: number, since?: Date) {
@@ -129,26 +100,4 @@ async function deleteTag({ toId }: TagRule, maxImageId: number, since?: Date) {
     DELETE FROM "TagsOnCollection"
     WHERE "tagId" = ${toId} ${sinceClause};
   `;
-
-  log('Disabling images');
-  // Break into batches so that we can handle large numbers of images
-  let cursor = 0;
-  const batchSize = since ? 100 * IMAGE_BATCH_SIZE : IMAGE_BATCH_SIZE;
-  await limitConcurrency(() => {
-    if (cursor > maxImageId) return null; // We've reached the end of the images
-
-    const start = cursor;
-    cursor += batchSize;
-    const end = cursor;
-    log(`Updating images ${start} - ${end}`);
-    return async () => {
-      await dbWrite.$executeRaw`
-        UPDATE "TagsOnImage" SET disabled = true, "disabledAt" = now(), "disabledReason" = 'Replaced'
-        WHERE "tagId" = ${toId} AND "disabledAt" IS NULL
-          AND "imageId" >= ${start}
-          AND "imageId" < ${end}
-          ${sinceClause}
-      `;
-    };
-  }, 3);
 }

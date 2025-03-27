@@ -57,6 +57,7 @@ import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { AssociatedModels } from '~/components/AssociatedModels/AssociatedModels';
+import { BidModelButton } from '~/components/Auction/AuctionUtils';
 import {
   InteractiveTipBuzzButton,
   useBuzzTippingStore,
@@ -96,6 +97,7 @@ import { useToggleFavoriteMutation } from '~/components/ResourceReview/resourceR
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SensitiveShield } from '~/components/SensitiveShield/SensitiveShield';
 import { ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { env } from '~/env/client';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -103,7 +105,6 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import useIsClient from '~/hooks/useIsClient';
 import { openContext } from '~/providers/CustomModalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useTourContext } from '~/components/Tours/ToursProvider';
 import { CAROUSEL_LIMIT } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
@@ -203,19 +204,18 @@ export const getServerSideProps = createServerSideProps({
     const isTraining = !!version?.trainingStatus;
     const draft = version?.status === 'Draft';
     const isOwner = version?.model.userId === session?.user?.id;
-
-    if (isTraining && isOwner) {
-      // Start checking whether to redirect:
-      // TODO: We might wanna redirect to all steps (?).
-      if (draft) {
-        return {
-          redirect: {
-            destination: `/models/${version.model.id}/model-versions/${version.id}/wizard?step=1`,
-            permanent: false,
-          },
-        };
-      }
-    }
+    // TODO: Commenting cause @ally found it's ideal to be able to enter a models' page even if it's unpublished.
+    // if (isTraining && isOwner) {
+    //   // Start checking whether to redirect:
+    //   if (draft) {
+    //     return {
+    //       redirect: {
+    //         destination: `/models/${version.model.id}/model-versions/${version.id}/wizard?step=1`,
+    //         permanent: false,
+    //       },
+    //     };
+    //   }
+    // }
 
     if (ssg) {
       // if (version)
@@ -405,50 +405,6 @@ export default function ModelDetailsV2({
     });
   };
 
-  const deleteVersionMutation = trpc.modelVersion.delete.useMutation({
-    async onMutate(payload) {
-      await queryUtils.model.getById.cancel({ id });
-
-      const previousData = queryUtils.model.getById.getData({ id });
-      if (previousData) {
-        const filteredVersions = previousData.modelVersions.filter((v) => v.id !== payload.id);
-
-        queryUtils.model.getById.setData(
-          { id },
-          { ...previousData, modelVersions: filteredVersions }
-        );
-      }
-
-      return { previousData };
-    },
-    async onSuccess() {
-      const nextLatestVersion = queryUtils.model.getById.getData({ id })?.modelVersions[0];
-      if (nextLatestVersion) router.replace(`/models/${id}?modelVersionId=${nextLatestVersion.id}`);
-      closeAllModals();
-    },
-    onError(error, _variables, context) {
-      showErrorNotification({
-        error: new Error(error.message),
-        title: 'Unable to delete version',
-        reason: error.message ?? 'An unexpected error occurred, please try again',
-      });
-      if (context?.previousData?.id)
-        queryUtils.model.getById.setData({ id: context?.previousData?.id }, context?.previousData);
-    },
-  });
-  const handleDeleteVersion = (versionId: number) => {
-    openConfirmModal({
-      title: 'Delete Version',
-      children:
-        'Are you sure you want to delete this version? This action is destructive and cannot be reverted.',
-      centered: true,
-      labels: { confirm: 'Delete Version', cancel: "No, don't delete it" },
-      confirmProps: { color: 'red', loading: deleteVersionMutation.isLoading },
-      closeOnConfirm: false,
-      onConfirm: () => deleteVersionMutation.mutate({ id: versionId }),
-    });
-  };
-
   const changeModeMutation = trpc.model.changeMode.useMutation();
   const handleChangeMode = async (mode: ModelModifier | null) => {
     const prevModel = queryUtils.model.getById.getData({ id });
@@ -511,6 +467,28 @@ export default function ModelDetailsV2({
           );
         },
       });
+  };
+
+  const toggleCannotPromoteMutation = trpc.model.toggleCannotPromote.useMutation({
+    async onSuccess({ id, meta }) {
+      const prevModel = queryUtils.model.getById.getData({ id });
+      await queryUtils.model.getById.cancel({ id });
+
+      if (prevModel) {
+        queryUtils.model.getById.setData({ id }, { ...prevModel, meta });
+      }
+
+      // invalidate all auction results in case we deleted bids
+      await queryUtils.auction.getBySlug.invalidate();
+
+      showSuccessNotification({ message: 'Successfully toggled cannot promote' });
+    },
+    onError(error) {
+      showErrorNotification({ title: 'Failed to toggle', error: new Error(error.message) });
+    },
+  });
+  const handleToggleCannotPromote = () => {
+    toggleCannotPromoteMutation.mutate({ id });
   };
 
   const view = router.query.view;
@@ -607,6 +585,7 @@ export default function ModelDetailsV2({
     unpublishedReason !== 'other'
       ? unpublishReasons[unpublishedReason]?.notificationMessage
       : `Removal reason: ${model.meta?.customMessage}.`;
+  const isBannedFromPromotion = model.meta?.cannotPromote ?? false;
 
   return (
     <>
@@ -763,6 +742,32 @@ export default function ModelDetailsV2({
                         onClick={() => runTour({ key: 'model-page', step: 0, forceRun: true })}
                       />
                     )}
+                    {features.auctions && selectedVersion && (
+                      <BidModelButton
+                        className={classes.headerButton}
+                        entityData={{
+                          // TODO these overrides are colossally stupid.
+                          ...selectedVersion,
+                          model: {
+                            ...model,
+                            cannotPromote: (model.meta as ModelMeta | null)?.cannotPromote ?? false,
+                          },
+                          image: !!image
+                            ? {
+                                ...image,
+                                userId: image.user.id,
+                                name: image.name ?? '',
+                                width: image.width ?? 0,
+                                height: image.height ?? 0,
+                                hash: image.hash ?? '',
+                                modelVersionId: image.modelVersionId ?? 0,
+                                tags: image.tags ? image.tags.map((t) => t.id) : [],
+                                availability: image.availability ?? Availability.Public,
+                              }
+                            : undefined,
+                        }}
+                      />
+                    )}
                     <ToggleModelNotification
                       className={classes.headerButton}
                       modelId={model.id}
@@ -826,6 +831,13 @@ export default function ModelDetailsV2({
                                 Unpublish as Violation
                               </Menu.Item>
                             )}
+                            <Menu.Item
+                              color="orange"
+                              icon={<IconBan size={14} stroke={1.5} />}
+                              onClick={() => handleToggleCannotPromote()}
+                            >
+                              {isBannedFromPromotion ? 'Allow Promoting' : 'Ban Promoting'}
+                            </Menu.Item>
                             <Menu.Item
                               color={theme.colors.red[6]}
                               icon={<IconTrash size={14} stroke={1.5} />}
@@ -1118,9 +1130,8 @@ export default function ModelDetailsV2({
                     // });
                   }
                 }}
-                onDeleteClick={handleDeleteVersion}
                 showExtraIcons={isOwner || isModerator}
-                showToggleCoverage={model.type === ModelType.Checkpoint}
+                // showToggleCoverage={model.type === ModelType.Checkpoint}
               />
             </Group>
             {!!selectedVersion && (

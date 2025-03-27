@@ -213,49 +213,49 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
-async function getImageTasks(ctx: ModelMetricContext) {
-  const affected = await getAffected(ctx, 'ModelVersion')`
-    -- Get recent model image uploads
-    SELECT DISTINCT
-      ir."modelVersionId" as id
-    FROM "Image" i
-    JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" IS NOT NULL
-    JOIN "Post" p ON i."postId" = p.id
-    WHERE p."publishedAt" BETWEEN '${ctx.lastUpdate}' AND now();
-  `;
+// async function getImageTasks(ctx: ModelMetricContext) {
+//   const affected = await getAffected(ctx, 'ModelVersion')`
+//     -- Get recent model image uploads
+//     SELECT DISTINCT
+//       ir."modelVersionId" as id
+//     FROM "Image" i
+//     JOIN "ImageResourceNew" ir ON ir."imageId" = i.id AND ir."modelVersionId" IS NOT NULL
+//     JOIN "Post" p ON i."postId" = p.id
+//     WHERE p."publishedAt" BETWEEN '${ctx.lastUpdate}' AND now();
+//   `;
 
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getImageTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update model image metrics
-      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "imageCount")
-      SELECT
-        "modelVersionId",
-        timeframe,
-        ${snippets.timeframeSum('i."publishedAt"')} "imageCount"
-      FROM (
-        SELECT
-          ir."modelVersionId",
-          p."publishedAt"
-        FROM "ModelVersion" mv
-        JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "ImageResource" ir ON mv.id = ir."modelVersionId"
-        JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
-        JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
-        WHERE
-          mv.id IN (${ids})
-      ) i
-      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
-      GROUP BY "modelVersionId", timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-        SET "imageCount" = EXCLUDED."imageCount", "updatedAt" = now();
-    `;
-    log('getImageTasks', i + 1, 'of', tasks.length, 'done');
-  });
+//   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
+//     ctx.jobContext.checkIfCanceled();
+//     log('getImageTasks', i + 1, 'of', tasks.length);
+//     await executeRefresh(ctx)`
+//       -- update model image metrics
+//       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "imageCount")
+//       SELECT
+//         "modelVersionId",
+//         timeframe,
+//         ${snippets.timeframeSum('i."publishedAt"')} "imageCount"
+//       FROM (
+//         SELECT
+//           ir."modelVersionId",
+//           p."publishedAt"
+//         FROM "ModelVersion" mv
+//         JOIN "Model" m ON m.id = mv."modelId"
+//         JOIN "ImageResourceNew" ir ON mv.id = ir."modelVersionId"
+//         JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
+//         JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
+//         WHERE
+//           mv.id IN (${ids})
+//       ) i
+//       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+//       GROUP BY "modelVersionId", timeframe
+//       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+//         SET "imageCount" = EXCLUDED."imageCount", "updatedAt" = now();
+//     `;
+//     log('getImageTasks', i + 1, 'of', tasks.length, 'done');
+//   });
 
-  return tasks;
-}
+//   return tasks;
+// }
 
 async function getVersionRatingTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
@@ -428,7 +428,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
         tf.timeframe,
         COUNT(DISTINCT c."addedById") AS "collectedCount"
       FROM "CollectionItem" c
-      JOIN Timeframes tf ON 
+      JOIN Timeframes tf ON
         (tf.timeframe = 'AllTime')
         OR (tf.timeframe = 'Year' AND c."createdAt" > NOW() - INTERVAL '365 days')
         OR (tf.timeframe = 'Month' AND c."createdAt" > NOW() - INTERVAL '30 days')

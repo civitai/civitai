@@ -4,8 +4,8 @@ import { UploadType } from '~/server/common/enums';
 import { extname } from 'node:path';
 import { filenamize, generateToken } from '~/utils/string-helpers';
 import { getMultipartPutUrl } from '~/utils/s3-utils';
-import { logToDb } from '~/utils/logging';
 import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
 
 const upload = async (req: NextApiRequest, res: NextApiResponse) => {
   const session = await getServerAuthSession({ req, res });
@@ -27,7 +27,8 @@ const upload = async (req: NextApiRequest, res: NextApiResponse) => {
 
   const key = `${type ?? UploadType.Default}/${userId}/${filename}.${generateToken(4)}${ext}`;
   const result = await getMultipartPutUrl(key, req.body.size);
-  await logToDb('s3-upload', {
+  await logToAxiom({
+    name: 's3-upload',
     userId,
     type,
     filename: fullFilename,

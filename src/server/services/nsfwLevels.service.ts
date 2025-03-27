@@ -431,22 +431,22 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
         mv.id,
         CASE
           WHEN m.nsfw = TRUE THEN ${nsfwBrowsingLevelsFlag}
-          WHEN m."userId" = -1 THEN (
-            SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
-            FROM (
-              SELECT
-              ir."imageId" id,
-              i."nsfwLevel"
-              FROM "ImageResource" ir
-              JOIN "Image" i ON i.id = ir."imageId"
-              JOIN "Post" p ON p.id = i."postId"
-              JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
-              WHERE ir."modelVersionId" = mv.id
-              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
-              ORDER BY im."reactionCount" DESC
-              LIMIT 20
-            ) AS ranked
-          )
+          -- WHEN m."userId" = -1 THEN (
+          --   SELECT COALESCE(bit_or(ranked."nsfwLevel"), 0) "nsfwLevel"
+          --   FROM (
+          --     SELECT
+          --     ir."imageId" id,
+          --     i."nsfwLevel"
+          --     FROM "ImageResourceNew" ir
+          --     JOIN "Image" i ON i.id = ir."imageId"
+          --     JOIN "Post" p ON p.id = i."postId"
+          --     JOIN "ImageMetric" im ON im."imageId" = ir."imageId" AND im.timeframe = 'AllTime'::"MetricTimeframe"
+          --     WHERE ir."modelVersionId" = mv.id
+          --     AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0 AND i."nsfwLevel" != 32
+          --     ORDER BY im."reactionCount" DESC
+          --     LIMIT 20
+          --   ) AS ranked
+          -- )
           WHEN m."userId" != -1 THEN (
             SELECT COALESCE(bit_or(i."nsfwLevel"), 0) "nsfwLevel"
             FROM (
@@ -456,7 +456,7 @@ export async function updateModelVersionNsfwLevels(modelVersionIds: number[]) {
               JOIN "Image" i ON i."postId" = p.id
               WHERE p."modelVersionId" = mv.id
               AND p."userId" = m."userId"
-              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0
+              AND p."publishedAt" IS NOT NULL AND i."nsfwLevel" != 0 AND i."nsfwLevel" != 32
               ORDER BY p."id", i."index"
               LIMIT 20
             ) AS i

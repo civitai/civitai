@@ -2,14 +2,13 @@ import {
   addWorkflowTag,
   deleteWorkflow as clientDeleteWorkflow,
   getWorkflow as clientGetWorkflow,
+  GetWorkflowData,
   patchWorkflow,
   queryWorkflows as clientQueryWorkflows,
   removeWorkflowTag,
   submitWorkflow as clientSubmitWorkflow,
-  updateWorkflow as clientUpdateWorkflow,
-  GetWorkflowData,
   SubmitWorkflowData,
-  NSFWLevel,
+  updateWorkflow as clientUpdateWorkflow,
 } from '@civitai/client';
 import { z } from 'zod';
 import { isProd } from '~/env/other';
@@ -105,7 +104,7 @@ export async function submitWorkflow({
 
   if (!data) {
     const e = error as any;
-    const message = e.errors ? e.errors.messages.join('\n') : e.detail;
+    const message = e.errors?.messages ? e.errors.messages.join('\n') : e.detail;
 
     if (!isProd) {
       console.log('----Workflow Error----');

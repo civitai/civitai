@@ -158,6 +158,10 @@ export type TechniqueType = "Image" | "Video";
 
 export type AppealStatus = "Pending" | "Approved" | "Rejected";
 
+export type AuctionType = "Model" | "Image" | "Collection" | "Article";
+
+export type ModerationRuleAction = "Approve" | "Block" | "Hold";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -401,6 +405,9 @@ export interface User {
   appeals?: Appeal[];
   resolvedAppeals?: Appeal[];
   cashWithdrawals?: CashWithdrawal[];
+  bids?: Bid[];
+  recurringBids?: BidRecurring[];
+  moderationRules?: ModerationRule[];
 }
 
 export interface CustomerSubscription {
@@ -689,6 +696,8 @@ export interface ModelVersion {
   recommendedResources?: RecommendedResource[];
   recommendedTo?: RecommendedResource[];
   DonationGoal?: DonationGoal[];
+  featuredInfo?: FeaturedModelVersion[];
+  ImageResourceNew?: ImageResourceNew[];
 }
 
 export interface ModelVersionEngagement {
@@ -1067,7 +1076,7 @@ export interface Image {
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   thread?: Thread | null;
-  tags?: TagsOnImage[];
+  tags?: TagsOnImageDetails[];
   tagVotes?: TagsOnImageVote[];
   tagComposites?: ImageTag[];
   metrics?: ImageMetric[];
@@ -1092,6 +1101,8 @@ export interface Image {
   CosmeticShopSection?: CosmeticShopSection[];
   flags?: ImageFlag[];
   ratingRequests?: ImageRatingRequest[];
+  tagsNew?: TagsOnImageNew[];
+  ImageResourceNew?: ImageResourceNew[];
 }
 
 export interface ImageFlag {
@@ -1133,6 +1144,22 @@ export interface ImageResource {
   image?: Image;
   strength: number | null;
   detected: boolean;
+}
+
+export interface ImageResourceNew {
+  imageId: number;
+  image?: Image;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  strength: number | null;
+  detected: boolean;
+}
+
+export interface ResourceOverride {
+  hash: string;
+  modelVersionId: number;
+  type: ModelHashType;
+  createdAt: Date;
 }
 
 export interface ImageMetric {
@@ -1193,7 +1220,6 @@ export interface Tag {
   tagsOnModels?: TagsOnModels[];
   tagsOnModelsVotes?: TagsOnModelsVote[];
   tagsOnQuestion?: TagsOnQuestions[];
-  tagsOnImage?: TagsOnImage[];
   tagsOnImageVotes?: TagsOnImageVote[];
   tagsOnPosts?: TagsOnPost[];
   tagsOnArticles?: TagsOnArticle[];
@@ -1208,6 +1234,7 @@ export interface Tag {
   tagsOnPostVotes?: TagsOnPostVote[];
   tagsOnBounties?: TagsOnBounty[];
   CollectionItem?: CollectionItem[];
+  tagsOnImage?: TagsOnImageDetails[];
 }
 
 export interface TagsOnTags {
@@ -1245,18 +1272,11 @@ export interface TagsOnQuestions {
   tagId: number;
 }
 
-export interface TagsOnImage {
+export interface TagsOnImageNew {
   imageId: number;
   image?: Image;
   tagId: number;
-  tag?: Tag;
-  createdAt: Date;
-  automated: boolean;
-  confidence: number | null;
-  disabled: boolean;
-  disabledAt: Date | null;
-  needsReview: boolean;
-  source: TagSource;
+  attributes: number;
 }
 
 export interface TagsOnImageVote {
@@ -1421,13 +1441,6 @@ export interface CommentReaction {
   reaction: ReviewReactions;
   createdAt: Date;
   updatedAt: Date;
-}
-
-export interface Log {
-  id: string;
-  event: string;
-  details: JsonValue | null;
-  createdAt: Date;
 }
 
 export interface UserNotificationSettings {
@@ -2533,6 +2546,85 @@ export interface Appeal {
   buzzTransactionId: string | null;
 }
 
+export interface AuctionBase {
+  id: number;
+  type: AuctionType;
+  ecosystem: string | null;
+  name: string;
+  slug: string;
+  quantity: number;
+  minPrice: number;
+  active: boolean;
+  auctions?: Auction[];
+  recurringBids?: BidRecurring[];
+}
+
+export interface Auction {
+  id: number;
+  auctionBaseId: number;
+  auctionBase?: AuctionBase;
+  startAt: Date;
+  endAt: Date;
+  quantity: number;
+  minPrice: number;
+  validFrom: Date;
+  validTo: Date;
+  finalized: boolean;
+  bids?: Bid[];
+}
+
+export interface Bid {
+  id: number;
+  auctionId: number;
+  auction?: Auction;
+  userId: number;
+  user?: User;
+  entityId: number;
+  amount: number;
+  createdAt: Date;
+  deleted: boolean;
+  transactionIds: string[];
+  isRefunded: boolean;
+  fromRecurring: boolean;
+}
+
+export interface BidRecurring {
+  id: number;
+  auctionBaseId: number;
+  auctionBase?: AuctionBase;
+  userId: number;
+  user?: User;
+  entityId: number;
+  amount: number;
+  createdAt: Date;
+  startAt: Date;
+  endAt: Date | null;
+  isPaused: boolean;
+}
+
+export interface FeaturedModelVersion {
+  id: number;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  validFrom: Date;
+  validTo: Date;
+  position: number;
+}
+
+export interface ModerationRule {
+  id: number;
+  entityType: EntityType;
+  definition: JsonValue;
+  action: ModerationRuleAction;
+  createdAt: Date;
+  updatedAt: Date;
+  enabled: boolean;
+  order: number | null;
+  reason: string | null;
+  createdById: number;
+  createdBy?: User;
+}
+
 export interface QuestionRank {
   questionId: number;
   question?: Question;
@@ -3170,7 +3262,6 @@ export interface ModelTag {
 }
 
 export interface ImageResourceHelper {
-  id: number;
   imageId: number;
   image?: Image;
   reviewId: number | null;
@@ -3178,8 +3269,7 @@ export interface ImageResourceHelper {
   reviewDetails: string | null;
   reviewCreatedAt: Date | null;
   name: string | null;
-  hash: string | null;
-  modelVersionId: number | null;
+  modelVersionId: number;
   modelVersionName: string | null;
   modelVersionCreatedAt: Date | null;
   modelId: number | null;
@@ -3194,7 +3284,6 @@ export interface ImageResourceHelper {
 }
 
 export interface PostResourceHelper {
-  id: number;
   postId: number;
   post?: Post;
   reviewId: number | null;
@@ -3203,7 +3292,8 @@ export interface PostResourceHelper {
   reviewDetails: string | null;
   reviewCreatedAt: Date | null;
   name: string | null;
-  modelVersionId: number | null;
+  imageId: number;
+  modelVersionId: number;
   modelVersionName: string | null;
   modelVersionCreatedAt: Date | null;
   modelId: number | null;
@@ -3489,6 +3579,20 @@ export interface EntityMetricImage {
   comment: number | null;
   collection: number | null;
   buzz: number | null;
+}
+
+export interface TagsOnImageDetails {
+  imageId: number;
+  image?: Image;
+  tagId: number;
+  tag?: Tag;
+  source: TagSource;
+  automated: boolean;
+  disabled: boolean;
+  needsReview: boolean;
+  reserved_1: boolean;
+  reserved_2: boolean;
+  confidence: number;
 }
 
 type JsonValue = string | number | boolean | { [key in string]?: JsonValue } | Array<JsonValue> | null;

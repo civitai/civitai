@@ -47,7 +47,7 @@ import {
   openExtractionFeeModal,
   openPhasesModal,
   openSettlementModal,
-  openWithdrawalFreeModal,
+  openWithdrawalFeeModal,
 } from '~/components/Buzz/CreatorProgramV2/CreatorProgramV2.modals';
 import { useBuzz } from '~/components/Buzz/useBuzz';
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -73,9 +73,10 @@ import {
   CAP_DEFINITIONS,
   MIN_CAP,
   MIN_WITHDRAWAL_AMOUNT,
+  WITHDRAWAL_FEES,
 } from '~/shared/constants/creator-program.constants';
 import { Flags } from '~/shared/utils';
-import { Currency } from '~/shared/utils/prisma/enums';
+import { CashWithdrawalMethod, Currency } from '~/shared/utils/prisma/enums';
 import { formatDate, roundMinutes } from '~/utils/date-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import {
@@ -563,7 +564,9 @@ const EstimatedEarningsCard = () => {
             <p className="text-lg">
               <span className="font-bold">Your Current Value:</span> $
               {compensationPool
-                ? numberWithCommas(getCurrentValue(banked.total ?? 0, compensationPool))
+                ? numberWithCommas(
+                    formatToLeastDecimals(getCurrentValue(banked.total ?? 0, compensationPool))
+                  )
                 : 'N/A'}
             </p>
             <ActionIcon onClick={openEarningEstimateModal}>
@@ -640,6 +643,10 @@ const WithdrawCashCard = () => {
   const [toWithdraw, setToWithdraw] = React.useState<number>(MIN_WITHDRAWAL_AMOUNT);
 
   const isLoading = isLoadingCash || isLoadingPaymentConfiguration;
+  const withdrawalMethodSetup = userPaymentConfiguration?.tipaltiWithdrawalMethod;
+  const unsupportedWithdrawalMethod = withdrawalMethodSetup
+    ? !WITHDRAWAL_FEES[userPaymentConfiguration.tipaltiWithdrawalMethod as CashWithdrawalMethod]
+    : false;
 
   useEffect(() => {
     if (userCash && userCash.ready) {
@@ -810,7 +817,10 @@ const WithdrawCashCard = () => {
                   h="100%"
                   loading={withdrawingCash}
                   disabled={
-                    toWithdraw < MIN_WITHDRAWAL_AMOUNT || toWithdraw > (userCash?.ready ?? 0)
+                    toWithdraw < MIN_WITHDRAWAL_AMOUNT ||
+                    toWithdraw > (userCash?.ready ?? 0) ||
+                    unsupportedWithdrawalMethod ||
+                    !withdrawalMethodSetup
                   }
                   onClick={() => {
                     dialogStore.trigger({
@@ -835,6 +845,22 @@ const WithdrawCashCard = () => {
                   <IconBuildingBank size={24} />
                 </ActionIcon>
               </Tooltip>
+              {!withdrawalMethodSetup && (
+                <Alert color="red" className="mt-auto p-2">
+                  <p>
+                    It does not seem your withdrawal method has been setup. Please go into your
+                    withdrawal method settings to configure.
+                  </p>
+                </Alert>
+              )}
+              {unsupportedWithdrawalMethod && (
+                <Alert color="red" className="mt-auto p-2">
+                  <p>
+                    Your current withdrawal method is not supported. Please update your withdrawal
+                    method in your Tipalti configuration to one of our supported methods.
+                  </p>
+                </Alert>
+              )}
             </div>
             {userCash?.withdrawalFee && (
               <div className="flex gap-2">
@@ -844,7 +870,7 @@ const WithdrawCashCard = () => {
                     ? formatCurrencyForDisplay(userCash?.withdrawalFee.amount)
                     : formatCurrencyForDisplay(toWithdraw * userCash?.withdrawalFee.amount)}
                 </p>
-                <ActionIcon onClick={openWithdrawalFreeModal}>
+                <ActionIcon onClick={openWithdrawalFeeModal}>
                   <IconInfoCircle size={14} />
                 </ActionIcon>
               </div>
@@ -885,7 +911,7 @@ const WithdrawalHistoryModal = () => {
                 <tbody>
                   {withdrawalHistory?.map((withdrawal) => (
                     <tr key={withdrawal.id}>
-                      <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA [UTC]', true)}</td>
+                      <td>{formatDate(withdrawal.createdAt, 'MMM D, YYYY @ hA z')}</td>
                       <td>
                         <div className="flex items-center gap-2">
                           <span>${formatCurrencyForDisplay(withdrawal.amount)}</span>
@@ -901,7 +927,7 @@ const WithdrawalHistoryModal = () => {
                       </td>
                       <td>
                         <div className="flex items-center gap-2">
-                          <span>{capitalize(withdrawal.status)}</span>
+                          <span>{getDisplayName(withdrawal.status)}</span>
                           {withdrawal.note && (
                             <Tooltip label={withdrawal.note} position="top">
                               <IconInfoCircle size={14} />

@@ -67,7 +67,7 @@ export default WebhookEndpoint(async (req, res) => {
               SELECT
                 m.id,
                 m.nsfw
-              FROM "ImageResource" ir
+              FROM "ImageResourceNew" ir
               LEFT JOIN "ModelVersion" mv on ir."modelVersionId" = mv.id
               JOIN "Model" m on mv."modelId" = m.id
               WHERE ir."imageId" = i.id

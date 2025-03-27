@@ -11,18 +11,9 @@ import {
   SimpleGrid,
   Stack,
   Text,
-  ThemeIcon,
   Title,
-  Tooltip,
   TooltipProps,
 } from '@mantine/core';
-import {
-  BountyEntryMode,
-  BountyMode,
-  BountyType,
-  Currency,
-  TagTarget,
-} from '~/shared/utils/prisma/enums';
 import {
   IconCalendar,
   IconCalendarDue,
@@ -35,11 +26,12 @@ import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React from 'react';
 import { z } from 'zod';
-
-import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
+
+import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -61,19 +53,25 @@ import {
   InputText,
   useForm,
 } from '~/libs/form';
-import { constants, activeBaseModels } from '~/server/common/constants';
+import { activeBaseModels, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { createBountyInputSchema } from '~/server/schema/bounty.schema';
+import {
+  BountyEntryMode,
+  BountyMode,
+  BountyType,
+  Currency,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
+import { stripTime } from '~/utils/date-helpers';
+import { containerQuery } from '~/utils/mantine-css-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
 import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
 import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 import { DaysFromNow } from '../Dates/DaysFromNow';
-import { stripTime } from '~/utils/date-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
+import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -250,7 +248,7 @@ export function BountyCreateForm() {
     message: (requiredBalance) =>
       `You don't have enough funds to create this bounty. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: false,
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>

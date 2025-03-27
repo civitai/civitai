@@ -47,6 +47,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const sortableAttributes = [
     'createdAt',
+    'id',
     'metrics.itemCount',
     'metrics.followerCount',
     'metrics.contributorCount',
@@ -67,7 +68,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     console.log('onIndexSetup :: updateRankingRulesTask created', updateRankingRulesTask);
   }
 
-  const filterableAttributes = ['user.username', 'type', 'nsfwLevel'];
+  const filterableAttributes = ['user.username', 'type', 'nsfwLevel', 'id'];
 
   if (
     // Meilisearch stores sorted.
@@ -281,7 +282,7 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
       c."read",
       c."write",
       c."mode",
-      c."nsfwLevel"   
+      c."nsfwLevel"
       FROM "Collection" c
       WHERE ${Prisma.join(where, ' AND ')}
     ), users AS MATERIALIZED (
@@ -434,8 +435,8 @@ export const collectionsSearchIndex = createSearchIndexUpdateProcessor({
 
     logger(`PullData :: Pulled collection images.`);
 
-    const tags = await dbRead.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabledAt: null },
+    const tags = await dbRead.tagsOnImageDetails.findMany({
+      where: { imageId: { in: imageIds }, disabled: false },
       select: { imageId: true, tagId: true },
     });
 

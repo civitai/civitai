@@ -287,7 +287,7 @@ export const modelNotifications = createNotificationProcessor({
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `We were unable to publish your model version: ${details.displayName} due to insufficient funds. Please remove early access or purchase more buzz to publish.`,
+      message: `We were unable to publish your model version: ${details.displayName} due to insufficient funds. Please remove early access or purchase more Buzz to publish.`,
       url: `/models/${details.modelId}?modelVersionId=${details.modelVersionId}`,
     }),
   },

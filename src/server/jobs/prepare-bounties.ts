@@ -15,8 +15,13 @@ import {
 } from '~/server/email/templates';
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { logToAxiom } from '~/server/logging/client';
 
 const log = createLogger('prepare-bounties', 'blue');
+
+const logJob = (data: MixedObject) => {
+  logToAxiom({ name: 'prepare-bounties', type: 'error', ...data }, 'webhooks').catch();
+};
 
 const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => {
   const [lastRun, setLastRun] = await getJobDate('prepare-bounties');
@@ -60,16 +65,23 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
   for (const { id, userId, user, name, _count } of justExpiredBounties) {
     log('Sending bounty expired reminder to ', userId);
     if (user?.email) {
-      await bountyExpiredEmail.send({
-        bounty: {
-          id,
-          name,
-          entryCount: _count.entries ?? 0,
-        },
-        user: {
-          email: user.email,
-        },
-      });
+      bountyExpiredEmail
+        .send({
+          bounty: { id, name, entryCount: _count.entries ?? 0 },
+          user: { email: user.email },
+        })
+        .catch((error) =>
+          logJob({
+            message: 'Error sending bounty expired email',
+            data: {
+              email: user.email,
+              bountyId: id,
+              error: error.message,
+              cause: error.cause,
+              stack: error.stack,
+            },
+          })
+        );
     }
   }
 
@@ -103,16 +115,24 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
   for (const { id, userId, user, name } of needReminderBounties) {
     log('Sending bounty expired reminder to ', userId);
     if (user?.email && user?.username) {
-      await bountyExpiredReminderEmail.send({
-        bounty: {
-          id,
-          name,
-        },
-        user: {
-          username: user.username,
-          email: user.email,
-        },
-      });
+      bountyExpiredReminderEmail
+        .send({
+          bounty: { id, name },
+          user: { username: user.username, email: user.email },
+        })
+        .catch((error) =>
+          logJob({
+            message: 'Error sending bounty expired reminder email',
+            data: {
+              username: user.username,
+              email: user.email,
+              bountyId: id,
+              error: error.message,
+              cause: error.cause,
+              stack: error.stack,
+            },
+          })
+        );
     }
   }
 
@@ -232,15 +252,23 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
       `);
 
       if (user) {
-        bountyRefundedEmail.send({
-          bounty: {
-            id,
-            name,
-          },
-          user: {
-            email: user.email,
-          },
-        });
+        bountyRefundedEmail
+          .send({
+            bounty: { id, name },
+            user: { email: user.email },
+          })
+          .catch((error) =>
+            logJob({
+              message: 'Error sending bounty refunded email',
+              data: {
+                email: user.email,
+                bountyId: id,
+                error: error.message,
+                cause: error.cause,
+                stack: error.stack,
+              },
+            })
+          );
       }
 
       tracker.bounty({ type: 'Expire', bountyId: id, userId: -1 }).catch(handleLogError);
@@ -306,18 +334,24 @@ const prepareBounties = createJob('prepare-bounties', '0 23 * * *', async () => 
     await bountiesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
 
     if (user) {
-      bountyAutomaticallyAwardedEmail.send({
-        bounty: {
-          id,
-          name,
-        },
-        entry: {
-          id: winnerEntryId,
-        },
-        user: {
-          email: user.email,
-        },
-      });
+      bountyAutomaticallyAwardedEmail
+        .send({
+          bounty: { id, name },
+          entry: { id: winnerEntryId },
+          user: { email: user.email },
+        })
+        .catch((error) =>
+          logJob({
+            message: 'Error sending bounty awarded email',
+            data: {
+              email: user.email,
+              bountyId: id,
+              error: error.message,
+              cause: error.cause,
+              stack: error.stack,
+            },
+          })
+        );
     }
     // Now
     log(`Finished bounty ${id}`);

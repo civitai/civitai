@@ -266,7 +266,7 @@ const createResourceReviewNotification = async ({
     return;
   }
 
-  const imageCount = await dbRead.imageResource.count({
+  const imageCount = await dbRead.imageResourceNew.count({
     where: { modelVersionId, image: { userId } },
   });
 

@@ -1,6 +1,8 @@
 import { Prisma } from '@prisma/client';
 import { uniqBy } from 'lodash-es';
 import type { SessionUser } from 'next-auth';
+
+import { env } from '~/env/server';
 import { getGenerationConfig } from '~/server/common/constants';
 
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
@@ -25,18 +27,13 @@ import {
   GenerationResourceDataModel,
   resourceDataCache,
 } from '~/server/services/model-version.service';
+import { getFeaturedModels } from '~/server/services/model.service';
 import {
   handleLogError,
   throwAuthorizationError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getPrimaryFile, getTrainingFileEpochNumberDetails } from '~/server/utils/model-helpers';
-import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
-
-import { fromJson, toJson } from '~/utils/json-helpers';
-
-import { env } from '~/env/server';
-import { getFeaturedModels } from '~/server/services/model.service';
 import { getPagedData } from '~/server/utils/pagination-helpers';
 import {
   baseModelResourceTypes,
@@ -46,7 +43,10 @@ import {
   getBaseModelSetType,
   SupportedBaseModel,
 } from '~/shared/constants/generation.constants';
+import { Availability, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { isFutureDate } from '~/utils/date-helpers';
+
+import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
@@ -222,6 +222,7 @@ export type RemixOfProps = {
   url?: string;
   type: MediaType;
   similarity?: number;
+  createdAt: Date;
 };
 export type GenerationData = {
   remixOfId?: number;
@@ -278,6 +279,7 @@ async function getMediaGenerationData({
       meta: true,
       height: true,
       width: true,
+      createdAt: true,
     },
   });
   if (!media) throw throwNotFoundError();
@@ -289,6 +291,7 @@ async function getMediaGenerationData({
     type: media.type,
     url: media.url,
     similarity: 1,
+    createdAt: media.createdAt,
   };
 
   const { prompt, negativePrompt } = cleanPrompt(media.meta as Record<string, any>);
@@ -299,9 +302,9 @@ async function getMediaGenerationData({
 
   switch (media.type) {
     case 'image':
-      const imageResources = await dbRead.imageResource.findMany({
+      const imageResources = await dbRead.imageResourceNew.findMany({
         where: { imageId: id },
-        select: { imageId: true, modelVersionId: true, hash: true, strength: true },
+        select: { imageId: true, modelVersionId: true, strength: true },
       });
       const versionIds = [
         ...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined)),
@@ -312,7 +315,6 @@ async function getMediaGenerationData({
           const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
           return {
             ...item,
-            hash: imageResource?.hash ?? undefined,
             strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
           };
         })
@@ -339,22 +341,22 @@ async function getMediaGenerationData({
         ...meta
       } = imageGenerationSchema.parse(media.meta);
 
-      if (meta.hashes && meta.prompt) {
-        for (const [key, hash] of Object.entries(meta.hashes)) {
-          if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
+      // if (meta.hashes && meta.prompt) {
+      //   for (const [key, hash] of Object.entries(meta.hashes)) {
+      //     if (!['lora:', 'lyco:'].some((x) => key.startsWith(x))) continue;
 
-          // get the resource that matches the hash
-          const uHash = hash.toUpperCase();
-          const resource = resources.find((x) => x.hash === uHash);
-          if (!resource || resource.strength) continue;
+      //     // get the resource that matches the hash
+      //     const uHash = hash.toUpperCase();
+      //     const resource = resources.find((x) => x.hash === uHash);
+      //     if (!resource || resource.strength) continue;
 
-          // get everything that matches <key:{number}>
-          const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
-          if (!matches) continue;
+      //     // get everything that matches <key:{number}>
+      //     const matches = new RegExp(`<${key}:([0-9\.]+)>`, 'i').exec(meta.prompt);
+      //     if (!matches) continue;
 
-          resource.strength = parseFloat(matches[1]);
-        }
-      }
+      //     resource.strength = parseFloat(matches[1]);
+      //   }
+      // }
 
       return {
         remixOfId: media.id, // TODO - remove
@@ -489,7 +491,7 @@ export async function getShouldChargeForResources(
       ...acc,
       [modelId]: fileSizeKB
         ? !FREE_RESOURCE_TYPES.includes(modelType) &&
-          !featuredModels.includes(modelId) &&
+          !featuredModels.map((fm) => fm.modelId).includes(modelId) &&
           fileSizeKB > 10 * 1024
         : false,
     }),
@@ -531,6 +533,7 @@ export type GenerationResource = GenerationResourceBase & {
     jobId: string;
     fileName: string;
     epochNumber: number;
+    isExpired: boolean;
   };
   substitute?: GenerationResourceBase;
 };
@@ -664,7 +667,7 @@ export async function getResourceData({
       if (env.ORCHESTRATOR_EXPERIMENTAL && fileSizeKB) {
         additionalResourceCost =
           !FREE_RESOURCE_TYPES.includes(item.model.type) &&
-          !featuredModels.includes(item.model.id) &&
+          !featuredModels.map((fm) => fm.modelId).includes(item.model.id) &&
           fileSizeKB > 10 * 1024;
       }
 
@@ -704,6 +707,9 @@ export async function getResourceData({
         substitute: substituteData,
       });
 
+      /*
+        epochs are used to generate images from a trained model before the model is finished training. It allows the user to determine the best trained model from the available epochs.
+      */
       return (epochsDetails?.length ?? 0) > 0
         ? epochsDetails.map((epochDetails) => ({ ...payload, epochDetails }))
         : payload;

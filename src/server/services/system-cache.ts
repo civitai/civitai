@@ -43,6 +43,8 @@ export async function getModeratedTags(): Promise<SystemModerationTag[]> {
     })
     .filter(isDefined);
 
+  console.log(tagsOnTags);
+
   const combined: SystemModerationTag[] = [...tags, ...normalizedTagsOnTags];
 
   await redis.packed.set(REDIS_KEYS.SYSTEM.MODERATED_TAGS, combined, {

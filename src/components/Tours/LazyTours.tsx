@@ -31,7 +31,10 @@ export default function LazyTours({ getHelpers }: Pick<JoyrideProps, 'getHelpers
         window.dispatchEvent(new Event('resize'));
       }
 
-      if (type === EVENTS.TOUR_END && completeStatus.includes(status)) {
+      if (
+        (type === EVENTS.TOUR_END && completeStatus.includes(status)) ||
+        action === ACTIONS.CLOSE
+      ) {
         closeTour({ reset: true });
         return;
       }

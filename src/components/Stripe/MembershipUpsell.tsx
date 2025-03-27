@@ -23,6 +23,8 @@ import { constants } from '~/server/common/constants';
 import { SubscriptionProductMetadata } from '~/server/schema/subscriptions.schema';
 import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 
 const useStyles = createStyles((theme) => ({
   card: {
@@ -100,7 +102,8 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   }
 
   const metadata = (targetPlan.metadata ?? {}) as SubscriptionProductMetadata;
-  const { image, benefits } = getPlanDetails(targetPlan, featureFlags);
+  const planMeta = getPlanDetails(targetPlan, featureFlags);
+  const { image, benefits } = planMeta;
 
   const targetTier = metadata.tier ?? 'free';
   // const monthlyBuzz = metadata.monthlyBuzz ?? 0;
@@ -138,13 +141,33 @@ export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
           ))}
         </Stack>
         <div>
-          <SubscribeButton priceId={priceId}>
-            <Button radius="xl" size="md" mt="sm">
-              Get {capitalize(targetTier)} - $
-              {formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
+          {subscription ? (
+            <Button
+              radius="xl"
+              size="md"
+              mt="sm"
+              onClick={() => {
+                dialogStore.trigger({
+                  component: MembershipUpgradeModal,
+                  props: {
+                    priceId,
+                    meta: planMeta,
+                  },
+                });
+              }}
+            >
+              Upgrade - ${formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
               /Month
             </Button>
-          </SubscribeButton>
+          ) : (
+            <SubscribeButton priceId={priceId}>
+              <Button radius="xl" size="md" mt="sm">
+                Get {capitalize(targetTier)} - $
+                {formatPriceForDisplay(unitAmount, undefined, { decimals: false })}
+                /Month
+              </Button>
+            </SubscribeButton>
+          )}
         </div>
         <Text mt="auto" size="sm">
           Cancel for free anytime. <Anchor href="/pricing">Learn more</Anchor>

@@ -51,6 +51,7 @@ export function getClient(
   const pool = new Pool({
     connectionString,
     connectionTimeoutMillis: env.DATABASE_CONNECTION_TIMEOUT,
+    min: 0,
     max: env.DATABASE_POOL_MAX,
     idleTimeoutMillis: env.DATABASE_POOL_IDLE_TIMEOUT,
     statement_timeout:
@@ -128,6 +129,7 @@ type LaggingType =
   | 'postImages'
   | 'article';
 
+// TODO move these functions so we dont import redis when getting pgdb
 export async function getDbWithoutLag(type: LaggingType, id?: number) {
   if (env.REPLICATION_LAG_DELAY <= 0 || !id) return dbRead;
   const value = await redis.get(`${REDIS_KEYS.LAG_HELPER}:${type}:${id}`);
@@ -200,7 +202,11 @@ export async function dataProcessor({
     cursor++; // To avoid batch overlap
 
     return async () => {
-      await processor({ ...context, start, end });
+      try {
+        await processor({ ...context, start, end });
+      } catch (e) {
+        console.log({ start, end, message: (e as Error).message });
+      }
     };
   }, concurrency);
 }

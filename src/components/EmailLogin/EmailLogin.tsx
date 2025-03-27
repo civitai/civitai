@@ -5,6 +5,7 @@ import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { z } from 'zod';
 import { Form, InputText, useForm } from '~/libs/form';
+import { showErrorNotification } from '~/utils/notifications';
 
 const schema = z.object({
   email: z.string().trim().toLowerCase().email(),
@@ -25,18 +26,25 @@ export const EmailLogin = ({
   const form = useForm({ schema });
   const handleEmailLogin = async ({ email }: z.infer<typeof schema>) => {
     onStatusChange('loading');
-    const result = await signIn('email', { email, redirect: false, callbackUrl: returnUrl });
-    if (result?.error === 'AccessDenied') {
-      router.replace({ query: { error: 'NoExtraEmails' } }, undefined, { shallow: true });
+    try {
+      const result = await signIn('email', { email, redirect: false, callbackUrl: returnUrl });
+      if (result?.error === 'AccessDenied') {
+        router.replace({ query: { error: 'NoExtraEmails' } }, undefined, { shallow: true });
+        onStatusChange('idle');
+        return;
+      } else if (result?.error) {
+        router.replace({ query: { error: 'TooManyRequests' } }, undefined, { shallow: true });
+        onStatusChange('idle');
+        return;
+      }
+      onStatusChange('submitted');
+    } catch (error) {
+      showErrorNotification({
+        title: 'Failed to sign in',
+        error: new Error('Email sign-in is not available. Please try again later.'),
+      });
       onStatusChange('idle');
-      return;
-    } else if (result?.error) {
-      router.replace({ query: { error: 'TooManyRequests' } }, undefined, { shallow: true });
-      onStatusChange('idle');
-      return;
     }
-
-    onStatusChange('submitted');
   };
 
   if (status === 'submitted')

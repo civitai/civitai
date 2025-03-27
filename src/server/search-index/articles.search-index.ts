@@ -32,6 +32,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'content',
     'tags.name',
     'user.username',
+    'id',
   ]);
 
   console.log(
@@ -46,6 +47,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'stats.collectedCount',
     'stats.viewCount',
     'stats.tippedAmountCount',
+    'id',
   ]);
 
   console.log('onIndexSetup :: sortableFieldsAttributesTask created', sortableFieldsAttributesTask);

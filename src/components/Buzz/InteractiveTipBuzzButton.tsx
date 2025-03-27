@@ -9,25 +9,25 @@ import {
   UnstyledButton,
   UnstyledButtonProps,
 } from '@mantine/core';
+import { useInterval, useLocalStorage } from '@mantine/hooks';
+import { showNotification } from '@mantine/notifications';
+import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { create } from 'zustand';
+import { devtools } from 'zustand/middleware';
+import { immer } from 'zustand/middleware/immer';
+import { useBuzz } from '~/components/Buzz/useBuzz';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { LoginPopover } from '~/components/LoginPopover/LoginPopover';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { IconBolt, IconCheck, IconSend, IconX } from '@tabler/icons-react';
-import { useInterval, useLocalStorage } from '@mantine/hooks';
-import { showNotification } from '@mantine/notifications';
-import { devtools } from 'zustand/middleware';
-import { create } from 'zustand';
-import { immer } from 'zustand/middleware/immer';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { useBuzzTransaction } from './buzz.utils';
-import { useTrackEvent } from '../TrackView/track.utils';
-import { isTouchDevice } from '~/utils/device-helpers';
-import { useBuzz } from '~/components/Buzz/useBuzz';
-import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { constants } from '~/server/common/constants';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { isTouchDevice } from '~/utils/device-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
+import { useTrackEvent } from '../TrackView/track.utils';
+import { useBuzzTransaction } from './buzz.utils';
 
 type Props = UnstyledButtonProps & {
   toUserId: number;
@@ -134,7 +134,7 @@ export function InteractiveTipBuzzButton({
     message: (requiredBalance) =>
       `You don't have enough funds to send a tip. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: false,
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>

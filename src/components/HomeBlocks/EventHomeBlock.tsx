@@ -105,7 +105,7 @@ function EventHomeBlockContent({ metadata }: Props) {
                     {abbreviateNumber(totalTeamScores)}
                   </Text>
                 </Group>
-                <Text size="xs">Total buzz donations</Text>
+                <Text size="xs">Total Buzz donations</Text>
               </Stack>
               {teamScore && equipped && (
                 <Stack align="end" spacing={0}>

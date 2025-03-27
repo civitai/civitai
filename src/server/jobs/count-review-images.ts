@@ -32,7 +32,7 @@ export const countReviewImages = createJob('count-review-images', '0 22 * * *', 
     const affectedReviewsQuery = await pgDbWrite.cancellableQuery<ReviewRow>(`
         SELECT DISTINCT
           rr.id as "reviewId"
-        FROM "ImageResource" ir
+        FROM "ImageResourceNew" ir
         JOIN "Image" i ON i.id = ir."imageId"
         JOIN "Post" p ON p.id = i."postId" AND p."publishedAt" IS NOT NULL
         JOIN "ResourceReview" rr ON rr."modelVersionId" = ir."modelVersionId" AND rr."userId" = i."userId"
@@ -66,7 +66,7 @@ export const countReviewImages = createJob('count-review-images', '0 22 * * *', 
         r.id as "reviewId",
         COUNT(i.id) AS images
       FROM "ResourceReview" r
-      JOIN "ImageResource" ir ON ir."modelVersionId" = r."modelVersionId"
+      JOIN "ImageResourceNew" ir ON ir."modelVersionId" = r."modelVersionId"
       JOIN "Image" i ON i.id = ir."imageId" AND i."userId" = r."userId"
       WHERE r.id IN (${reviews})
       GROUP BY r.id;

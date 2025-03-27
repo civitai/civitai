@@ -1,3 +1,4 @@
+import { auctionTour } from '~/components/Tours/tours/auction.tour';
 import {
   contentGenerationTour,
   remixContentGenerationTour,
@@ -10,6 +11,7 @@ export const tourSteps = {
   'remix-content-generation': remixContentGenerationTour,
   'post-generation': postGenerationTour,
   'model-page': modelPageTour,
+  auction: auctionTour,
   welcome: welcomeTour,
 } as const;
 

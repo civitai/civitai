@@ -344,6 +344,9 @@ model User {
   appeals                    Appeal[]                       @relation("submittedAppeals")
   resolvedAppeals            Appeal[]                       @relation("resolvedAppeals")
   cashWithdrawals            CashWithdrawal[]
+  bids                       Bid[]
+  recurringBids              BidRecurring[]
+  moderationRules            ModerationRule[]
 
   @@index([deletedAt])
 }
@@ -800,6 +803,8 @@ model ModelVersion {
   recommendedResources    RecommendedResource[]     @relation("recommendedResources")
   recommendedTo           RecommendedResource[]     @relation("recommendedTo")
   DonationGoal            DonationGoal[]
+  featuredInfo            FeaturedModelVersion[]
+  ImageResourceNew        ImageResourceNew[]
 
   @@index([modelId], type: Hash)
 }
@@ -1351,7 +1356,7 @@ model Image {
   reports             ImageReport[]
   reactions           ImageReaction[]
   thread              Thread?
-  tags                TagsOnImage[]
+  tags                TagsOnImageDetails[]
   tagVotes            TagsOnImageVote[]
   tagComposites       ImageTag[]
   metrics             ImageMetric[]
@@ -1376,6 +1381,8 @@ model Image {
   CosmeticShopSection CosmeticShopSection[]
   flags               ImageFlag[]
   ratingRequests      ImageRatingRequest[]
+  tagsNew             TagsOnImageNew[]
+  ImageResourceNew    ImageResourceNew[]
 
   @@index([featuredAt])
   @@index([postId], type: Hash)
@@ -1443,6 +1450,27 @@ model ImageResource {
   @@unique([modelVersionId, name, imageId])
   @@index([imageId], type: Hash)
   @@index([imageId, modelVersionId])
+}
+
+model ImageResourceNew {
+  imageId        Int
+  image          Image        @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  strength       Int?
+  detected       Boolean      @default(false)
+
+  @@id([imageId, modelVersionId])
+  @@index([modelVersionId])
+}
+
+model ResourceOverride {
+  hash           String
+  modelVersionId Int
+  type           ModelHashType
+  createdAt      DateTime      @default(now())
+
+  @@id([hash])
 }
 
 model ImageMetric {
@@ -1528,12 +1556,11 @@ model Tag {
   isCategory Boolean     @default(false)
   adminOnly  Boolean     @default(false)
 
-  toTags               TagsOnTags[]       @relation("TagsOnTags_fromTag")
-  fromTags             TagsOnTags[]       @relation("TagsOnTags_toTag")
+  toTags               TagsOnTags[]         @relation("TagsOnTags_fromTag")
+  fromTags             TagsOnTags[]         @relation("TagsOnTags_toTag")
   tagsOnModels         TagsOnModels[]
   tagsOnModelsVotes    TagsOnModelsVote[]
   tagsOnQuestion       TagsOnQuestions[]
-  tagsOnImage          TagsOnImage[]
   tagsOnImageVotes     TagsOnImageVote[]
   tagsOnPosts          TagsOnPost[]
   tagsOnArticles       TagsOnArticle[]
@@ -1548,6 +1575,7 @@ model Tag {
   tagsOnPostVotes      TagsOnPostVote[]
   tagsOnBounties       TagsOnBounty[]
   CollectionItem       CollectionItem[]
+  tagsOnImage          TagsOnImageDetails[]
 
   @@unique([name])
 }
@@ -1617,24 +1645,14 @@ enum TagSource {
   HiveDemographics
 }
 
-model TagsOnImage {
-  imageId     Int
-  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
-  tagId       Int
-  tag         Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  createdAt   DateTime  @default(now())
-  automated   Boolean   @default(false)
-  confidence  Int?
-  disabled    Boolean   @default(false)
-  disabledAt  DateTime?
-  needsReview Boolean   @default(false)
-  source      TagSource @default(User)
+model TagsOnImageNew {
+  imageId    Int
+  image      Image @relation(fields: [imageId], references: [id])
+  tagId      Int
+  attributes Int   @db.SmallInt()
 
-  @@id([tagId, imageId])
-  @@index([imageId], type: Hash)
-  @@index([automated])
-  @@index([source])
-  @@index([disabled])
+  @@id([imageId, tagId])
+  @@index([tagId])
 }
 
 model TagsOnImageVote {
@@ -1844,13 +1862,6 @@ model CommentReaction {
   updatedAt DateTime        @updatedAt
 
   @@unique([commentId, userId, reaction])
-}
-
-model Log {
-  id        String   @id @default(cuid())
-  event     String
-  details   Json?
-  createdAt DateTime @default(now())
 }
 
 model UserNotificationSettings {
@@ -3364,6 +3375,114 @@ model Appeal {
   @@index([status])
 }
 
+enum AuctionType {
+  Model
+  Image
+  Collection
+  Article
+}
+
+model AuctionBase {
+  id        Int         @id @default(autoincrement())
+  type      AuctionType
+  ecosystem String? // like Pony, SDXL, etc
+  name      String
+  slug      String
+  quantity  Int // propagates to individual item
+  minPrice  Int // propagates to individual item
+  // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
+  active    Boolean     @default(true)
+
+  auctions      Auction[]
+  recurringBids BidRecurring[]
+
+  @@unique([type, ecosystem])
+  @@unique([name])
+  @@unique([slug])
+}
+
+model Auction {
+  id            Int         @id @default(autoincrement())
+  auctionBaseId Int
+  auctionBase   AuctionBase @relation(fields: [auctionBaseId], references: [id], onDelete: Cascade)
+  startAt       DateTime
+  endAt         DateTime
+  quantity      Int
+  minPrice      Int
+  validFrom     DateTime
+  validTo       DateTime
+  finalized     Boolean     @default(false)
+  // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
+  // sold Int
+
+  bids Bid[]
+
+  @@unique([auctionBaseId, startAt])
+}
+
+model Bid {
+  id             Int      @id @default(autoincrement())
+  auctionId      Int
+  auction        Auction  @relation(fields: [auctionId], references: [id], onDelete: Cascade)
+  userId         Int
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityId       Int
+  amount         Int
+  createdAt      DateTime @default(now())
+  deleted        Boolean  @default(false)
+  transactionIds String[] @default([])
+  isRefunded     Boolean  @default(false)
+  fromRecurring  Boolean  @default(false)
+
+  @@unique([auctionId, userId, entityId])
+}
+
+model BidRecurring {
+  id            Int         @id @default(autoincrement())
+  auctionBaseId Int
+  auctionBase   AuctionBase @relation(fields: [auctionBaseId], references: [id], onDelete: Cascade)
+  userId        Int
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  entityId      Int
+  amount        Int
+  createdAt     DateTime    @default(now())
+  startAt       DateTime
+  endAt         DateTime?
+  isPaused      Boolean     @default(false)
+
+  @@unique([auctionBaseId, userId, entityId])
+}
+
+model FeaturedModelVersion {
+  id             Int          @id @default(autoincrement())
+  modelVersionId Int
+  modelVersion   ModelVersion @relation(fields: [modelVersionId], references: [id], onDelete: Cascade)
+  validFrom      DateTime
+  validTo        DateTime
+  position       Int
+}
+
+enum ModerationRuleAction {
+  Approve
+  Block
+  Hold
+}
+
+model ModerationRule {
+  id         Int                  @id @default(autoincrement())
+  entityType EntityType
+  definition Json
+  action     ModerationRuleAction
+  createdAt  DateTime             @default(now())
+  updatedAt  DateTime             @updatedAt
+  enabled    Boolean              @default(true)
+  order      Int?
+  reason     String?
+
+  createdById Int
+  createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+}
+
 /// @view
 model QuestionRank {
   questionId              Int      @id
@@ -4024,7 +4143,6 @@ model ModelTag {
 
 /// @view
 model ImageResourceHelper {
-  id                    Int        @id
   imageId               Int
   image                 Image      @relation(fields: [imageId], references: [id])
   reviewId              Int?
@@ -4032,8 +4150,7 @@ model ImageResourceHelper {
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?
-  hash                  String?
-  modelVersionId        Int?
+  modelVersionId        Int
   modelVersionName      String?
   modelVersionCreatedAt DateTime?
   modelId               Int?
@@ -4046,12 +4163,11 @@ model ImageResourceHelper {
   modelVersionBaseModel String?
   detected              Boolean?
 
-  @@unique([imageId, name, modelVersionId])
+  @@id([imageId, modelVersionId])
 }
 
 /// @view
 model PostResourceHelper {
-  id                    Int        @id
   postId                Int
   post                  Post       @relation(fields: [postId], references: [id])
   reviewId              Int?
@@ -4060,7 +4176,8 @@ model PostResourceHelper {
   reviewDetails         String?
   reviewCreatedAt       DateTime?
   name                  String?
-  modelVersionId        Int?
+  imageId               Int
+  modelVersionId        Int
   modelVersionName      String?
   modelVersionCreatedAt DateTime?
   modelId               Int?
@@ -4071,6 +4188,7 @@ model PostResourceHelper {
   modelThumbsDownCount  Int?
   modelType             ModelType?
 
+  @@id([imageId, modelVersionId])
   @@unique([postId, name, modelVersionId])
 }
 
@@ -4383,4 +4501,21 @@ model EntityMetricImage {
   comment       Int?
   collection    Int?
   buzz          Int?
+}
+
+/// @view
+model TagsOnImageDetails {
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id])
+  tagId       Int
+  tag         Tag       @relation(fields: [tagId], references: [id])
+  source      TagSource
+  automated   Boolean
+  disabled    Boolean
+  needsReview Boolean
+  reserved_1  Boolean
+  reserved_2  Boolean
+  confidence  Int
+
+  @@id([imageId, tagId])
 }

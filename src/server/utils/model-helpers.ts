@@ -1,5 +1,6 @@
 import { startCase } from 'lodash-es';
 import { ModelFileType } from '~/server/common/constants';
+import { canGenerateWithEpoch } from '~/server/common/model-helpers';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 
@@ -82,10 +83,15 @@ export const getTrainingFileEpochNumberDetails = (
   const jobFileUrl = downloadUrl.split('/jobs/')[1]; // Leaves you with: ${jobId}/assets/${fileName}
   const jobId = jobFileUrl.split('/assets/')[0];
   const fileName = jobFileUrl.split('/assets/')[1];
+  const completeDate =
+    file.metadata.trainingResults?.version === 2
+      ? file.metadata.trainingResults.completedAt
+      : file.metadata.trainingResults?.end_time;
 
   return {
     jobId,
     fileName,
     epochNumber: epochNumber ?? ('epoch_number' in epoch ? epoch.epoch_number : epoch.epochNumber),
+    isExpired: !canGenerateWithEpoch(completeDate),
   };
 };

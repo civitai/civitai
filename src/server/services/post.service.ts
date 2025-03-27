@@ -1055,19 +1055,16 @@ export const addResourceToPostImage = async ({
   // TODO restrictions on allowedTypes
 
   // noinspection JSPotentiallyInvalidTargetOfIndexedPropertyAccess
-  const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();
-  const name = `${modelVersion.model.name} - ${modelVersion.name}`;
+  // const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();
 
-  const createdResources = await dbWrite.imageResource.createManyAndReturn({
+  const createdResources = await dbWrite.imageResourceNew.createManyAndReturn({
     data: imageIds.map((imageId) => ({
       modelVersionId,
       imageId,
-      name,
-      hash,
       detected: false,
     })),
     skipDuplicates: true,
-    select: { id: true, imageId: true },
+    select: { modelVersionId: true, imageId: true },
   });
 
   if (createdResources.length > 0) {
@@ -1096,7 +1093,10 @@ export const addResourceToPostImage = async ({
   }
 
   return dbWrite.imageResourceHelper.findMany({
-    where: { id: { in: createdResources.map((x) => x.id) } },
+    where: {
+      imageId: { in: createdResources.map((x) => x.imageId) },
+      modelVersionId: { in: createdResources.map((x) => x.modelVersionId) },
+    },
   });
 };
 
@@ -1113,15 +1113,8 @@ export const removeResourceFromPostImage = async ({
   if (!image) throw throwNotFoundError('Image not found.');
   // TODO add check for isOnSite and return
 
-  // nb: possible issue with deduped "name" field?
-  const resource = await dbWrite.imageResource.findFirst({
-    where: { imageId, modelVersionId },
-  });
-
-  if (!resource) throw throwNotFoundError('Image resource not found.');
-
-  const deleted = await dbWrite.imageResource.delete({
-    where: { id: resource.id },
+  const deleted = await dbWrite.imageResourceNew.delete({
+    where: { imageId_modelVersionId: { imageId, modelVersionId } },
   });
 
   await queueImageSearchIndexUpdate({
