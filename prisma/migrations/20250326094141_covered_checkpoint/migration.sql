@@ -27,6 +27,8 @@ alter table "CoveredCheckpoint"
       on delete cascade
       on update cascade;
 
+-- driveby
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "ChatMember_chatId_idx" ON "ChatMember" ("chatId");
 
 create or replace view "GenerationCoverage"("modelId", "modelVersionId", covered) as
 SELECT
