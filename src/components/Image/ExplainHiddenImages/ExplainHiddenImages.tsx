@@ -42,7 +42,7 @@ export function ExplainHiddenImages({
 
   const handleShowAll = () => {
     setBrowsingLevelOverride?.(
-      Flag.intersection(
+      Flags.intersection(
         Flags.addFlag(hiddenByBrowsingLevelFlag, browsingLevel),
         domainSettings.allowedNsfwLevelsFlag
       )
