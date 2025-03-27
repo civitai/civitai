@@ -51,6 +51,7 @@ import { Flags } from '~/shared/utils';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
+import { Prisma } from '@prisma/client';
 
 type UserCapCacheItem = {
   id: number;
@@ -663,7 +664,19 @@ export async function getPoolParticipants(month?: Date) {
     GROUP BY userId
     HAVING amount > 0;
   `;
-  return participants;
+
+  let bannedParticipants: { userId: number }[] = [];
+
+  if (participants.length > 0) {
+    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT "id" as "userId"
+      FROM "User"
+      WHERE id IN (${Prisma.join(participants.map((p) => p.userId))})
+        AND ("bannedAt" IS NOT NULL OR onboarding & ${OnboardingSteps.BannedCreatorProgram} != 0);
+    `;
+  }
+
+  return participants.filter((p) => !bannedParticipants.some((b) => b.userId === p.userId));
 }
 
 export const updateCashWithdrawal = async ({

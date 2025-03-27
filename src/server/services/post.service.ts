@@ -1058,13 +1058,12 @@ export const addResourceToPostImage = async ({
   // TODO restrictions on allowedTypes
 
   // noinspection JSPotentiallyInvalidTargetOfIndexedPropertyAccess
-  const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();
+  // const hash = modelVersion.files?.[0]?.hashes?.[0]?.hash?.toLowerCase();
 
   const createdResources = await dbWrite.imageResourceNew.createManyAndReturn({
     data: imageIds.map((imageId) => ({
       modelVersionId,
       imageId,
-      hash,
       detected: false,
     })),
     skipDuplicates: true,
