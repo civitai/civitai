@@ -36,7 +36,7 @@ export function ExplainHiddenImages({
     hiddenByBrowsingLevel.map((x) => x.browsingLevel)
   );
   const showHiddenBrowsingLevels =
-    totalHiddenByBrowsingLevel.length > 0 &&
+    totalHiddenByBrowsingLevel > 0 &&
     !domainSettings.disableNsfwLevelControl &&
     Flags.intersection(domainSettings.allowedNsfwLevelsFlag, hiddenByBrowsingLevelFlag) !== 0;
 
