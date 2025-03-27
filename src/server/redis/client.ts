@@ -401,6 +401,19 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
   },
+  NEW_ORDER: {
+    EXP: 'new-order:exp',
+    FERVOR: 'new-order:fervor',
+    BUZZ: 'new-order:blessed-buzz',
+    SMITE: 'new-order:smite-progress',
+    QUEUES: 'new-order:queues',
+    RATINGS: 'new-order:ratings',
+    MATCHES: 'new-order:matches',
+    JUDGEMENTS: {
+      ALL: 'new-order:judgements:all',
+      CORRECT: 'new-order:judgements:correct',
+    },
+  },
 } as const;
 
 // Cached data

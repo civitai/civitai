@@ -137,6 +137,7 @@ export enum SignalMessages {
   CashInvalidator = 'creators-program:cash-invalidator',
   AuctionBidChange = 'auction:bid-change',
   TopicUpdate = 'topic:connections',
+  ContentModQueueUpdate = 'new-order:queue-update',
 }
 
 export enum BountySort {
@@ -345,4 +346,30 @@ export enum SignalTopic {
   CreatorProgram = 'creators-program',
   Auction = 'auction', // with :auctionId
   ModelVersion = 'model-version', // with :modelVersionId
+  NewOrder = 'new-order', // with :queueId
+}
+
+export enum NewOrderImageRating {
+  Sanctified = 'Sanctified',
+  Blessed = 'Blessed',
+  Virtuous = 'Virtuous',
+  Tempted = 'Tempted',
+  Tainted = 'Tainted',
+  Damned = 'Damned',
+}
+
+export enum NewOrderImageRatingStatus {
+  Correct = 'Correct',
+  Pending = 'Pending',
+  Failed = 'Failed',
+  AcolyteCorrect = 'AcolyteCorrect',
+  AcolyteFailed = 'AcolyteFailed',
+}
+
+export enum NewOrderDamnedReason {
+  None = 'None',
+  Bestiality = 'Bestiality',
+  Deepfake = 'Deepfake',
+  Incest = 'Incest',
+  CSAM = 'CSAM',
 }

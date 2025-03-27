@@ -408,6 +408,7 @@ export interface User {
   bids?: Bid[];
   recurringBids?: BidRecurring[];
   moderationRules?: ModerationRule[];
+  playerInfo?: NewOrderPlayer[];
 }
 
 export interface CustomerSubscription {
@@ -2617,6 +2618,41 @@ export interface ModerationRule {
   reason: string | null;
   createdById: number;
   createdBy?: User;
+}
+
+export interface NewOrderPlayer {
+  userId: number;
+  user?: User;
+  rankId: number;
+  rank?: NewOrderRank;
+  startAt: Date;
+  exp: number;
+  fervor: number;
+  smiteReceived?: NewOrderSmite[];
+  smiteGiven?: NewOrderSmite[];
+}
+
+export interface NewOrderRank {
+  id: number;
+  name: string;
+  minExp: number;
+  createdAt: Date;
+  updatedAt: Date;
+  players?: NewOrderPlayer[];
+}
+
+export interface NewOrderSmite {
+  id: number;
+  targetPlayerId: number;
+  targetPlayer?: NewOrderPlayer;
+  givenById: number;
+  givenBy?: NewOrderPlayer;
+  size: number;
+  remaining: number;
+  reason: string | null;
+  createdAt: Date;
+  cleansedAt: Date | null;
+  cleansedReason: string | null;
 }
 
 export interface QuestionRank {

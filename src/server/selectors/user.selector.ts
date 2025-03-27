@@ -102,3 +102,17 @@ export const userWithProfileSelect = Prisma.validator<Prisma.UserSelect>()({
     },
   },
 });
+
+export const playerInfoSelect = Prisma.validator<Prisma.NewOrderPlayerSelect>()({
+  exp: true,
+  fervor: true,
+  startAt: true,
+  rank: {
+    select: { id: true, name: true, minExp: true },
+  },
+});
+
+export const userWithPlayerInfoSelect = Prisma.validator<Prisma.UserSelect>()({
+  ...simpleUserSelect,
+  playerInfo: { select: playerInfoSelect },
+});

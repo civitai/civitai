@@ -347,6 +347,7 @@ model User {
   bids                       Bid[]
   recurringBids              BidRecurring[]
   moderationRules            ModerationRule[]
+  playerInfo                 NewOrderPlayer[]
 
   @@index([deletedAt])
 }
@@ -3473,6 +3474,42 @@ model ModerationRule {
 
   createdById Int
   createdBy   User @relation(fields: [createdById], references: [id], onDelete: Cascade)
+}
+
+model NewOrderPlayer {
+  userId Int          @id
+  user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rankId Int
+  rank   NewOrderRank @relation(fields: [rankId], references: [id], onDelete: Cascade)
+
+  startAt       DateTime        @default(now())
+  exp           Int             @default(0)
+  fervor        Int             @default(0)
+  smiteReceived NewOrderSmite[] @relation("smiteReceived")
+  smiteGiven    NewOrderSmite[] @relation("smiteGiven")
+}
+
+model NewOrderRank {
+  id        Int              @id @default(autoincrement())
+  name      String
+  minExp    Int
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  players   NewOrderPlayer[]
+}
+
+model NewOrderSmite {
+  id             Int            @id @default(autoincrement())
+  targetPlayerId Int
+  targetPlayer   NewOrderPlayer @relation("smiteReceived", fields: [targetPlayerId], references: [userId], onDelete: Cascade)
+  givenById      Int
+  givenBy        NewOrderPlayer @relation("smiteGiven", fields: [givenById], references: [userId], onDelete: Cascade)
+  size           Int
+  remaining      Int
+  reason         String?
+  createdAt      DateTime       @default(now())
+  cleansedAt     DateTime?
+  cleansedReason String?
 }
 
 /// @view
