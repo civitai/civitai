@@ -4,6 +4,8 @@ import { TagSource } from '~/shared/utils/prisma/enums';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { Limiter } from '~/server/utils/concurrency-helpers';
 import { getModeratedTags, getTagRules } from '~/server/services/system-cache';
+import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 
 type TagsOnImageNewArgs = {
   imageId: number;
@@ -42,6 +44,10 @@ export async function insertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
   });
 
   await updateImageNsfwLevels(args);
+  await queueImageSearchIndexUpdate({
+    ids: args.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
@@ -71,6 +77,10 @@ export async function upsertTagsOnImageNew(args: TagsOnImageNewArgs[]) {
   });
 
   await updateImageNsfwLevels(args);
+  await queueImageSearchIndexUpdate({
+    ids: args.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Update,
+  });
 }
 
 export async function deleteTagsOnImageNew(args: { imageId: number; tagId: number }[]) {
@@ -87,6 +97,10 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
   });
 
   await updateImageNsfwLevels(args);
+  await queueImageSearchIndexUpdate({
+    ids: args.map((x) => x.imageId),
+    action: SearchIndexUpdateQueueAction.Delete,
+  });
 }
 
 async function updateImageNsfwLevels(args: { imageId: number; tagId: number }[]) {
