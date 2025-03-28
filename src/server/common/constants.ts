@@ -1116,6 +1116,8 @@ export type DomainSettings = {
   excludedSystemHomeBlockIds: number[];
   allowedNsfwLevels: NsfwLevel[];
   publicNsfwLevels?: NsfwLevel[];
+  // Optionally defines what value to look for in the user for this domain.
+  browsingLevelKey: 'browsingLevel' | 'redBrowsingLevel';
 };
 
 export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
@@ -1127,6 +1129,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     disableNsfwLevelControl: true,
     systemHomeBlockIds: [],
     excludedSystemHomeBlockIds: [],
+    browsingLevelKey: 'browsingLevel',
   },
   blue: {
     color: 'blue',
@@ -1137,6 +1140,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     systemHomeBlockIds: [],
     excludedSystemHomeBlockIds: [],
     publicNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13],
+    browsingLevelKey: 'browsingLevel',
   },
   red: {
     color: 'red',
@@ -1147,6 +1151,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     systemHomeBlockIds: [],
     excludedSystemHomeBlockIds: [],
     publicNsfwLevels: [NsfwLevel.R, NsfwLevel.X],
+    browsingLevelKey: 'redBrowsingLevel',
   },
 };
 

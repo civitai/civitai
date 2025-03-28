@@ -5,7 +5,6 @@ import { useDomainColor } from '~/hooks/useDomainColor';
 
 import { useDomainSync } from '~/hooks/useDomainSync';
 import { useDomainSettings } from '~/providers/DomainSettingsProvider';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ColorDomain } from '~/server/common/constants';
 import { UserMeta } from '~/server/schema/user.schema';
 import {
@@ -48,7 +47,7 @@ export function CivitaiSessionProvider({
       memberInBadState: user.memberInBadState,
       refresh: update,
       settings: {
-        // Always shwo NSFW if the domain is red
+        // Always show NSFW if the domain is red. No way around it.
         showNsfw: user.showNsfw || domainSettings.color === 'red',
         browsingLevel: user.browsingLevel,
         disableHidden: disableHidden ?? true,
@@ -57,6 +56,11 @@ export function CivitaiSessionProvider({
         blurNsfw: user.blurNsfw,
       },
     };
+
+    if (domainSettings.browsingLevelKey && domainSettings.browsingLevelKey !== 'browsingLevel') {
+      const key = domainSettings.browsingLevelKey;
+      currentUser.settings[key] = user[key] ?? user.browsingLevel;
+    }
 
     const allowedNsfwLevelsFlag = domainSettings.allowedNsfwLevels
       ? flagifyBrowsingLevel(domainSettings.allowedNsfwLevels)
@@ -129,18 +133,14 @@ export type CurrentUser = Omit<
   | 'settings'
 >;
 
-type BrowsingSettings = {
+export type BrowsingSettings = {
   showNsfw: boolean;
   blurNsfw: boolean;
   browsingLevel: number;
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
-};
-
-type UserChatSettings = {
-  muteSounds: boolean;
-  acknowledged: boolean;
+  redBrowsingLevel?: number;
 };
 
 const CivitaiSessionContext = createContext<AuthedUser | UnauthedUser | null>(null);

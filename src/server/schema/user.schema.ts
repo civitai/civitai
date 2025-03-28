@@ -225,6 +225,8 @@ export const userSettingsSchema = z.object({
     .optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
+  // Domain browsing levels:
+  redBrowsingLevel: z.number().optional(),
 });
 
 const [featureKey, ...otherKeys] = featureFlagKeys;

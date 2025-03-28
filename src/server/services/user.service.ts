@@ -774,6 +774,10 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         : tier != null
         ? false
         : true,
+    redBrowsingLevel:
+      userSettings.success && userSettings.data.redBrowsingLevel != null
+        ? userSettings.data.redBrowsingLevel
+        : undefined,
     // feedbackToken,
   };
   await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
