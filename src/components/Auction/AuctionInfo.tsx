@@ -38,7 +38,6 @@ import { Countdown } from '~/components/Countdown/Countdown';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { featureInfo } from '~/components/Model/ModelVersions/ModelVersionPopularity';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -78,7 +77,7 @@ const QuickBid = ({
   );
 };
 
-export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => any }) => {
+export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => unknown }) => {
   const features = useFeatureFlags();
   const { runTour } = useTourContext();
   const { drawerToggle, selectedAuction } = useAuctionContext();
@@ -124,15 +123,14 @@ export const AuctionTopSection = ({ refreshFunc }: { refreshFunc?: () => any }) 
             <Stack>
               <Text size="sm">
                 <Badge mr="xs">Visibility</Badge>The model will be featured in all valid resource
-                selectors (generation, resource editing, etc.), and has a chance to be on the front
-                page (SFW only).
+                selectors (generation, resource editing, etc.), and has a chance to be featured on
+                the front page (SFW only).
               </Text>
               <Text size="sm">
                 <Badge color="green" mr="xs">
-                  Discount
+                  Generation
                 </Badge>
-                Generations with this model (if it&apos;s a checkpoint) will have a{' '}
-                {Math.abs(featureInfo.markup) * 100}% discount applied to them.
+                Checkpoints will be enabled for use in generation.
               </Text>
             </Stack>
           </Stack>
@@ -302,7 +300,7 @@ export const AuctionInfo = () => {
                 label={
                   auctionData ? (
                     <Stack spacing={4} align="end">
-                      <Text>Winning resources will be boosted:</Text>
+                      <Text>Winning resources will be featured:</Text>
                       <Text>
                         From: {formatDate(auctionData.validFrom, 'MMM DD, YYYY h:mm:ss a')}
                       </Text>
@@ -313,7 +311,7 @@ export const AuctionInfo = () => {
               >
                 <Group spacing="sm" className="max-md:w-full">
                   <Badge className="max-md:w-[80px]">
-                    <Text>Boosted</Text>
+                    <Text>Featured</Text>
                   </Badge>
 
                   {auctionData ? (
@@ -343,7 +341,6 @@ export const AuctionInfo = () => {
                 <Group spacing="sm" className="max-md:w-full">
                   <Badge className="max-md:w-[80px]">
                     <Text>Ends In</Text>
-                    {/* todo does this say ended when its over? */}
                   </Badge>
 
                   {auctionData ? (

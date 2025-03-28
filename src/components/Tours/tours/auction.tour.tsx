@@ -1,3 +1,4 @@
+import { Stack, Text } from '@mantine/core';
 import Router from 'next/router';
 import { StepWithData } from '~/types/tour';
 import { waitForElement } from '~/utils/html-helpers';
@@ -19,9 +20,16 @@ export const auctionTour: StepWithData[] = [
   {
     target: '[data-tour="auction:start"]',
     placement: 'center',
-    title: 'What are They?',
-    content:
-      'Each day, you can bid ⚡ Buzz to feature models on the homepage and resource selection areas of the site. These will appear the day after the auction concludes. Higher bids = better spots!',
+    title: 'What are Auctions?',
+    content: (
+      <Stack>
+        <Text>
+          You can bid ⚡ Buzz to feature models on the homepage and resource selection areas of the
+          site. Higher bids = better spots!
+        </Text>
+        <Text>Checkpoints will also be enabled for generation until the auction cycle ends.</Text>
+      </Stack>
+    ),
     disableBeacon: true,
     floaterProps: {
       styles: { floater: { width: '100%' } },
@@ -70,7 +78,7 @@ export const auctionTour: StepWithData[] = [
     target: '[data-tour="auction:bid"]',
     title: 'Place Bid',
     content:
-      'Choose a model, and place your bid! Optionally, you can have this recur every day until a set date.',
+      'Choose a model, and place your bid! Optionally, you can have this recur every time an auction resets (until a date of your choosing).',
     disableBeacon: true,
     data: {
       onNext: async () => {
@@ -93,7 +101,7 @@ export const auctionTour: StepWithData[] = [
     placement: 'center',
     title: 'Then What?',
     content:
-      "At the end of the day, winners will be determined. If you're one of them, your model will appear featured around the site! If not, you'll be fully refunded.",
+      "At the end of the auction cycle, winners will be determined. If you're one of them, your model will appear featured around the site! If not, you'll be fully refunded.",
     disableBeacon: true,
     floaterProps: {
       styles: { floater: { width: '100%' } },

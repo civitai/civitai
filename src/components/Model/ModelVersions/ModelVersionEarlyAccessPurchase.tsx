@@ -1,20 +1,10 @@
-import {
-  Anchor,
-  Button,
-  Center,
-  Group,
-  Loader,
-  Modal,
-  Stack,
-  Text,
-  createStyles,
-} from '@mantine/core';
+import { Anchor, Button, Center, Loader, Modal, Stack, Text } from '@mantine/core';
 import { IconAlertCircle } from '@tabler/icons-react';
-import { useRouter } from 'next/router';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { Countdown } from '~/components/Countdown/Countdown';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
+import { useInvalidateWhatIf } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import {
   useModelVersionPermission,
   useMutateModelVersion,
@@ -23,7 +13,6 @@ import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { showSuccessNotification } from '~/utils/notifications';
 import { getDisplayName } from '~/utils/string-helpers';
-import { useInvalidateWhatIf } from '~/components/ImageGeneration/utils/generationRequestHooks';
 
 export const ModelVersionEarlyAccessPurchase = ({
   modelVersionId,
@@ -147,7 +136,8 @@ export const ModelVersionEarlyAccessPurchase = ({
                   {earlyAccessConfig.generationTrialLimit} trials for generation. Test this{' '}
                   {resourceLabel}{' '}
                   <GenerateButton
-                    modelVersionId={modelVersionId}
+                    versionId={modelVersionId}
+                    canGenerate={true}
                     data-activity="create:version-stat"
                     onClick={() => {
                       dialog.onClose();
