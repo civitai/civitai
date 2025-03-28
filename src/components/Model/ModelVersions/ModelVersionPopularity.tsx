@@ -4,16 +4,16 @@ import { useModelVersionTopicListener } from '~/components/Model/ModelVersions/m
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
-export const featureInfo = {
-  name: 'Featured',
-  description: 'Featured by the community',
-  markup: -0.2,
-} as const;
-const newInfo = {
-  name: 'New',
-  description: 'Newly available for generation',
-  markup: 0.2,
-};
+// const featureInfo = {
+//   name: 'Featured',
+//   description: 'Featured by the community',
+//   markup: -0.2,
+// } as const;
+// const newInfo = {
+//   name: 'New',
+//   description: 'Newly available for generation',
+//   markup: 0.2,
+// };
 const popularityInfoMap = {
   '0.0': {
     name: 'Dormant',
@@ -91,7 +91,7 @@ export const ModelVersionPopularity = ({
   };
 
   const popularity = data?.popularityRank ?? 0;
-  const isFeatured = data?.isFeatured ?? false;
+  // const isFeatured = data?.isFeatured ?? false;
   // const isNew = data?.isNew ?? false; // TODO check for isNew
 
   const closestPopularityKey =
@@ -100,7 +100,8 @@ export const ModelVersionPopularity = ({
       .filter((key) => key <= popularity)
       .sort((a, b) => b - a)[0]
       ?.toFixed(1) as keyof typeof popularityInfoMap) ?? '0.0';
-  const closestPopularityInfo = isFeatured ? featureInfo : popularityInfoMap[closestPopularityKey];
+  // const closestPopularityInfo = isFeatured ? featureInfo : popularityInfoMap[closestPopularityKey];
+  const closestPopularityInfo = popularityInfoMap[closestPopularityKey];
 
   return (
     <Tooltip multiline withinPortal label={<Text>{closestPopularityInfo.description}</Text>}>

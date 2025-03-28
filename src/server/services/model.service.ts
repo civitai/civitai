@@ -2811,6 +2811,8 @@ export async function getFeaturedModels() {
         FROM "CollectionItem" ci
         WHERE
           ci."collectionId" = ${FEATURED_MODEL_COLLECTION_ID}
+        ORDER BY "createdAt" desc
+        LIMIT 500
       `;
       return query.map((row) => ({ modelId: row.modelId, position: 0 }));
     });
