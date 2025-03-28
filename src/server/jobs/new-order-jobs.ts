@@ -2,8 +2,13 @@ import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
-import { dbRead } from '~/server/db/client';
-import { allJudmentsCounter, correctJudgementsCounter } from '~/server/games/new-order/utils';
+import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  allJudmentsCounter,
+  correctJudgementsCounter,
+  expCounter,
+  fervorCounter,
+} from '~/server/games/new-order/utils';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
@@ -17,7 +22,7 @@ type BlessedBuzzQueryResult = {
   multiplier: number;
 };
 
-const newOrderGrantBlessBuzz = createJob('new-order-grant-bless-buzz', '0 0 * * *', async () => {
+const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * * *', async () => {
   if (!clickhouse) return;
 
   const [lastRun, setLastRun] = await getJobDate('new-order-grant-bless-buzz');
@@ -112,15 +117,19 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   await Promise.all([
     correctJudgementsCounter.reset({ all: true }),
     allJudmentsCounter.reset({ all: true }),
+    fervorCounter.reset({ all: true }),
+    expCounter.reset({ all: true }),
   ]);
 
   const batches = chunk(judgements, 500);
   for (const batch of batches) {
+    // TODO.newOrder: confirm this is correct way to do it without overloading the db
     batch.forEach(async (r) => {
       await updatePlayerStats({
         playerId: r.userId,
         status: r.status,
         exp: r.grantedExp * r.multiplier,
+        writeToDb: true,
       });
     });
   }
@@ -135,4 +144,4 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
   // confirm where to get the data from
 });
 
-export const newOrderJobs = [newOrderGrantBlessBuzz, newOrderDailyReset, newOrderPickTemplars];
+export const newOrderJobs = [newOrderGrantBlessedBuzz, newOrderDailyReset, newOrderPickTemplars];

@@ -1,10 +1,11 @@
 import { clickhouse } from '~/server/clickhouse/client';
 import {
-  NewOrderDamnedReason,
   NewOrderImageRating,
   NewOrderImageRatingStatus,
   ImageSort,
   NsfwLevel,
+  SignalTopic,
+  SignalMessages,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -15,12 +16,19 @@ import {
   fervorCounter,
   smitesCounter,
 } from '~/server/games/new-order/utils';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  AddImageRatingInput,
+  CleanseSmiteInput,
+  SmitePlayerInput,
+} from '~/server/schema/games/new-order.schema';
 import { playerInfoSelect } from '~/server/selectors/user.selector';
 import { getAllImagesIndex } from '~/server/services/image.service';
+import { fetchThroughCache } from '~/server/utils/cache-helpers';
 import { throwInternalServerError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { signalClient } from '~/utils/signal-client';
 
 export async function joinGame({ userId }: { userId: number }) {
   const user = await dbRead.user.findUnique({
@@ -36,15 +44,32 @@ export async function joinGame({ userId }: { userId: number }) {
   });
 
   if (!user) throw throwNotFoundError(`No user with id ${userId}`);
-  if (user.playerInfo) return user.playerInfo; // User is already in game
+  if (user.playerInfo) {
+    // User is already in game
+    const stats = await getPlayerStats({ playerId: userId });
+    return { ...user.playerInfo, stats };
+  }
 
   // TODO.newOrder: determine how to get ranks
+  const ranks = await getNewOrderRanks();
+  const rank = ranks.find((r) => r.name === 'Acolyte');
   const player = await dbWrite.newOrderPlayer.create({
-    data: { userId, rankId: 1, startAt: new Date() },
+    data: { userId, rankId: rank?.id || 1, startAt: new Date() },
     select: playerInfoSelect,
   });
 
-  return player;
+  return { ...player, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
+}
+
+async function getPlayerStats({ playerId }: { playerId: number }) {
+  const [exp, fervor, smites, blessedBuzz] = await Promise.all([
+    expCounter.getCount(playerId),
+    fervorCounter.getCount(playerId),
+    smitesCounter.getCount(playerId),
+    blessedBuzzCounter.getCount(playerId),
+  ]);
+
+  return { exp, fervor, smites, blessedBuzz };
 }
 
 export async function getImagesQueue() {
@@ -65,12 +90,7 @@ export async function smitePlayer({
   modId,
   reason,
   size,
-}: {
-  playerId: number;
-  modId: number;
-  reason: string;
-  size: number;
-}) {
+}: SmitePlayerInput & { modId: number }) {
   const smite = await dbWrite.newOrderSmite.create({
     data: {
       targetPlayerId: playerId,
@@ -81,31 +101,33 @@ export async function smitePlayer({
     },
   });
 
-  const smiteCount = await dbWrite.newOrderSmite.count({
+  const activeSmiteCount = await dbWrite.newOrderSmite.count({
     where: { targetPlayerId: playerId, cleansedAt: null },
   });
-  if (smiteCount >= 3) return resetPlayer({ playerId });
+  if (activeSmiteCount >= 3) return resetPlayer({ playerId });
 
-  await smitesCounter.increment({ id: playerId, value: size });
+  const newSmiteCount = await smitesCounter.increment({ id: playerId, value: size });
+  signalClient.topicSend({
+    topic: SignalTopic.NewOrder,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: { playerId, smites: newSmiteCount },
+  });
 
   return smite;
 }
 
-export async function cleanseSmite({
-  id,
-  cleansedReason,
-  playerId,
-}: {
-  id: number;
-  cleansedReason: string;
-  playerId: number;
-}) {
+export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmiteInput) {
   const smite = await dbWrite.newOrderSmite.update({
     where: { id },
     data: { cleansedAt: new Date(), cleansedReason },
   });
 
-  await smitesCounter.decrement({ id: playerId, value: smite.size });
+  const smiteCount = await smitesCounter.decrement({ id: playerId, value: smite.size });
+  signalClient.topicSend({
+    topic: SignalTopic.NewOrder,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: { playerId, smites: smiteCount },
+  });
 
   return smite;
 }
@@ -124,12 +146,7 @@ export async function addImageRating({
   imageId,
   rating,
   damnedReason,
-}: {
-  playerId: number;
-  imageId: number;
-  rating: NewOrderImageRating;
-  damnedReason?: NewOrderDamnedReason;
-}) {
+}: AddImageRatingInput) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   const player = await dbRead.newOrderPlayer.findUnique({
@@ -187,6 +204,24 @@ export async function addImageRating({
     1
   );
 
+  if (status === NewOrderImageRatingStatus.Correct) {
+    // Reduce gainedExp from oldest smite remaining score
+    const smite = await dbWrite.newOrderSmite.findFirst({
+      where: { targetPlayerId: playerId, remaining: { gt: 0 } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, remaining: true },
+    });
+
+    if (smite) {
+      const updatedSmite = await dbWrite.newOrderSmite.update({
+        where: { id: smite.id },
+        data: { remaining: smite.remaining - grantedExp * multiplier },
+      });
+      if (updatedSmite.remaining <= 0)
+        await cleanseSmite({ id: updatedSmite.id, cleansedReason: 'Smite expired', playerId });
+    }
+  }
+
   // Increase all counters
   const stats = await updatePlayerStats({ playerId, status, exp: grantedExp * multiplier });
 
@@ -226,15 +261,27 @@ export async function updatePlayerStats({
     });
   }
 
-  return { exp: newExp, fervor: newFervor, blessedBuzz };
+  const stats = { exp: newExp, fervor: newFervor, blessedBuzz };
+
+  signalClient.topicSend({
+    topic: SignalTopic.NewOrder,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: { ...stats, playerId },
+  });
+
+  return { ...stats };
 }
 
 async function resetPlayer({ playerId }: { playerId: number }) {
+  const ranks = await getNewOrderRanks();
+  const rank = ranks.find((r) => r.name === 'Acolyte');
+  if (!rank) throw throwNotFoundError(`No rank found for Acolyte`);
+
   await dbWrite.$transaction([
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankId: 1, exp: 0, fervor: 0 },
+      data: { rankId: rank.id, exp: 0, fervor: 0 },
     }),
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
@@ -253,5 +300,33 @@ async function resetPlayer({ playerId }: { playerId: number }) {
     blessedBuzzCounter.reset({ id: playerId }),
   ]);
 
+  signalClient.topicSend({
+    topic: SignalTopic.NewOrder,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: {
+      playerId,
+      rankId: 1,
+      exp: 0,
+      fervor: 0,
+      smites: 0,
+      blessedBuzz: 0,
+    },
+  });
+
   // TODO.newOrder: Cleanup clickhouse data?
+}
+
+export function getNewOrderRanks() {
+  return fetchThroughCache(
+    REDIS_KEYS.CACHES.NEW_ORDER.RANKS,
+    async () => {
+      const ranks = await dbRead.newOrderRank.findMany({
+        orderBy: { id: 'asc' },
+        select: { id: true, name: true, minExp: true },
+      });
+
+      return ranks;
+    },
+    { ttl: 0 } // TODO.newOrder: set a proper TTL
+  );
 }

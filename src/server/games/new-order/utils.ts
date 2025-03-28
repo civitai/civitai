@@ -60,11 +60,9 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return count - absValue;
   }
 
-  async function reset({ id, all }: { id: number; all?: never } | { all: true; id?: never }) {
+  function reset({ id, all }: { id: number; all?: never } | { all: true; id?: never }) {
     if (all) return sysRedis.del(key);
-
-    if (ordered) await sysRedis.zRem(key, id.toString());
-    else await sysRedis.hDel(key, id.toString());
+    return ordered ? sysRedis.zRem(key, id.toString()) : sysRedis.hDel(key, id.toString());
   }
 
   return { increment, decrement, reset, getCount };

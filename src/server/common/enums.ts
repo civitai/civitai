@@ -137,7 +137,8 @@ export enum SignalMessages {
   CashInvalidator = 'creators-program:cash-invalidator',
   AuctionBidChange = 'auction:bid-change',
   TopicUpdate = 'topic:connections',
-  ContentModQueueUpdate = 'new-order:queue-update',
+  NewOrderQueueUpdate = 'new-order:queue-update',
+  NewOrderPlayerUpdate = 'new-order:player-update',
 }
 
 export enum BountySort {

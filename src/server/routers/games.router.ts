@@ -3,9 +3,19 @@ import { ComputeCost, GAME_TOKEN_LENGTH } from '~/components/Chopped/chopped.uti
 import { env as clientEnv } from '~/env/client';
 import { env } from '~/env/server';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import {
+  addImageRatingSchema,
+  cleanseSmiteSchema,
+  smitePlayerSchema,
+} from '~/server/schema/games/new-order.schema';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { joinGame } from '~/server/services/games/new-order.service';
-import { guardedProcedure, protectedProcedure, router } from '~/server/trpc';
+import {
+  addImageRating,
+  cleanseSmite,
+  joinGame,
+  smitePlayer,
+} from '~/server/services/games/new-order.service';
+import { guardedProcedure, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
 import { generateToken } from '~/utils/string-helpers';
 
 const newGameSchema = z.object({
@@ -66,5 +76,14 @@ export const gamesRouter = router({
   }),
   newOrder: router({
     join: guardedProcedure.query(({ ctx }) => joinGame({ userId: ctx.user.id })),
+    smitePlayer: moderatorProcedure
+      .input(smitePlayerSchema)
+      .mutation(({ input, ctx }) => smitePlayer({ ...input, modId: ctx.user.id })),
+    cleanseSmite: moderatorProcedure
+      .input(cleanseSmiteSchema)
+      .mutation(({ input }) => cleanseSmite({ ...input })),
+    addRating: guardedProcedure.input(addImageRatingSchema).mutation(({ input, ctx }) => {
+      return addImageRating({ ...input, playerId: ctx.user.id });
+    }),
   }),
 });
