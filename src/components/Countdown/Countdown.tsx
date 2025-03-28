@@ -1,6 +1,6 @@
 import dayjs from 'dayjs';
 import plugin from 'dayjs/plugin/duration';
-import { useState, useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import useIsClient from '~/hooks/useIsClient';
 import { toStringList } from '~/utils/array-helpers';
 
@@ -29,6 +29,8 @@ function getCountdownString(
     countdownTuple.push(
       format === 'long' ? `${seconds} ${seconds === 1 ? 'second' : 'seconds'}` : `${seconds}s`
     );
+
+  if (countdownTuple.length === 0) return 'Ended';
 
   return format === 'long' ? toStringList(countdownTuple) : countdownTuple.join(' ');
 }

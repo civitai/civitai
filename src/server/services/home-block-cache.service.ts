@@ -11,6 +11,7 @@ const CACHE_EXPIRY = {
   [HomeBlockType.Social]: 60 * 3, // 3 min - doesn't actually do anything since this is from metadata
   [HomeBlockType.Event]: 60 * 3, // 3 min - doesn't actually do anything since this is from metadata
   [HomeBlockType.CosmeticShop]: 60 * 3, // 3 min
+  [HomeBlockType.FeaturedModelVersion]: 60 * 60, // 1 hour
 };
 
 type HomeBlockForCache = {
@@ -30,6 +31,8 @@ function getHomeBlockIdentifier(homeBlock: HomeBlockForCache) {
       return homeBlock.id;
     case HomeBlockType.CosmeticShop:
       return homeBlock.metadata.cosmeticShopSection?.id;
+    case HomeBlockType.FeaturedModelVersion:
+      return 'default';
   }
 }
 
@@ -64,7 +67,7 @@ export async function getHomeBlockCached(homeBlock: HomeBlockForCache) {
   return parsedHomeBlock;
 }
 
-export async function homeBlockCacheBust(type: HomeBlockType, entityId: number) {
+export async function homeBlockCacheBust(type: HomeBlockType, entityId: number | string) {
   const redisString = `${REDIS_KEYS.HOMEBLOCKS.BASE}:${type}:${entityId}` as const;
   log(`Cache busted: ${redisString}`);
   await redis.del(redisString);

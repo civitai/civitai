@@ -86,6 +86,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import { RuleDefinition } from '~/server/utils/mod-rules';
 import {
   DEFAULT_PAGE_SIZE,
   getCursor,
@@ -120,7 +121,6 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
-import { RuleDefinition } from '~/server/utils/mod-rules';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -249,6 +249,7 @@ export const getModelsRaw = async ({
     excludedUserIds,
     collectionTagId,
     availability,
+    isFeatured,
   } = input;
 
   let pending = input.pending;
@@ -490,6 +491,16 @@ export const getModelsRaw = async ({
   if (supportsGeneration) {
     AND.push(
       Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc."covered" = true)`
+    );
+  }
+
+  if (isFeatured) {
+    const featuredModels = await getFeaturedModels();
+    AND.push(
+      Prisma.sql`m."id" IN (${Prisma.join(
+        featuredModels.map((m) => m.modelId),
+        ','
+      )})`
     );
   }
 
@@ -2262,7 +2273,7 @@ export async function getCheckpointGenerationCoverage(versionIds: number[]) {
   const coveredResources = await dbRead.$queryRaw<{ version_id: number }[]>`
     SELECT
       version_id
-    FROM "CoveredCheckpointDetails"
+    FROM "CoveredCheckpoint"
     WHERE
       version_id IN (${Prisma.join(versionIds)});
   `;
@@ -2295,47 +2306,35 @@ export async function toggleCheckpointCoverage({ id, versionId }: ToggleCheckpoi
   const affectedVersionIds = await dbWrite.$queryRaw<{ version_id: number }[]>`
     SELECT
       version_id
-    FROM "CoveredCheckpointDetails"
+    FROM "CoveredCheckpoint"
          JOIN "ModelVersion" mv ON mv.id = version_id
     WHERE
       mv."modelId" = ${id};
   `;
 
-  const transaction: Prisma.PrismaPromise<unknown>[] = [
-    dbWrite.$executeRaw`
-      REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails";
-    `,
-  ];
-
   if (versionId) {
     if (affectedVersionIds.some((x) => x.version_id === versionId)) {
-      transaction.unshift(
-        dbWrite.$executeRaw`
+      await dbWrite.$executeRaw`
           DELETE
           FROM "CoveredCheckpoint"
           WHERE
             ("model_id" = ${id} AND "version_id" = ${versionId})
           OR ("model_id" = ${id} AND "version_id" IS NULL);
-        `
-      );
+        `;
       affectedVersionIds.splice(
         affectedVersionIds.findIndex((x) => x.version_id === versionId),
         1
       );
     } else {
-      transaction.unshift(
-        dbWrite.$executeRaw`
+      await dbWrite.$executeRaw`
           INSERT INTO "CoveredCheckpoint" ("model_id", "version_id")
           VALUES
             (${id}, ${versionId})
           ON CONFLICT DO NOTHING;
-        `
-      );
+        `;
       affectedVersionIds.push({ version_id: versionId });
     }
   }
-
-  await dbWrite.$transaction(transaction);
 
   return affectedVersionIds.map((x) => x.version_id);
 }
