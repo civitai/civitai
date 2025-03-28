@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { constants } from '~/server/common/constants';
+import { ColorDomain, colorDomains, constants } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -225,7 +225,6 @@ export const userSettingsSchema = z.object({
     .optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
-  // Domain browsing levels:
   redBrowsingLevel: z.number().optional(),
 });
 
@@ -315,6 +314,7 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
+  domain: z.enum(['green', 'blue', 'red']).optional(),
 });
 
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;

@@ -59,7 +59,7 @@ export function CivitaiSessionProvider({
 
     if (domainSettings.browsingLevelKey && domainSettings.browsingLevelKey !== 'browsingLevel') {
       const key = domainSettings.browsingLevelKey;
-      currentUser.settings[key] = user[key] ?? user.browsingLevel;
+      currentUser.settings.browsingLevel = user[key] ?? user.browsingLevel;
     }
 
     const allowedNsfwLevelsFlag = domainSettings.allowedNsfwLevels
@@ -140,7 +140,6 @@ export type BrowsingSettings = {
   disableHidden: boolean;
   allowAds: boolean;
   autoplayGifs: boolean;
-  redBrowsingLevel?: number;
 };
 
 const CivitaiSessionContext = createContext<AuthedUser | UnauthedUser | null>(null);
