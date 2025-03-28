@@ -89,7 +89,7 @@ export async function deleteTagsOnImageNew(args: { imageId: number; tagId: numbe
 
     await pgDbWrite.query(`
       DELETE FROM "TagsOnImageNew"
-      WHERE ("tagId", "imageId") IN (SELECT * FROM (VALUES ${values}) AS t("imageId", "tagId"));
+      WHERE ("imageId", "tagId") IN (SELECT * FROM (VALUES ${values}) AS t("imageId", "tagId"));
     `);
 
     const imageIds = [...new Set(items.map((x) => x.imageId))];
