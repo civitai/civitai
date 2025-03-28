@@ -89,8 +89,9 @@ export function createCachedArray<T extends object>({
     const cacheMisses = new Set<number>();
     const dontCache = new Set<number>();
     const toRevalidate: Record<number, T> = {};
-    const ttlExpiry = new Date(Date.now() - ttl * 1000);
+    // const ttlExpiry = new Date(Date.now() - ttl * 1000);
     const locks = new Set<RedisKeyTemplateCache>();
+    const invaliDate = new Date(Date.now() + debounceTime * 1000);
     for (const id of [...new Set(ids)]) {
       const cached = cache[id];
       if (cached) {
@@ -100,7 +101,7 @@ export function createCachedArray<T extends object>({
           cacheMisses.add(id);
           continue;
         }
-        if (staleWhileRevalidate && cached.cachedAt < ttlExpiry) {
+        if (staleWhileRevalidate && cached.cachedAt < invaliDate) {
           toRevalidate[id] = cached;
           continue;
         }
@@ -112,7 +113,7 @@ export function createCachedArray<T extends object>({
     if (toRevalidateIds.length > 0) {
       const gotLocks = await Promise.all(
         toRevalidateIds.map((id) =>
-          redis.setNxKeepTtlWithEx(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`, '1', 10)
+          redis.setNxKeepTtlWithEx(`${REDIS_KEYS.CACHE_LOCKS}:${key}:${id}`, '1', debounceTime)
         )
       );
       for (let i = 0; i < toRevalidateIds.length; i++) {
@@ -221,7 +222,14 @@ export function createCachedArray<T extends object>({
     const toCache = Object.fromEntries(
       updates.map((x) => [x[idKey], { ...x, cachedAt: invaliDate }])
     );
-    await redis.packed.mSet(toCache);
+
+    const EX = staleWhileRevalidate ? ttl * 2 : ttl;
+    if (Object.keys(toCache).length > 0)
+      await Promise.all(
+        Object.entries(toCache).map(([id, cache]) =>
+          redis.packed.set(`${key}:${id}`, cache, { EX })
+        )
+      );
 
     log(`Invalidated ${ids.length} ${key} items: ${ids.join(', ')}`);
   }
