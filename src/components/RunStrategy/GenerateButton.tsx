@@ -83,7 +83,7 @@ export function GenerateButton({
 
   const showBid = features.auctions && !canGenerate && isAvailable && isPublished && !cannotPromote;
 
-  if (!showBid || !canGenerate) return null;
+  if (!showBid && !canGenerate) return null;
 
   const popButton = showBid ? (
     <BidModelButton
