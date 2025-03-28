@@ -28,6 +28,7 @@ export const serverSchema = z.object({
   REDIS_URL: z.string().url(),
   REDIS_URL_DIRECT: commaDelimitedStringArray().default([]),
   REDIS_SYS_URL: z.string().url(),
+  REDIS_BULL_URL: z.string().url().optional(),
   REDIS_TIMEOUT: z.preprocess((x) => (x ? parseInt(String(x)) : 5000), z.number().optional()),
   NODE_ENV: z.enum(['development', 'test', 'production']),
   NEXTAUTH_SECRET: z.string(),
@@ -127,10 +128,10 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_ENDPOINT: z.string().url().optional(),
   EXTERNAL_MODERATION_TOKEN: z.string().optional(),
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
-  EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
-  BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
+  EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().default(0.5),
+  BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.default(false),
 
-  EXTERNAL_IMAGE_SCANNER: z.enum(['hive', 'rekognition']).optional().default('hive').catch('hive'),
+  EXTERNAL_IMAGE_SCANNER: z.enum(['hive', 'rekognition']).default('hive').catch('hive'),
   MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),
   HIVE_VISUAL_TOKEN: z.string().optional(),
 
@@ -158,7 +159,7 @@ export const serverSchema = z.object({
   PAYPAL_SECRET: z.string().optional(),
   PAYPAL_CLIENT_ID: z.string().optional(),
   S3_VAULT_BUCKET: z.string().optional(),
-  HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
+  HEALTHCHECK_TIMEOUT: z.coerce.number().default(1500),
   FRESHDESK_JWT_SECRET: z.string().optional(),
   FRESHDESK_JWT_URL: z.string().optional(),
   FRESHDESK_DOMAIN: z.string().optional(),
@@ -213,7 +214,9 @@ export const serverSchema = z.object({
   // Creator Program Related:
   CREATOR_POOL_TAXES: z.coerce.number().optional(),
   CREATOR_POOL_PORTION: z.coerce.number().optional(),
-  CREATOR_POOL_FORECAST_PORTION: z.coerce.number().optional().default(50),
+  CREATOR_POOL_FORECAST_PORTION: z.coerce.number().default(50),
+
+  ENABLE_BULLMQ_WORKERS: zc.booleanString.default(false),
 });
 
 /**

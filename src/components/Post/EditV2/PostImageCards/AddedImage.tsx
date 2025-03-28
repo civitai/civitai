@@ -42,7 +42,6 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
 import {
-  isMadeOnSite,
   useGenerationStatus,
 } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
@@ -69,6 +68,7 @@ import {
   getBaseModelResourceTypes,
   getBaseModelSetType,
   getBaseModelSetTypes,
+  isMadeOnSite,
 } from '~/shared/constants/generation.constants';
 import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';

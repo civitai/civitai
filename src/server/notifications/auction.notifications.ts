@@ -1,4 +1,4 @@
-import { MY_BIDS } from '~/components/Auction/AuctionProvider';
+import { MY_BIDS } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 import { asOrdinal } from '~/utils/number-helpers';

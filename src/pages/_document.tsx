@@ -1,6 +1,7 @@
 import { createGetInitialProps } from '@mantine/next';
 import Document, { Html, Main, NextScript, Head } from 'next/document';
 import clsx from 'clsx';
+import { SIGTERM } from '~/shared/utils/sigterm';
 
 const getInitialProps = createGetInitialProps();
 
@@ -77,3 +78,19 @@ export default class _Document extends Document {
 //   }
 //   return kept;
 // }
+
+if (process.env.NEXT_MANUAL_SIG_HANDLE) {
+  process.on('SIGTERM', async () => {
+    const handlers = SIGTERM.handlers;
+    console.info(`SIGTERM signal received: closing queues: ${handlers.length}`);
+    await SIGTERM.cleanup();
+    console.log('Graceful shutdown complete.');
+  });
+
+  process.on('SIGINT', async () => {
+    const handlers = SIGTERM.handlers;
+    console.info(`SIGINT signal received: closing queues: ${handlers.length}`);
+    await SIGTERM.cleanup();
+    console.log('Graceful shutdown complete.');
+  });
+}

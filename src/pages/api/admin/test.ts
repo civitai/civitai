@@ -20,18 +20,9 @@ import {
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { pgDbWrite } from '~/server/db/pgDb';
-
-type Row = {
-  userId: number;
-  cosmeticId: number;
-  claimKey: string;
-  data: any[];
-  fixedData?: Record<string, any>;
-};
-
-const covered = [1288397, 1288372, 1288371, 1288358, 1282254, 1281249];
-const notCovered = [474453, 379259];
-const test = [1183765, 164821];
+import { Queue } from 'bullmq';
+import { EventQueue } from '~/server/event-queue/event-queue';
+import { ImageQueue } from '~/server/event-queue/image.queue';
 
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
@@ -93,9 +84,9 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   setWorkflowDefinition(workflow.key, workflow);
     // }
 
-    const result = await getWorkflowDefinitions();
+    await ImageQueue.add('test', { name: 'bob' });
 
-    res.status(200).send(result);
+    res.status(200).send({});
   } catch (e) {
     console.log(e);
     res.status(400).end();

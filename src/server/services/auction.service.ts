@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -31,6 +30,28 @@ import { AuctionType, Availability, BuzzAccountType } from '~/shared/utils/prism
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
+import type { ResourceSelectOptions } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import { getBaseModelResourceTypes } from '~/shared/constants/generation.constants';
+import { ModelType } from '~/shared/utils/prisma/enums';
+
+type ResourceOptions = Exclude<ResourceSelectOptions['resources'], undefined>;
+
+export const getModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'] | undefined) => {
+  if (!ab) return [] as ResourceOptions;
+
+  if (ab.ecosystem === null) {
+    return [
+      {
+        type: ModelType.Checkpoint,
+      },
+    ] as ResourceOptions;
+  }
+
+  //  as BaseModelResourceTypes[keyof BaseModelResourceTypes]
+  return (getBaseModelResourceTypes(ab.ecosystem) ?? []).filter(
+    (t) => t.type !== 'Checkpoint'
+  ) as ResourceOptions;
+};
 
 export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   id: true,

@@ -146,9 +146,9 @@ import { withRetries } from '~/utils/errorHandling';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { RuleDefinition } from '~/server/utils/mod-rules';
+import { ImageQueue } from '~/server/event-queue/image.queue';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
-
 export const imageUrlInUse = async ({ url, id }: { url: string; id: number }) => {
   const otherImagesWithSameUrl = await dbRead.image.findFirst({
     select: { id: true },
@@ -210,56 +210,64 @@ const filterOutDeleted = async <T extends object>(data: (T & { id: number })[]) 
   return data.filter((x) => !deleted.includes(x.id));
 };
 
-export const deleteImageById = async ({
-  id,
-  updatePost,
-}: GetByIdInput & { updatePost?: boolean }) => {
-  updatePost ??= true;
-  try {
-    const image = await dbWrite.image.delete({
-      where: { id },
-      select: { url: true, postId: true, nsfwLevel: true, userId: true },
-    });
-    if (!image) return;
+export const deleteImageById = async ({ id }: GetByIdInput) => {
+  await ImageQueue.waitUntilReady();
 
-    // Mark as deleted in cache so we filter it out in the future
-    await markImagesDeleted(id);
+  const image = await dbWrite.image.findUnique({
+    where: { id },
+    select: { url: true, postId: true, nsfwLevel: true, userId: true },
+  });
+  // const image = await dbWrite.image.delete({
+  //   where: { id },
+  //   select: { url: true, postId: true, nsfwLevel: true, userId: true },
+  // });
+  if (!image) return;
 
-    try {
-      if (isProd && !(await imageUrlInUse({ url: image.url, id }))) {
-        // TODO Remove after fallback bucket is deprecated
-        if (env.S3_IMAGE_UPLOAD_BUCKET_OLD)
-          await withRetries(() =>
-            baseS3Client.deleteObject({
-              bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD as string,
-              key: image.url,
-            })
-          );
-        await withRetries(() =>
-          imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: image.url })
-        );
-        await purgeResizeCache({ url: image.url });
-      }
-    } catch {
-      // Ignore errors
-    }
+  // this method only works in prod due to redis versioning
+  if (isProd) await markImagesDeleted(id);
 
-    await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
-    await imagesMetricsSearchIndex.queueUpdate([
-      { id, action: SearchIndexUpdateQueueAction.Delete },
-    ]);
+  await ImageQueue.add('delete', { id, url: image.url });
 
-    // await dbWrite.$executeRaw`DELETE FROM "Image" WHERE id = ${id}`;
-    if (updatePost && image.postId) {
-      await updatePostNsfwLevel(image.postId);
-      await bustCachesForPost(image.postId);
-      postMetrics.queueUpdate(image.postId);
-    }
-    return image;
-  } catch {
-    // Ignore errors
-  }
+  return image;
 };
+
+/*
+  1. deadletter queue
+  2. queue everything
+*/
+
+export async function deleteImageByIdPostProcess({ id, url }: { id: number; url: string }) {
+  console.log(`post delete image: ${id}`);
+  console.time('DELETE IMAGE JOB');
+  // await dbWrite.$queryRaw`
+  //   DELETE FROM "ImageResourceNew" WHERE "imageId" = ${id};
+  // `;
+  // await dbWrite.$queryRaw`
+  //   DELETE FROM "TagsOnImageNew" WHERE "imageId" = ${id};
+  // `;
+
+  // try {
+  //   if (isProd && !(await imageUrlInUse({ url, id }))) {
+  //     // TODO Remove after fallback bucket is deprecated
+  //     if (env.S3_IMAGE_UPLOAD_BUCKET_OLD)
+  //       await withRetries(() =>
+  //         baseS3Client.deleteObject({
+  //           bucket: env.S3_IMAGE_UPLOAD_BUCKET_OLD as string,
+  //           key: url,
+  //         })
+  //       );
+  //     await withRetries(() =>
+  //       imageS3Client.deleteObject({ bucket: env.S3_IMAGE_UPLOAD_BUCKET, key: url })
+  //     );
+  //     await purgeResizeCache({ url });
+  //   }
+  // } catch {
+  //   // Ignore errors
+  // }
+  // await imagesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  // await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Delete }]);
+  console.timeEnd('DELETE IMAGE JOB');
+}
 
 type AffectedImage = {
   id: number;

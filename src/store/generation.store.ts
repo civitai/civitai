@@ -20,7 +20,7 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
-export type RunType = 'run' | 'remix' | 'replay';
+type RunType = 'run' | 'remix' | 'replay';
 export type GenerationPanelView = 'queue' | 'generate' | 'feed';
 type GenerationState = {
   counter: number;

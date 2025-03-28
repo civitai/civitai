@@ -243,14 +243,3 @@ export function keyupEditAttention(event: React.KeyboardEvent<HTMLTextAreaElemen
 
 //   return [selected, handleSetSelected] as const;
 // }
-
-export const isMadeOnSite = (meta: ImageMetaProps | null) => {
-  if (!meta) return false;
-  return (
-    'civitaiResources' in meta ||
-    (!!meta.workflow &&
-      generationFormWorkflowConfigurations
-        .map((x) => x.key)
-        .some((v) => v === (meta.workflow as string)))
-  );
-};

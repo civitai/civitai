@@ -11,6 +11,7 @@ import {
 } from '~/server/common/constants';
 import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -658,3 +659,14 @@ export function getUpscaleFactor(original: GetUpscaleFactorProps, upscale: GetUp
   const s2 = upscale.width > upscale.height ? upscale.width : upscale.height;
   return Math.round((s2 / s1) * 10) / 10;
 }
+
+export const isMadeOnSite = (meta: ImageMetaProps | null) => {
+  if (!meta) return false;
+  return (
+    'civitaiResources' in meta ||
+    (!!meta.workflow &&
+      generationFormWorkflowConfigurations
+        .map((x) => x.key)
+        .some((v) => v === (meta.workflow as string)))
+  );
+};

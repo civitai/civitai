@@ -11,6 +11,7 @@ import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.cons
 import { Flags } from '~/shared/utils';
 import { hasNsfwWords } from '~/utils/metadata/audit';
 import { isDefined, paired } from '~/utils/type-guards';
+import type { CurrentUser } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 
 export function useApplyHiddenPreferences<
   T extends keyof BaseDataTypeMap,
@@ -109,7 +110,7 @@ type FilterPreferencesProps<TKey, TData> = {
   showHidden?: boolean;
   showImageless?: boolean;
   disabled?: boolean;
-  currentUser: ReturnType<typeof useCurrentUser>;
+  currentUser: CurrentUser | null;
   allowLowerLevels?: boolean;
   canViewNsfw: boolean;
 };
@@ -583,7 +584,7 @@ type BaseTool = {
   id: number;
 };
 
-export type BaseDataTypeMap = {
+type BaseDataTypeMap = {
   images: BaseImage[];
   models: BaseModel[];
   articles: BaseArticle[];

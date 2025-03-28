@@ -21,10 +21,6 @@ import { z } from 'zod';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import InputResourceSelectMultiple from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
-import {
-  MAX_DONATION_GOAL,
-  MIN_DONATION_GOAL,
-} from '~/components/Model/ModelVersions/model-version.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -37,7 +33,7 @@ import {
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { activeBaseModels, constants } from '~/server/common/constants';
+import { activeBaseModels, constants, MIN_DONATION_GOAL, MAX_DONATION_GOAL } from '~/server/common/constants';
 import { ClubResourceSchema } from '~/server/schema/club.schema';
 import {
   GenerationResourceSchema,

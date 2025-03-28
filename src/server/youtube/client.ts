@@ -1,7 +1,6 @@
 import { OAuth2Client } from 'google-auth-library';
 import { Readable } from 'node:stream';
 import sanitize from 'sanitize-html';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { env } from '~/env/server';
 import { fetchBlob } from '~/utils/file-utils';
 import { youtube, auth, youtube_v3 } from 'googleapis/build/src/apis/youtube';
@@ -66,54 +65,54 @@ type S3ToYoutubeInput = {
   client: OAuth2Client;
 };
 
-export const uploadYoutubeVideo = async ({
-  url,
-  mimeType = 'video/mp4',
-  client,
-  title,
-  description,
-}: S3ToYoutubeInput) => {
-  const service = youtube('v3');
-  const blob = await fetchBlob(getEdgeUrl(url, { type: 'video', original: true }));
-  if (!blob) return;
+// export const uploadYoutubeVideo = async ({
+//   url,
+//   mimeType = 'video/mp4',
+//   client,
+//   title,
+//   description,
+// }: S3ToYoutubeInput) => {
+//   const service = youtube('v3');
+//   const blob = await fetchBlob(getEdgeUrl(url, { type: 'video', original: true }));
+//   if (!blob) return;
 
-  const stream = (blob as Blob).stream();
+//   const stream = (blob as Blob).stream();
 
-  return new Promise<youtube_v3.Schema$Video | undefined>((resolve, reject) => {
-    service.videos.insert(
-      {
-        auth: client,
-        part: ['snippet', 'status'],
-        requestBody: {
-          snippet: {
-            title: title,
-            // Youtube doesn't like HTML into their descriptions.
-            description: sanitize(description, {
-              allowedTags: [],
-              allowedAttributes: {},
-            }),
-          },
-          status: {
-            privacyStatus: 'unlisted',
-          },
-        },
-        media: {
-          mimeType: mimeType,
-          // @ts-ignore - Readable stream is supported here.
-          body: Readable.fromWeb(stream),
-        },
-      },
-      (err, response) => {
-        if (err) {
-          reject(err);
-          return;
-        }
+//   return new Promise<youtube_v3.Schema$Video | undefined>((resolve, reject) => {
+//     service.videos.insert(
+//       {
+//         auth: client,
+//         part: ['snippet', 'status'],
+//         requestBody: {
+//           snippet: {
+//             title: title,
+//             // Youtube doesn't like HTML into their descriptions.
+//             description: sanitize(description, {
+//               allowedTags: [],
+//               allowedAttributes: {},
+//             }),
+//           },
+//           status: {
+//             privacyStatus: 'unlisted',
+//           },
+//         },
+//         media: {
+//           mimeType: mimeType,
+//           // @ts-ignore - Readable stream is supported here.
+//           body: Readable.fromWeb(stream),
+//         },
+//       },
+//       (err, response) => {
+//         if (err) {
+//           reject(err);
+//           return;
+//         }
 
-        resolve(response?.data);
-      }
-    );
-  });
-};
+//         resolve(response?.data);
+//       }
+//     );
+//   });
+// };
 
 type UpdateYoutubeVideoInput = {
   videoId: string;
