@@ -48,6 +48,8 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
       debouncer(() => {
         const changed = getChanged(curr, snapshotRef.current);
         if (Object.keys(changed).length > 0) {
+          // The reason why we pass domain it's cause that way we can store the content values on different places depending
+          // on how it makes sense. For instance, for RED - Browssing level is stored under the name `redBrowsingLevel` inside the user settings.
           mutate({
             ...changed,
             domain,
