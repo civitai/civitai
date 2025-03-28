@@ -1,6 +1,4 @@
 import dayjs, { Dayjs } from 'dayjs';
-import { uniq } from 'lodash-es';
-import { constants, FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
@@ -19,20 +17,21 @@ import {
   type PrepareBidsReturn,
 } from '~/server/services/auction.service';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
-import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { bustFeaturedModelsCache } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { withRetries } from '~/server/utils/errorHandling';
-import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
-import { AuctionType, BuzzAccountType, HomeBlockType } from '~/shared/utils/prisma/enums';
+import {
+  AuctionType,
+  BuzzAccountType,
+  HomeBlockType,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
 const jobName = 'handle-auctions';
 const kvKey = `${jobName}-step`;
-const collectionNote = 'from auction';
-const modelsToAddToCollection = 3;
 
 const log = createLogger(jobName, 'magenta');
 
@@ -93,16 +92,6 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
 });
 
 const cleanOldCollectionItems = async (now: Dayjs) => {
-  // Remove old auction winners from collection
-  const deletedFromCollection = await dbWrite.collectionItem.deleteMany({
-    where: {
-      collectionId: FEATURED_MODEL_COLLECTION_ID,
-      note: collectionNote,
-    },
-  });
-
-  log(deletedFromCollection.count, 'removed from collection');
-
   const nowDate = now.subtract(1, 'day').toDate();
   const oldFeatured = await dbWrite.featuredModelVersion.findMany({
     where: {
@@ -125,10 +114,7 @@ const handlePreviousAuctions = async (now: Dayjs) => {
   // Get the bids from previous auctions
   const allAuctionsWithBids = await _fetchAuctionsWithBids(now);
 
-  // Track creators across all auctions
-  const creatorsSeen = new Set<number>();
-
-  // Insert the winners into the featured table and the collection
+  // Insert the winners into the featured table
   // Refund people who didn't make the cutoff
   // Mark auctions as finalized
 
@@ -144,15 +130,11 @@ const handlePreviousAuctions = async (now: Dayjs) => {
             .map((b) => b.userId);
           const bidDetails = { ...r, userIds: matchUserIds, auctionId: auctionRow.id };
 
-          // TODO remove when we re-enable auctions
-          result.losers.push(bidDetails);
-
-          // TODO re-enable once we turn auctions back on
-          // if (r.totalAmount >= auctionRow.minPrice && r.position <= auctionRow.quantity) {
-          //   result.winners.push(bidDetails);
-          // } else {
-          //   result.losers.push(bidDetails);
-          // }
+          if (r.totalAmount >= auctionRow.minPrice && r.position <= auctionRow.quantity) {
+            result.winners.push(bidDetails);
+          } else {
+            result.losers.push(bidDetails);
+          }
           return result;
         },
         { winners: [] as WinnerType[], losers: [] as WinnerType[] }
@@ -164,7 +146,7 @@ const handlePreviousAuctions = async (now: Dayjs) => {
 
       // Feature the winners
       if (winners.length > 0) {
-        await _handleWinnersForAuction(auctionRow, winners, creatorsSeen);
+        await _handleWinnersForAuction(auctionRow, winners);
       } else {
         log('No winners.');
       }
@@ -206,15 +188,18 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
           transactionIds: true,
         },
       },
+      auctionBase: {
+        select: {
+          ...auctionSelect.auctionBase.select,
+          runForDays: true,
+          validForDays: true,
+        },
+      },
     },
   });
 };
 
-const _handleWinnersForAuction = async (
-  auctionRow: AuctionRow,
-  winners: WinnerType[],
-  creatorsSeen: Set<number>
-) => {
+const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerType[]) => {
   const winnerIds = winners.map((w) => w.entityId);
   const entityNames = Object.fromEntries(winnerIds.map((w) => [w, null as string | null]));
 
@@ -230,7 +215,6 @@ const _handleWinnersForAuction = async (
     });
     log(createdFeatured.count, 'featured models');
 
-    // Insert winners into the collection
     const modelData = await dbWrite.modelVersion.findMany({
       where: { id: { in: winnerIds } },
       select: {
@@ -243,6 +227,7 @@ const _handleWinnersForAuction = async (
             poi: true,
             nsfw: true,
             userId: true,
+            type: true,
           },
         },
       },
@@ -253,51 +238,60 @@ const _handleWinnersForAuction = async (
       entityNames[md.id] = md.model.name;
     });
 
-    // Filter only safe models
-    const validModelData = modelData.filter(
-      (m) => hasSafeBrowsingLevel(m.nsfwLevel) && !m.model.nsfw && !m.model.poi
-    );
-
-    const filteredModelData: typeof validModelData = [];
-    validModelData.forEach((md) => {
-      if (!creatorsSeen.has(md.model.userId)) {
-        filteredModelData.push(md);
-        creatorsSeen.add(md.model.userId);
-      }
-    });
-
-    const modelIds = uniq(
-      filteredModelData
-        .sort((a, b) => {
-          const matchA = winners.find((w) => w.entityId === a.id);
-          const matchB = winners.find((w) => w.entityId === b.id);
-          if (!matchA) return 1;
-          if (!matchB) return -1;
-          return matchA.position - matchB.position;
+    if (!auctionRow.auctionBase.ecosystem) {
+      // update checkpoint coverage
+      const checkpoints = winners
+        .map((w) => {
+          const mv = modelData.find((m) => m.id === w.entityId);
+          return {
+            model_id: mv?.modelId,
+            version_id: mv?.id,
+            type: mv?.model.type,
+          };
         })
-        // Pick top models to add to the collection
-        .map((m) => m.modelId)
-    ).slice(0, modelsToAddToCollection);
+        .filter(
+          (
+            c
+          ): c is {
+            model_id: number;
+            version_id: number;
+            type: 'Checkpoint';
+          } => !!c.model_id && !!c.version_id && c.type === ModelType.Checkpoint
+        );
 
-    // Add them to the collection
-    if (modelIds.length > 0) {
-      const createdCollection = await dbWrite.collectionItem.createMany({
-        data: modelIds.map((m) => ({
-          collectionId: FEATURED_MODEL_COLLECTION_ID,
-          modelId: m,
-          note: collectionNote,
-          addedById: constants.system.user.id,
-        })),
-        skipDuplicates: true,
-      });
-      log(createdCollection.count, 'featured models in collection');
-    } else {
-      log('No featured models in collection!');
+      try {
+        await dbWrite.$transaction(async (tx) => {
+          await tx.$queryRaw`
+            TRUNCATE TABLE "CoveredCheckpoint"
+          `;
+
+          if (checkpoints.length) {
+            await tx.coveredCheckpoint.createMany({
+              data: checkpoints.map((c) => ({
+                model_id: c.model_id,
+                version_id: c.version_id,
+              })),
+              skipDuplicates: true,
+            });
+          }
+        });
+      } catch (error) {
+        const err = error as Error;
+        logToAxiom({
+          name: 'handle-auctions',
+          type: 'error',
+          message: `Failed to update checkpoint coverage`,
+          data: { checkpoints },
+          error: err.message,
+          cause: err.cause,
+          stack: err.stack,
+        }).catch();
+      }
     }
 
     // Clear related caches
-    await homeBlockCacheBust(HomeBlockType.Collection, FEATURED_MODEL_COLLECTION_ID);
     await bustFeaturedModelsCache();
+    await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
     await modelVersionResourceCache.bust(winnerIds);
     await bustOrchestratorModelCache(winnerIds);
 
@@ -309,7 +303,7 @@ const _handleWinnersForAuction = async (
     const details: DetailsWonAuction = {
       name: entityNames[winner.entityId],
       position: winner.position,
-      until: 'tomorrow', // TODO hardcoded for now
+      until: dayjs(auctionRow.validTo).format('MMM D YYYY'),
     };
     await createNotification({
       userIds: winner.userIds,
@@ -408,6 +402,23 @@ const createRecurringBids = async (now: Dayjs) => {
           continue;
         }
 
+        // Check if a bid already exists for this auction, user, and entity
+        const existingBid = await dbWrite.bid.findFirst({
+          where: {
+            auctionId: auctionMatch.id,
+            userId: recurringBid.userId,
+            entityId: recurringBid.entityId,
+            fromRecurring: true,
+          },
+          select: { id: true },
+        });
+
+        // If a bid already exists, skip this recurring bid
+        if (existingBid) {
+          log(`Skipping recurring bid, as it already exists:`, existingBid.id);
+          continue;
+        }
+
         // Charge the user the relevant bid amount
         const { transactionId } = await withRetries(() =>
           createBuzzTransaction({
@@ -478,27 +489,33 @@ const createRecurringBids = async (now: Dayjs) => {
 };
 
 const createNewAuctions = async (now: Dayjs) => {
+  const tomorrow = now.add(1, 'day');
+
   // Create new auctions for tomorrow
   const auctionBases = await dbWrite.auctionBase.findMany({
     where: {
       active: true,
+      auctions: { none: { startAt: { lte: tomorrow.toDate() }, endAt: { gt: tomorrow.toDate() } } },
     },
     select: {
       ...auctionBaseSelect,
       quantity: true,
       minPrice: true,
+      runForDays: true,
+      validForDays: true,
     },
   });
   const newAuctions = await dbWrite.auction.createManyAndReturn({
     data: auctionBases.map((ab) => {
+      const endAt = tomorrow.add(ab.runForDays, 'd');
       return {
-        startAt: now.add(1, 'd').startOf('day').toDate(),
-        endAt: now.add(2, 'd').startOf('day').toDate(),
+        startAt: tomorrow.startOf('day').toDate(),
+        endAt: endAt.startOf('day').toDate(),
         quantity: ab.quantity,
         minPrice: ab.minPrice,
         auctionBaseId: ab.id,
-        validFrom: now.add(2, 'd').startOf('day').toDate(),
-        validTo: now.add(3, 'd').startOf('day').toDate(),
+        validFrom: endAt.startOf('day').toDate(),
+        validTo: endAt.add(ab.validForDays, 'd').startOf('day').toDate(),
       };
     }),
     select: { id: true, auctionBaseId: true },

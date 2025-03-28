@@ -12,16 +12,11 @@ import {
   Stack,
   useMantineTheme,
 } from '@mantine/core';
-import {
-  Availability,
-  CheckpointType,
-  MetricTimeframe,
-  ModelStatus,
-  ModelType,
-} from '~/shared/utils/prisma/enums';
 import { IconFilter } from '@tabler/icons-react';
 import { CSSProperties, useCallback, useState } from 'react';
+import { FilterButton } from '~/components/Buttons/FilterButton';
 import { PeriodFilter } from '~/components/Filters';
+import { FilterChip } from '~/components/Filters/FilterChip';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { useModelQueryParams } from '~/components/Model/model.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -29,9 +24,14 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelFilterSchema, useFiltersContext } from '~/providers/FiltersProvider';
 import { activeBaseModels, BaseModel, constants } from '~/server/common/constants';
+import {
+  Availability,
+  CheckpointType,
+  MetricTimeframe,
+  ModelStatus,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { getDisplayName, splitUppercase } from '~/utils/string-helpers';
-import { FilterButton } from '~/components/Buttons/FilterButton';
-import { FilterChip } from '~/components/Filters/FilterChip';
 
 const availableStatus = Object.values(ModelStatus).filter((status) =>
   ['Draft', 'Deleted', 'Unpublished'].includes(status)
@@ -93,6 +93,7 @@ export function DumbModelFiltersDropdown({
     (mergedFilters.earlyAccess ? 1 : 0) +
     (mergedFilters.supportsGeneration ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
+    (mergedFilters.isFeatured ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fileFormats?.length ?? 0) +
     (!!mergedFilters.availability ? 1 : 0) +
@@ -110,6 +111,7 @@ export function DumbModelFiltersDropdown({
       hidden: undefined,
       fileFormats: undefined,
       fromPlatform: false,
+      isFeatured: false,
       period: MetricTimeframe.AllTime,
       availability: undefined,
     };
@@ -126,6 +128,7 @@ export function DumbModelFiltersDropdown({
         hidden: undefined,
         fileFormats: undefined,
         fromPlatform: undefined,
+        isFeatured: undefined,
         period: MetricTimeframe.AllTime,
       });
     setFilters(reset);
@@ -236,6 +239,12 @@ export function DumbModelFiltersDropdown({
             onChange={(checked) => handleChange({ fromPlatform: checked })}
           >
             <span>Made On-site</span>
+          </FilterChip>
+          <FilterChip
+            checked={mergedFilters.isFeatured}
+            onChange={(checked) => handleChange({ isFeatured: checked })}
+          >
+            <span>Featured</span>
           </FilterChip>
         </Group>
       </Stack>
