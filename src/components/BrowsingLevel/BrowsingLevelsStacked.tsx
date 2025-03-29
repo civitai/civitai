@@ -1,6 +1,7 @@
 import { Group, Text } from '@mantine/core';
 import { ToggleList } from '~/components/ToggleList/ToggleList';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 import {
   BrowsingLevel,
   browsingLevelDescriptions,
@@ -10,9 +11,11 @@ import {
 import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsStacked() {
+  const domainSettings = useDomainSettings();
+  const levels = (domainSettings.allowedNsfwLevels as BrowsingLevel[]) || browsingLevels;
   return (
     <ToggleList>
-      {browsingLevels.map((level) => (
+      {levels.map((level) => (
         <BrowsingLevelItem key={level} level={level} />
       ))}
     </ToggleList>

@@ -13,7 +13,7 @@ const schema = getAllUsersInput.extend({
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const apiCaller = appRouter.createCaller(publicApiContext(req, res));
+  const apiCaller = appRouter.createCaller(await publicApiContext(req, res));
   const isSystemRequest = req.query.token === env.WEBHOOK_TOKEN;
   const result = schema.safeParse(req.query);
   if (!result.success) return res.status(400).json(result.error);

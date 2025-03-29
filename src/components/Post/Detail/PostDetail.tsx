@@ -73,14 +73,17 @@ import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
+import { DomainSettingsProvider } from '~/providers/DomainSettingsProvider';
 
 type Props = { postId: number };
 
 export function PostDetail(props: Props) {
   return (
-    <BrowsingLevelProvider>
-      <PostDetailContent {...props} />
-    </BrowsingLevelProvider>
+    <DomainSettingsProvider>
+      <BrowsingLevelProvider>
+        <PostDetailContent {...props} />
+      </BrowsingLevelProvider>
+    </DomainSettingsProvider>
   );
 }
 
