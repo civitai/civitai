@@ -537,6 +537,11 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           height = 480;
           aspectRatio = width / height;
           break;
+        case 'vidu':
+          width = 1280;
+          height = 720;
+          aspectRatio = width / height;
+          break;
       }
     }
   }
