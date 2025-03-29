@@ -1,4 +1,4 @@
-import { KlingMode, KlingModel } from '@civitai/client';
+import { KlingMode, KlingModel, KlingVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -47,3 +47,10 @@ const klingImg2VidConfig = new VideoGenerationConfig({
 });
 
 export const klingVideoGenerationConfig = [klingTxt2ImgConfig, klingImg2VidConfig];
+
+export function KlingInput(
+  args: z.infer<(typeof klingVideoGenerationConfig)[number]['schema']>
+): KlingVideoGenInput {
+  const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
+  return { ...args, sourceImage };
+}
