@@ -126,7 +126,7 @@ export function isHolidaysTime() {
 }
 
 export function isApril1() {
-  const today = dayjs();
+  const today = dayjs.utc();
   return today.month() === 3 && today.date() === 1;
 }
 
