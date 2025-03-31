@@ -6,6 +6,7 @@ import { env } from '~/env/server';
 import { SIGTERM } from '~/shared/utils/sigterm';
 import { WorkerRegistry } from '~/server/event-queue/worker-registry';
 import { ServerSingleton } from '~/server/utils/server-singleton';
+import { GIT_BRANCH_NAME } from '~/server/utils/git-helpers';
 
 const redisUrl = env.REDIS_BULL_URL ?? '';
 export const connection = ServerSingleton(
@@ -44,7 +45,11 @@ class CustomQueue<TMap extends EventHandlerMap> extends Queue {
 }
 
 export class EventQueue<TMap extends EventHandlerMap> {
-  constructor(private name: string, private eventHandlerMap: TMap) {}
+  constructor(private _name: string, private eventHandlerMap: TMap) {}
+
+  private get name() {
+    return `${GIT_BRANCH_NAME}:${this._name}`;
+  }
 
   queue = (options?: QueueOptions) => {
     return new CustomQueue<TMap>(this.name, { ...options, connection });
