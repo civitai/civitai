@@ -1,4 +1,4 @@
-import { clickhouse } from '~/server/clickhouse/client';
+import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import {
   NewOrderImageRating,
   NewOrderImageRatingStatus,
@@ -16,7 +16,9 @@ import {
   fervorCounter,
   smitesCounter,
 } from '~/server/games/new-order/utils';
+import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { InfiniteQueryInput } from '~/server/schema/base.schema';
 import {
   AddImageRatingInput,
   CleanseSmiteInput,
@@ -37,6 +39,7 @@ export async function joinGame({ userId }: { userId: number }) {
       playerInfo: {
         select: {
           ...playerInfoSelect,
+          // Might not be necessary
           _count: { select: { smiteReceived: { where: { cleansedAt: null } } } },
         },
       },
@@ -51,14 +54,20 @@ export async function joinGame({ userId }: { userId: number }) {
   }
 
   // TODO.newOrder: determine how to get ranks
-  const ranks = await getNewOrderRanks();
-  const rank = ranks.find((r) => r.name === 'Acolyte');
+  const rank = await getNewOrderRank({ name: 'Acolyte' });
   const player = await dbWrite.newOrderPlayer.create({
     data: { userId, rankId: rank?.id || 1, startAt: new Date() },
     select: playerInfoSelect,
   });
 
   return { ...player, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
+}
+
+function getPlayerById({ playerId }: { playerId: number }) {
+  return dbRead.newOrderPlayer.findUnique({
+    where: { userId: playerId },
+    select: playerInfoSelect,
+  });
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
@@ -72,7 +81,15 @@ async function getPlayerStats({ playerId }: { playerId: number }) {
   return { exp, fervor, smites, blessedBuzz };
 }
 
-export async function getImagesQueue() {
+export async function getImagesQueue({
+  limit,
+  cursor,
+  playerId,
+}: InfiniteQueryInput & { playerId: number }) {
+  const player = await getPlayerById({ playerId });
+
+  // TODO.newOrder: get queue based on player rank
+
   const images = await getAllImagesIndex({
     limit: 1000,
     browsingLevel: allBrowsingLevelsFlag,
@@ -108,7 +125,7 @@ export async function smitePlayer({
 
   const newSmiteCount = await smitesCounter.increment({ id: playerId, value: size });
   signalClient.topicSend({
-    topic: SignalTopic.NewOrder,
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
     data: { playerId, smites: newSmiteCount },
   });
@@ -124,7 +141,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
 
   const smiteCount = await smitesCounter.decrement({ id: playerId, value: smite.size });
   signalClient.topicSend({
-    topic: SignalTopic.NewOrder,
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
     data: { playerId, smites: smiteCount },
   });
@@ -146,7 +163,8 @@ export async function addImageRating({
   imageId,
   rating,
   damnedReason,
-}: AddImageRatingInput) {
+  chTracker,
+}: AddImageRatingInput & { chTracker?: Tracker }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   const player = await dbRead.newOrderPlayer.findUnique({
@@ -175,27 +193,40 @@ export async function addImageRating({
   const multiplier = status === NewOrderImageRatingStatus.Correct ? 1 : -1;
 
   // TODO.newOrder: should we await this?
-  await clickhouse.insert<{
-    userId: number;
-    imageId: number;
-    rating: NewOrderImageRating;
-    status: NewOrderImageRatingStatus;
-  }>({
-    table: 'holy_order_image_rating',
-    values: [
-      {
-        userId: playerId,
+  // TODO.newOrder: replace with clickhouse tracker
+  if (chTracker) {
+    try {
+      await chTracker.newOrderImageRating({
+        playerId,
         imageId,
         rating,
-        status: player.rank.name === 'Acolyte' ? `Acolyte${status}` : status,
-        createdAt: new Date(),
+        status:
+          player.rank.name === 'Acolyte'
+            ? status === NewOrderImageRatingStatus.Correct
+              ? NewOrderImageRatingStatus.AcolyteCorrect
+              : NewOrderImageRatingStatus.AcolyteFailed
+            : status,
         damnedReason,
         grantedExp,
         multiplier,
-      },
-    ],
-    format: 'JSONEachRow',
-  });
+      });
+    } catch (e) {
+      const error = e as Error;
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'Failed to track new order image rating',
+          details: {
+            data: { playerId, imageId, rating, status, damnedReason, grantedExp, multiplier },
+          },
+          message: error.message,
+          stack: error.stack,
+          cause: error.cause,
+        },
+        'clickhouse'
+      ).catch();
+    }
+  }
 
   // Increase rating count
   await sysRedis.hIncrBy(
@@ -224,6 +255,11 @@ export async function addImageRating({
 
   // Increase all counters
   const stats = await updatePlayerStats({ playerId, status, exp: grantedExp * multiplier });
+  signalClient.topicSend({
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: { ...stats, playerId },
+  });
 
   // TODO.newOrder: what else can we return here?
   return { stats };
@@ -264,7 +300,7 @@ export async function updatePlayerStats({
   const stats = { exp: newExp, fervor: newFervor, blessedBuzz };
 
   signalClient.topicSend({
-    topic: SignalTopic.NewOrder,
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
     data: { ...stats, playerId },
   });
@@ -272,10 +308,19 @@ export async function updatePlayerStats({
   return { ...stats };
 }
 
+export function calculateFervor({
+  correctJudgements,
+  allJudgements,
+}: {
+  correctJudgements: number;
+  allJudgements: number;
+}) {
+  const correctPercentage = correctJudgements / (allJudgements || 1);
+  return correctJudgements * correctPercentage * Math.E ** (allJudgements * -1);
+}
+
 async function resetPlayer({ playerId }: { playerId: number }) {
-  const ranks = await getNewOrderRanks();
-  const rank = ranks.find((r) => r.name === 'Acolyte');
-  if (!rank) throw throwNotFoundError(`No rank found for Acolyte`);
+  const rank = await getNewOrderRank({ name: 'Acolyte' });
 
   await dbWrite.$transaction([
     // Reset player back to level 1
@@ -301,7 +346,7 @@ async function resetPlayer({ playerId }: { playerId: number }) {
   ]);
 
   signalClient.topicSend({
-    topic: SignalTopic.NewOrder,
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
     data: {
       playerId,
@@ -316,8 +361,8 @@ async function resetPlayer({ playerId }: { playerId: number }) {
   // TODO.newOrder: Cleanup clickhouse data?
 }
 
-export function getNewOrderRanks() {
-  return fetchThroughCache(
+export async function getNewOrderRank({ name }: { name: string }) {
+  const ranks = await fetchThroughCache(
     REDIS_KEYS.CACHES.NEW_ORDER.RANKS,
     async () => {
       const ranks = await dbRead.newOrderRank.findMany({
@@ -329,4 +374,9 @@ export function getNewOrderRanks() {
     },
     { ttl: 0 } // TODO.newOrder: set a proper TTL
   );
+
+  const rank = ranks.find((r) => r.name === name);
+  if (!rank) throw throwNotFoundError(`No rank found with name ${name}`);
+
+  return rank;
 }

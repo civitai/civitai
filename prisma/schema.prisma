@@ -347,7 +347,7 @@ model User {
   bids                       Bid[]
   recurringBids              BidRecurring[]
   moderationRules            ModerationRule[]
-  playerInfo                 NewOrderPlayer[]
+  playerInfo                 NewOrderPlayer?
 
   @@index([deletedAt])
 }
@@ -3485,7 +3485,7 @@ model ModerationRule {
 }
 
 model NewOrderPlayer {
-  userId Int          @id
+  userId Int          @id @unique
   user   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   rankId Int
   rank   NewOrderRank @relation(fields: [rankId], references: [id], onDelete: Cascade)

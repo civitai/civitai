@@ -347,7 +347,7 @@ export enum SignalTopic {
   CreatorProgram = 'creators-program',
   Auction = 'auction', // with :auctionId
   ModelVersion = 'model-version', // with :modelVersionId
-  NewOrder = 'new-order', // with :queueId
+  NewOrderPlayer = 'new-order-player', // with :playerId
 }
 
 export enum NewOrderImageRating {

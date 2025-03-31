@@ -408,7 +408,7 @@ export interface User {
   bids?: Bid[];
   recurringBids?: BidRecurring[];
   moderationRules?: ModerationRule[];
-  playerInfo?: NewOrderPlayer[];
+  playerInfo?: NewOrderPlayer | null;
 }
 
 export interface CustomerSubscription {
