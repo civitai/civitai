@@ -59,10 +59,8 @@ export async function joinGame({ userId }: { userId: number }) {
     return { ...user.playerInfo, stats };
   }
 
-  // TODO.newOrder: determine how to get ranks
-  const rank = await getNewOrderRank({ name: 'Acolyte' });
   const player = await dbWrite.newOrderPlayer.create({
-    data: { userId, rankId: rank?.id || 1, startAt: new Date() },
+    data: { userId, rankType: NewOrderRankType.Accolyte, startAt: new Date() },
     select: playerInfoSelect,
   });
 
@@ -85,27 +83,6 @@ async function getPlayerStats({ playerId }: { playerId: number }) {
   ]);
 
   return { exp, fervor, smites, blessedBuzz };
-}
-
-export async function getImagesQueue({
-  limit,
-  cursor,
-  playerId,
-}: InfiniteQueryInput & { playerId: number }) {
-  const player = await getPlayerById({ playerId });
-
-  // TODO.newOrder: get queue based on player rank
-
-  const images = await getAllImagesIndex({
-    limit: 1000,
-    browsingLevel: allBrowsingLevelsFlag,
-    sort: ImageSort.Newest,
-    period: MetricTimeframe.AllTime,
-    periodMode: 'published',
-    include: ['meta'],
-  });
-
-  return images;
 }
 
 export async function smitePlayer({
@@ -326,13 +303,11 @@ export function calculateFervor({
 }
 
 async function resetPlayer({ playerId }: { playerId: number }) {
-  const rank = await getNewOrderRank({ name: 'Acolyte' });
-
   await dbWrite.$transaction([
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankId: rank.id, exp: 0, fervor: 0 },
+      data: { rankType: NewOrderRankType.Accolyte, exp: 0, fervor: 0 },
     }),
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
@@ -372,8 +347,8 @@ export async function getNewOrderRank({ name }: { name: string }) {
     REDIS_KEYS.CACHES.NEW_ORDER.RANKS,
     async () => {
       const ranks = await dbRead.newOrderRank.findMany({
-        orderBy: { id: 'asc' },
-        select: { id: true, name: true, minExp: true },
+        orderBy: { type: 'asc' },
+        select: { type: true, name: true, minExp: true },
       });
 
       return ranks;
@@ -386,39 +361,32 @@ export async function getNewOrderRank({ name }: { name: string }) {
 
   return rank;
 }
- 
-export function getNewOrderImageSet({
-  userId
+
+export async function getImagesQueue({
+  playerId,
   imageCount,
-} : {
-  userId: number;
+}: {
+  playerId: number;
   imageCount: number;
 }) {
   const player = await dbRead.newOrderPlayer.findUnique({
-    where: { userId },
+    where: { userId: playerId },
     select: {
-      id: true,
-      rank: {
-        select: { type: true},
-      },
+      userId: true,
+      rankType: true,
     },
   });
 
-  if (!player) throw throwNotFoundError(`No player with id ${userId}`);
-
-  if (player.rank.pools.length === 0)
-    throw throwBadRequestError(
-      'The rank this player is in might be misconfigured. Please contact support.'
-    );
+  if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
   const imageIds: number[] = [];
-  const rankPools = player.rank.type === NewOrderRankType.Templar ? [
-    ...poolCounters.Templar,
-    ...poolCounters.Knight,
-  ] : poolCounters[player.rank.type];
+  const rankPools =
+    player.rankType === NewOrderRankType.Templar
+      ? [...poolCounters.Templar, ...poolCounters.Knight]
+      : poolCounters[player.rankType];
 
-  for (const pool of rankPools) { 
-    const images = pool.getAll(imageCount);
+  for (const pool of rankPools) {
+    const images = await pool.getAll(imageCount);
     if (images.length === 0) continue;
 
     imageIds.push(...images);

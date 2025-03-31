@@ -17,10 +17,10 @@ import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import {
   calculateFervor,
   cleanseSmite,
-  getNewOrderRank,
   updatePlayerStats,
 } from '~/server/services/games/new-order.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 
@@ -68,11 +68,12 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   }
   log(`BlessedBuzz :: Found ${correctJudgements.length} correct judgements`);
 
-  const rank = await getNewOrderRank({ name: 'Knight' });
-
   // Get current player data for knights only
   const players = await dbRead.newOrderPlayer.findMany({
-    where: { userId: { in: correctJudgements.map((j) => j.userId) }, rankId: rank.id },
+    where: {
+      userId: { in: correctJudgements.map((j) => j.userId) },
+      rankType: NewOrderRankType.Knight,
+    },
     select: { userId: true },
   });
 
@@ -203,10 +204,9 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
     return;
   }
 
-  const rank = await getNewOrderRank({ name: 'Knight' });
   const userIds = judgements.map((j) => j.userId);
   const players = await dbRead.newOrderPlayer.findMany({
-    where: { userId: { in: userIds }, rankId: rank.id },
+    where: { userId: { in: userIds }, rankType: NewOrderRankType.Knight },
     select: { userId: true },
   });
   if (!players.length) {

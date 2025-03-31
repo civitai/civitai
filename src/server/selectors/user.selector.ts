@@ -108,7 +108,7 @@ export const playerInfoSelect = Prisma.validator<Prisma.NewOrderPlayerSelect>()(
   fervor: true,
   startAt: true,
   rank: {
-    select: { id: true, name: true, minExp: true },
+    select: { type: true, name: true, minExp: true },
   },
 });
 
