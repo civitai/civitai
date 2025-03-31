@@ -347,7 +347,7 @@ model User {
   bids                       Bid[]
   recurringBids              BidRecurring[]
   moderationRules            ModerationRule[]
-  playerInfo                 NewOrderPlayer[]
+  playerInfo                 NewOrderPlayer?
 
   @@index([deletedAt])
 }
@@ -3485,16 +3485,15 @@ model ModerationRule {
 }
 
 model NewOrderPlayer {
-  userId   Int              @id
-  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  rankType NewOrderRankType
-  rank     NewOrderRank     @relation(fields: [rankType], references: [type], onDelete: Cascade)
-
-  startAt       DateTime        @default(now())
-  exp           Int             @default(0)
-  fervor        Int             @default(0)
-  smiteReceived NewOrderSmite[] @relation("smiteReceived")
-  smiteGiven    NewOrderSmite[] @relation("smiteGiven")
+  userId        Int              @id @unique
+  user          User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  rankType      NewOrderRankType
+  rank          NewOrderRank     @relation(fields: [rankType], references: [type], onDelete: Cascade)
+  startAt       DateTime         @default(now())
+  exp           Int              @default(0)
+  fervor        Int              @default(0)
+  smiteReceived NewOrderSmite[]  @relation("smiteReceived")
+  smiteGiven    NewOrderSmite[]  @relation("smiteGiven")
 }
 
 enum NewOrderRankType {

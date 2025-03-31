@@ -1,5 +1,11 @@
 import { z } from 'zod';
 import { NewOrderDamnedReason, NewOrderImageRating } from '~/server/common/enums';
+import { infiniteQuerySchema } from '~/server/schema/base.schema';
+
+export type GetImageQueueSchema = z.infer<typeof getImageQueueSchema>;
+export const getImageQueueSchema = infiniteQuerySchema.extend({
+  // TODO: add playerId to the schema
+});
 
 export type SmitePlayerInput = z.infer<typeof smitePlayerSchema>;
 export const smitePlayerSchema = z.object({

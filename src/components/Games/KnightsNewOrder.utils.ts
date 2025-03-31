@@ -12,9 +12,24 @@ export const useKnightsNewOrderListener = () => {
     defaultValue: [],
   });
 
-  useSignalTopic(SignalTopic.NewOrder);
+  useSignalTopic(SignalTopic.NewOrderPlayer);
 
-  useSignalConnection(SignalMessages.NewOrderQueueUpdate, (data) => {
+  useSignalConnection(SignalMessages.NewOrderPlayerUpdate, (data) => {
     console.log(data);
+    queryUtils.games.newOrder.join.setData(undefined, (old) => {
+      if (!old) return old;
+      const player = old.players.find((p) => p.id === data.playerId);
+      if (!player) return old;
+
+      return {
+        ...old,
+        players: old.players.map((p) => {
+          if (p.id === data.playerId) {
+            return { ...p, ...data };
+          }
+          return p;
+        }),
+      };
+    });
   });
 };
