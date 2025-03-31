@@ -1,3 +1,4 @@
+import { select } from 'motion/dist/react-m';
 import { clickhouse } from '~/server/clickhouse/client';
 import {
   NewOrderImageRating,
@@ -14,6 +15,7 @@ import {
   correctJudgementsCounter,
   expCounter,
   fervorCounter,
+  poolCounters,
   smitesCounter,
 } from '~/server/games/new-order/utils';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -25,9 +27,14 @@ import {
 import { playerInfoSelect } from '~/server/selectors/user.selector';
 import { getAllImagesIndex } from '~/server/services/image.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
-import { throwInternalServerError, throwNotFoundError } from '~/server/utils/errorHandling';
+import {
+  throwBadRequestError,
+  throwInternalServerError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { MetricTimeframe } from '~/shared/utils/prisma/enums';
+import { MetricTimeframe, NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 
 export async function joinGame({ userId }: { userId: number }) {
@@ -329,4 +336,46 @@ export function getNewOrderRanks() {
     },
     { ttl: 0 } // TODO.newOrder: set a proper TTL
   );
+}
+ 
+export function getNewOrderImageSet({
+  userId
+  imageCount,
+} : {
+  userId: number;
+  imageCount: number;
+}) {
+  const player = await dbRead.newOrderPlayer.findUnique({
+    where: { userId },
+    select: {
+      id: true,
+      rank: {
+        select: { type: true},
+      },
+    },
+  });
+
+  if (!player) throw throwNotFoundError(`No player with id ${userId}`);
+
+  if (player.rank.pools.length === 0)
+    throw throwBadRequestError(
+      'The rank this player is in might be misconfigured. Please contact support.'
+    );
+
+  const imageIds: number[] = [];
+  const rankPools = player.rank.type === NewOrderRankType.Templar ? [
+    ...poolCounters.Templar,
+    ...poolCounters.Knight,
+  ] : poolCounters[player.rank.type];
+
+  for (const pool of rankPools) { 
+    const images = pool.getAll(imageCount);
+    if (images.length === 0) continue;
+
+    imageIds.push(...images);
+
+    if (imageIds.length >= imageCount) break;
+  }
+
+  return shuffle(imageIds.slice(0, imageCount));
 }

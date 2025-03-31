@@ -162,6 +162,8 @@ export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
+export type NewOrderRankType = "Accolyte" | "Knight" | "Templar";
+
 export type EntityMetric_EntityType_Type = "Image";
 
 export type EntityMetric_MetricType_Type = "ReactionLike" | "ReactionHeart" | "ReactionLaugh" | "ReactionCry" | "Comment" | "Collection" | "Buzz";
@@ -2629,7 +2631,7 @@ export interface ModerationRule {
 export interface NewOrderPlayer {
   userId: number;
   user?: User;
-  rankId: number;
+  rankType: NewOrderRankType;
   rank?: NewOrderRank;
   startAt: Date;
   exp: number;
@@ -2639,7 +2641,7 @@ export interface NewOrderPlayer {
 }
 
 export interface NewOrderRank {
-  id: number;
+  type: NewOrderRankType;
   name: string;
   minExp: number;
   createdAt: Date;

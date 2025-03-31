@@ -1,5 +1,6 @@
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 
 type NewOrderRedisKeyString = Values<typeof REDIS_SYS_KEYS.NEW_ORDER>;
 type NewOrderRedisKey = `${NewOrderRedisKeyString}${'' | `:${string}`}`;
@@ -27,6 +28,23 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     }
 
     return fetchedCount;
+  }
+
+  async function getAll(limit?: number) {
+    // Returns all ids in the range of min and max
+    // If ordered, returns the ids by the score in descending order.
+    if (ordered) {
+      const data = await sysRedis.zRange(key, -Infinity, Infinity, {
+        REV: true,
+        BY: 'SCORE',
+        LIMIT: { offset: 0, count: limit ?? 100 },
+      });
+
+      return data.map(Number);
+    }
+
+    const data = await sysRedis.hGetAll(key);
+    return Object.values(data).map(Number);
   }
 
   async function getCount(id: number) {
@@ -65,7 +83,7 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return ordered ? sysRedis.zRem(key, id.toString()) : sysRedis.hDel(key, id.toString());
   }
 
-  return { increment, decrement, reset, getCount };
+  return { increment, decrement, reset, getCount, getAll };
 }
 
 export const correctJudgementsCounter = createCounter({
@@ -99,3 +117,48 @@ export const expCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.EXP,
   fetchCount: async () => 0,
 });
+
+export const poolKeys = {
+  [NewOrderRankType.Accolyte]: [
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Accolyte1`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Accolyte2`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Accolyte3`,
+  ],
+  [NewOrderRankType.Knight]: [
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight1`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight2`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight3`,
+  ],
+  [NewOrderRankType.Templar]: [
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar1`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar2`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Templar3`,
+  ],
+};
+
+export const poolCounters = {
+  [NewOrderRankType.Accolyte]: poolKeys[NewOrderRankType.Accolyte].map((key) =>
+    createCounter({
+      key: key as NewOrderRedisKey,
+      fetchCount: async (imageId: number) => 0,
+      ttl: CacheTTL.week,
+      ordered: true,
+    })
+  ),
+  [NewOrderRankType.Knight]: poolKeys[NewOrderRankType.Knight].map((key) =>
+    createCounter({
+      key: key as NewOrderRedisKey,
+      fetchCount: async (imageId: number) => 0,
+      ttl: CacheTTL.week,
+      ordered: true,
+    })
+  ),
+  [NewOrderRankType.Templar]: poolKeys[NewOrderRankType.Templar].map((key) =>
+    createCounter({
+      key: key as NewOrderRedisKey,
+      fetchCount: async (imageId: number) => 0,
+      ttl: CacheTTL.week,
+      ordered: true,
+    })
+  ),
+};
