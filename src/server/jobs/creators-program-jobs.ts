@@ -264,7 +264,7 @@ export const extractionPhaseStartedNotification = createJob(
 );
 export const extractionPhaseEndingNotification = createJob(
   'creator-program-extraction-phase-ending',
-  `0 0 L-1 * *`,
+  `0 0 L * *`,
   async () => {
     const month = dayjs().format('YYYY-MM');
     const users = await getCreatorProgramUsers();
