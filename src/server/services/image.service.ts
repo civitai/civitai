@@ -3555,18 +3555,18 @@ export const getImageModerationReviewQueue = async ({
   const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
-    ${
+    ${Prisma.raw(
       tagReview
-        ? Prisma.raw(`
+        ? `
             WITH tags_review AS (
               SELECT "imageId"
               FROM "TagsOnImageDetails" WHERE "needsReview"
               ${cursor ? `AND "imageId" <= ${cursor}` : ''}
               ORDER BY ("imageId", "tagId") DESC
               LIMIT ${limit + 1}
-            )`)
+            )`
         : ''
-    }
+    )}
     -- Image moderation queue
     SELECT
       i.id,
