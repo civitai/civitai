@@ -278,13 +278,11 @@ export default defineNextConfig(
           destination: '/collections/6503138',
           permanent: true,
         },
-
         {
           source: '/creators-program',
           destination: '/creator-program',
           permanent: true,
         },
-
       ];
     },
     output: 'standalone',

@@ -83,7 +83,7 @@ type Abuser = {
 const abuseLimitsSchema = z.object({
   awarded: z.number().default(3000),
   user_count: z.number().default(10),
-  excludedIps: z.string().array().default(['1.1.1.1', '']),
+  excludedIps: z.string().array().default(['1.1.1.1', '']), // "10.124.0.14","10.124.0.17","10.124.0.32","10.124.0.70","10.124.0.84","10.124.0.94"
   award_types: z.string().array().default(['dailyBoost']),
   user_conditions: z.string().array().optional(),
 });

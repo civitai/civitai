@@ -77,12 +77,12 @@ const EpochRow = ({
   onPublishClick: (modelUrl: string) => void;
   loading?: boolean;
   incomplete?: boolean;
-  modelVersionId?: number;
+  modelVersionId: number;
   canGenerate?: boolean;
 }) => {
   const currentUser = useCurrentUser();
   const { classes, cx } = useStyles();
-  const features = useFeatureFlags();
+  // const features = useFeatureFlags();
 
   return (
     <Paper
@@ -117,8 +117,10 @@ const EpochRow = ({
             </DownloadButton>
             {canGenerate && (
               <SubscriptionRequiredBlock feature="private-models">
+                {/* TODO will this work? */}
                 <GenerateButton
-                  modelVersionId={modelVersionId}
+                  versionId={modelVersionId}
+                  canGenerate={true}
                   disabled={!currentUser?.isMember && !currentUser?.isModerator}
                   epochNumber={epoch.epochNumber}
                 />

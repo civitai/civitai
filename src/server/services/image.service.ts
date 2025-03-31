@@ -22,7 +22,11 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import {
+  combineSqlWithParams,
+  getDbWithoutLag,
+  preventReplicationLag,
+} from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -3517,16 +3521,6 @@ export const getImageModerationReviewQueue = async ({
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
   }
 
-  if (tagReview) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImageDetails" toi
-      WHERE toi."imageId" = i.id AND toi."needsReview"
-    )`);
-    AND.push(Prisma.sql`
-      i."nsfwLevel" < ${NsfwLevel.Blocked}
-    `);
-  }
-
   if (tagIds?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "TagsOnImageDetails" toi
@@ -3541,20 +3535,27 @@ export const getImageModerationReviewQueue = async ({
   let cursorProp = 'i."id"';
   let cursorDirection = 'DESC';
 
-  if (reportReview) {
-    // Add this to the WHERE:
-    AND.push(Prisma.sql`report."status" = 'Pending'`);
-    // Also, update sorter to most recent:
-    orderBy = `report."createdAt" ASC`;
-    cursorProp = 'report.id';
-    cursorDirection = 'ASC';
-  }
+  if (tagReview) {
+    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review)`);
+    AND.push(Prisma.sql`
+      i."nsfwLevel" < ${NsfwLevel.Blocked}
+    `);
+  } else {
+    if (reportReview) {
+      // Add this to the WHERE:
+      AND.push(Prisma.sql`report."status" = 'Pending'`);
+      // Also, update sorter to most recent:
+      orderBy = `report."createdAt" ASC`;
+      cursorProp = 'report.id';
+      cursorDirection = 'ASC';
+    }
 
-  if (cursor) {
-    // Random sort cursor is handled by the WITH query
-    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    if (cursorProp)
-      AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+    if (cursor) {
+      // Random sort cursor is handled by the WITH query
+      const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+      if (cursorProp)
+        AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+    }
   }
 
   // TODO: find a better way to handle different select/join for each type of review
@@ -3562,6 +3563,18 @@ export const getImageModerationReviewQueue = async ({
   const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
+    ${Prisma.raw(
+      tagReview
+        ? `
+            WITH tags_review AS (
+              SELECT "imageId"
+              FROM "TagsOnImageDetails" WHERE "needsReview"
+              ${cursor ? `AND "imageId" <= ${cursor}` : ''}
+              ORDER BY ("imageId", "tagId") DESC
+              LIMIT ${limit + 1}
+            )`
+        : ''
+    )}
     -- Image moderation queue
     SELECT
       i.id,
@@ -3611,6 +3624,11 @@ export const getImageModerationReviewQueue = async ({
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
     nextCursor = nextItem?.cursorId;
+  }
+
+  if (tagReview) {
+    const nextItem = rawImages.pop();
+    if (rawImages.length > 0) nextCursor = nextItem?.cursorId;
   }
 
   const imageIds = rawImages.map((i) => i.id);

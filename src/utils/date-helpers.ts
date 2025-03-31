@@ -125,6 +125,11 @@ export function isHolidaysTime() {
   return today.month() === 11;
 }
 
+export function isApril1() {
+  const today = dayjs.utc();
+  return today.month() === 3 && today.date() === 1;
+}
+
 export function roundMinutes(d: Date | string) {
   const date = dayjs(d).toDate();
   date.setHours(date.getHours() + Math.round(date.getMinutes() / 60));

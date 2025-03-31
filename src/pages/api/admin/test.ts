@@ -20,6 +20,7 @@ import {
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { pgDbWrite } from '~/server/db/pgDb';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { Queue } from 'bullmq';
 import { EventQueue } from '~/server/event-queue/event-queue';
 import { ImageQueue } from '~/server/event-queue/image.queue';

@@ -10,9 +10,9 @@ import {
   BuzzWithdrawalRequestSort,
   ClubSort,
   CollectionSort,
-  ImageSort,
-  GenerationSort,
   GenerationReactType,
+  GenerationSort,
+  ImageSort,
   ModelSort,
   PostSort,
   QuestionSort,
@@ -53,6 +53,7 @@ const modelFilterSchema = z.object({
   fileFormats: z.enum(constants.modelFileFormats).array().optional(),
   pending: z.boolean().optional(),
   availability: z.nativeEnum(Availability).optional(),
+  isFeatured: z.boolean().optional(),
 });
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
