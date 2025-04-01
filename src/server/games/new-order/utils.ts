@@ -83,7 +83,15 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return ordered ? sysRedis.zRem(key, id.toString()) : sysRedis.hDel(key, id.toString());
   }
 
-  return { increment, decrement, reset, getCount, getAll };
+  async function exists(id: number | string) {
+    const countStr = ordered
+      ? await sysRedis.zScore(key, id.toString())
+      : await sysRedis.hGet(key, id.toString());
+
+    return countStr !== null && countStr !== undefined;
+  }
+
+  return { increment, decrement, reset, getCount, getAll, exists };
 }
 
 export const correctJudgementsCounter = createCounter({

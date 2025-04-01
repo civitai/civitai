@@ -370,6 +370,7 @@ export async function addImageToQueue({
     where: { id: imageId },
     select: { id: true },
   });
+
   if (!image) return false;
 
   const pools = poolCounters[rankType];
