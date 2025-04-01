@@ -85,7 +85,8 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
             userId: Number.parseInt(event.eventData.payeeId),
             tipaltiAccountStatus: event.eventData.status,
             tipaltiPaymentsEnabled: event.eventData.isPayable,
-            tipaltiWithdrawalMethod: event.eventData.paymentMethod as CashWithdrawalMethod,
+            tipaltiWithdrawalMethod: (event.eventData.paymentMethod ??
+              event.eventData.paymentMethodType) as CashWithdrawalMethod,
           });
           break;
         case 'paymentGroupApproved':

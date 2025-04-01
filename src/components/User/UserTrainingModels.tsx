@@ -242,7 +242,7 @@ export default function UserTrainingModels() {
         size="sm"
       >
         Due to high load, LoRA Trainings are not always successful - they may fail or get stuck in
-        processing. Not to worry though, if your LoRA training fails your buzz will be refunded
+        processing. Not to worry though, if your LoRA training fails your Buzz will be refunded
         within 24 hours. If your training has been processing for more than 24 hours it will be auto
         failed and a refund will be issued to you. If your training fails it&apos;s recommended that
         you try again.

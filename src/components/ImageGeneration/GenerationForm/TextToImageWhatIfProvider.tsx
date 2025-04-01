@@ -51,7 +51,7 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       }
     }
 
-    let modelId = defaultModel.id;
+    let modelId = model?.id ?? defaultModel.id;
     const isFlux = getIsFlux(watched.baseModel);
     if (isFlux && watched.fluxMode) {
       const { version } = parseAIR(watched.fluxMode);
@@ -59,10 +59,6 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       if (watched.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
-    const isSD3 = getIsSD3(watched.baseModel);
-    if (isSD3 && model?.id) {
-      modelId = model.id;
-    }
     const additionalResources = resources
       .filter((x) => isDefined(x.id))
       .map((x) => ({ id: x.id as number, epochNumber: x.epochDetails?.epochNumber }));

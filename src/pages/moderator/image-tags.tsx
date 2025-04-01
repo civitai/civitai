@@ -5,7 +5,6 @@ import {
   Card,
   Center,
   Checkbox,
-  Container,
   Group,
   Loader,
   Paper,
@@ -32,7 +31,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { MasonryGrid } from '~/components/MasonryGrid/MasonryGrid';
+import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
@@ -42,6 +41,8 @@ import { trpc } from '~/utils/trpc';
 import { getImageEntityUrl } from '~/utils/moderators/moderator.util';
 import { createSelectStore } from '~/store/select.store';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
+import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 
 const imageSelectStore = createSelectStore<number>();
 
@@ -58,60 +59,73 @@ export default function ImageTags() {
   }, []);
 
   return (
-    <Container size="xl">
-      <Stack>
-        <Paper
-          withBorder
-          shadow="lg"
-          p="xs"
-          sx={{
-            display: 'inline-flex',
-            float: 'right',
-            alignSelf: 'flex-end',
-            marginRight: 6,
-            position: 'sticky',
-            top: 'var(--header-height,0)',
-            marginBottom: -80,
-            zIndex: 10,
-          }}
-        >
-          <ModerationControls images={images} filters={filters} />
-        </Paper>
-
-        <Stack spacing={0} mb="lg">
-          <Title order={1}>Tags Needing Review</Title>
-          <Text color="dimmed">
-            These are images with moderation tags that users have voted to remove.
-          </Text>
-        </Stack>
-
-        {isLoading ? (
-          <Center py="xl">
-            <Loader size="xl" />
-          </Center>
-        ) : images.length ? (
-          <MasonryGrid
-            items={images}
-            isRefetching={isRefetching}
-            isFetchingNextPage={isFetchingNextPage}
-            render={ImageGridItem}
-          />
-        ) : (
-          <NoContent mt="lg" message="There are no tags that need review" />
-        )}
-        {hasNextPage && (
-          <InViewLoader
-            loadFn={fetchNextPage}
-            loadCondition={!isRefetching}
-            style={{ gridColumn: '1/-1' }}
+    <MasonryProvider>
+      <MasonryContainer>
+        <Stack>
+          <Paper
+            withBorder
+            shadow="lg"
+            p="xs"
+            sx={{
+              display: 'inline-flex',
+              float: 'right',
+              alignSelf: 'flex-end',
+              marginRight: 6,
+              position: 'sticky',
+              top: 'var(--header-height,0)',
+              marginBottom: -80,
+              zIndex: 10,
+            }}
           >
-            <Center p="xl" sx={{ height: 36 }} mt="md">
-              <Loader />
+            <ModerationControls images={images} filters={filters} />
+          </Paper>
+
+          <Stack spacing={0} mb="lg">
+            <Title order={1}>Tags Needing Review</Title>
+            <Text color="dimmed">
+              These are images with moderation tags that users have voted to remove.
+            </Text>
+          </Stack>
+
+          {isLoading ? (
+            <Center py="xl">
+              <Loader size="xl" />
             </Center>
-          </InViewLoader>
-        )}
-      </Stack>
-    </Container>
+          ) : images.length ? (
+            // <MasonryGrid
+            //   items={images}
+            //   isRefetching={isRefetching}
+            //   isFetchingNextPage={isFetchingNextPage}
+            //   render={ImageGridItem}
+            // />
+            <MasonryColumns
+              data={images}
+              imageDimensions={(data) => {
+                const width = data?.width ?? 450;
+                const height = data?.height ?? 450;
+                return { width, height };
+              }}
+              maxItemHeight={600}
+              render={ImageGridItem}
+              itemId={(data) => data.id}
+            />
+          ) : (
+            <NoContent mt="lg" message="There are no tags that need review" />
+          )}
+          {hasNextPage && (
+            <InViewLoader
+              loadFn={fetchNextPage}
+              loadCondition={!isRefetching}
+              style={{ gridColumn: '1/-1' }}
+            >
+              <Center p="xl" sx={{ height: 36 }} mt="md">
+                <Loader />
+              </Center>
+            </InViewLoader>
+          )}
+        </Stack>
+      </MasonryContainer>
+    </MasonryProvider>
   );
 }
 
@@ -334,7 +348,13 @@ function ImageGridItem({ data: image, width: itemWidth }: ImageGridItemProps) {
         </ImageGuard2>
       </Card.Section>
       {needsReview && (
-        <VotableTags mt="xs" tags={tags.moderation} entityType="image" entityId={image.id} highlightContested />
+        <VotableTags
+          mt="xs"
+          tags={tags.moderation}
+          entityType="image"
+          entityId={image.id}
+          highlightContested
+        />
       )}
     </Card>
   );

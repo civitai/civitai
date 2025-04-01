@@ -10,6 +10,8 @@ export async function middleware(request: NextRequest) {
 export const config = {
   matcher: [
     '/moderator/:path*',
+    '/testing/:path*',
+    '/api/testing/:path*',
     '/api/trpc/:path*',
     '/api/v1/:path*',
     // '/models/:path*',

@@ -11,6 +11,7 @@ export type NotificationProcessor = {
   getDetails?: (notifications: BareNotification[]) => BareNotification[];
   category: NotificationCategory;
   defaultDisabled?: boolean;
+  showCategory?: boolean;
 };
 
 export const bareNotification = z.object({

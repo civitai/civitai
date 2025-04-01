@@ -192,6 +192,7 @@ const ModelCollection = ({ collection }: { collection: NonNullable<CollectionByI
   );
 };
 
+const imageCollectionSortOptions = [ImageSort.Newest, ImageSort.Oldest];
 const ImageCollection = ({
   collection,
   permissions,
@@ -201,7 +202,9 @@ const ImageCollection = ({
 }) => {
   const isContestCollection = collection.mode === CollectionMode.Contest;
   const { replace, query } = useImageQueryParams();
-  const sort = isContestCollection ? ImageSort.Random : query.sort ?? ImageSort.Newest;
+  const defaultSort =
+    query.sort && imageCollectionSortOptions.includes(query.sort) ? query.sort : ImageSort.Newest;
+  const sort = isContestCollection ? ImageSort.Random : defaultSort;
   const period = query.period ?? MetricTimeframe.AllTime;
   const updateCollectionCoverImageMutation = trpc.collection.updateCoverImage.useMutation();
   const utils = trpc.useUtils();
@@ -298,6 +301,7 @@ const ImageCollection = ({
                   value={sort}
                   compact={false}
                   onChange={(x) => replace({ sort: x as ImageSort })}
+                  options={imageCollectionSortOptions.map((x) => ({ label: x, value: x }))}
                 />
                 <MediaFiltersDropdown
                   filterType="images"

@@ -7,7 +7,7 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
-import {
+import type {
   AutoCaptionResponse,
   AutoTagResponse,
   CaptionDataResponse,
@@ -19,7 +19,7 @@ import {
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
-import { MyTrainingModelGetAll } from '~/types/router';
+import type { MyTrainingModelGetAll } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';

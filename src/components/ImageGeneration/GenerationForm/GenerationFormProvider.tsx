@@ -55,6 +55,7 @@ const baseSchema = textToImageParamsSchema
     remixOfId: z.number().optional(),
     remixSimilarity: z.number().optional(),
     remixPrompt: z.string().optional(),
+    remixNegativePrompt: z.string().optional(),
     aspectRatio: z.string(),
     fluxUltraAspectRatio: z.string(),
     fluxUltraRaw: z.boolean().optional(),
@@ -263,7 +264,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
     values: getValues,
-    exclude: ['remixSimilarity', 'remixPrompt'],
+    exclude: ['remixSimilarity', 'remixPrompt', 'remixNegativePrompt'],
     storage: localStorage,
   });
 
@@ -275,6 +276,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       }
 
       form.setValue('remixPrompt', data.params.prompt);
+      form.setValue('remixNegativePrompt', data.params.negativePrompt);
     });
   }
 

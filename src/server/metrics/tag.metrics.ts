@@ -76,7 +76,12 @@ async function getEngagementTasks(ctx: MetricProcessorRunContext) {
 
 const tagCountMap = {
   Models: { id: 'modelId', table: 'TagsOnModels', column: 'modelCount', sourceTable: 'Model' },
-  Images: { id: 'imageId', table: 'TagsOnImage', column: 'imageCount', sourceTable: 'Image' },
+  Images: {
+    id: 'imageId',
+    table: 'TagsOnImageDetails',
+    column: 'imageCount',
+    sourceTable: 'Image',
+  },
   Posts: { id: 'postId', table: 'TagsOnPost', column: 'postCount', sourceTable: 'Post' },
   Articles: {
     id: 'articleId',

@@ -133,9 +133,7 @@ export const updatePostHandler = async ({
 }) => {
   try {
     const post = await dbRead.post.findFirst({
-      where: {
-        id: input.id,
-      },
+      where: { id: input.id },
       select: {
         publishedAt: true,
         collectionId: true,
@@ -145,6 +143,12 @@ export const updatePostHandler = async ({
         detail: true,
       },
     });
+
+    // Throw error if trying to reschedule a post that is already published
+    const today = new Date();
+    if (input.publishedAt && post?.publishedAt && dayjs(post.publishedAt).isBefore(today)) {
+      throw throwBadRequestError('You cannot reschedule a post that is already published');
+    }
 
     if (
       input.publishedAt &&
@@ -173,9 +177,7 @@ export const updatePostHandler = async ({
       }
 
       const collection = await getCollectionById({
-        input: {
-          id: input.collectionId,
-        },
+        input: { id: input.collectionId },
       });
 
       if (collection.type !== CollectionType.Post && collection.type !== CollectionType.Image) {
@@ -201,15 +203,11 @@ export const updatePostHandler = async ({
         const exists = await dbRead.image.findFirst({
           where: {
             postId: input.id,
-            tools: {
-              none: {},
-            },
+            tools: { none: {} },
           },
         });
 
-        if (exists) {
-          throw throwBadRequestError('All images must have tools to be submitted');
-        }
+        if (exists) throw throwBadRequestError('All images must have tools to be submitted');
       }
 
       if (collection.mode === CollectionMode.Contest) {
@@ -233,28 +231,18 @@ export const updatePostHandler = async ({
       }
     }
 
-    const updatedPost = await updatePost({
-      ...input,
-      user: ctx.user,
-    });
-
+    const updatedPost = await updatePost({ ...input, user: ctx.user });
     const collection = updatedPost.collectionId
       ? await getCollectionById({
-          input: {
-            id: updatedPost.collectionId,
-          },
+          input: { id: updatedPost.collectionId },
         })
       : undefined;
 
     const wasPublished = !post?.publishedAt && updatedPost.publishedAt;
     if (wasPublished) {
       const postTags = await dbRead.postTag.findMany({
-        where: {
-          postId: updatedPost.id,
-        },
-        select: {
-          tagName: true,
-        },
+        where: { postId: updatedPost.id },
+        select: { tagName: true },
       });
 
       const isScheduled = dayjs(updatedPost.publishedAt).isAfter(dayjs().add(10, 'minutes')); // Publishing more than 10 minutes in the future

@@ -210,59 +210,59 @@ export const samplersToComfySamplers: Record<
 };
 
 // TODO - improve this
-export const defaultCheckpoints: Record<
-  string,
-  {
-    ecosystem: string;
-    type: string;
-    source: string;
-    model: number;
-    version: number;
-  }
-> = {
-  SD1: {
-    ecosystem: 'sd1',
-    type: 'model',
-    source: 'civitai',
-    model: 4384,
-    version: 128713,
-  },
-  SD3: {
-    ecosystem: 'sd3',
-    type: 'model',
-    source: 'civitai',
-    model: 878387,
-    version: 983309,
-  },
-  SD3_5M: {
-    ecosystem: 'sd3',
-    type: 'model',
-    source: 'civitai',
-    model: 896953,
-    version: 1003708,
-  },
-  SDXL: {
-    ecosystem: 'sdxl',
-    type: 'model',
-    source: 'civitai',
-    model: 101055,
-    version: 128078,
-  },
-  Pony: {
-    ecosystem: 'sdxl',
-    type: 'model',
-    source: 'civitai',
-    model: 257749,
-    version: 290640,
-  },
-  Illustrious: {
-    ecosystem: 'sdxl',
-    type: 'model',
-    source: 'civitai',
-    model: 795765,
-    version: 889818,
-  },
-};
+// export const defaultCheckpoints: Record<
+//   string,
+//   {
+//     ecosystem: string;
+//     type: string;
+//     source: string;
+//     model: number;
+//     version: number;
+//   }
+// > = {
+//   SD1: {
+//     ecosystem: 'sd1',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 4384,
+//     version: 128713,
+//   },
+//   SD3: {
+//     ecosystem: 'sd3',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 878387,
+//     version: 983309,
+//   },
+//   SD3_5M: {
+//     ecosystem: 'sd3',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 896953,
+//     version: 1003708,
+//   },
+//   SDXL: {
+//     ecosystem: 'sdxl',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 101055,
+//     version: 128078,
+//   },
+//   Pony: {
+//     ecosystem: 'sdxl',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 257749,
+//     version: 290640,
+//   },
+//   Illustrious: {
+//     ecosystem: 'sdxl',
+//     type: 'model',
+//     source: 'civitai',
+//     model: 795765,
+//     version: 889818,
+//   },
+// };
 
 // #region [utils]
 // some base models, such as SD1.5 can work with different base model set types
@@ -287,7 +287,8 @@ export function getIsSdxl(baseModel?: string) {
     baseModelSetType === 'SDXL' ||
     baseModelSetType === 'Pony' ||
     baseModelSetType === 'SDXLDistilled' ||
-    baseModelSetType === 'Illustrious'
+    baseModelSetType === 'Illustrious' ||
+    baseModelSetType === 'NoobAI'
   );
 }
 
@@ -311,6 +312,7 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Flux1')) return 'Flux1';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'Illustrious'))
     return 'Illustrious';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'NoobAI')) return 'NoobAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
   else return 'SD1';
@@ -395,6 +397,14 @@ export function sanitizeParamsByWorkflowDefinition(
 // #endregion
 
 // #region [config]
+const sdxlEcosystemPartialSupport = [
+  'SDXL 0.9',
+  'SDXL 1.0',
+  'SDXL 1.0 LCM',
+  ...baseModelSets.Pony.baseModels,
+  ...baseModelSets.Illustrious.baseModels,
+  ...baseModelSets.NoobAI.baseModels,
+];
 export type BaseModelResourceTypes = typeof baseModelResourceTypes;
 export type SupportedBaseModel = keyof BaseModelResourceTypes;
 export const baseModelResourceTypes = {
@@ -443,22 +453,22 @@ export const baseModelResourceTypes = {
     {
       type: ModelType.TextualInversion,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
+      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
     },
     {
       type: ModelType.LORA,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.DoRA,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.LoCon,
       baseModels: baseModelSets.Pony.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.VAE,
@@ -470,22 +480,49 @@ export const baseModelResourceTypes = {
     {
       type: ModelType.TextualInversion,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM', 'SD 1.5'],
+      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
     },
     {
       type: ModelType.LORA,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.DoRA,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.LoCon,
       baseModels: baseModelSets.Illustrious.baseModels,
-      partialSupport: ['SDXL 0.9', 'SDXL 1.0', 'SDXL 1.0 LCM'],
+      partialSupport: sdxlEcosystemPartialSupport,
+    },
+    {
+      type: ModelType.VAE,
+      baseModels: [...baseModelSets.SDXL.baseModels],
+    },
+  ],
+  NoobAI: [
+    { type: ModelType.Checkpoint, baseModels: baseModelSets.NoobAI.baseModels },
+    {
+      type: ModelType.TextualInversion,
+      baseModels: baseModelSets.NoobAI.baseModels,
+      partialSupport: ['SD 1.5', ...sdxlEcosystemPartialSupport],
+    },
+    {
+      type: ModelType.LORA,
+      baseModels: baseModelSets.NoobAI.baseModels,
+      partialSupport: sdxlEcosystemPartialSupport,
+    },
+    {
+      type: ModelType.DoRA,
+      baseModels: baseModelSets.NoobAI.baseModels,
+      partialSupport: sdxlEcosystemPartialSupport,
+    },
+    {
+      type: ModelType.LoCon,
+      baseModels: baseModelSets.NoobAI.baseModels,
+      partialSupport: sdxlEcosystemPartialSupport,
     },
     {
       type: ModelType.VAE,
@@ -610,4 +647,14 @@ export function getClosestFluxUltraAspectRatio(width: number, height: number) {
   const closest = findClosest(ratios, width / height);
   const index = ratios.indexOf(closest);
   return `${index ?? defaultFluxUltraAspectRatioIndex}`;
+}
+
+type GetUpscaleFactorProps = {
+  width: number;
+  height: number;
+};
+export function getUpscaleFactor(original: GetUpscaleFactorProps, upscale: GetUpscaleFactorProps) {
+  const s1 = original.width > original.height ? original.width : original.height;
+  const s2 = upscale.width > upscale.height ? upscale.width : upscale.height;
+  return Math.round((s2 / s1) * 10) / 10;
 }

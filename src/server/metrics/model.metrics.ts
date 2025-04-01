@@ -41,7 +41,7 @@ export const modelMetrics = createMetricProcessor({
       getVersionBuzzTasks(ctx),
     ]);
     log('modelVersionMetrics update', versionTasks.flat().length, 'tasks');
-    for (const tasks of versionTasks) await limitConcurrency(tasks, 10);
+    for (const tasks of versionTasks) await limitConcurrency(tasks, 5);
 
     const modelTasks = await Promise.all([
       getModelRatingTasks(ctx),
@@ -51,7 +51,7 @@ export const modelMetrics = createMetricProcessor({
       getVersionAggregationTasks(ctx),
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
-    for (const tasks of modelTasks) await limitConcurrency(tasks, 10);
+    for (const tasks of modelTasks) await limitConcurrency(tasks, 5);
 
     // Update the search index
     //---------------------------------------
@@ -213,49 +213,49 @@ async function getGenerationTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
-async function getImageTasks(ctx: ModelMetricContext) {
-  const affected = await getAffected(ctx, 'ModelVersion')`
-    -- Get recent model image uploads
-    SELECT DISTINCT
-      ir."modelVersionId" as id
-    FROM "Image" i
-    JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" IS NOT NULL
-    JOIN "Post" p ON i."postId" = p.id
-    WHERE p."publishedAt" BETWEEN '${ctx.lastUpdate}' AND now();
-  `;
+// async function getImageTasks(ctx: ModelMetricContext) {
+//   const affected = await getAffected(ctx, 'ModelVersion')`
+//     -- Get recent model image uploads
+//     SELECT DISTINCT
+//       ir."modelVersionId" as id
+//     FROM "Image" i
+//     JOIN "ImageResourceNew" ir ON ir."imageId" = i.id AND ir."modelVersionId" IS NOT NULL
+//     JOIN "Post" p ON i."postId" = p.id
+//     WHERE p."publishedAt" BETWEEN '${ctx.lastUpdate}' AND now();
+//   `;
 
-  const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    log('getImageTasks', i + 1, 'of', tasks.length);
-    await executeRefresh(ctx)`
-      -- update model image metrics
-      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "imageCount")
-      SELECT
-        "modelVersionId",
-        timeframe,
-        ${snippets.timeframeSum('i."publishedAt"')} "imageCount"
-      FROM (
-        SELECT
-          ir."modelVersionId",
-          p."publishedAt"
-        FROM "ModelVersion" mv
-        JOIN "Model" m ON m.id = mv."modelId"
-        JOIN "ImageResource" ir ON mv.id = ir."modelVersionId"
-        JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
-        JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
-        WHERE
-          mv.id IN (${ids})
-      ) i
-      CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
-      GROUP BY "modelVersionId", timeframe
-      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
-        SET "imageCount" = EXCLUDED."imageCount", "updatedAt" = now();
-    `;
-    log('getImageTasks', i + 1, 'of', tasks.length, 'done');
-  });
+//   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
+//     ctx.jobContext.checkIfCanceled();
+//     log('getImageTasks', i + 1, 'of', tasks.length);
+//     await executeRefresh(ctx)`
+//       -- update model image metrics
+//       INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "imageCount")
+//       SELECT
+//         "modelVersionId",
+//         timeframe,
+//         ${snippets.timeframeSum('i."publishedAt"')} "imageCount"
+//       FROM (
+//         SELECT
+//           ir."modelVersionId",
+//           p."publishedAt"
+//         FROM "ModelVersion" mv
+//         JOIN "Model" m ON m.id = mv."modelId"
+//         JOIN "ImageResourceNew" ir ON mv.id = ir."modelVersionId"
+//         JOIN "Image" i ON i.id = ir."imageId" AND m."userId" != i."userId"
+//         JOIN "Post" p ON i."postId" = p.id AND p."publishedAt" IS NOT NULL AND p."publishedAt" < now()
+//         WHERE
+//           mv.id IN (${ids})
+//       ) i
+//       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
+//       GROUP BY "modelVersionId", timeframe
+//       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+//         SET "imageCount" = EXCLUDED."imageCount", "updatedAt" = now();
+//     `;
+//     log('getImageTasks', i + 1, 'of', tasks.length, 'done');
+//   });
 
-  return tasks;
-}
+//   return tasks;
+// }
 
 async function getVersionRatingTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'ModelVersion')`
@@ -285,6 +285,7 @@ async function getVersionRatingTasks(ctx: ModelMetricContext) {
       WHERE r.exclude = FALSE
         AND r."tosViolation" = FALSE
         AND r."modelVersionId" IN (${ids})
+        AND r."modelVersionId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY r."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
         SET "thumbsUpCount" = EXCLUDED."thumbsUpCount", "thumbsDownCount" = EXCLUDED."thumbsDownCount", "updatedAt" = now();
@@ -320,6 +321,7 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
       JOIN "DonationGoal" dg ON dg.id = d."donationGoalId"
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE dg."modelVersionId" IN (${ids})
+        AND dg."modelVersionId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY dg."modelVersionId", tf.timeframe
       ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
         SET "tippedCount" = EXCLUDED."tippedCount", "tippedAmountCount" = EXCLUDED."tippedAmountCount", "updatedAt" = now();
@@ -374,6 +376,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
     FROM comments
     WHERE time >= ${ctx.lastUpdate}
       AND type = 'Model'
+      AND entityId IS NOT NULL
   `;
   const affected = [...new Set([...commentEvents.map((x) => x.modelId), ...ctx.queue])];
   ctx.addAffected(affected);
@@ -392,6 +395,7 @@ async function getCommentTasks(ctx: ModelMetricContext) {
       CROSS JOIN ( SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
       WHERE c."tosViolation" = false
         AND c."modelId" IN (${ids})
+        AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY c."modelId", tf.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
         SET "commentCount" = EXCLUDED."commentCount", "updatedAt" = now();
@@ -424,7 +428,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
         tf.timeframe,
         COUNT(DISTINCT c."addedById") AS "collectedCount"
       FROM "CollectionItem" c
-      JOIN Timeframes tf ON 
+      JOIN Timeframes tf ON
         (tf.timeframe = 'AllTime')
         OR (tf.timeframe = 'Year' AND c."createdAt" > NOW() - INTERVAL '365 days')
         OR (tf.timeframe = 'Month' AND c."createdAt" > NOW() - INTERVAL '30 days')
@@ -432,6 +436,7 @@ async function getCollectionTasks(ctx: ModelMetricContext) {
         OR (tf.timeframe = 'Day' AND c."createdAt" > NOW() - INTERVAL '1 day')
       JOIN "Model" m ON m.id = c."modelId" -- ensure model exists
       WHERE c."modelId" = ANY (ARRAY[${ids}])
+        AND c."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY c."modelId", tf.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
         SET "collectedCount" = EXCLUDED."collectedCount", "updatedAt" = now();
@@ -473,6 +478,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
         CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe ) tf
         WHERE bt."entityType" = 'Model' AND bt."entityId" IS NOT NULL
           AND bt."entityId" IN (${ids})
+          AND bt."entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         GROUP BY "entityId", tf.timeframe
       ), "versionTips" AS (
         SELECT
@@ -483,6 +489,7 @@ async function getBuzzTasks(ctx: ModelMetricContext) {
         FROM "ModelVersionMetric" mvm
         JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
         WHERE mv."modelId" IN (${ids})
+          AND mv."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
         GROUP BY mv."modelId", mvm.timeframe
       )
       INSERT INTO "ModelMetric" ("modelId", timeframe, "tippedCount", "tippedAmountCount")
@@ -526,6 +533,7 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
       FROM "ModelVersionMetric" mvm
       JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
       WHERE mv."modelId" IN (${ids})
+        AND mv."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY mv."modelId", mvm.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
         SET "updatedAt" = now(), "downloadCount" = EXCLUDED."downloadCount", "imageCount" = EXCLUDED."imageCount", "generationCount" = EXCLUDED."generationCount";

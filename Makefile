@@ -50,19 +50,25 @@ copy-env:
 
 .PHONY: npm-install
 npm-install:
+	# TODO fix postinstall on git bash
 	npm i
 
+.PHONY: gen-prisma
+gen-prisma:
+	prisma generate --no-hints
+
+.PHONY: dev
+dev:
+	cross-env NODE_OPTIONS=\"--disable-warning=ExperimentalWarning\" next dev
+
 .PHONY: run
-run:
-	npm run db:generate
-	npm run dev
+run: gen-prisma dev
 
 .PHONY: init
 init: copy-env npm-install start run-migrations bootstrap-db bootstrap-metrics run
 
 .PHONY: rerun
-rerun: start bootstrap-db
-	npm run dev
+rerun: start bootstrap-db bootstrap-metrics dev
 
 .PHONY: init-devcontainer
 init-devcontainer: copy-env npm-install run-migrations bootstrap-db bootstrap-metrics

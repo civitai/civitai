@@ -1,6 +1,6 @@
-import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
 import { getByIdSchema } from '~/server/schema/base.schema';
+import { HomeBlockType } from '~/shared/utils/prisma/enums';
 
 export type HomeBlockMetaSchema = z.infer<typeof homeBlockMetaSchema>;
 
@@ -45,6 +45,7 @@ export const homeBlockMetaSchema = z
     link: z.string(),
     linkText: z.string(),
     cosmeticShopSection: cosmeticShopSectionSchema,
+    footer: z.string().optional(),
   })
   .partial();
 

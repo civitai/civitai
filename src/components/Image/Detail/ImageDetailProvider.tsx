@@ -92,8 +92,6 @@ export function ImageDetailProvider({
     { enabled: shouldFetchImage }
   );
 
-  console.log(prefetchedImage);
-
   if (prefetchedImage && shouldFetchImage) {
     images.unshift(prefetchedImage as any);
   }

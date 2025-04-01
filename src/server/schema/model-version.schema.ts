@@ -8,7 +8,7 @@ import { constants } from '~/server/common/constants';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { imageSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
-import { ModelMeta } from '~/server/schema/model.schema';
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import {
   ModelStatus,
@@ -20,7 +20,13 @@ import {
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
 import { isAir } from '~/utils/string-helpers';
-import { trainingBaseModelType } from '~/utils/training';
+import {
+  engineTypes,
+  loraTypes,
+  lrSchedulerTypes,
+  optimizerTypes,
+  trainingBaseModelType,
+} from '~/utils/training';
 
 export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
 export const queryModelVersionsSchema = infiniteQuerySchema.extend({
@@ -66,13 +72,6 @@ export type TrainingDetailsBaseModelList = (typeof trainingDetailsBaseModels)[nu
 export type TrainingDetailsBaseModel =
   | TrainingDetailsBaseModelList
   | TrainingDetailsBaseModelCustom;
-
-export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
-export type OptimizerTypes = (typeof optimizerTypes)[number];
-export const loraTypes = ['lora'] as const; // LoCon Lycoris", "LoHa Lycoris
-export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
-export const engineTypes = ['kohya', 'x-flux', 'rapid'] as const;
-export type EngineTypes = (typeof engineTypes)[number];
 
 export type TrainingDetailsParams = z.infer<typeof trainingDetailsParams>;
 export const trainingDetailsParams = z.object({
@@ -193,7 +192,7 @@ export const modelVersionUpsertSchema2 = z.object({
   epochs: z.number().min(0).max(100000).nullish(),
   clipSkip: z.number().min(1).max(12).nullish(),
   vaeId: z.number().nullish(),
-  trainedWords: z.array(z.string()).default([]),
+  trainedWords: z.array(z.string()).optional(),
   trainingStatus: z.nativeEnum(TrainingStatus).nullish(),
   trainingDetails: trainingDetailsObj.nullish(),
   status: z.nativeEnum(ModelStatus).optional(),
@@ -307,4 +306,14 @@ export type ModelVersionEarlyAccessPurchase = z.infer<typeof modelVersionEarlyAc
 export const modelVersionEarlyAccessPurchase = z.object({
   modelVersionId: z.number(),
   type: z.enum(['download', 'generation']),
+});
+
+export type GetModelVersionPopularityInput = z.infer<typeof getModelVersionPopularityInput>;
+export const getModelVersionPopularityInput = z.object({
+  id: z.number(),
+});
+
+export type GetModelVersionsPopularityInput = z.infer<typeof getModelVersionsPopularityInput>;
+export const getModelVersionsPopularityInput = z.object({
+  ids: z.array(z.number()),
 });

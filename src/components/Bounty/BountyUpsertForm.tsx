@@ -1,29 +1,22 @@
 import {
+  ActionIcon,
   Alert,
+  Anchor,
   Button,
+  createStyles,
+  Divider,
   Group,
+  Input,
+  List,
+  Paper,
+  Progress,
+  Radio,
+  SimpleGrid,
   Stack,
   Text,
   Title,
   Tooltip,
-  SimpleGrid,
-  Paper,
-  ActionIcon,
-  Progress,
-  Divider,
-  Input,
-  Radio,
-  createStyles,
-  Anchor,
-  List,
 } from '@mantine/core';
-import {
-  BountyEntryMode,
-  BountyMode,
-  BountyType,
-  Currency,
-  TagTarget,
-} from '~/shared/utils/prisma/enums';
 import {
   IconCalendar,
   IconCalendarDue,
@@ -31,56 +24,63 @@ import {
   IconInfoCircle,
   IconTrash,
 } from '@tabler/icons-react';
+import dayjs from 'dayjs';
 import { useRouter } from 'next/router';
 import React, { useEffect, useState } from 'react';
+import { z } from 'zod';
+import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
+import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
+import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
+import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
+import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFormStorage } from '~/hooks/useFormStorage';
 import {
   Form,
   InputCheckbox,
   InputDatePicker,
   InputMultiFileUpload,
+  InputMultiSelect,
   InputNumber,
-  InputRTE,
   InputRadioGroup,
+  InputRTE,
   InputSegmentedControl,
   InputSelect,
   InputSwitch,
   InputTags,
   InputText,
   useForm,
-  InputMultiSelect,
 } from '~/libs/form';
-import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
-import { useCFImageUpload } from '~/hooks/useCFImageUpload';
-import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
+import { activeBaseModels, constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { MediaHash } from '~/components/ImageHash/ImageHash';
-import dayjs from 'dayjs';
-import { getDisplayName } from '~/utils/string-helpers';
-import { constants, activeBaseModels } from '~/server/common/constants';
-import { z } from 'zod';
-import { getMinMaxDates, useMutateBounty } from './bounty.utils';
-import { CurrencyIcon } from '../Currency/CurrencyIcon';
-import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
-import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-import { numberWithCommas } from '~/utils/number-helpers';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { useBuzzTransaction } from '../Buzz/buzz.utils';
-import { DaysFromNow } from '../Dates/DaysFromNow';
-import { dateWithoutTimezone, stripTime } from '~/utils/date-helpers';
-import { BountyGetById } from '~/types/router';
+import { upsertBountyInputSchema } from '~/server/schema/bounty.schema';
 import { BaseFileSchema } from '~/server/schema/file.schema';
+import {
+  BountyEntryMode,
+  BountyMode,
+  BountyType,
+  Currency,
+  TagTarget,
+} from '~/shared/utils/prisma/enums';
+import { BountyGetById } from '~/types/router';
+import { dateWithoutTimezone, stripTime } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
-import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
-import { InfoPopover } from '../InfoPopover/InfoPopover';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { getDisplayName } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { AlertWithIcon } from '../AlertWithIcon/AlertWithIcon';
+import { useBuzzTransaction } from '../Buzz/buzz.utils';
+import { ContentPolicyLink } from '../ContentPolicyLink/ContentPolicyLink';
+import { CurrencyIcon } from '../Currency/CurrencyIcon';
+import { DaysFromNow } from '../Dates/DaysFromNow';
+import { InfoPopover } from '../InfoPopover/InfoPopover';
+import { getMinMaxDates, useMutateBounty } from './bounty.utils';
 
 const bountyModeDescription: Record<BountyMode, string> = {
   [BountyMode.Individual]:
@@ -274,7 +274,7 @@ export function BountyUpsertForm({ bounty }: { bounty?: BountyGetById }) {
     message: (requiredBalance) =>
       `You don't have enough funds to create this bounty. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: false,
     purchaseSuccessMessage: (purchasedBalance) => (
       <Stack>

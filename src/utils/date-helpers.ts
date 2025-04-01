@@ -1,6 +1,7 @@
 import dayjs from 'dayjs';
 import minMax from 'dayjs/plugin/minMax';
 import utc from 'dayjs/plugin/utc';
+
 dayjs.extend(minMax);
 dayjs.extend(utc);
 
@@ -61,6 +62,7 @@ export function isBetweenToday(value: Date) {
 }
 
 export const aDayAgo = dayjs().subtract(1, 'day').toDate();
+export const aDayAhead = dayjs().add(1, 'day').toDate();
 
 export function stripTime(value: Date) {
   return value.toISOString().substring(0, 10);
@@ -121,6 +123,12 @@ export function getThanksgivingDate(year: number) {
 export function isHolidaysTime() {
   const today = dayjs();
   return today.month() === 11;
+}
+
+export function isApril1() {
+  const today = dayjs.utc();
+  // return today.month() === 3 && today.date() === 1;
+  return today.month() === 3 && today.date() >= 1 && today.date() <= 4;
 }
 
 export function roundMinutes(d: Date | string) {

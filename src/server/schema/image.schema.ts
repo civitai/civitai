@@ -200,7 +200,17 @@ export const imageModerationSchema = z.object({
   ids: z.number().array(),
   needsReview: z.string().nullish(),
   reviewAction: z.enum(['delete', 'removeName', 'mistake']).optional(),
-  reviewType: z.enum(['minor', 'poi', 'reported', 'csam', 'blocked', 'tag', 'newUser', 'appeal']),
+  reviewType: z.enum([
+    'minor',
+    'poi',
+    'reported',
+    'csam',
+    'blocked',
+    'tag',
+    'newUser',
+    'appeal',
+    'modRule',
+  ]),
 });
 export type ImageModerationSchema = z.infer<typeof imageModerationSchema>;
 
@@ -335,7 +345,7 @@ export const getImageSchema = z.object({
 export type RemoveImageResourceSchema = z.infer<typeof removeImageResourceSchema>;
 export const removeImageResourceSchema = z.object({
   imageId: z.number(),
-  resourceId: z.number(),
+  modelVersionId: z.number(),
 });
 
 export type GetEntitiesCoverImage = z.infer<typeof getEntitiesCoverImage>;

@@ -17,6 +17,7 @@ import {
 } from '~/server/schema/tag.schema';
 import { imageTagCompositeSelect, modelTagCompositeSelect } from '~/server/selectors/tag.selector';
 import { getCategoryTags, getSystemTags } from '~/server/services/system-cache';
+import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   HiddenImages,
   HiddenModels,
@@ -29,17 +30,14 @@ import { removeEmpty } from '~/utils/object-helpers';
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
 
 export const getTagWithModelCount = ({ name }: { name: string }) => {
+  // No longer include count since we just have too many now...
   return dbRead.$queryRaw<[{ id: number; name: string; count: number }]>`
-    SELECT "public"."Tag"."id",
-           "public"."Tag"."name",
-           CAST(COUNT("public"."TagsOnModels"."tagId") AS INTEGER) as count
-    FROM "public"."Tag"
-           LEFT JOIN "public"."TagsOnModels" ON "public"."Tag"."id" = "public"."TagsOnModels"."tagId"
-           LEFT JOIN "public"."Model" ON "public"."TagsOnModels"."modelId" = "public"."Model"."id"
-    WHERE "public"."Tag"."name" = ${name}
-      AND "public"."Model"."status" = 'Published'
-      AND "public"."TagsOnModels"."modelId" IS NOT NULL
-    GROUP BY "public"."Tag"."id", "public"."Tag"."name"
+    SELECT "id",
+           "name",
+           0 as count
+    FROM "Tag"
+    WHERE "name" = ${name}
+    GROUP BY "id", "name"
     LIMIT 1 OFFSET 0;
   `;
 };
@@ -59,11 +57,11 @@ export const getTag = ({ id }: { id: number }) => {
 export const getTagCountForImages = async (imageIds: number[]) => {
   if (!imageIds.length) return {};
   const results = await dbRead.$queryRaw<{ imageId: number; count: number }[]>`
-    SELECT "public"."TagsOnImage"."imageId",
-           CAST(COUNT("public"."TagsOnImage"."tagId") AS INTEGER) as count
-    FROM "public"."TagsOnImage"
-    WHERE "public"."TagsOnImage"."imageId" IN (${Prisma.join(imageIds)})
-    GROUP BY "public"."TagsOnImage"."imageId"
+    SELECT "public"."TagsOnImageDetails"."imageId",
+           CAST(COUNT("public"."TagsOnImageDetails"."tagId") AS INTEGER) as count
+    FROM "public"."TagsOnImageDetails"
+    WHERE "public"."TagsOnImageDetails"."imageId" IN (${Prisma.join(imageIds)})
+    GROUP BY "public"."TagsOnImageDetails"."imageId"
   `;
 
   return results.reduce((acc, { imageId, count }) => {
@@ -487,19 +485,21 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
       ON CONFLICT DO NOTHING
     `);
   } else if (entityType === 'image') {
-    await dbWrite.$executeRawUnsafe(`
-      INSERT INTO "TagsOnImage" ("imageId", "tagId", "confidence")
-      SELECT i."id",
-             t."id",
-              ${0}
+    const result = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+      SELECT i."id" AS "imageId",  t."id" AS "tagId"
       FROM "Image" i
-             JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
-      WHERE i."id" IN (${entityIds.join(', ')})
-      ON CONFLICT ("imageId", "tagId") DO UPDATE SET "disabled"    = false,
-                                                     "needsReview" = false,
-                                                     automated     = false
-    `);
-    updateImageNSFWLevels(entityIds);
+      JOIN "Tag" t ON t.${tagSelector} IN (${tagIn})
+      WHERE i."id" IN (${entityIds.join(', ')});
+    `;
+    await upsertTagsOnImageNew(
+      result.map(({ imageId, tagId }) => ({
+        imageId,
+        tagId,
+        automated: false,
+        disabled: false,
+        needsReview: false,
+      }))
+    );
   } else if (entityType === 'article') {
     await dbWrite.$executeRawUnsafe(`
       INSERT INTO "TagsOnArticle" ("articleId", "tagId")
@@ -604,11 +604,9 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
         }
     `);
   } else if (entityType === 'image') {
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "TagsOnImage"
-      SET "disabled"    = true,
-          "needsReview" = false,
-          "disabledAt"  = NOW()
+    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
+      SELECT "imageId", "tagId"
+      FROM "TagsOnImageDetails"
       WHERE "imageId" IN (${entityIds.join(', ')})
         ${
           isTagIds
@@ -616,8 +614,10 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
             : `AND "tagId" IN (SELECT id FROM "Tag" WHERE name IN (${tagIn}))`
         }
     `);
-    updateImageNSFWLevels(entityIds);
-    await tagIdsForImagesCache.bust(entityIds);
+
+    await upsertTagsOnImageNew(
+      toUpdate.map(({ imageId, tagId }) => ({ imageId, tagId, disabled: true, needsReview: false }))
+    );
   } else if (entityType === 'tag') {
     await dbWrite.$executeRawUnsafe(`
       DELETE
@@ -642,27 +642,23 @@ export const moderateTags = async ({ entityIds, entityType, disable }: ModerateT
     //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
     // `);
   } else if (entityType === 'image') {
-    await dbWrite.$executeRawUnsafe(`
-      UPDATE "TagsOnImage"
-      SET "disabled"    = ${disable},
-          "needsReview" = false,
-          "automated"   = false,
-          "disabledAt"  = ${disable ? 'NOW()' : 'null'}
+    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
+      SELECT "imageId", "tagId"
+      FROM "TagsOnImageDetails"
       WHERE "needsReview" = true
-        AND "imageId" IN (${entityIds.join(', ')})
+        AND "imageId" IN (${entityIds.join(', ')});
     `);
 
-    // Update nsfw baseline
-    if (disable) updateImageNSFWLevels(entityIds);
-    await tagIdsForImagesCache.bust(entityIds);
+    await upsertTagsOnImageNew(
+      toUpdate.map(({ imageId, tagId }) => ({
+        imageId,
+        tagId,
+        automated: false,
+        disabled: disable,
+        needsReview: false,
+      }))
+    );
   }
-};
-
-const updateImageNSFWLevels = async (imageIds: number[]) => {
-  await dbWrite.$executeRawUnsafe(`
-    -- Update NSFW baseline
-    SELECT update_nsfw_levels(ARRAY[${imageIds.join(',')}]);
-  `);
 };
 
 export const deleteTags = async ({ tags }: DeleteTagsSchema) => {

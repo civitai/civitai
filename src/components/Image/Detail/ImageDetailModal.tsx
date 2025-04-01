@@ -9,6 +9,7 @@ import { ImagesContextState } from '~/components/Image/Providers/ImagesProvider'
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { removeEmpty } from '../../../utils/object-helpers';
+import { EdgeVideoSettingsProvider } from '~/components/EdgeMedia/EdgeVideoSettingsProvider';
 
 export default function ImageDetailModal({
   imageId,
@@ -50,7 +51,9 @@ export default function ImageDetailModal({
         hideReactionCount={hideReactionCount}
         collectionId={collectionId}
       >
-        <ImageDetail2 />
+        <EdgeVideoSettingsProvider skipManualPlay>
+          <ImageDetail2 />
+        </EdgeVideoSettingsProvider>
       </ImageDetailProvider>
     </PageModal>
   );

@@ -9,7 +9,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { periodModeSchema } from '~/server/schema/base.schema';
-import { GetAllModelsInput, ToggleCheckpointCoverageInput } from '~/server/schema/model.schema';
+import { GetAllModelsInput } from '~/server/schema/model.schema';
 import { usernameSchema } from '~/server/schema/user.schema';
 import {
   Availability,
@@ -66,6 +66,7 @@ const modelQueryParamSchema = z
       .optional(),
     fromPlatform: booleanString().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    isFeatured: booleanString().optional(),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;
@@ -154,37 +155,6 @@ export const useQueryModels = (
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };
-};
-
-export const useToggleCheckpointCoverageMutation = () => {
-  const queryUtils = trpc.useUtils();
-
-  const toggleMutation = trpc.model.toggleCheckpointCoverage.useMutation({
-    onSuccess: (_, { id, versionId }) => {
-      queryUtils.model.getById.setData({ id }, (old) => {
-        if (!old) return old;
-
-        return {
-          ...old,
-          modelVersions: old.modelVersions.map((v) =>
-            v.id === versionId ? { ...v, canGenerate: !v.canGenerate } : v
-          ),
-        };
-      });
-    },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Failed to toggle checkpoint coverage',
-        error: new Error(error.message),
-      });
-    },
-  });
-
-  const handleToggle = (data: ToggleCheckpointCoverageInput) => {
-    return toggleMutation.mutateAsync(data);
-  };
-
-  return { ...toggleMutation, toggle: handleToggle };
 };
 
 export const useModelShowcaseCollection = ({ modelId }: { modelId: number }) => {

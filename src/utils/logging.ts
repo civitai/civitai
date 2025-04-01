@@ -1,21 +1,5 @@
-import { dbWrite } from '~/server/db/client';
 import chalk from 'chalk';
 import { env } from '~/env/server';
-import { isDev } from '~/env/other';
-
-export async function logToDb(event: string, details: object) {
-  if (isDev) return; // Don't log in dev
-  try {
-    await dbWrite.log.createMany({
-      data: {
-        event,
-        details,
-      },
-    });
-  } catch (e) {
-    console.error('Failed to log', e);
-  }
-}
 
 type ChalkColor =
   | 'black'

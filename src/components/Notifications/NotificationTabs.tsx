@@ -5,7 +5,9 @@ import {
   useQueryNotificationsCount,
 } from '~/components/Notifications/notifications.utils';
 import { TwScrollX } from '~/components/TwScrollX/TwScrollX';
-import { NotificationCategory } from '~/server/common/enums';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { NotificationCategory, OnboardingSteps } from '~/server/common/enums';
+import { Flags } from '~/shared/utils';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 const categoryTabs: string[] = Object.values(NotificationCategory);
@@ -21,6 +23,8 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
   const { classes } = useStyles();
   const count = useQueryNotificationsCount();
   const { isLoading, hasCategory } = useNotificationSettings(enabled);
+  const currentUser = useCurrentUser();
+  const isCreator = Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram);
 
   const handleTabChange = (value: string | null) => {
     onTabChange?.(value !== 'all' ? value : null);
@@ -29,8 +33,10 @@ export function NotificationTabs({ onTabChange, enabled = true, ...tabsProps }: 
   if (isLoading) return null;
 
   const allTabs = tabs.filter(
-    (tab) => tab === 'all' || tab === 'announcements' || hasCategory[tab]
+    (tab) =>
+      tab === 'all' || tab === 'announcements' || (tab === 'Creator' ? isCreator : hasCategory[tab])
   );
+
   // const tabsWithNotifications = allTabs.filter(
   //   (tab) => count[tab.toLowerCase() as keyof typeof count] > 0
   // );

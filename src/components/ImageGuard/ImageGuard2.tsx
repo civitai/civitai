@@ -1,8 +1,10 @@
-import { Badge, BadgeProps, Text, Alert, Button } from '@mantine/core';
+import { Alert, Badge, BadgeProps, Button, Text } from '@mantine/core';
 import { IconEye, IconEyeOff } from '@tabler/icons-react';
+import clsx from 'clsx';
 import Router from 'next/router';
 import React, { createContext, useCallback, useContext } from 'react';
 import { create } from 'zustand';
+import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -11,14 +13,12 @@ import { constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import {
   browsingLevelLabels,
-  nsfwBrowsingLevelsFlag,
   getIsSafeBrowsingLevel,
+  nsfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { useImageStore } from '~/store/image.store';
 import classes from './ImageGuard.module.scss';
-import clsx from 'clsx';
-import { useBrowsingLevelContext } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 
 type ImageProps = {
   id: number;

@@ -1,5 +1,7 @@
+import type { ResourceInfo } from '@civitai/client';
 import { Prisma } from '@prisma/client';
 import dayjs from 'dayjs';
+import { env } from '~/env/server';
 import { BaseModel, BaseModelType, CacheTTL, constants } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -10,6 +12,7 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { ProfileImage } from '~/server/selectors/image.selector';
 import type { EntityAccessDataType } from '~/server/services/common.service';
 import { getImagesForModelVersion, ImagesForModelVersions } from '~/server/services/image.service';
+import { getModelClient } from '~/server/services/orchestrator/models';
 import { CachedObject, createCachedObject } from '~/server/utils/cache-helpers';
 import {
   Availability,
@@ -21,6 +24,7 @@ import {
   TagSource,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 const alwaysIncludeTags = [...constants.imageTags.styles, ...constants.imageTags.subjects];
@@ -35,8 +39,8 @@ export const tagIdsForImagesCache = createCachedObject<{
     const imageIds = Array.isArray(imageId) ? imageId : [imageId];
     const db = fromWrite ? dbWrite : dbRead;
 
-    const imageTags = await db.tagsOnImage.findMany({
-      where: { imageId: { in: imageIds }, disabledAt: null },
+    const imageTags = await db.tagsOnImageDetails.findMany({
+      where: { imageId: { in: imageIds }, disabled: false },
       select: {
         imageId: true,
         source: true,
@@ -400,6 +404,8 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
   key: REDIS_KEYS.CACHES.DATA_FOR_MODEL,
   idKey: 'modelId',
   ttl: CacheTTL.day,
+  cacheNotFound: false,
+  staleWhileRevalidate: false,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
 
@@ -681,4 +687,77 @@ export const modelTagCache = createCachedObject<ModelTagCacheItem>({
     }
   },
   ttl: CacheTTL.day,
+});
+
+export type ModelVersionResourceCacheItem = {
+  versionId: number;
+  popularityRank: number | null;
+  isFeatured: boolean;
+  isNew: boolean;
+};
+export const modelVersionResourceCache = createCachedObject<ModelVersionResourceCacheItem>({
+  key: REDIS_KEYS.CACHES.MODEL_VERSION_RESOURCE_INFO,
+  idKey: 'versionId',
+  ttl: CacheTTL.md,
+  lookupFn: async (ids) => {
+    const mvInfo = await dbRead.modelVersion.findMany({
+      where: { id: { in: ids } },
+      select: { id: true, baseModel: true, model: { select: { id: true, type: true } } },
+    });
+
+    const versionInfo = await Promise.all(
+      mvInfo.map(async (v) => {
+        try {
+          const md = await getModelClient({
+            token: env.ORCHESTRATOR_ACCESS_TOKEN,
+            air: stringifyAIR({
+              baseModel: v.baseModel,
+              type: v.model.type,
+              modelId: v.model.id,
+              id: v.id,
+            }),
+          });
+          if (!md || !!md.error)
+            return {
+              popularityRank: 0,
+              isFeatured: false,
+              isNew: false,
+              id: v.id,
+            };
+
+          const data: ResourceInfo = md.data;
+          const isNew = !!data.publishedAt
+            ? dayjs(data.publishedAt).isAfter(dayjs().subtract(7, 'day'))
+            : false;
+
+          return {
+            popularityRank: data.popularityRank ?? 0,
+            isFeatured: data.isFeatured ?? false,
+            isNew,
+            id: v.id,
+          };
+        } catch (e) {
+          console.error(e);
+          return {
+            popularityRank: 0,
+            isFeatured: false,
+            isNew: false,
+            id: v.id,
+          };
+        }
+      })
+    );
+
+    return Object.fromEntries(
+      versionInfo.map((vi) => [
+        vi.id,
+        {
+          versionId: vi.id,
+          popularityRank: vi.popularityRank ?? 0,
+          isFeatured: vi.isFeatured ?? false,
+          isNew: vi.isNew ?? false,
+        },
+      ])
+    );
+  },
 });

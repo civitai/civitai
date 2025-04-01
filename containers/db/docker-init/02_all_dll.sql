@@ -6518,8 +6518,7 @@ CREATE TABLE public."TagsOnImage" (
     disabled boolean DEFAULT false NOT NULL,
     "needsReview" boolean DEFAULT false NOT NULL,
     "disabledAt" timestamp(3) without time zone,
-    source public."TagSource" DEFAULT 'User'::public."TagSource" NOT NULL,
-    "disabledReason" public."TagDisabledReason" DEFAULT 'Voted'::public."TagDisabledReason" NOT NULL
+    source public."TagSource" DEFAULT 'User'::public."TagSource" NOT NULL
 );
 
 

@@ -22,9 +22,15 @@ import {
   MIN_WITHDRAWAL_AMOUNT,
 } from '~/shared/constants/creator-program.constants';
 import { createJob } from './job';
-import { OnboardingSteps, SignalMessages, SignalTopic } from '~/server/common/enums';
+import {
+  NotificationCategory,
+  OnboardingSteps,
+  SignalMessages,
+  SignalTopic,
+} from '~/server/common/enums';
 import { signalClient } from '~/utils/signal-client';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
+import { createNotification } from '~/server/services/notification.service';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
@@ -213,15 +219,63 @@ export const creatorsProgramSettleCash = createJob(
   }
 );
 
-export const bakingPhaseNotification = createJob(
-  'creators-program-rollover',
-  `0 0 L-${EXTRACTION_PHASE_DURATION - 1} * *`,
-  async () => {
-    const users = await dbWrite.$queryRaw<{ userId: number }[]>`
+const getCreatorProgramUsers = async () => {
+  const users = await dbWrite.$queryRaw<{ userId: number }[]>`
       SELECT "id" as "userId"
       FROM "User"
       WHERE "onboarding" & ${OnboardingSteps.CreatorProgram} != 0
     `;
+
+  return users.map((u) => u.userId);
+};
+
+export const bakingPhaseEndingNotification = createJob(
+  'creator-program-banking-phase-ending',
+  `0 0 L-${EXTRACTION_PHASE_DURATION + 1} * *`,
+  async () => {
+    const month = dayjs().format('YYYY-MM');
+    const users = await getCreatorProgramUsers();
+
+    await createNotification({
+      type: 'creator-program-banking-phase-ending',
+      category: NotificationCategory.Creator,
+      key: `creator-program-banking-phase-ending:${month}`,
+      userIds: users,
+      details: {},
+    });
+  }
+);
+
+export const extractionPhaseStartedNotification = createJob(
+  'creator-program-extraction-phase-started',
+  `0 0 L-${EXTRACTION_PHASE_DURATION} * *`,
+  async () => {
+    const month = dayjs().format('YYYY-MM');
+    const users = await getCreatorProgramUsers();
+
+    await createNotification({
+      type: 'creator-program-extraction-phase-started',
+      category: NotificationCategory.Creator,
+      key: `creator-program-extraction-phase-started:${month}`,
+      userIds: users,
+      details: {},
+    });
+  }
+);
+export const extractionPhaseEndingNotification = createJob(
+  'creator-program-extraction-phase-ending',
+  `0 0 L * *`,
+  async () => {
+    const month = dayjs().format('YYYY-MM');
+    const users = await getCreatorProgramUsers();
+
+    await createNotification({
+      type: 'creator-program-extraction-phase-ending',
+      category: NotificationCategory.Creator,
+      key: `creator-program-extraction-phase-ending:${month}`,
+      userIds: users,
+      details: {},
+    });
   }
 );
 
@@ -230,4 +284,7 @@ export const creatorProgramJobs = [
   creatorsProgramInviteTipalti,
   creatorsProgramRollover,
   creatorsProgramSettleCash,
+  bakingPhaseEndingNotification,
+  extractionPhaseStartedNotification,
+  extractionPhaseEndingNotification,
 ];

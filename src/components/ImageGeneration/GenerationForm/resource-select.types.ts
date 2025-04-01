@@ -13,7 +13,7 @@ export type ResourceSelectOptions = {
   excludeIds?: number[];
 };
 
-const selectSources = ['generation', 'training', 'addResource', 'modelVersion'] as const;
+const selectSources = ['generation', 'training', 'addResource', 'modelVersion', 'auction'] as const;
 export type ResourceSelectSource = (typeof selectSources)[number];
 
 export type ResourceFilter = {

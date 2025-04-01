@@ -1,13 +1,11 @@
-import { UNRUNNABLE_JOB_CRON, createJob } from './job';
-import { dbRead, dbWrite } from '~/server/db/client';
 import dayjs from 'dayjs';
-import { throwInsufficientFundsError } from '~/server/utils/errorHandling';
-import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
-import { TransactionType } from '~/server/schema/buzz.schema';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import { createBuzzTransaction, getUserBuzzAccount } from '~/server/services/buzz.service';
 import { getServerStripe } from '~/server/utils/get-server-stripe';
-import { isDev } from '~/env/other';
 import { constants } from '../common/constants';
+import { createJob, UNRUNNABLE_JOB_CRON } from './job';
 
 const logger = ({ type = 'error', data = {} }: { type?: string; data?: MixedObject }) => {
   logToAxiom(
@@ -91,7 +89,7 @@ export const processClubMembershipRecurringPayments = createJob(
             // TODO: Send email to user that they need to add a payment method.
             logger({
               data: {
-                message: "Unable to get user's buzz account",
+                message: "Unable to get user's Buzz account",
                 ...clubMembership,
               },
             });
@@ -130,7 +128,7 @@ export const processClubMembershipRecurringPayments = createJob(
                 } catch (e) {
                   logger({
                     data: {
-                      message: 'Error paying with buzz',
+                      message: 'Error paying with Buzz',
                       ...clubMembership,
                     },
                   });

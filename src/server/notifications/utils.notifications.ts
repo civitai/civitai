@@ -1,4 +1,5 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
+import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
 import { buzzNotifications } from '~/server/notifications/buzz.notifications';
@@ -41,6 +42,7 @@ export const notificationProcessors = {
   ...followNotifications,
   ...cosmeticShopNotifications,
   ...challengeNotifications,
+  ...auctionNotifications,
 };
 
 // Sort notifications by priority and group them by priority
@@ -72,10 +74,11 @@ function getNotificationTypes() {
     string,
     { displayName: string; type: string; defaultDisabled: boolean }[]
   > = {};
-  for (const [type, { displayName, toggleable, category, defaultDisabled }] of Object.entries(
-    notificationProcessors
-  )) {
-    if (toggleable === false) continue;
+  for (const [
+    type,
+    { displayName, toggleable, category, defaultDisabled, showCategory },
+  ] of Object.entries(notificationProcessors)) {
+    if (toggleable === false && !showCategory) continue;
     notificationCategoryTypes[category] ??= [];
     notificationCategoryTypes[category]!.push({
       type,

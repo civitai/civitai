@@ -36,6 +36,7 @@ import { CopyButton } from '~/components/CopyButton/CopyButton';
 import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
 import { InputPrompt } from '~/components/Generate/Input/InputPrompt';
 import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { ImageById } from '~/components/Image/ById/ImageById';
 import {
   useGenerationStatus,
@@ -65,6 +66,11 @@ import { GenerateButton } from '~/components/Orchestrator/components/GenerateBut
 import { PersistentAccordion } from '~/components/PersistentAccordion/PersistantAccordion';
 import { RefreshSessionButton } from '~/components/RefreshSessionButton/RefreshSessionButton';
 import { useActiveSubscription } from '~/components/Stripe/memberships.util';
+import {
+  contentGenerationTour,
+  remixContentGenerationTour,
+} from '~/components/Tours/tours/content-gen.tour';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { TrainedWords } from '~/components/TrainedWords/TrainedWords';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
@@ -77,7 +83,6 @@ import {
 import { Watch } from '~/libs/form/components/Watch';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { useTourContext } from '~/components/Tours/ToursProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
@@ -101,13 +106,8 @@ import { parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
-import {
-  contentGenerationTour,
-  remixContentGenerationTour,
-} from '~/components/Tours/tours/content-gen.tour';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 
 let total = 0;
 const tips = {
@@ -204,7 +204,7 @@ export function GenerationFormContent() {
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
   });
 
@@ -657,8 +657,11 @@ export function GenerationFormContent() {
                 )}
 
                 <div className="flex flex-col">
-                  <Watch {...form} fields={['remixSimilarity', 'remixOfId', 'remixPrompt']}>
-                    {({ remixSimilarity, remixOfId, remixPrompt }) => {
+                  <Watch
+                    {...form}
+                    fields={['remixSimilarity', 'remixOfId', 'remixPrompt', 'remixNegativePrompt']}
+                  >
+                    {({ remixSimilarity, remixOfId, remixPrompt, remixNegativePrompt }) => {
                       if (!remixOfId || !remixPrompt || !remixSimilarity) return <></>;
 
                       return (
@@ -695,43 +698,76 @@ export function GenerationFormContent() {
                                       {remixPrompt}
                                     </Text>
                                   )}
-                                  {remixSimilarity < 0.75 && (
-                                    <>
-                                      <Text size="xs" lh={1.2} mb={6}>
-                                        Your prompt has deviated sufficiently from the original that
-                                        this generation will be treated as a new image rather than a
-                                        remix
-                                      </Text>
-                                      <Group spacing="xs" grow noWrap>
-                                        <Button
-                                          variant="default"
-                                          onClick={() => form.setValue('prompt', remixPrompt)}
-                                          size="xs"
-                                          color="default"
-                                          fullWidth
-                                          h={30}
-                                          leftIcon={<IconRestore size={14} />}
-                                        >
-                                          Restore Prompt
-                                        </Button>
-                                        <Button
-                                          variant="light"
-                                          color="red"
-                                          size="xs"
-                                          onClick={() => {
-                                            form.setValue('remixOfId', undefined);
-                                            form.setValue('remixSimilarity', undefined);
-                                            form.setValue('remixPrompt', undefined);
-                                          }}
-                                          fullWidth
-                                          h={30}
-                                          leftIcon={<IconX size={14} />}
-                                        >
-                                          Stop Remixing
-                                        </Button>
-                                      </Group>
-                                    </>
-                                  )}
+                                  {
+                                    remixSimilarity < 0.75 ? (
+                                      <>
+                                        <Text size="xs" lh={1.2} mb={6}>
+                                          Your prompt has deviated sufficiently from the original
+                                          that this generation will be treated as a new image rather
+                                          than a remix
+                                        </Text>
+                                        <Group spacing="xs" grow noWrap>
+                                          <Button
+                                            variant="default"
+                                            onClick={() => {
+                                              form.setValue(
+                                                'prompt',
+                                                remixPrompt.replace(
+                                                  /\(*([^():,]+)(?::[0-9.]+)?\)*/g,
+                                                  `$1`
+                                                )
+                                              );
+                                              form.setValue(
+                                                'negativePrompt',
+                                                remixNegativePrompt?.replace(
+                                                  /\(*([^():,]+)(?::[0-9.]+)?\)*/g,
+                                                  `$1`
+                                                )
+                                              );
+                                            }}
+                                            size="xs"
+                                            color="default"
+                                            fullWidth
+                                            h={30}
+                                            leftIcon={<IconRestore size={14} />}
+                                          >
+                                            Restore Prompt
+                                          </Button>
+                                          <Button
+                                            variant="light"
+                                            color="red"
+                                            size="xs"
+                                            onClick={() => {
+                                              form.setValue('remixOfId', undefined);
+                                              form.setValue('remixSimilarity', undefined);
+                                              form.setValue('remixPrompt', undefined);
+                                              form.setValue('remixNegativePrompt', undefined);
+                                            }}
+                                            fullWidth
+                                            h={30}
+                                            leftIcon={<IconX size={14} />}
+                                          >
+                                            Stop Remixing
+                                          </Button>
+                                        </Group>
+                                      </>
+                                    ) : null
+                                    // : (
+                                    //   <Text
+                                    //     variant="link"
+                                    //     className="cursor-pointer"
+                                    //     size="xs"
+                                    //     lh={1.2}
+                                    //     mb={6}
+                                    //     onClick={() => {
+                                    //       form.setValue('prompt', remixPrompt);
+                                    //       form.setValue('negativePrompt', remixNegativePrompt);
+                                    //     }}
+                                    //   >
+                                    //     Restore original prompt weights
+                                    //   </Text>
+                                    // )
+                                  }
                                 </Stack>
                               </Alert>
                             </div>
@@ -896,13 +932,13 @@ export function GenerationFormContent() {
 
                 {!isFlux && !isSD3 && featureFlags.canViewNsfw && (
                   <div className="my-2 flex flex-wrap justify-between gap-3">
-                    <InputSwitch
+                    {/* <InputSwitch
                       name="nsfw"
                       label="Mature content"
                       labelPosition="left"
                       disabled={hasMinorResources}
                       checked={hasMinorResources ? false : undefined}
-                    />
+                    /> */}
                     {features.draft && (
                       <InputSwitch
                         name="draft"
@@ -1140,6 +1176,11 @@ export function GenerationFormContent() {
                             />
                           )}
                         </div>
+                        {/* <Text variant="link" onClick={() => {
+                          const {prompt = '', negativePrompt = ''}= useGenerationStore.getState().data?.originalParams ?? {};
+                          form.setValue('prompt', prompt)
+                          form.setValue('negativePrompt', negativePrompt)
+                        }}>Restore original prompt with weights?</Text> */}
                       </Accordion.Panel>
                     </Accordion.Item>
                   </PersistentAccordion>

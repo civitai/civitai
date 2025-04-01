@@ -13,6 +13,14 @@ import { limitConcurrency, Task } from '~/server/utils/concurrency-helpers';
 import { getResourceData } from '~/server/services/generation/generation.service';
 import { Prisma } from '@prisma/client';
 import { getCommentsThreadDetails2 } from '~/server/services/commentsv2.service';
+import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import {
+  getWorkflowDefinitions,
+  setWorkflowDefinition,
+} from '~/server/services/orchestrator/comfy/comfy.utils';
+import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 
 type Row = {
   userId: number;
@@ -29,10 +37,10 @@ const test = [1183765, 164821];
 export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApiResponse) {
   try {
     const session = await getServerAuthSession({ req, res });
-    const modelVersions = await getResourceData({
-      ids: [1182093],
-      user: session?.user,
-    });
+    // const modelVersions = await getResourceData({
+    //   ids: [1182093],
+    //   user: session?.user,
+    // });
     // const modelVersions = await dbRead.$queryRaw`
     //   SELECT
     //     mv."id",
@@ -71,7 +79,42 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   entityType: 'article',
     // });
 
-    res.status(200).send(modelVersions);
+    // await upsertTagsOnImageNew([
+    //   {
+    //     imageId: 1,
+    //     tagId: 1,
+    //     // source: 'User',
+    //     confidence: 70,
+    //     // automated: true,
+    //     // disabled: false,
+    //     // needsReview: false,
+    //   },
+    // ]);
+    // for (const workflow of workflows) {
+    //   setWorkflowDefinition(workflow.key, workflow);
+    // }
+
+    const imageTags = await dbWrite.tagsOnImageDetails.findMany({
+      where: { imageId: { in: [66447372] }, disabled: false },
+      select: {
+        imageId: true,
+        source: true,
+        tagId: true,
+      },
+    });
+    const dbTags = imageTags.map((x) => x.tagId);
+
+    await tagIdsForImagesCache.bust(66447372);
+    const cache = await tagIdsForImagesCache.fetch(66447372);
+    const tags = Object.values(cache).flatMap((x) => x.tags);
+
+    const fromDb = await dbWrite.tag.findMany({ where: { id: { in: dbTags } } });
+    const fromCache = await dbWrite.tag.findMany({ where: { id: { in: tags } } });
+
+    res.status(200).send({
+      fromDb,
+      fromCache,
+    });
   } catch (e) {
     console.log(e);
     res.status(400).end();

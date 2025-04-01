@@ -3,7 +3,7 @@ export const getImageEntityUrl = (image: {
   entityId?: number | null;
   entityType?: string | null;
   postId?: number | null;
-  metadata?: { profilePicture?: boolean; username?: number } | null;
+  metadata?: { profilePicture?: boolean; username?: string } | null;
 }) => {
   // if (image.postId) return `/posts/${image.postId}`;
   if (image.metadata?.username) return `/user/${image.metadata.username}`;

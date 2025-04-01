@@ -765,7 +765,7 @@ export async function publishPrivateModelVersionHandler({
     select: {
       id: true,
       uploadType: true,
-      model: { select: { publishedAt: true, availability: true, userId: true } },
+      model: { select: { id: true, publishedAt: true, availability: true, userId: true } },
       files: {
         select: {
           metadata: true,
@@ -813,6 +813,8 @@ export async function publishPrivateModelVersionHandler({
       availability: Availability.Private,
     },
   });
+
+  await dataForModelsCache.bust(version.model.id);
 
   return modelVersion;
 }

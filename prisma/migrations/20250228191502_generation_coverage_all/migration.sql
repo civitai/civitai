@@ -21,7 +21,8 @@ WHERE
       'SD 3.5'::text,
       'SD 3.5 Medium'::text,
       'SD 3.5 Large'::text,
-      'SD 3.5 Large Turbo'::text
+      'SD 3.5 Large Turbo'::text,
+      'NoobAI'::text
       ])
     AND NOT m.poi
     AND (

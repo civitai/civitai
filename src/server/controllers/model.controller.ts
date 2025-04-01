@@ -930,6 +930,8 @@ export const restoreModelHandler = async ({
       { id: input.id, action: SearchIndexUpdateQueueAction.Update },
     ]);
 
+    await dataForModelsCache.bust(input.id);
+
     return model;
   } catch (error) {
     if (error instanceof TRPCError) error;

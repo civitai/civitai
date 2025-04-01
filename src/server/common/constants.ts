@@ -87,6 +87,8 @@ export const constants = {
     'Mochi',
     'LTXV',
     'CogVideoX',
+    'NoobAI',
+    'Wan Video',
     'Other',
   ],
   hiddenBaseModels: [
@@ -215,6 +217,7 @@ export const constants = {
       notified: 5,
       muted: 8,
     },
+    epochGenerationTimeLimit: 15, // In days
   },
   tagVoting: {
     voteDuration: 1000 * 60 * 60 * 24,
@@ -538,6 +541,8 @@ export const baseModelSets = {
   Mochi: new BaseModelSet({ name: 'Mochi', baseModels: ['Mochi'] }),
   LTXV: new BaseModelSet({ name: 'LTXV', baseModels: ['LTXV'] }),
   CogVideoX: new BaseModelSet({ name: 'CogVideoX', baseModels: ['CogVideoX'] }),
+  NoobAI: new BaseModelSet({ name: 'NoobAI', baseModels: ['NoobAI'] }),
+  WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
 };
 
 type BaseModelSets = typeof baseModelSets;
@@ -636,6 +641,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/THUDM/CogVideoX-5b/blob/main/LICENSE',
     name: 'CogVideoX License',
   },
+  noobAi: {
+    url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
+    name: 'NoobAI License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -680,6 +689,8 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   Mochi: baseLicenses['apache 2.0'],
   LTXV: baseLicenses['ltxv license'],
   CogVideoX: baseLicenses['cogvideox license'],
+  NoobAI: baseLicenses['noobAi'],
+  'Wan Video': baseLicenses['apache 2.0'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
@@ -802,6 +813,12 @@ export const generationConfig = {
       { label: 'Landscape', width: 1216, height: 832 },
       { label: 'Portrait', width: 832, height: 1216 },
     ],
+    // doesn't work for all illustrios models
+    // aspectRatios: [
+    //   { label: 'Square', width: 1536, height: 1536 },
+    //   { label: 'Landscape', width: 1920, height: 1280 },
+    //   { label: 'Portrait', width: 1280, height: 1920 },
+    // ],
     checkpoint: {
       id: 889818,
       name: 'v0.1',
@@ -816,6 +833,30 @@ export const generationConfig = {
       model: {
         id: 795765,
         name: 'Illustrious-XL',
+        type: 'Checkpoint',
+      },
+    } as GenerationResource,
+  },
+  NoobAI: {
+    aspectRatios: [
+      { label: 'Square', width: 1024, height: 1024 },
+      { label: 'Landscape', width: 1216, height: 832 },
+      { label: 'Portrait', width: 832, height: 1216 },
+    ],
+    checkpoint: {
+      id: 1190596,
+      name: 'V-Pred-1.0-Version',
+      trainedWords: [],
+      baseModel: 'NoobAI',
+      strength: 1,
+      minStrength: -1,
+      maxStrength: 2,
+      canGenerate: true,
+      hasAccess: true,
+      covered: true,
+      model: {
+        id: 833294,
+        name: 'NoobAI-XL (NAI-XL)',
         type: 'Checkpoint',
       },
     } as GenerationResource,

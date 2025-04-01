@@ -51,6 +51,7 @@ import { Flags } from '~/shared/utils';
 import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prisma/enums';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
+import { Prisma } from '@prisma/client';
 
 type UserCapCacheItem = {
   id: number;
@@ -62,6 +63,10 @@ type UserCapCacheItem = {
 export const userCapCache = createCachedObject<UserCapCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CAPS,
   idKey: 'id',
+  dontCacheFn: (data) => !data.cap,
+  cacheNotFound: false,
+  staleWhileRevalidate: false,
+  debounceTime: 1, // 10s debounce is too long for this cache.
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 
@@ -117,7 +122,7 @@ export const userCapCache = createCachedObject<UserCapCacheItem>({
       })
     );
   },
-  ttl: CacheTTL.month,
+  ttl: CacheTTL.day,
 });
 
 export async function getBankCap(userId: number) {
@@ -143,7 +148,7 @@ export async function getBanked(userId: number) {
 
       return data.totalBalance;
     },
-    { ttl: CacheTTL.month }
+    { ttl: CacheTTL.day }
   );
 
   return {
@@ -156,7 +161,7 @@ export async function flushBankedCache() {
 }
 
 export async function getCreatorRequirements(userId: number) {
-  const [status] = await dbRead.$queryRaw<{ score: number; membership: UserTier }[]>`
+  const [status] = await dbWrite.$queryRaw<{ score: number; membership: UserTier }[]>`
     SELECT
     COALESCE(cast((meta->'scores'->'total') as int), 0) as score,
     (
@@ -275,7 +280,7 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
   const value = await fetchThroughCache(
     REDIS_KEYS.CREATOR_PROGRAM.POOL_VALUE,
     async () => await getPoolValue(),
-    { ttl: CacheTTL.month }
+    { ttl: CacheTTL.day }
   );
 
   // Since it hits the buzz service, no need to cache this.
@@ -284,7 +289,7 @@ export async function getCompensationPool({ month }: CompensationPoolInput) {
   const forecasted = await fetchThroughCache(
     REDIS_KEYS.CREATOR_PROGRAM.POOL_FORECAST,
     async () => await getPoolForecast(),
-    { ttl: CacheTTL.month }
+    { ttl: CacheTTL.day }
   );
 
   return {
@@ -402,8 +407,8 @@ export async function extractBuzz(userId: number) {
   }
 
   // Bust affected caches
-  bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
-  bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
+  await bustFetchThroughCache(`${REDIS_KEYS.CREATOR_PROGRAM.BANKED}:${userId}`);
+  await bustFetchThroughCache(REDIS_KEYS.CREATOR_PROGRAM.POOL_SIZE);
 
   const compensationPool = await getCompensationPool({});
   signalClient.topicSend({
@@ -429,6 +434,8 @@ type UserCashCacheItem = {
 export const userCashCache = createCachedObject<UserCashCacheItem>({
   key: REDIS_KEYS.CREATOR_PROGRAM.CASH,
   idKey: 'id',
+  staleWhileRevalidate: false,
+  debounceTime: 1, // 10s debounce is too long for this cache.
   lookupFn: async (ids) => {
     if (ids.length === 0 || !clickhouse) return {};
 
@@ -562,6 +569,10 @@ export async function withdrawCash(userId: number, amount: number) {
     );
   }
 
+  if (!WITHDRAWAL_FEES[userPaymentConfiguration.tipaltiWithdrawalMethod]) {
+    throw new Error('Selected withdrawal method is not supported');
+  }
+
   // Determine withdrawal amount
   const fee = getWithdrawalFee(amount, cash.paymentMethod);
   const toWithdraw = amount - fee;
@@ -653,7 +664,19 @@ export async function getPoolParticipants(month?: Date) {
     GROUP BY userId
     HAVING amount > 0;
   `;
-  return participants;
+
+  let bannedParticipants: { userId: number }[] = [];
+
+  if (participants.length > 0) {
+    bannedParticipants = await dbWrite.$queryRaw<{ userId: number }[]>`
+      SELECT "id" as "userId"
+      FROM "User"
+      WHERE id IN (${Prisma.join(participants.map((p) => p.userId))})
+        AND ("bannedAt" IS NOT NULL OR onboarding & ${OnboardingSteps.BannedCreatorProgram} != 0);
+    `;
+  }
+
+  return participants.filter((p) => !bannedParticipants.some((b) => b.userId === p.userId));
 }
 
 export const updateCashWithdrawal = async ({

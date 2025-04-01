@@ -364,10 +364,7 @@ const TipaltiConfigurationCard = () => {
 };
 
 export function UserPaymentConfigurationCard() {
-  const features = useFeatureFlags();
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
-
-  if (!features.creatorsProgram) return null;
 
   if (!isLoading && !userPaymentConfiguration) {
     return null;

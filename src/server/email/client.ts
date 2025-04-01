@@ -7,6 +7,8 @@ const shouldConnect =
 const client = shouldConnect
   ? nodemailer.createTransport({
       pool: true,
+      maxConnections: 30, // default 5
+      maxMessages: 600, // default 100
       host: env.EMAIL_HOST,
       port: env.EMAIL_PORT,
       secure: env.EMAIL_SECURE,

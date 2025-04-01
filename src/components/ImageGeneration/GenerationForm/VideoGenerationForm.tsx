@@ -1,10 +1,28 @@
-import { Button, Input, Text, Select, Alert, Loader, Anchor } from '@mantine/core';
-import React, { createContext, useEffect, useState, useContext, useMemo } from 'react';
-import { UseFormReturn, useFormContext } from 'react-hook-form';
+import { KlingMode } from '@civitai/client';
+import { Alert, Anchor, Button, Input, Loader, Select, Text } from '@mantine/core';
+import { useIsMutating } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
+import { uniqBy } from 'lodash-es';
+import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
+import { useFormContext, UseFormReturn } from 'react-hook-form';
 import { z } from 'zod';
+import { create } from 'zustand';
+import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
 import { DailyBoostRewardClaim } from '~/components/Buzz/Rewards/DailyBoostRewardClaim';
+import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
+import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
+import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
+import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
+import { SourceImageUploadAccordion } from '~/components/Generation/Input/SourceImageUpload';
+import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
+import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
 import { HaiperAspectRatio } from '~/components/ImageGeneration/GenerationForm/HaiperAspectRatio';
 import InputSeed from '~/components/ImageGeneration/GenerationForm/InputSeed';
+import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
+import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
+import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
 import {
   Form,
   InputNumberSlider,
@@ -14,54 +32,32 @@ import {
   InputTextArea,
 } from '~/libs/form';
 import { usePersistForm } from '~/libs/form/hooks/usePersistForm';
-import { trpc } from '~/utils/trpc';
-import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
-import { useGenerate } from '~/components/ImageGeneration/utils/generationRequestHooks';
-import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
-import { numberWithCommas } from '~/utils/number-helpers';
-import { create } from 'zustand';
-import {
-  generationStore,
-  useGenerationFormStore,
-  generationFormStore,
-  useGenerationStore,
-  useVideoGenerationWorkflows,
-  useSelectedVideoWorkflow,
-} from '~/store/generation.store';
-import { QueueSnackbar } from '~/components/ImageGeneration/QueueSnackbar';
-import {
-  WORKFLOW_TAGS,
-  engineDefinitions,
-  generationFormWorkflowConfigurations,
-} from '~/shared/constants/generation.constants';
-import { showErrorNotification } from '~/utils/notifications';
-import {
-  AccordionGeneratorImageInput,
-  GeneratorImageInput,
-} from '~/components/Generate/Input/GeneratorImageInput';
-import { useGenerationStatus } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { DismissibleAlert } from '~/components/DismissibleAlert/DismissibleAlert';
-import { getDisplayName, hashify } from '~/utils/string-helpers';
-import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
-import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
-import { InputAspectRatioColonDelimited } from '~/components/Generate/Input/InputAspectRatioColonDelimited';
-import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { KlingMode } from '@civitai/client';
-import { type OrchestratorEngine } from '~/server/orchestrator/infrastructure/base.enums';
-import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
-import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
 import { VideoGenerationSchema } from '~/server/orchestrator/generation/generation.config';
+import { haiperDuration } from '~/server/orchestrator/haiper/haiper.schema';
+import { type OrchestratorEngine } from '~/server/orchestrator/infrastructure/base.enums';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
-import { useIsMutating } from '@tanstack/react-query';
-import { getQueryKey } from '@trpc/react-query';
-import { uniqBy } from 'lodash-es';
+import { klingAspectRatios, klingDuration } from '~/server/orchestrator/kling/kling.schema';
 import {
   lightricksAspectRatios,
   lightricksDuration,
 } from '~/server/orchestrator/lightricks/lightricks.schema';
-import { InputRequestPriority } from '~/components/Generation/Input/RequestPriority';
-import { GenerationCostPopover } from '~/components/ImageGeneration/GenerationForm/GenerationCostPopover';
-import { SourceImageUploadAccordion } from '~/components/Generation/Input/SourceImageUpload';
+import {
+  engineDefinitions,
+  generationFormWorkflowConfigurations,
+  WORKFLOW_TAGS,
+} from '~/shared/constants/generation.constants';
+import {
+  generationFormStore,
+  generationStore,
+  useGenerationFormStore,
+  useGenerationStore,
+  useSelectedVideoWorkflow,
+  useVideoGenerationWorkflows,
+} from '~/store/generation.store';
+import { showErrorNotification } from '~/utils/notifications';
+import { numberWithCommas } from '~/utils/number-helpers';
+import { getDisplayName, hashify } from '~/utils/string-helpers';
+import { trpc } from '~/utils/trpc';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -614,7 +610,7 @@ function FormWrapper({
     message: (requiredBalance) =>
       `You don't have enough funds to perform this action. Required Buzz: ${numberWithCommas(
         requiredBalance
-      )}. Buy or earn more buzz to perform this action.`,
+      )}. Buy or earn more Buzz to perform this action.`,
     performTransactionOnPurchase: true,
   });
 
@@ -629,15 +625,25 @@ function FormWrapper({
 
   function handleSubmit(data: VideoGenerationSchema) {
     if (isLoading) return;
-    setDebouncedIsLoading(true);
 
     const { cost } = useCostStore.getState();
     const totalCost = cost;
+
+    let validated: Record<string, any> | null = null;
+    try {
+      validated = validateInput(workflow, data);
+    } catch (e: any) {
+      const { message, path } = JSON.parse(e.message)?.[0] as any;
+      form.setError(path?.[0] ?? '', { message });
+    }
+    if (!validated) return;
+    setDebouncedIsLoading(true);
+
     // TODO - tips?
     conditionalPerformTransaction(totalCost, () => {
       mutate({
         type: 'video',
-        data: validateInput(workflow, data),
+        data: validated,
         tags: [WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
       });
     });
@@ -750,6 +756,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
       } catch (e: any) {
         const { message, path } = JSON.parse(e.message)?.[0] as any;
         setQuery(null);
+        // setError()
         setError(`${path?.[0]}: ${message}`);
       }
     });

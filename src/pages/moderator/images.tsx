@@ -3,7 +3,6 @@ import {
   Anchor,
   AspectRatio,
   Badge,
-  Box,
   Card,
   Center,
   Checkbox,
@@ -54,6 +53,7 @@ import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
+import { RuleDefinitionPopover } from '~/components/Moderation/RuleDefinitionPopover';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { PopConfirm } from '~/components/PopConfirm/PopConfirm';
@@ -114,6 +114,7 @@ const ImageReviewType = {
   reported: 'Reported',
   csam: 'CSAM',
   appeal: 'Appeals',
+  modRule: 'Rule Violations',
 } as const;
 
 type ImageReviewType = keyof typeof ImageReviewType;
@@ -517,6 +518,16 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
               <ContentClamp maxHeight={150}>
                 {image.appeal?.reason ? <Text size="sm">{image.appeal.reason}</Text> : null}
               </ContentClamp>
+            </Stack>
+          </Card.Section>
+        )}
+        {image.needsReview === 'modRule' && image.metadata?.ruleReason && (
+          <Card.Section p="xs">
+            <Stack>
+              <Text>{image.metadata.ruleReason}</Text>
+              {image.metadata.ruleId && (
+                <RuleDefinitionPopover ruleId={image.metadata.ruleId} entityType="Image" />
+              )}
             </Stack>
           </Card.Section>
         )}

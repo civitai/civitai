@@ -12,24 +12,22 @@ import {
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
-import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
-import {
-  Availability,
-  CommercialUse,
-  ModelStatus,
-  ModelType,
-  ModelVersionEngagementType,
-} from '~/shared/utils/prisma/enums';
-
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS } from '~/server/redis/client';
-import { GetByIdInput } from '~/server/schema/base.schema';
-import { TransactionType } from '~/server/schema/buzz.schema';
-import { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import {
+  dataForModelsCache,
+  modelVersionAccessCache,
+  modelVersionResourceCache,
+} from '~/server/redis/caches';
+import { REDIS_KEYS } from '~/server/redis/client';
+import type { GetByIdInput } from '~/server/schema/base.schema';
+import { TransactionType } from '~/server/schema/buzz.schema';
+import type { ModelFileMetadata, TrainingResultsV2 } from '~/server/schema/model-file.schema';
+import type {
   DeleteExplorationPromptInput,
   EarlyAccessModelVersionsOnTimeframeSchema,
   GetModelVersionByModelTypeProps,
+  GetModelVersionPopularityInput,
+  GetModelVersionsPopularityInput,
   ModelVersionEarlyAccessConfig,
   ModelVersionMeta,
   ModelVersionsGeneratedImagesOnTimeframeSchema,
@@ -45,12 +43,15 @@ import {
   imagesSearchIndex,
   modelsSearchIndex,
 } from '~/server/search-index';
+import { deleteBidsForModelVersion } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import { createBuzzTransaction } from '~/server/services/buzz.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { checkDonationGoalComplete } from '~/server/services/donation-goal.service';
+import { uploadImageFromUrl } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
+import { addPostImage, createPost } from '~/server/services/post.service';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
@@ -58,11 +59,15 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { getBaseModelSet } from '~/shared/constants/generation.constants';
-import { maxDate } from '~/utils/date-helpers';
+import {
+  Availability,
+  CommercialUse,
+  ModelStatus,
+  ModelType,
+  ModelVersionEngagementType,
+} from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
 import { ingestModelById, updateModelLastVersionAt } from './model.service';
-import { uploadImageFromUrl } from '~/server/services/image.service';
-import { addPostImage, createPost } from '~/server/services/post.service';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -484,6 +489,7 @@ export const deleteVersionById = async ({ id }: GetByIdInput) => {
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
     await preventReplicationLag('modelVersion', deleted.modelId);
     await bustMvCache(deleted.id);
+    await deleteBidsForModelVersion({ modelVersionId: id });
 
     return deleted;
   });
@@ -975,10 +981,7 @@ export const modelVersionGeneratedImagesOnTimeframe = async ({
 
   if (!clickhouse || modelVersions.length === 0) return [];
 
-  const date = maxDate(
-    dayjs().startOf('day').subtract(timeframe, 'day').toDate(),
-    dayjs().startOf('month').subtract(1, 'day').toDate()
-  ).toISOString();
+  const date = dayjs().startOf('day').subtract(timeframe, 'day').toDate();
 
   const generationData = await clickhouse.$query<Row>`
     SELECT
@@ -1198,6 +1201,8 @@ export const earlyAccessPurchase = async ({
       description: `Gain early access on model: ${modelVersion.model.name} - ${modelVersion.name}`,
       details: { modelVersionId, type, earlyAccessPurchase: true },
     });
+    if (!buzzTransaction.transactionId)
+      throw throwBadRequestError('Failed to create Buzz transaction.');
 
     buzzTransactionId = buzzTransaction.transactionId;
     const accessRecord = await dbWrite.entityAccess.findFirst({
@@ -1399,20 +1404,14 @@ export const bustMvCache = async (ids: number | number[], userId?: number) => {
 
 export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   const modelVersion = await dbRead.modelVersion.findFirst({
-    where: {
-      id,
-    },
+    where: { id },
     select: {
       id: true,
       files: {
-        select: {
-          id: true,
-          metadata: true,
-        },
+        select: { id: true, metadata: true },
       },
     },
   });
-
   if (!modelVersion) return null;
 
   const modelFile = modelVersion.files?.[0];
@@ -1422,12 +1421,12 @@ export const getWorkflowIdFromModelVersion = async ({ id }: GetByIdInput) => {
   if (!metadata) return null;
 
   const trainingResults = (metadata.trainingResults ?? {}) as TrainingResultsV2;
-
   return trainingResults.workflowId ?? null;
 };
 
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
+  cacheNotFound: false,
   lookupFn: async (ids) => {
     if (!ids.length) return {};
     const dbResults = await dbRead.$queryRaw<GenerationResourceDataModel[]>`
@@ -1575,4 +1574,13 @@ export const createModelVersionPostFromTraining = async ({
       })
     )
   );
+};
+
+export const getModelVersionPopularity = async ({ id }: GetModelVersionPopularityInput) => {
+  const resp = await modelVersionResourceCache.fetch([id]);
+  return resp[id] ?? { versionId: id, popularityRank: 0, isFeatured: false, isNew: false };
+};
+
+export const getModelVersionsPopularity = async ({ ids }: GetModelVersionsPopularityInput) => {
+  return await modelVersionResourceCache.fetch(ids);
 };

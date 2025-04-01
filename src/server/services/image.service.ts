@@ -22,7 +22,11 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import {
+  combineSqlWithParams,
+  getDbWithoutLag,
+  preventReplicationLag,
+} from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -39,7 +43,7 @@ import {
   thumbnailCache,
   userContentOverviewCache,
 } from '~/server/redis/caches';
-import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput, InfiniteQueryInput } from '~/server/schema/base.schema';
 import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import {
@@ -125,9 +129,8 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { ImageResource } from '~/shared/utils/prisma/models';
-import { fetchBlob, getBase64 } from '~/utils/file-utils';
-import { logToDb } from '~/utils/logging';
+import { ImageResourceNew } from '~/shared/utils/prisma/models';
+import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -140,10 +143,13 @@ import {
   ImageModerationSchema,
   IngestImageInput,
   ingestImageSchema,
+  RemoveImageResourceSchema,
 } from './../schema/image.schema';
 import { uniqBy } from 'lodash-es';
 import { withRetries } from '~/utils/errorHandling';
-// TODO.ingestion - logToDb something something 'axiom'
+import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import { RuleDefinition } from '~/server/utils/mod-rules';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -292,12 +298,7 @@ export const moderateImages = async ({
       },
     });
 
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Delete });
 
     for (const img of affected) {
       await createNotification({
@@ -316,43 +317,30 @@ export const moderateImages = async ({
     return affected;
   } else if (reviewAction === 'removeName') {
     await removeNameReference(ids);
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else if (reviewAction === 'mistake') {
     // Remove needsReview status
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
       data: { needsReview: null, ingestion: 'Scanned' },
     });
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else {
     // Approve
-    const results = await dbWrite.$queryRaw<{ id: number; nsfwLevel: number }[]>`
-      UPDATE "Image" SET
-        "needsReview" = ${needsReview},
-        "blockedFor" = NULL,
-        "ingestion" = 'Scanned',
-        -- if image was created within 72 hrs, set scannedAt to now
-        "scannedAt" = CASE
-          WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
-          ELSE "scannedAt"
-        END,
-        "nsfwLevel" = CASE
-          WHEN "nsfwLevel" = ${NsfwLevel.Blocked}::int THEN 0
-          ELSE "nsfwLevel"
-        END
-      WHERE id IN (${Prisma.join(ids)})
-      RETURNING id, "nsfwLevel";
-    `;
+    await dbWrite.$queryRaw`
+        UPDATE "Image" SET
+          "needsReview" = ${needsReview},
+          "blockedFor" = NULL,
+          -- Remove ruleId and ruleReason from metadata
+          "metadata" = "metadata" - 'ruleId' - 'ruleReason',
+          "ingestion" = 'Scanned',
+          -- if image was created within 72 hrs, set scannedAt to now
+          "scannedAt" = CASE
+            WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
+            ELSE "scannedAt"
+          END
+        WHERE id IN (${Prisma.join(ids)});
+      `;
 
     // Remove tags that triggered review
     const tagIds = (await getTagsNeedingReview()).map((x) => x.id);
@@ -371,31 +359,22 @@ export const moderateImages = async ({
       tagIds.push(...blockedTags.map((x) => x.id));
     }
 
-    await dbWrite.tagsOnImage.updateMany({
-      where: { imageId: { in: ids }, tagId: { in: tagIds } },
-      data: { disabled: true, disabledAt: new Date(), needsReview: false },
-    });
+    const toUpdate = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+        SELECT "imageId", "tagId"
+        FROM "TagsOnImageDetails"
+        WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
+      `;
 
-    // Resolve any pending appeals
-    await resolveEntityAppeal({
-      ids: results.map((x) => x.id),
-      entityType: EntityType.Image,
-      status: AppealStatus.Approved,
-      resolvedMessage: 'Image approved',
-      userId,
-    });
-
-    // Update nsfw level of image
-    const resetLevels = results.filter((x) => x.nsfwLevel === 0).map((x) => x.id);
-    if (resetLevels.length) await updateNsfwLevel(resetLevels);
-    else if (changeTags) await updateNsfwLevel(ids);
-
-    await imagesSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+    await upsertTagsOnImageNew(
+      toUpdate.map(({ imageId, tagId }) => ({
+        imageId,
+        tagId,
+        disabled: true,
+        needsReview: false,
+      }))
     );
-    await imagesMetricsSearchIndex.queueUpdate(
-      ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
-    );
+
+    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   }
   return null;
 };
@@ -404,7 +383,9 @@ export async function updateNsfwLevel(ids: number | number[]) {
   if (!Array.isArray(ids)) ids = [ids];
   ids = [...new Set(ids)]; // dedupe
   if (!ids.length) return;
-  await dbWrite.$executeRawUnsafe(`SELECT update_nsfw_levels(ARRAY[${ids.join(',')}]::integer[])`);
+  await dbWrite.$executeRawUnsafe(
+    `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
+  );
   await thumbnailCache.bust(ids);
 }
 
@@ -435,12 +416,11 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         select: {
           id: true,
           modelVersion: { select: { id: true, name: true } },
-          name: true,
           detected: true,
         },
       },
       tags: {
-        where: { disabledAt: null },
+        where: { disabled: false },
         select: {
           automated: true,
           tag: {
@@ -466,10 +446,15 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   `;
   if (!images?.length) throw new TRPCError({ code: 'NOT_FOUND' });
 
-  await dbWrite.tagsOnImage.updateMany({
-    where: { imageId: images[0].id, disabledAt: { not: null } },
-    data: { disabled: false, disabledAt: null },
-  });
+  const results = await dbWrite.$queryRaw<{ imageId: number; tagId: number }[]>`
+    SELECT "imageId", "tagId"
+    FROM "TagsOnImageDetails"
+    WHERE "imageId" = ${images[0].id} AND NOT "disabled";
+  `;
+
+  await upsertTagsOnImageNew(
+    results.map(({ imageId, tagId }) => ({ imageId, tagId, disabled: false }))
+  );
 
   return await ingestImage({ image: images[0] });
 };
@@ -509,8 +494,6 @@ export const ingestImage = async ({
         nsfwLevel: NsfwLevel.PG,
       },
     });
-    // TODO.manuel: Create default tagsOnImage record
-    // await dbWrite.tagsOnImage.create();
 
     // Update post NSFW level
     if (updated.postId) await updatePostNsfwLevel(updated.postId);
@@ -559,10 +542,12 @@ export const ingestImage = async ({
 
     return true;
   } else {
-    await logToDb('image-ingestion', {
+    await logToAxiom({
+      name: 'image-ingestion',
       type: 'error',
       imageId: id,
       url,
+      responseStatus: response.status,
     });
 
     return false;
@@ -672,7 +657,7 @@ export const ingestImageBulk = async ({
 //         [
 //           Prisma.sql`i."ingestion" = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`,
 //           Prisma.sql`NOT EXISTS (
-//           SELECT 1 FROM "TagsOnImage" toi
+//           SELECT 1 FROM "TagsOnImageDetails" toi
 //           WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join([
 //             ...new Set(excludedTagIds),
 //           ])}) AND NOT toi.disabled
@@ -749,7 +734,7 @@ export const getAllImages = async (
     collectionId, // TODO - call this from separate method?
     modelId,
     modelVersionId,
-    imageId, // TODO - remove, not in use
+    imageId, // used in public API
     username,
     period,
     periodMode,
@@ -851,7 +836,7 @@ export const getAllImages = async (
   // Filter to specific model/review content
   const prioritizeUser = !!prioritizedUserIds?.length; // [x]
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
-    from = `FROM "ImageResource" irr`;
+    from = `FROM "ImageResourceNew" irr`;
     joins.push(`JOIN "Image" i ON i.id = irr."imageId"`);
     if (reviewId) {
       joins.push(`JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"`);
@@ -907,8 +892,8 @@ export const getAllImages = async (
   if (tags?.length) {
     AND.push(Prisma.sql`i.id IN (
       SELECT "imageId"
-      FROM "TagsOnImage"
-      WHERE "tagId" IN (${Prisma.join(tags)}) AND "disabledAt" IS NULL
+      FROM "TagsOnImageDetails"
+      WHERE "tagId" IN (${Prisma.join(tags)}) AND "disabled" = FALSE
     )`);
   }
 
@@ -925,7 +910,6 @@ export const getAllImages = async (
   if (!!postIds?.length) AND.push(Prisma.sql`i."postId" IN (${Prisma.join(postIds)})`);
 
   // Filter to a specific image
-  // [x] not needed
   if (imageId) AND.push(Prisma.sql`i.id = ${imageId}`);
 
   if (sort === ImageSort.Random && !collectionId) {
@@ -1006,21 +990,21 @@ export const getAllImages = async (
     orderBy = `i."index"`;
   } else {
     // Sort by selected sort
-    if (sort === ImageSort.MostComments) {
-      orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."commentCount" > 0`);
-    } else if (sort === ImageSort.MostReactions) {
-      orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."reactionCount" > 0`);
-    } else if (sort === ImageSort.MostCollected) {
-      orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
-      if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
-    }
+    // if (sort === ImageSort.MostComments) {
+    //   orderBy = `im."commentCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."commentCount" > 0`);
+    // } else if (sort === ImageSort.MostReactions) {
+    //   orderBy = `im."reactionCount" DESC, im."heartCount" DESC, im."likeCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."reactionCount" > 0`);
+    // } else if (sort === ImageSort.MostCollected) {
+    //   orderBy = `im."collectedCount" DESC, im."reactionCount" DESC, im."imageId"`;
+    //   if (!isGallery) AND.push(Prisma.sql`im."collectedCount" > 0`);
+    // }
     // else if (sort === ImageSort.MostTipped) {
     //   orderBy = `im."tippedAmountCount" DESC, im."reactionCount" DESC, im."imageId"`;
     //   if (!isGallery) AND.push(Prisma.sql`im."tippedAmountCount" > 0`);
     // }
-    else if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
+    if (sort === ImageSort.Random) orderBy = 'ct."randomId" DESC';
     // TODO this causes the app to spike
     // else if (sort === ImageSort.Oldest) {
     //   orderBy = 'i."sortAt" ASC';
@@ -1029,7 +1013,7 @@ export const getAllImages = async (
     //   orderBy = 'i."sortAt" DESC';
     //   AND.push(Prisma.sql`i."sortAt" <= now()`);
     // }
-    else if (sort === ImageSort.Oldest) orderBy = `i."createdAt" ASC`;
+    else if (sort === ImageSort.Oldest) orderBy = `i."id" ASC`;
     else {
       if (from.indexOf(`irr`) !== -1) {
         // Ensure to sort by irr.imageId when reading from imageResources to maximize index utilization
@@ -1046,13 +1030,7 @@ export const getAllImages = async (
   // }
 
   // Limit to images created since period start
-  const sortingByMetrics = orderBy.includes('im.'); // [x]
-  if (sortingByMetrics && period !== 'AllTime' && periodMode !== 'stats') {
-    const ageGroups = getPeriods(period);
-    AND.push(
-      Prisma.sql`im."ageGroup" = ANY(ARRAY[${Prisma.join(ageGroups)}]::"MetricTimeframe"[])`
-    );
-  } else if (period && period !== 'AllTime' && periodMode !== 'stats') {
+  if (period && period !== 'AllTime' && periodMode !== 'stats') {
     const interval = period.toLowerCase();
     AND.push(
       Prisma.sql`i."createdAt" >= date_trunc('day', now()) - interval '1 ${Prisma.raw(interval)}'`
@@ -1121,7 +1099,7 @@ export const getAllImages = async (
   if (baseModels?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ModelVersion" mv
-      RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+      RIGHT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
       WHERE mv."baseModel" IN (${Prisma.join(baseModels)})
     )`);
   }
@@ -1153,9 +1131,6 @@ export const getAllImages = async (
     JOIN "User" u ON u.id = i."userId"
     JOIN "Post" p ON p.id = i."postId"
     ${Prisma.raw(WITH.length && collectionId ? `JOIN ct ON ct."imageId" = i.id` : '')}
-    ${Prisma.raw(
-      ids?.length ? 'LEFT' : ''
-    )} JOIN "ImageMetric" im ON im."imageId" = i.id AND im.timeframe = 'AllTime'::"MetricTimeframe"
     WHERE ${Prisma.join(AND, ' AND ')}
   `;
 
@@ -1228,7 +1203,7 @@ export const getAllImages = async (
         includeBaseModel
           ? `(
             SELECT mv."baseModel"
-            FROM "ImageResource" ir
+            FROM "ImageResourceNew" ir
             LEFT JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
             LEFT JOIN "Model" m ON mv."modelId" = m.id
             WHERE m."type" = 'Checkpoint' AND ir."imageId" = i.id
@@ -2164,9 +2139,8 @@ export async function getTagNamesForImages(imageIds: number[]) {
 export async function getResourceIdsForImages(imageIds: number[]) {
   const imageResourcesArr = await dbRead.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
     SELECT "imageId", "modelVersionId"
-    FROM "ImageResource"
-    WHERE "imageId" IN (${Prisma.join(imageIds)})
-      AND "modelVersionId" IS NOT NULL
+    FROM "ImageResourceNew"
+    WHERE "imageId" IN (${Prisma.join(imageIds)});
   `;
   const imageResources = imageResourcesArr.reduce((acc, { imageId, modelVersionId }) => {
     if (!acc[imageId]) acc[imageId] = [];
@@ -2342,7 +2316,7 @@ export const getImage = async ({
 export const getImageResources = async ({ id }: GetByIdInput) => {
   const resources = await dbRead.$queryRaw<ImageResourceHelperModel[]>`
     SELECT
-      irh."id",
+      irh."imageId",
       irh."reviewId",
       irh."reviewRating",
       irh."reviewDetails",
@@ -2428,7 +2402,7 @@ export const getImagesForModelVersion = async ({
       Prisma.join(
         [
           Prisma.sql`i."nsfwLevel" != 0`,
-          Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImage" toi WHERE toi."imageId" = i.id AND toi."disabledAt" IS NULL AND toi."tagId" IN (${Prisma.join(
+          Prisma.sql`NOT EXISTS (SELECT 1 FROM "TagsOnImageDetails" toi WHERE toi."imageId" = i.id AND toi."disabled" = FALSE AND toi."tagId" IN (${Prisma.join(
             excludedTagIds
           )}) )`,
         ],
@@ -2760,15 +2734,18 @@ export const getImagesForPosts = async ({
   });
 };
 
-export const removeImageResource = async ({ id }: GetByIdInput) => {
+export const removeImageResource = async ({
+  imageId,
+  modelVersionId,
+}: RemoveImageResourceSchema) => {
   try {
-    const resource = await dbWrite.imageResource.delete({
-      where: { id },
+    const resource = await dbWrite.imageResourceNew.delete({
+      where: { imageId_modelVersionId: { imageId, modelVersionId } },
     });
-    if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
+    // if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
-    purgeImageGenerationDataCache(id);
-    purgeCache({ tags: [`image-resources-${id}`] });
+    purgeImageGenerationDataCache(imageId);
+    // purgeCache({ tags: [`image-resources-${imageId}`] });
 
     return resource;
   } catch (error) {
@@ -3536,19 +3513,9 @@ export const getImageModerationReviewQueue = async ({
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
   }
 
-  if (tagReview) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImage" toi
-      WHERE toi."imageId" = i.id AND toi."needsReview"
-    )`);
-    AND.push(Prisma.sql`
-      i."nsfwLevel" < ${NsfwLevel.Blocked}
-    `);
-  }
-
   if (tagIds?.length) {
     AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImage" toi
+      SELECT 1 FROM "TagsOnImageDetails" toi
       WHERE toi."imageId" = i.id AND toi."tagId" IN (${Prisma.join(tagIds)})
     )`);
   }
@@ -3560,20 +3527,27 @@ export const getImageModerationReviewQueue = async ({
   let cursorProp = 'i."id"';
   let cursorDirection = 'DESC';
 
-  if (reportReview) {
-    // Add this to the WHERE:
-    AND.push(Prisma.sql`report."status" = 'Pending'`);
-    // Also, update sorter to most recent:
-    orderBy = `report."createdAt" ASC`;
-    cursorProp = 'report.id';
-    cursorDirection = 'ASC';
-  }
+  if (tagReview) {
+    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review)`);
+    AND.push(Prisma.sql`
+      i."nsfwLevel" < ${NsfwLevel.Blocked}
+    `);
+  } else {
+    if (reportReview) {
+      // Add this to the WHERE:
+      AND.push(Prisma.sql`report."status" = 'Pending'`);
+      // Also, update sorter to most recent:
+      orderBy = `report."createdAt" ASC`;
+      cursorProp = 'report.id';
+      cursorDirection = 'ASC';
+    }
 
-  if (cursor) {
-    // Random sort cursor is handled by the WITH query
-    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    if (cursorProp)
-      AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+    if (cursor) {
+      // Random sort cursor is handled by the WITH query
+      const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+      if (cursorProp)
+        AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+    }
   }
 
   // TODO: find a better way to handle different select/join for each type of review
@@ -3581,6 +3555,19 @@ export const getImageModerationReviewQueue = async ({
   const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
+    ${Prisma.raw(
+      tagReview
+        ? `
+            WITH tags_review AS (
+              SELECT "imageId"
+              FROM "TagsOnImageDetails" WHERE "needsReview"
+              AND NOT "disabled"
+              ${cursor ? `AND "imageId" <= ${cursor}` : ''}
+              ORDER BY ("imageId", "tagId") DESC
+              LIMIT ${limit + 1}
+            )`
+        : ''
+    )}
     -- Image moderation queue
     SELECT
       i.id,
@@ -3632,6 +3619,11 @@ export const getImageModerationReviewQueue = async ({
     nextCursor = nextItem?.cursorId;
   }
 
+  if (tagReview) {
+    const nextItem = rawImages.pop();
+    if (rawImages.length > 0) nextCursor = nextItem?.cursorId;
+  }
+
   const imageIds = rawImages.map((i) => i.id);
   let tagsVar: (VotableTagModel & { imageId: number })[] | undefined;
 
@@ -3668,7 +3660,7 @@ export const getImageModerationReviewQueue = async ({
       SELECT
         toi."imageId",
         t.name
-      FROM "TagsOnImage" toi
+      FROM "TagsOnImageNew" toi
       JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
       JOIN "Tag" t ON t.id = tot."toTagId"
       JOIN "Tag" f ON f.id = tot."fromTagId" AND f.name = 'real person'
@@ -3724,7 +3716,7 @@ export const getImageModerationReviewQueue = async ({
       modelVersionId?: number | null;
       entityType?: string | null;
       entityId?: number | null;
-      metadata?: MixedObject | null;
+      metadata?: ImageMetadata | VideoMetadata | null;
       removedAt?: Date | null;
       tosReason?: string | null;
       minor: boolean;
@@ -3753,7 +3745,7 @@ export const getImageModerationReviewQueue = async ({
       ...i
     }) => ({
       ...i,
-      metadata: i.metadata as MixedObject,
+      metadata: i.metadata as ImageMetadata | VideoMetadata | null,
       user: {
         id: creatorId,
         username,
@@ -3790,10 +3782,7 @@ export const getImageModerationReviewQueue = async ({
     })
   );
 
-  return {
-    nextCursor,
-    items: images,
-  };
+  return { nextCursor, items: images };
 };
 
 export async function get404Images() {
@@ -3844,7 +3833,7 @@ export async function getModeratorPOITags() {
       rpt.name,
       CAST(COUNT(i.id) as int) as count
     FROM "Image" i
-    JOIN "TagsOnImage" toi ON toi."imageId" = i.id
+    JOIN "TagsOnImageNew" toi ON toi."imageId" = i.id
     JOIN real_person_tags rpt ON rpt.id = toi."tagId"
     WHERE i."needsReview" = 'poi'
     GROUP BY rpt.id, rpt.name
@@ -3869,7 +3858,7 @@ async function removeNameReference(images: number[]) {
           toi."imageId",
           t.id as "tagId",
           t.name
-        FROM "TagsOnImage" toi
+        FROM "TagsOnImageNew" toi
         JOIN "TagsOnTags" tot ON tot."toTagId" = toi."tagId"
         JOIN "Tag" t ON t.id = tot."toTagId"
         JOIN "Tag" f ON f.id = tot."fromTagId" AND f.name = 'real person'
@@ -3912,7 +3901,7 @@ async function removeNameReference(images: number[]) {
 
     // Remove tags
     await dbWrite.$executeRaw`
-      DELETE FROM "TagsOnImage" toi
+      DELETE FROM "TagsOnImageNew" toi
       USING "TagsOnTags" tot
       WHERE toi."imageId" IN (${Prisma.join(images)})
         AND toi."tagId" = tot."toTagId"
@@ -3967,7 +3956,9 @@ export async function updateImageNsfwLevel({
   if (!nsfwLevel) throw throwBadRequestError();
   if (user.isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
-    await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+    // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
+    // Commenting this out should solve the problem.
+    // await imagesSearchIndex.updateSync([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     if (status) {
       await dbWrite.imageRatingRequest.updateMany({
         where: { imageId: id, status: 'Pending' },
@@ -4407,7 +4398,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
   const { rows: resources } = await pgDbRead.query<{
-    id: number;
+    imageId: number;
+    modelVersionId: number;
     strength?: number;
     modelId: number;
     modelName: string;
@@ -4417,7 +4409,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
     baseModel: string;
   }>(Prisma.sql`
     SELECT
-      ir.id,
+      ir."imageId",
+      ir."modelVersionId",
       ir.strength,
       m.id as "modelId",
       m.name as "modelName",
@@ -4425,7 +4418,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
       mv.id as "versionId",
       mv.name as "versionName",
       mv."baseModel" as "baseModel"
-    FROM "ImageResource" ir
+    FROM "ImageResourceNew" ir
     JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
     JOIN "Model" m on mv."modelId" = m.id
       WHERE ir."imageId" = ${id}
@@ -4699,6 +4692,26 @@ export async function updateImageMinor({ id, minor }: UpdateImageMinorInput) {
   return image;
 }
 
+export async function getImageResourcesFromImageId({
+  imageId,
+  tx,
+}: {
+  imageId: number;
+  tx?: Prisma.TransactionClient;
+}) {
+  const dbClient = tx ?? dbWrite;
+  const computed = await dbClient.$queryRaw<
+    {
+      id: number;
+      modelversionid: number | null;
+      hash: string | null;
+      strength: number | null;
+      detected: boolean;
+    }[]
+  >`SELECT * FROM get_image_resources(${imageId}::int)`;
+  return computed;
+}
+
 export async function createImageResources({
   imageId,
   tx,
@@ -4708,35 +4721,33 @@ export async function createImageResources({
 }) {
   const dbClient = tx ?? dbWrite;
   // Read the resources based on complex metadata and hash matches
-  const resources = await dbClient.$queryRaw<
-    (ImageResource & { modelversionid?: number })[]
-  >`SELECT * FROM get_image_resources(${imageId}::int)`;
+  const resources = await getImageResourcesFromImageId({ imageId, tx });
   if (!resources.length) return null;
 
-  const resourcesWithModelVersions = uniqBy(
-    resources.filter((x) => x.modelversionid),
-    'modelversionid'
-  );
-  const resourcesWithoutModelVersions = resources.filter((x) => !x.modelversionid);
-
-  const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
-    (r) => Prisma.sql`
-        (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
-      r.detected
+  const withModelVersionId = resources
+    .map((x) => {
+      if (!x.modelversionid) return null;
+      return x;
     })
-      `
-  );
+    .filter(isDefined);
+  const resourcesWithModelVersions = uniqBy(withModelVersionId, 'modelversionid');
 
-  // Write the resources to the image
-  await dbClient.$executeRaw`
-    INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
-    VALUES ${Prisma.join(sql, ',')}
-    ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
-    SET
-      detected = excluded.detected,
-      hash = excluded.hash,
-      strength = excluded.strength;
-  `;
+  if (resourcesWithModelVersions.length) {
+    const values = Prisma.join(
+      resourcesWithModelVersions.map(
+        (r) => Prisma.sql`(${r.id}, ${r.modelversionid}, ${r.strength}, ${r.detected})`
+      )
+    );
+
+    await dbClient.$queryRaw`
+      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", strength, detected)
+      VALUES ${values}
+      ON CONFLICT ("imageId", "modelVersionId") DO UPDATE
+      SET
+        detected = excluded.detected,
+        strength = excluded.strength;
+    `;
+  }
 
   return resources;
 }
@@ -4806,3 +4817,28 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
 
   return response;
 };
+
+export async function getImagesModRules() {
+  const modRules = await fetchThroughCache(
+    REDIS_KEYS.CACHES.MOD_RULES.IMAGES,
+    async () => {
+      const rules = await dbRead.moderationRule.findMany({
+        where: { entityType: EntityType.Image, enabled: true },
+        select: { id: true, definition: true, action: true, reason: true },
+        orderBy: [{ order: 'asc' }],
+      });
+
+      return rules.map(({ definition, ...rule }) => ({
+        ...rule,
+        definition: definition as RuleDefinition,
+      }));
+    },
+    { ttl: CacheTTL.day }
+  );
+
+  return modRules;
+}
+
+export async function bustImageModRulesCache() {
+  await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
+}
