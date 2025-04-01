@@ -10,7 +10,7 @@ import { ChatAllMessages, ChatCreateChat } from '~/types/router';
 import { isApril1 } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-const messageSound = isApril1() ? '/sounds/message-u.mp3' : '/sounds/message2.mp3';
+const messageSound = isApril1() ? '/sounds/messageu.mp3' : '/sounds/message2.mp3';
 const volume = isApril1() ? 0.2 : 0.5;
 
 export const useChatNewMessageSignal = () => {
