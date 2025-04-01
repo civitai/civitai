@@ -409,11 +409,11 @@ const createRecurringBids = async (now: Dayjs) => {
             userId: recurringBid.userId,
             entityId: recurringBid.entityId,
           },
-          select: { id: true, fromRecurring: true, transactionIds: true },
+          select: { id: true },
         });
 
         // If a bid already exists, skip this recurring bid
-        if (existingBid && existingBid.fromRecurring) {
+        if (existingBid) {
           log(`Skipping recurring bid, as it already exists:`, existingBid.id);
           continue;
         }
@@ -459,20 +459,8 @@ const createRecurringBids = async (now: Dayjs) => {
         }
 
         // Insert a new bid row that matches the new auctions
-        await dbWrite.bid.upsert({
-          where: {
-            auctionId_userId_entityId: {
-              auctionId: auctionMatch.id,
-              userId: recurringBid.userId,
-              entityId: recurringBid.entityId,
-            },
-          },
-          update: {
-            amount: { increment: recurringBid.amount },
-            transactionIds: [...(existingBid?.transactionIds ?? []), transactionId],
-            fromRecurring: true,
-          },
-          create: {
+        await dbWrite.bid.create({
+          data: {
             auctionId: auctionMatch.id,
             userId: recurringBid.userId,
             entityId: recurringBid.entityId,
