@@ -565,6 +565,7 @@ export const HomeBlockType = {
   Social: 'Social',
   Event: 'Event',
   CosmeticShop: 'CosmeticShop',
+  FeaturedModelVersion: 'FeaturedModelVersion',
 } as const;
 
 export type HomeBlockType = (typeof HomeBlockType)[keyof typeof HomeBlockType];

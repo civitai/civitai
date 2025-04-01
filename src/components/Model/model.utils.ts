@@ -66,6 +66,7 @@ const modelQueryParamSchema = z
       .optional(),
     fromPlatform: booleanString().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    isFeatured: booleanString().optional(),
   })
   .partial();
 export type ModelQueryParams = z.output<typeof modelQueryParamSchema>;

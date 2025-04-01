@@ -1,6 +1,6 @@
 import type { Prisma } from '@prisma/client';
-import { HomeBlockType } from '~/shared/utils/prisma/enums';
 import type { SessionUser } from 'next-auth';
+import { ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -11,21 +11,31 @@ import {
   SetHomeBlocksOrderInputSchema,
   UpsertHomeBlockInput,
 } from '~/server/schema/home-block.schema';
+import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 import {
   getCollectionById,
   getCollectionItemsByCollectionId,
 } from '~/server/services/collection.service';
+import { getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
+import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
 import { getLeaderboardsWithResults } from '~/server/services/leaderboard.service';
+import {
+  getFeaturedModels,
+  GetModelsWithImagesAndModelVersions,
+  getModelsWithImagesAndModelVersions,
+} from '~/server/services/model.service';
 import {
   throwAuthorizationError,
   throwBadRequestError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import {
+  allBrowsingLevelsFlag,
+  hasSafeBrowsingLevel,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
+import { HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { isDefined } from '~/utils/type-guards';
-import { getHomeBlockCached } from '~/server/services/home-block-cache.service';
-import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
-import { getSectionById, getShopSectionsWithItems } from '~/server/services/cosmetic-shop.service';
-import { getCurrentAnnouncements } from '~/server/services/announcement.service';
 
 export const getHomeBlocks = async <
   TSelect extends Prisma.HomeBlockSelect = Prisma.HomeBlockSelect
@@ -142,6 +152,7 @@ export type HomeBlockWithData = {
   leaderboards?: GetLeaderboardsWithResults;
   announcements?: GetAnnouncements;
   cosmeticShopSection?: GetShopSectionsWithItems;
+  featuredModels?: GetModelsWithImagesAndModelVersions[];
 };
 
 export const getHomeBlockData = async ({
@@ -245,6 +256,60 @@ export const getHomeBlockData = async ({
         ...homeBlock,
         metadata,
         cosmeticShopSection,
+      };
+    }
+    case HomeBlockType.FeaturedModelVersion: {
+      // TODO eventually switch this to the actual version
+      const featured = await getFeaturedModels();
+
+      const modelData =
+        featured.length > 0
+          ? (
+              await getModelsWithImagesAndModelVersions({
+                user,
+                input: {
+                  ids: featured.map((f) => f.modelId),
+                  limit: featured.length,
+                  hidden: false,
+                  favorites: false,
+                  sort: ModelSort.HighestRated,
+                  period: MetricTimeframe.AllTime,
+                  periodMode: 'stats',
+                  browsingLevel: allBrowsingLevelsFlag,
+                },
+              })
+            ).items
+          : ([] as GetModelsWithImagesAndModelVersions[]);
+
+      const validModelData = modelData.filter(
+        (m) => hasSafeBrowsingLevel(m.nsfwLevel) && !m.nsfw && !m.poi
+      );
+
+      const filteredModelData: typeof validModelData = [];
+      const creatorsSeen = new Set<number>();
+
+      validModelData.forEach((md) => {
+        if (!creatorsSeen.has(md.user.id)) {
+          filteredModelData.push(md);
+          creatorsSeen.add(md.user.id);
+        }
+      });
+
+      const limitedData = filteredModelData
+        .sort((a, b) => {
+          const matchA = featured.find((f) => f.modelId === a.id);
+          const matchB = featured.find((f) => f.modelId === b.id);
+          if (!matchA || !matchA.position) return 1;
+          if (!matchB || !matchB.position) return -1;
+          return matchA.position - matchB.position;
+        })
+        .slice(0, input.limit);
+      // TODO optionally limit position to <= modelsToAddToCollection
+
+      return {
+        ...homeBlock,
+        metadata,
+        featuredModels: limitedData,
       };
     }
     default:

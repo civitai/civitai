@@ -118,7 +118,7 @@ export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
-export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop";
+export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion";
 
 export type Currency = "USD" | "BUZZ";
 
@@ -590,6 +590,7 @@ export interface Model {
   collectionItems?: CollectionItem[];
   generationCoverage?: GenerationCoverage[];
   flags?: ModelFlag[];
+  coveredCheckpoints?: CoveredCheckpoint[];
 }
 
 export interface ModelFlag {
@@ -701,6 +702,7 @@ export interface ModelVersion {
   DonationGoal?: DonationGoal[];
   featuredInfo?: FeaturedModelVersion[];
   ImageResourceNew?: ImageResourceNew[];
+  coveredCheckpoints?: CoveredCheckpoint[];
 }
 
 export interface ModelVersionEngagement {
@@ -2558,6 +2560,8 @@ export interface AuctionBase {
   quantity: number;
   minPrice: number;
   active: boolean;
+  runForDays: number;
+  validForDays: number;
   auctions?: Auction[];
   recurringBids?: BidRecurring[];
 }
@@ -2612,6 +2616,13 @@ export interface FeaturedModelVersion {
   validFrom: Date;
   validTo: Date;
   position: number;
+}
+
+export interface CoveredCheckpoint {
+  model_id: number;
+  version_id: number;
+  model?: Model;
+  modelVersion?: ModelVersion;
 }
 
 export interface ModerationRule {
