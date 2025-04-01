@@ -465,7 +465,8 @@ export async function addImageToQueue({
   if (!image) return false;
 
   const pools = poolCounters[rankType];
-  pools[priority - 1].increment({ id: imageId });
+
+  pools[priority - 1].getCount(imageId);
 
   return true;
 }

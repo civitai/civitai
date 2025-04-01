@@ -34,9 +34,9 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     // Returns all ids in the range of min and max
     // If ordered, returns the ids by the score in descending order.
     if (ordered) {
-      const data = await sysRedis.zRange(key, -Infinity, Infinity, {
-        REV: true,
+      const data = await sysRedis.zRange(key, Infinity, -Infinity, {
         BY: 'SCORE',
+        REV: true,
         LIMIT: { offset: 0, count: limit ?? 100 },
       });
 
