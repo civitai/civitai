@@ -14,6 +14,7 @@ import {
   addImageRating,
   cleanseSmite,
   getImagesQueue,
+  getPlayerById,
   joinGame,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
@@ -77,7 +78,8 @@ export const gamesRouter = router({
     }),
   }),
   newOrder: router({
-    join: guardedProcedure.query(({ ctx }) => joinGame({ userId: ctx.user.id })),
+    join: guardedProcedure.mutation(({ ctx }) => joinGame({ userId: ctx.user.id })),
+    getPlayer: guardedProcedure.query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
     getImageQueue: guardedProcedure
       .input(getImageQueueSchema)
       .query(({ input, ctx }) => getImagesQueue({ ...input, playerId: ctx.user.id })),

@@ -19,7 +19,6 @@ import {
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
-import { InfiniteQueryInput } from '~/server/schema/base.schema';
 import {
   AddImageRatingInput,
   CleanseSmiteInput,
@@ -61,11 +60,16 @@ export async function joinGame({ userId }: { userId: number }) {
   return { ...player, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
 }
 
-function getPlayerById({ playerId }: { playerId: number }) {
-  return dbRead.newOrderPlayer.findUnique({
+export async function getPlayerById({ playerId }: { playerId: number }) {
+  const player = await dbRead.newOrderPlayer.findUnique({
     where: { userId: playerId },
     select: playerInfoSelect,
   });
+  if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
+
+  const stats = await getPlayerStats({ playerId });
+
+  return { ...player, stats };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {

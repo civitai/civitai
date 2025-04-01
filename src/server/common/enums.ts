@@ -348,6 +348,7 @@ export enum SignalTopic {
   Auction = 'auction', // with :auctionId
   ModelVersion = 'model-version', // with :modelVersionId
   NewOrderPlayer = 'new-order-player', // with :playerId
+  NewOrderQueue = 'new-order-queue', // with :queueId
 }
 
 export enum NewOrderImageRating {

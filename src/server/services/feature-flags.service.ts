@@ -112,6 +112,7 @@ const featureFlags = createFeatureFlags({
   appTour: ['public'],
   privateModels: ['mod', 'granted'],
   auctions: ['mod'],
+  newOrderGame: ['mod'],
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
