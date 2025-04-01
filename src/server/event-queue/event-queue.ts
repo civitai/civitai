@@ -45,11 +45,7 @@ class CustomQueue<TMap extends EventHandlerMap> extends Queue {
 }
 
 export class EventQueue<TMap extends EventHandlerMap> {
-  constructor(private _name: string, private eventHandlerMap: TMap) {}
-
-  private get name() {
-    return `${GIT_BRANCH_NAME}:${this._name}`;
-  }
+  constructor(private name: string, private eventHandlerMap: TMap) {}
 
   queue = (options?: QueueOptions) => {
     return new CustomQueue<TMap>(this.name, { ...options, connection });
