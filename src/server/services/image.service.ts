@@ -3561,6 +3561,7 @@ export const getImageModerationReviewQueue = async ({
             WITH tags_review AS (
               SELECT "imageId"
               FROM "TagsOnImageDetails" WHERE "needsReview"
+              AND NOT "disabled"
               ${cursor ? `AND "imageId" <= ${cursor}` : ''}
               ORDER BY ("imageId", "tagId") DESC
               LIMIT ${limit + 1}
