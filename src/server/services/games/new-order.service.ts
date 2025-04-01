@@ -305,7 +305,7 @@ async function resetPlayer({ playerId }: { playerId: number }) {
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0 },
+      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0, startAt: new Date() },
     }),
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
@@ -390,15 +390,7 @@ export async function getImagesQueue({
   playerId: number;
   imageCount: number;
 }) {
-  const player = await dbRead.newOrderPlayer.findUnique({
-    where: { userId: playerId },
-    select: {
-      userId: true,
-      rankType: true,
-    },
-  });
-
-  if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
+  const player = await getPlayerById({ playerId });
 
   const imageIds: number[] = [];
   const rankPools =
