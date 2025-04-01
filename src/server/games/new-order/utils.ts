@@ -119,10 +119,10 @@ export const expCounter = createCounter({
 });
 
 export const poolKeys = {
-  [NewOrderRankType.Accolyte]: [
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Accolyte1`,
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Accolyte2`,
-    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Accolyte3`,
+  [NewOrderRankType.Acolyte]: [
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte1`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte2`,
+    `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte3`,
   ],
   [NewOrderRankType.Knight]: [
     `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Knight1`,
@@ -137,7 +137,7 @@ export const poolKeys = {
 };
 
 export const poolCounters = {
-  [NewOrderRankType.Accolyte]: poolKeys[NewOrderRankType.Accolyte].map((key) =>
+  [NewOrderRankType.Acolyte]: poolKeys[NewOrderRankType.Acolyte].map((key) =>
     createCounter({
       key: key as NewOrderRedisKey,
       fetchCount: async (imageId: number) => 0,

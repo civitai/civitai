@@ -14,22 +14,13 @@ export const useKnightsNewOrderListener = () => {
 
   useSignalTopic(SignalTopic.NewOrderPlayer);
 
+  // Used to update player stats (exp, fervor, blessed buzz, rank, etc.)
   useSignalConnection(SignalMessages.NewOrderPlayerUpdate, (data) => {
-    console.log(data);
+    // console.log(data);
     queryUtils.games.newOrder.join.setData(undefined, (old) => {
       if (!old) return old;
-      const player = old.players.find((p) => p.id === data.playerId);
-      if (!player) return old;
 
-      return {
-        ...old,
-        players: old.players.map((p) => {
-          if (p.id === data.playerId) {
-            return { ...p, ...data };
-          }
-          return p;
-        }),
-      };
+      return { ...old, ...data };
     });
   });
 };

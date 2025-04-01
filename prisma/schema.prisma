@@ -3497,7 +3497,7 @@ model NewOrderPlayer {
 }
 
 enum NewOrderRankType {
-  Accolyte
+  Acolyte
   Knight
   Templar
 }
