@@ -1,5 +1,4 @@
 import { Text, Title } from '@mantine/core';
-import console from 'console';
 import React, { Component, ErrorInfo } from 'react';
 
 type Props = { children: React.ReactNode };

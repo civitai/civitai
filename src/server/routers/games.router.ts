@@ -89,8 +89,8 @@ export const gamesRouter = router({
     cleanseSmite: moderatorProcedure
       .input(cleanseSmiteSchema)
       .mutation(({ input }) => cleanseSmite({ ...input })),
-    addRating: guardedProcedure.input(addImageRatingSchema).mutation(({ input, ctx }) => {
-      return addImageRating({ ...input, playerId: ctx.user.id });
-    }),
+    addRating: guardedProcedure
+      .input(addImageRatingSchema)
+      .mutation(({ input, ctx }) => addImageRating({ ...input, playerId: ctx.user.id })),
   }),
 });

@@ -114,6 +114,8 @@ export async function smitePlayer({
     data: { playerId, smites: newSmiteCount },
   });
 
+  // TODO.newOrder: send notification
+
   return smite;
 }
 
@@ -129,6 +131,8 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
     target: SignalMessages.NewOrderPlayerUpdate,
     data: { playerId, smites: smiteCount },
   });
+
+  // TODO.newOrder: send notification
 
   return smite;
 }
@@ -416,7 +420,7 @@ async function resetPlayer({ playerId }: { playerId: number }) {
     target: SignalMessages.NewOrderPlayerUpdate,
     data: {
       playerId,
-      rankId: 1,
+      rankType: NewOrderRankType.Acolyte,
       exp: 0,
       fervor: 0,
       smites: 0,
@@ -425,9 +429,10 @@ async function resetPlayer({ playerId }: { playerId: number }) {
   });
 
   // TODO.newOrder: Cleanup clickhouse data?
+  // TODO.newOrder: send notification to player
 }
 
-export async function getNewOrderRank({ name }: { name: string }) {
+export async function getNewOrderRanks({ name }: { name: string }) {
   const ranks = await fetchThroughCache(
     REDIS_KEYS.CACHES.NEW_ORDER.RANKS,
     async () => {
