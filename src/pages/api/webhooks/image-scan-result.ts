@@ -17,6 +17,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
+import { addImageToQueue } from '~/server/services/games/new-order.service';
 import {
   getImagesModRules,
   getTagNamesForImages,
@@ -33,6 +34,7 @@ import { getComputedTags } from '~/server/utils/tag-rules';
 import {
   ImageIngestionStatus,
   ModerationRuleAction,
+  NewOrderRankType,
   TagSource,
   TagTarget,
   TagType,
@@ -474,6 +476,7 @@ async function handleSuccess({
     }
 
     const data: Prisma.ImageUpdateInput = {};
+
     if (reviewKey) data.needsReview = reviewKey;
 
     if (nsfw && prompt) {
@@ -551,6 +554,30 @@ async function handleSuccess({
             : SearchIndexUpdateQueueAction.Update;
 
         await queueImageSearchIndexUpdate({ ids: [id], action });
+
+        // #region [NewOrder]
+        // New Order Queue Management. Only added when scan is succesful.
+        const queueDetails: { priority: 1 | 2 | 3; rankType: NewOrderRankType } = {
+          priority: 1,
+          rankType: NewOrderRankType.Knight,
+        };
+
+        if (nsfw) queueDetails.priority = 2;
+
+        if (reviewKey) {
+          data.needsReview = reviewKey;
+          queueDetails.rankType = NewOrderRankType.Templar;
+
+          if (reviewKey === 'minor') queueDetails.priority = 1;
+          if (reviewKey === 'poi') queueDetails.priority = 2;
+        }
+        // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
+        await addImageToQueue({
+          imageId: id,
+          rankType: queueDetails.rankType,
+          priority: queueDetails.priority,
+        });
+        // #endregion
       }
     }
 

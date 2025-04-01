@@ -362,6 +362,28 @@ export async function getNewOrderRank({ name }: { name: string }) {
   return rank;
 }
 
+export async function addImageToQueue({
+  imageId,
+  rankType,
+  // Top is always 1. 3 is default priority
+  priority = 3,
+}: {
+  imageId: number;
+  rankType: NewOrderRankType;
+  priority?: 1 | 2 | 3;
+}) {
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { id: true },
+  });
+  if (!image) return false;
+
+  const pools = poolCounters[rankType];
+  pools[priority - 1].reset({ id: imageId });
+
+  return true;
+}
+
 export async function getImagesQueue({
   playerId,
   imageCount,
