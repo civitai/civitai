@@ -758,7 +758,7 @@ export const ModerationRuleAction = {
 export type ModerationRuleAction = (typeof ModerationRuleAction)[keyof typeof ModerationRuleAction];
 
 export const NewOrderRankType = {
-  Accolyte: 'Accolyte',
+  Acolyte: 'Acolyte',
   Knight: 'Knight',
   Templar: 'Templar',
 } as const;

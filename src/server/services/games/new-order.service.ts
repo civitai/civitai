@@ -42,13 +42,7 @@ export async function joinGame({ userId }: { userId: number }) {
   const user = await dbRead.user.findUnique({
     where: { id: userId },
     select: {
-      playerInfo: {
-        select: {
-          ...playerInfoSelect,
-          // Might not be necessary
-          _count: { select: { smiteReceived: { where: { cleansedAt: null } } } },
-        },
-      },
+      playerInfo: { select: playerInfoSelect },
     },
   });
 
@@ -60,7 +54,7 @@ export async function joinGame({ userId }: { userId: number }) {
   }
 
   const player = await dbWrite.newOrderPlayer.create({
-    data: { userId, rankType: NewOrderRankType.Accolyte, startAt: new Date() },
+    data: { userId, rankType: NewOrderRankType.Acolyte, startAt: new Date() },
     select: playerInfoSelect,
   });
 
@@ -307,7 +301,7 @@ async function resetPlayer({ playerId }: { playerId: number }) {
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankType: NewOrderRankType.Accolyte, exp: 0, fervor: 0 },
+      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0 },
     }),
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({

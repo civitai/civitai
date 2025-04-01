@@ -162,7 +162,7 @@ export type AuctionType = "Model" | "Image" | "Collection" | "Article";
 
 export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
-export type NewOrderRankType = "Accolyte" | "Knight" | "Templar";
+export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
 
 export type EntityMetric_EntityType_Type = "Image";
 
