@@ -1,4 +1,3 @@
-import { ChatMessageType } from '~/shared/utils/prisma/enums';
 import produce from 'immer';
 import { useCallback } from 'react';
 import useSound from 'use-sound';
@@ -6,16 +5,19 @@ import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages } from '~/server/common/enums';
+import { ChatMessageType } from '~/shared/utils/prisma/enums';
 import { ChatAllMessages, ChatCreateChat } from '~/types/router';
+import { isApril1 } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
 
-const messageSound = '/sounds/message2.mp3'; // message
+const messageSound = isApril1() ? '/sounds/messageu.mp3' : '/sounds/message2.mp3';
+const volume = isApril1() ? 0.2 : 0.5;
 
 export const useChatNewMessageSignal = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const [play] = useSound(messageSound, { volume: 0.5 });
+  const [play] = useSound(messageSound, { volume });
 
   const onUpdate = useCallback(
     (updated: ChatAllMessages[number]) => {
@@ -91,7 +93,7 @@ export const useChatNewRoomSignal = () => {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
-  const [play] = useSound(messageSound, { volume: 0.5 });
+  const [play] = useSound(messageSound, { volume });
 
   const onUpdate = useCallback(
     (updated: ChatCreateChat) => {

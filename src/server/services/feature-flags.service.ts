@@ -111,7 +111,7 @@ const featureFlags = createFeatureFlags({
   generationOnlyModels: ['mod', 'granted', 'gold'],
   appTour: ['public'],
   privateModels: ['mod', 'granted'],
-  auctions: ['mod'],
+  auctions: ['public'],
   newOrderGame: ['mod'],
 });
 

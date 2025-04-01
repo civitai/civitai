@@ -1,4 +1,14 @@
-import { ActionIcon, ActionIconProps, Group, Paper, Stack, Text, Tooltip } from '@mantine/core';
+import {
+  ActionIcon,
+  ActionIconProps,
+  Button,
+  ButtonProps,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
 import { showNotification, updateNotification } from '@mantine/notifications';
 import NumberFlow from '@number-flow/react';
 import { IconCheck, IconGavel, IconUsers, IconX } from '@tabler/icons-react';
@@ -14,9 +24,12 @@ import {
 } from '~/components/Signals/SignalsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { SignalMessages, SignalTopic } from '~/server/common/enums';
+import { ModelMeta } from '~/server/schema/model.schema';
 import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getBaseModelSetType } from '~/shared/constants/generation.constants';
-import { AuctionType, Currency, ModelType } from '~/shared/utils/prisma/enums';
+import { AuctionType, Availability, Currency, ModelType } from '~/shared/utils/prisma/enums';
+import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
@@ -148,11 +161,50 @@ export function usePurchaseBid() {
   return { handleBuy, createLoading };
 }
 
+export const getEntityDataForBidModelButton = ({
+  version,
+  model,
+  image,
+}: {
+  version: ModelById['modelVersions'][number];
+  model: ModelById;
+  image: ImagesInfiniteModel | undefined;
+}) => {
+  return {
+    // TODO these overrides are colossally stupid.
+    ...version,
+    model: {
+      ...model,
+      cannotPromote: (model.meta as ModelMeta | null)?.cannotPromote ?? false,
+    },
+    image: !!image
+      ? {
+          ...image,
+          userId: image.user.id,
+          name: image.name ?? '',
+          width: image.width ?? 0,
+          height: image.height ?? 0,
+          hash: image.hash ?? '',
+          modelVersionId: image.modelVersionId ?? 0,
+          tags: image.tags ? image.tags.map((t) => t.id) : [],
+          availability: image.availability ?? Availability.Public,
+        }
+      : undefined,
+  };
+};
+
 export const BidModelButton = ({
   entityData,
-  ...actionIconProps
-}: ActionIconProps & {
+  asButton,
+  buttonProps,
+  actionIconProps,
+  divProps,
+}: {
   entityData: Exclude<GetAuctionBySlugReturn['bids'][number]['entityData'], undefined>;
+  asButton?: boolean;
+  buttonProps?: ButtonProps;
+  actionIconProps?: ActionIconProps;
+  divProps?: React.HTMLAttributes<HTMLDivElement>;
 }) => {
   const { setSelectedModel } = useAuctionContext();
   const router = useRouter();
@@ -162,15 +214,14 @@ export const BidModelButton = ({
     enabled: features.auctions,
   });
 
+  const isCheckpoint = entityData.model.type === ModelType.Checkpoint;
+
   const destAuction = useMemo(() => {
-    const modelSet =
-      entityData.model.type === ModelType.Checkpoint
-        ? null
-        : getBaseModelSetType(entityData.baseModel);
+    const modelSet = isCheckpoint ? null : getBaseModelSetType(entityData.baseModel);
     return auctions.find(
       (a) => a.auctionBase.type === AuctionType.Model && a.auctionBase.ecosystem === modelSet
     );
-  }, [auctions, entityData.baseModel, entityData.model.type]);
+  }, [auctions, entityData.baseModel, isCheckpoint]);
 
   const handle = () => {
     if (!destAuction) return;
@@ -192,21 +243,40 @@ export const BidModelButton = ({
   if (!features.auctions) return <></>;
   if (entityData.model.cannotPromote) return <></>;
 
+  const actionButton = asButton ? (
+    <Button onClick={handle} disabled={!destAuction} {...buttonProps}>
+      <Group spacing={8} noWrap>
+        <IconGavel size={20} />
+        <Text inherit inline className="hide-mobile">
+          Bid
+        </Text>
+      </Group>
+    </Button>
+  ) : (
+    <ActionIcon
+      onClick={handle}
+      disabled={!destAuction}
+      size="xl"
+      variant="light"
+      {...actionIconProps}
+    >
+      <IconGavel size={30} />
+    </ActionIcon>
+  );
+
   return (
     <Tooltip
-      label={destAuction ? 'Bid to feature this model' : 'No auction available for this model'}
+      withArrow
+      withinPortal
+      label={
+        destAuction
+          ? isCheckpoint
+            ? 'Bid to feature this model and enable it for generation'
+            : 'Bid to feature this model'
+          : 'No auction available for this model'
+      }
     >
-      <div>
-        <ActionIcon
-          onClick={handle}
-          disabled={!destAuction}
-          size="xl"
-          variant="light"
-          {...actionIconProps}
-        >
-          <IconGavel size={30} />
-        </ActionIcon>
-      </div>
+      <div {...divProps}>{actionButton}</div>
     </Tooltip>
   );
 };
