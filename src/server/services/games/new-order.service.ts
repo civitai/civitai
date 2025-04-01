@@ -235,6 +235,9 @@ export async function addImageRating({
     1
   );
 
+  // Increase rating count for the image in the queue.
+  await valueInQueue.pool.increment({ id: imageId, value: 1 });
+
   if (status === NewOrderImageRatingStatus.Correct) {
     // Reduce gainedExp from oldest smite remaining score
     const smite = await dbWrite.newOrderSmite.findFirst({
