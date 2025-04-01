@@ -278,7 +278,7 @@ export async function addImageRating({
 
     // Check if they all voted damned:
     if (keys.length === 1 && keys[0].endsWith(NewOrderImageRating.Damned)) {
-      // TODO: Handle damned image. Send to mods.
+      // TODO.newOrder: Handle damned image. Send to mods.
       processed = true;
     }
 
@@ -322,6 +322,10 @@ export async function addImageRating({
           data: { nsfwLevel: ratedNsfwLevel },
         });
       }
+
+      // Clear image from the pool:
+      valueInQueue.pool.reset({ id: imageId });
+      // TODO.newOrder: Send signal.
     }
   }
 
@@ -461,7 +465,7 @@ export async function addImageToQueue({
   if (!image) return false;
 
   const pools = poolCounters[rankType];
-  pools[priority - 1].reset({ id: imageId });
+  pools[priority - 1].increment({ id: imageId });
 
   return true;
 }
