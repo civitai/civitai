@@ -91,7 +91,7 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return countStr !== null && countStr !== undefined;
   }
 
-  return { increment, decrement, reset, getCount, getAll, exists };
+  return { increment, decrement, reset, getCount, getAll, exists, key };
 }
 
 export const correctJudgementsCounter = createCounter({

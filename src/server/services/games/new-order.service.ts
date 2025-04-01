@@ -1,3 +1,4 @@
+import { ReactQueryDevtoolsPanel } from '@tanstack/react-query-devtools';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import {
   NewOrderImageRating,
@@ -33,9 +34,11 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 import { MetricTimeframe, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
+import { isDefined } from '~/utils/type-guards';
 
 export async function joinGame({ userId }: { userId: number }) {
   const user = await dbRead.user.findUnique({
@@ -158,10 +161,26 @@ export async function addImageRating({
     where: { id: imageId },
     select: { id: true, nsfwLevel: true },
   });
+
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
 
-  // TODO.newOrder: check if image is already rated
-  const ratingCount = await sysRedis.hGetAll(`${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`);
+  const valueInQueue = await isImageInQueue({
+    imageId,
+    rankType:
+      player.rankType === NewOrderRankType.Templar
+        ? [NewOrderRankType.Templar, NewOrderRankType.Knight]
+        : player.rankType,
+  });
+
+  if (!valueInQueue) {
+    //  We won't error out cause technically it might've already be cleared as an image.
+    return false;
+  }
+
+  if (valueInQueue.value >= 5 && valueInQueue.rank === NewOrderRankType.Knight) {
+    // Ignore this vote, was rated by enough players.
+    return false;
+  }
 
   // TODO.newOrder: adjust status based on rating distance
   const status =
@@ -236,11 +255,72 @@ export async function addImageRating({
 
   // Increase all counters
   const stats = await updatePlayerStats({ playerId, status, exp: grantedExp * multiplier });
+
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
     data: { ...stats, playerId },
   });
+
+  // Now, process what to do with the image:
+  if (valueInQueue.rank === NewOrderRankType.Knight && ++valueInQueue.value >= 5) {
+    // Image is now rated by enough players, we can process it.
+    const ratings = await sysRedis.hGetAll(`${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`);
+    const keys = Object.keys(ratings);
+    let processed = false;
+
+    if (keys.length === 0) {
+      throw throwBadRequestError('No ratings found for image');
+    }
+
+    // Check if they all voted damned:
+    if (keys.length === 1 && keys[0].endsWith(NewOrderImageRating.Damned)) {
+      // TODO: Handle damned image. Send to mods.
+      processed = true;
+    }
+
+    if (keys.length > 1 && !processed) {
+      // Means there are multiple entries for this image. We must raise this to the Templars:
+      // Add to templars queue:
+      await addImageToQueue({
+        imageId,
+        rankType: NewOrderRankType.Templar,
+        priority: 1,
+      });
+    }
+
+    const rating = keys[0].split('-')[1] as NewOrderImageRating;
+    const ratedNsfwLevel = NewOrderImageRatingToNsfwLevel[rating];
+    const currentNsfwLevel = image.nsfwLevel;
+
+    if (ratedNsfwLevel !== currentNsfwLevel && !processed) {
+      // Check if lower:
+      if (ratedNsfwLevel < currentNsfwLevel) {
+        // Raise to templars because they lowered the rating.
+        await addImageToQueue({
+          imageId,
+          rankType: NewOrderRankType.Templar,
+          priority: 1,
+        });
+      } else if (
+        ratedNsfwLevel > currentNsfwLevel &&
+        Flags.increaseByBits(ratedNsfwLevel) !== currentNsfwLevel
+      ) {
+        // Raise to templars because the diff. is more than 1 level up:
+        await addImageToQueue({
+          imageId,
+          rankType: NewOrderRankType.Templar,
+          priority: 1,
+        });
+      } else {
+        // Else, we're good :)
+        await dbWrite.image.update({
+          where: { id: imageId },
+          data: { nsfwLevel: ratedNsfwLevel },
+        });
+      }
+    }
+  }
 
   // TODO.newOrder: what else can we return here?
   return { stats };
@@ -416,4 +496,38 @@ export async function getImagesQueue({
   }
 
   return shuffle(imageIds.slice(0, imageCount));
+}
+
+async function isImageInQueue({
+  imageId,
+  rankType,
+}: {
+  imageId: number;
+  rankType: NewOrderRankType | NewOrderRankType[];
+}) {
+  if (!Array.isArray(rankType)) rankType = [rankType];
+  const pools = rankType
+    .map((rank) =>
+      poolCounters[rank].map((pool) => ({
+        pool,
+        rank,
+      }))
+    )
+    .flat();
+  const exists = await Promise.all(
+    pools.map(async ({ pool, rank }) => {
+      const exists = await pool.exists(imageId);
+      if (exists) {
+        const value = await pool.getCount(imageId);
+        return {
+          pool,
+          value,
+          rank,
+        };
+      }
+      return null;
+    })
+  );
+
+  return exists.find((x) => isDefined(x)) || null;
 }
