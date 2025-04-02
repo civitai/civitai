@@ -953,8 +953,7 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
     select: { hideMeta: true, ingestion: true, blockedFor: true },
   });
 
-  const isBlockedForAiValidation =
-    currentImage.blockedFor === BlockedReason.AiNotVerified && currentImage.ingestion === 'Blocked';
+  const isBlockedForAiValidation = currentImage.blockedFor === BlockedReason.AiNotVerified;
 
   const result = await dbWrite.image.update({
     where: { id: image.id },

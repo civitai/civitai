@@ -62,9 +62,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   const isAiVerified = !images.some(
     (image) =>
       image.type === 'added' &&
-      Flags.intersects(image.data.nsfwLevel, nsfwBrowsingLevelsFlag) &&
       !isValidAIGeneration({
         id: image.data.id,
+        nsfwLevel: image.data.nsfwLevel,
         resources: image.data.resourceHelper,
         tools: image.data.tools,
         meta: image.data.meta as ImageMetaProps,

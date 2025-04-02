@@ -4,6 +4,8 @@ import arrayBufferToBuffer from 'arraybuffer-to-buffer';
 
 import { fetchBlob } from '~/utils/file-utils';
 import { ImageMetaProps } from '~/server/schema/image.schema';
+import { NSFWLevel } from '@civitai/client';
+import { NsfwLevel } from '~/server/common/enums';
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
@@ -103,6 +105,7 @@ export function calculateAspectRatioFit(
 
 type ImageForAiVerification = {
   id: number;
+  nsfwLevel: number;
   meta?: ImageMetaProps | null;
   tools?: any[] | null;
   resources?: any[] | null;
@@ -116,6 +119,7 @@ type ImageForAiVerification = {
  */
 
 export function isValidAIGeneration(image: ImageForAiVerification) {
+  if (image.nsfwLevel < NsfwLevel.R) return true; // PG images are alright for us anyway.
   if (image.meta?.prompt) return true;
   if (image.tools?.length) return true;
   if (image.resources?.length) return true;

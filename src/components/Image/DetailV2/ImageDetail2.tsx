@@ -422,6 +422,19 @@ export function ImageDetail2() {
                             : `This image won't be visible to other users until it's reviewed by our moderators.`}
                         </AlertWithIcon>
                       )}
+                       {['AiNotVerified'].includes(image.blockedFor ?? '') && (
+                        <AlertWithIcon
+                          icon={<IconAlertTriangle />}
+                          color="yellow"
+                          iconColor="yellow"
+                          title="Unable to verify AI generation"
+                          radius={0}
+                          px="md"
+                        >
+                          This image has been blocked because it is NSFW and we are unable to verify that it was generated using AI.
+                          Please update your post and add relevant metadata that explains it&rsquo;s generation process.  
+                        </AlertWithIcon>
+                      )}
                       {['Moderated', 'moderated'].includes(image.blockedFor ?? '') &&
                         !image.needsReview &&
                         isOwner && (

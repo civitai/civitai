@@ -496,6 +496,8 @@ async function handleSuccess({
       nsfw &&
       !isValidAIGeneration({
         ...image,
+        // Make it so that if we have NSFW tags we treat it as R+
+        nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.R : NsfwLevel.PG),
         meta: image.meta as ImageMetadata | VideoMetadata,
         tools: image.tools,
       })
@@ -504,7 +506,7 @@ async function handleSuccess({
       data.blockedFor = BlockedReason.AiNotVerified;
     }
 
-    if (nsfw && prompt) {
+    if (nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {
       // Determine if we need to block the image
       const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
       if (!success) {
