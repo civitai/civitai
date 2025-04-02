@@ -8,6 +8,7 @@ import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelP
 import { CollectionHomeBlock } from '~/components/HomeBlocks/CollectionHomeBlock';
 import { CosmeticShopSectionHomeBlock } from '~/components/HomeBlocks/CosmeticShopSectionHomeBlock';
 import { EventHomeBlock } from '~/components/HomeBlocks/EventHomeBlock';
+import { FeaturedModelVersionHomeBlock } from '~/components/HomeBlocks/FeaturedModelVersionHomeBlock';
 import { LeaderboardsHomeBlock } from '~/components/HomeBlocks/LeaderboardsHomeBlock';
 import { SocialHomeBlock } from '~/components/HomeBlocks/SocialHomeBlock';
 import ImagesInfinite from '~/components/Image/Infinite/ImagesInfinite';
@@ -95,6 +96,12 @@ export function Home() {
                     <CosmeticShopSectionHomeBlock
                       metadata={homeBlock.metadata}
                       homeBlockId={homeBlock.id}
+                    />
+                  )}
+                  {homeBlock.type === HomeBlockType.FeaturedModelVersion && (
+                    <FeaturedModelVersionHomeBlock
+                      homeBlockId={homeBlock.id}
+                      metadata={homeBlock.metadata}
                     />
                   )}
                   {showAds && <AdUnitTop className="py-3" />}

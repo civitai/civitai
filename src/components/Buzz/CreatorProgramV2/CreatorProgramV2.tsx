@@ -1004,14 +1004,27 @@ const ExtractBuzzCard = () => {
                         <p>
                           You are about to Extract{' '}
                           <CurrencyBadge unitAmount={banked?.total ?? 0} currency={Currency.BUZZ} />{' '}
-                          from the Bank. This action is not reversible. You cannot Bank Buzz until
-                          the next Banking Phase.
+                          from the Bank.
                         </p>
-                        <p> Are you sure?</p>
+                        <p>
+                          This action is not reversible. You cannot Bank Buzz until the next Banking
+                          Phase.
+                        </p>
+                        <Alert color="yellow">
+                          <p>
+                            If you are intending to withdraw cash,{' '}
+                            <span className="font-bold">DO NOT EXTRACT</span>. Buzz must remain in
+                            the Bank to be eligible for payout.
+                          </p>
+                        </Alert>
+                        <p> Are you sure you want to proceed with Extraction??</p>
                       </div>
                     ),
                     labels: { cancel: `Cancel`, confirm: `Yes, I am sure` },
                     onConfirm: handleExtractBuzz,
+                    confirmProps: {
+                      color: 'red',
+                    },
                   },
                 });
               }}

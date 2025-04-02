@@ -657,6 +657,7 @@ model Model {
   collectionItems    CollectionItem[]
   generationCoverage GenerationCoverage[]
   flags              ModelFlag[]
+  coveredCheckpoints CoveredCheckpoint[]
 
   @@index([name])
   @@index([status, nsfw])
@@ -805,6 +806,7 @@ model ModelVersion {
   DonationGoal            DonationGoal[]
   featuredInfo            FeaturedModelVersion[]
   ImageResourceNew        ImageResourceNew[]
+  coveredCheckpoints      CoveredCheckpoint[]
 
   @@index([modelId], type: Hash)
 }
@@ -2575,6 +2577,7 @@ enum HomeBlockType {
   Social
   Event
   CosmeticShop
+  FeaturedModelVersion
 }
 
 model HomeBlock {
@@ -3383,15 +3386,17 @@ enum AuctionType {
 }
 
 model AuctionBase {
-  id        Int         @id @default(autoincrement())
-  type      AuctionType
-  ecosystem String? // like Pony, SDXL, etc
-  name      String
-  slug      String
-  quantity  Int // propagates to individual item
-  minPrice  Int // propagates to individual item
+  id           Int         @id @default(autoincrement())
+  type         AuctionType
+  ecosystem    String? // like Pony, SDXL, etc
+  name         String
+  slug         String
+  quantity     Int // propagates to individual item
+  minPrice     Int // propagates to individual item
   // buyItNowPrices Json? // would probably need to be JSON to support different slot costs...
-  active    Boolean     @default(true)
+  active       Boolean     @default(true)
+  runForDays   Int         @default(1)
+  validForDays Int         @default(1)
 
   auctions      Auction[]
   recurringBids BidRecurring[]
@@ -3460,6 +3465,15 @@ model FeaturedModelVersion {
   validFrom      DateTime
   validTo        DateTime
   position       Int
+}
+
+model CoveredCheckpoint {
+  model_id     Int
+  version_id   Int
+  model        Model        @relation(fields: [model_id], references: [id], onDelete: Cascade)
+  modelVersion ModelVersion @relation(fields: [version_id], references: [id], onDelete: Cascade)
+
+  @@unique([model_id, version_id])
 }
 
 enum ModerationRuleAction {

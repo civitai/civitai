@@ -405,6 +405,7 @@ export const dataForModelsCache = createCachedObject<ModelDataCache>({
   idKey: 'modelId',
   ttl: CacheTTL.day,
   cacheNotFound: false,
+  staleWhileRevalidate: false,
   lookupFn: async (ids, fromWrite) => {
     const db = fromWrite ? dbWrite : dbRead;
 

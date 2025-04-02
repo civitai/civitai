@@ -27,7 +27,12 @@ import {
   throwInsufficientFundsError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { AuctionType, Availability, BuzzAccountType } from '~/shared/utils/prisma/enums';
+import {
+  AuctionType,
+  Availability,
+  BuzzAccountType,
+  ModelStatus,
+} from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
@@ -368,6 +373,8 @@ export const createBid = async ({
           select: {
             type: true,
             meta: true,
+            poi: true,
+            status: true,
           },
         },
       },
@@ -377,8 +384,13 @@ export const createBid = async ({
     if (mv.availability === Availability.Private)
       throw throwBadRequestError('Invalid model version.');
 
+    if (mv.model.status !== ModelStatus.Published)
+      throw throwBadRequestError('Invalid model version.');
+
     if ((mv.model.meta as ModelMeta | null)?.cannotPromote === true)
       throw throwBadRequestError('Invalid model version.');
+
+    if (mv.model.poi) throw throwBadRequestError('Invalid model version.');
 
     const allowedTypeData = getModelTypesForAuction(auctionData.auctionBase);
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);

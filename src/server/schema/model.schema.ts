@@ -106,6 +106,7 @@ export const getAllModelsSchema = baseQuerySchema
     pending: z.boolean().optional(),
     collectionTagId: z.number().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    isFeatured: z.boolean().optional(),
   });
 
 export type GetAllModelsInput = z.input<typeof getAllModelsSchema>;

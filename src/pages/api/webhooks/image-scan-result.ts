@@ -260,6 +260,7 @@ async function handleSuccess({
       meta: true,
       metadata: true,
       postId: true,
+      nsfwLevel: true,
     },
   });
   if (!image) {

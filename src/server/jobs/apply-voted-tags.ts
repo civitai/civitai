@@ -75,8 +75,6 @@ async function applyUpvotes() {
     ({ imageId, tagId }) => `${imageId}-${tagId}`
   );
 
-  console.log(affectedImageTags);
-
   // Update votes
   await dbWrite.$queryRaw`
     -- Update image tag votes

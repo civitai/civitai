@@ -231,7 +231,7 @@ const getCreatorProgramUsers = async () => {
 
 export const bakingPhaseEndingNotification = createJob(
   'creator-program-banking-phase-ending',
-  `0 0 L-${EXTRACTION_PHASE_DURATION - 1} * *`,
+  `0 0 L-${EXTRACTION_PHASE_DURATION + 1} * *`,
   async () => {
     const month = dayjs().format('YYYY-MM');
     const users = await getCreatorProgramUsers();
@@ -264,13 +264,13 @@ export const extractionPhaseStartedNotification = createJob(
 );
 export const extractionPhaseEndingNotification = createJob(
   'creator-program-extraction-phase-ending',
-  `0 0 L-1 * *`,
+  `0 0 L * *`,
   async () => {
     const month = dayjs().format('YYYY-MM');
     const users = await getCreatorProgramUsers();
 
     await createNotification({
-      type: 'creator-program-extraction-phase-started',
+      type: 'creator-program-extraction-phase-ending',
       category: NotificationCategory.Creator,
       key: `creator-program-extraction-phase-ending:${month}`,
       userIds: users,
