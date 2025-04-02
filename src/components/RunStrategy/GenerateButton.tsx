@@ -80,8 +80,10 @@ export function GenerateButton({
   const cannotPromote = model?.meta?.cannotPromote ?? false;
   const isAvailable = model?.availability !== Availability.Private;
   const isPublished = model?.status === ModelStatus.Published;
+  const isPoi = model?.poi ?? false;
 
-  const showBid = features.auctions && !canGenerate && isAvailable && isPublished && !cannotPromote;
+  const showBid =
+    features.auctions && !canGenerate && isAvailable && isPublished && !cannotPromote && !isPoi;
 
   if (!showBid && !canGenerate) return null;
 

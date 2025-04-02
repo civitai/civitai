@@ -34,9 +34,8 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import produce from 'immer';
-import { div } from 'motion/react-m';
 import { LazyMotion } from 'motion/react';
-
+import { div } from 'motion/react-m';
 import React, { useEffect, useState } from 'react';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { loadMotion } from '~/components/Chat/util';
@@ -46,6 +45,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ChatMemberStatus } from '~/shared/utils/prisma/enums';
 import { ChatListMessage } from '~/types/router';
+import { isApril1 } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -238,8 +238,11 @@ export function ChatList() {
               <Menu.Item
                 icon={muteSounds ? <IconEar size={18} /> : <IconEarOff size={18} />}
                 onClick={handleMute}
+                disabled={isApril1() && !muteSounds}
               >
-                {`${muteSounds ? 'Play' : 'Mute'} sounds`}
+                {isApril1() && !muteSounds
+                  ? 'No muting for senpai! 🥰 '
+                  : `${muteSounds ? 'Play' : 'Mute'} sounds`}
               </Menu.Item>
               <Menu.Item
                 disabled={activeCount === 0}

@@ -20,6 +20,7 @@ import {
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { pgDbWrite } from '~/server/db/pgDb';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 
 type Row = {
   userId: number;
@@ -93,9 +94,27 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   setWorkflowDefinition(workflow.key, workflow);
     // }
 
-    const result = await getWorkflowDefinitions();
+    const imageTags = await dbWrite.tagsOnImageDetails.findMany({
+      where: { imageId: { in: [66447372] }, disabled: false },
+      select: {
+        imageId: true,
+        source: true,
+        tagId: true,
+      },
+    });
+    const dbTags = imageTags.map((x) => x.tagId);
 
-    res.status(200).send(result);
+    await tagIdsForImagesCache.bust(66447372);
+    const cache = await tagIdsForImagesCache.fetch(66447372);
+    const tags = Object.values(cache).flatMap((x) => x.tags);
+
+    const fromDb = await dbWrite.tag.findMany({ where: { id: { in: dbTags } } });
+    const fromCache = await dbWrite.tag.findMany({ where: { id: { in: tags } } });
+
+    res.status(200).send({
+      fromDb,
+      fromCache,
+    });
   } catch (e) {
     console.log(e);
     res.status(400).end();

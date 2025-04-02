@@ -142,7 +142,7 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 const truncateRows = async () => {
   console.log('Truncating tables');
   await pgDbWrite.query(
-    'TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew" RESTART IDENTITY CASCADE'
+    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank" RESTART IDENTITY CASCADE`
   );
 };
 
@@ -171,7 +171,7 @@ const genUsers = (num: number, includeCiv = false) => {
       false,
       'civitai',
       true,
-      '2022-11-13 00:00:00.000',
+      '2021-11-13 00:00:00.000',
       null,
       null,
       null,
@@ -207,7 +207,7 @@ const genUsers = (num: number, includeCiv = false) => {
       true, // shownsfw
       'test-mod', // username
       true, // isMod
-      '2022-11-13 00:00:00.000',
+      '2021-11-13 00:00:00.000',
       null, // deletedAt
       null, // bannedAt
       null,

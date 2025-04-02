@@ -36,7 +36,7 @@ export function getExtractionFee(toExtract: number): number {
     remaining -= taxableAmount;
   }
 
-  return fee;
+  return Math.round(fee);
 }
 
 export function getPhases({ month, flip }: { month?: Date; flip?: boolean } = {}) {
