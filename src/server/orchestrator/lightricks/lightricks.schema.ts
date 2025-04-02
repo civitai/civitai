@@ -1,3 +1,4 @@
+import { LightricksVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -48,23 +49,9 @@ const lightricksImg2VidConfig = new VideoGenerationConfig({
 
 export const lightricksVideoGenerationConfig = [lightricksTxt2VidConfig, lightricksImg2VidConfig];
 
-// type Test = Prettify<LightricksVideoGenInput>;
-
-// const test = {
-//   tags: [],
-//   steps: [
-//     {
-//       $type: 'videoGen',
-//       input: {
-//         engine: 'lightricks',
-//         prompt: '',
-//         negativePrompt: '',
-//         cfgScale: 0.5,
-//         aspectRatio: '1:1',
-//         duration: 5,
-//         seed: 13541234,
-//         steps: 25,
-//       },
-//     },
-//   ],
-// };
+export function LightricksInput(
+  args: z.infer<(typeof lightricksVideoGenerationConfig)[number]['schema']>
+): LightricksVideoGenInput {
+  const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
+  return { ...args, sourceImage };
+}

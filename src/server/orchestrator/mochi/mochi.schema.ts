@@ -1,3 +1,4 @@
+import { MochiVideoGenInput } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -20,3 +21,9 @@ const mochiTxt2ImgConfig = new VideoGenerationConfig({
 });
 
 export const mochiVideoGenerationConfig = [mochiTxt2ImgConfig];
+
+export function MochiInput(
+  args: z.infer<(typeof mochiVideoGenerationConfig)[number]['schema']>
+): MochiVideoGenInput {
+  return { ...args };
+}
