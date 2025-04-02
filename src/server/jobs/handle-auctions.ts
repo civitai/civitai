@@ -408,7 +408,6 @@ const createRecurringBids = async (now: Dayjs) => {
             auctionId: auctionMatch.id,
             userId: recurringBid.userId,
             entityId: recurringBid.entityId,
-            fromRecurring: true,
           },
           select: { id: true },
         });

@@ -127,7 +127,8 @@ export function isHolidaysTime() {
 
 export function isApril1() {
   const today = dayjs.utc();
-  return today.month() === 3 && today.date() === 1;
+  // return today.month() === 3 && today.date() === 1;
+  return today.month() === 3 && today.date() >= 1 && today.date() <= 4;
 }
 
 export function roundMinutes(d: Date | string) {

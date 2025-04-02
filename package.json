@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.0.598",
+  "version": "5.0.601",
   "private": true,
   "scripts": {
     "start": "cross-env NEXT_MANUAL_SIG_HANDLE=true next start",
