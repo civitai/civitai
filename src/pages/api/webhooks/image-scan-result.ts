@@ -500,8 +500,8 @@ async function handleSuccess({
         tools: image.tools,
       })
     ) {
-      data.nsfwLevel = NsfwLevel.Blocked;
-      data.blockedFor = 'Could not confirm AI generation';
+      data.ingestion = ImageIngestionStatus.Blocked;
+      data.blockedFor = BlockedReason.AiNotVerified;
     }
 
     if (nsfw && prompt) {

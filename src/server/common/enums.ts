@@ -183,6 +183,7 @@ export enum BlockedReason {
   TOS = 'tos',
   Moderated = 'moderated',
   CSAM = 'CSAM',
+  AiNotVerified = 'AiNotVerified',
 }
 
 export enum ThreadSort {
