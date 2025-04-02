@@ -697,15 +697,25 @@ function FormWrapper({
 
   function handleSubmit(data: VideoGenerationSchema) {
     if (isLoading) return;
-    setDebouncedIsLoading(true);
 
     const { cost } = useCostStore.getState();
     const totalCost = cost;
+
+    let validated: Record<string, any> | null = null;
+    try {
+      validated = validateInput(workflow, data);
+    } catch (e: any) {
+      const { message, path } = JSON.parse(e.message)?.[0] as any;
+      form.setError(path?.[0] ?? '', { message });
+    }
+    if (!validated) return;
+    setDebouncedIsLoading(true);
+
     // TODO - tips?
     conditionalPerformTransaction(totalCost, () => {
       mutate({
         type: 'video',
-        data: validateInput(workflow, data),
+        data: validated,
         tags: [WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
       });
     });
@@ -818,6 +828,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
       } catch (e: any) {
         const { message, path } = JSON.parse(e.message)?.[0] as any;
         setQuery(null);
+        // setError()
         setError(`${path?.[0]}: ${message}`);
       }
     });

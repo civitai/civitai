@@ -3,8 +3,8 @@ import {
   IconCalendar,
   IconCaretDown,
   IconCategory,
-  IconShoppingBag,
   IconFileText,
+  IconHeart,
   IconHome,
   IconLayoutList,
   IconMoneybag,
@@ -13,7 +13,6 @@ import {
   IconTools,
   IconTrophy,
   IconVideo,
-  IconClover,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
@@ -91,7 +90,7 @@ export const homeOptions: HomeOption[] = [
   {
     key: 'shop',
     url: '/shop',
-    icon: (props: IconProps) => <IconClover {...props} />,
+    icon: (props: IconProps) => <IconHeart {...props} />,
     classes: ['tabHighlight'],
   },
 ];
@@ -111,18 +110,18 @@ export function filterHomeOptions(features: FeatureAccess) {
 
 const useTabsStyles = createStyles((theme) => ({
   tabHighlight: {
-    backgroundColor: theme.fn.rgba(theme.colors.green[3], theme.colorScheme === 'dark' ? 0.1 : 0.3),
+    backgroundColor: theme.fn.rgba(theme.colors.pink[3], theme.colorScheme === 'dark' ? 0.1 : 0.3),
     backgroundImage: `linear-gradient(90deg, ${theme.fn.rgba(
-      theme.colors.green[4],
+      theme.colors.pink[4],
       0
     )}, ${theme.fn.rgba(
-      theme.colors.green[4],
+      theme.colors.pink[4],
       theme.colorScheme === 'dark' ? 0.1 : 0.2
-    )}, ${theme.fn.rgba(theme.colors.green[4], 0)})`,
+    )}, ${theme.fn.rgba(theme.colors.pink[4], 0)})`,
     backgroundSize: '50px',
     backgroundPosition: '-300% 50%',
     backgroundRepeat: 'no-repeat',
-    color: theme.colorScheme === 'dark' ? theme.colors.green[3] : theme.colors.green[8],
+    color: theme.colorScheme === 'dark' ? theme.colors.pink[3] : theme.colors.pink[8],
     animation: 'button-highlight 5s linear infinite',
     willChange: 'background-position',
   },

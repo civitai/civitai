@@ -1,13 +1,12 @@
 import {
   Box,
+  createStyles,
   Group,
   SegmentedControl,
   SegmentedControlProps,
   Stack,
-  createStyles,
 } from '@mantine/core';
 import { useState } from 'react';
-import { Availability, MetricTimeframe } from '~/shared/utils/prisma/enums';
 
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -27,6 +26,7 @@ import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
+import { Availability, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 
@@ -71,6 +71,7 @@ function UserModelsPage() {
   const fromPlatform = queryFilters.fromPlatform ?? false;
   const baseModels = queryFilters.baseModels ?? undefined;
   const supportsGeneration = queryFilters.supportsGeneration ?? false;
+  const isFeatured = queryFilters.isFeatured ?? false;
   const username = queryFilters.username ?? '';
   const selfView =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
@@ -138,6 +139,7 @@ function UserModelsPage() {
                     fromPlatform,
                     baseModels,
                     supportsGeneration,
+                    isFeatured,
                   }}
                   showEmptyCta={selfView}
                   disableStoreFilters
@@ -163,6 +165,7 @@ function UserModelsPage() {
                     baseModels,
                     supportsGeneration,
                     availability: Availability.Private,
+                    isFeatured,
                   }}
                   showEmptyCta={selfView}
                   disableStoreFilters
