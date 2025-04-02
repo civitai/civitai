@@ -4,6 +4,8 @@ import arrayBufferToBuffer from 'arraybuffer-to-buffer';
 
 import { getClampedSize } from '~/utils/blurhash';
 import { fetchBlob } from '~/utils/file-utils';
+import { ImageMetadata } from '~/server/schema/media.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
@@ -99,4 +101,25 @@ export function calculateAspectRatioFit(
   } else {
     return { width: srcWidth, height: srcHeight, mutated: false };
   }
+}
+
+/**
+ * Check if the image is a valid AI generation. Currently, the only way we can tell this is by checking metadata values & tools.
+ *
+ * @param image Image object with meta and tools properties.
+ * @returns
+ */
+export function isValidAIGeneration(image: {
+  id: number;
+  meta?: ImageMetaProps | null;
+  tools?: any[] | null;
+  resources?: any[] | null;
+}) {
+  if (image.meta?.prompt) return true;
+  if (image.tools?.length) return true;
+  if (image.resources?.length) return true;
+  if (image.meta?.comfy) return true;
+  if (image.meta?.extra) return true;
+
+  return false;
 }

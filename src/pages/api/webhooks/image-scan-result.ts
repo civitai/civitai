@@ -37,6 +37,7 @@ import {
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { isValidAIGeneration } from '~/utils/image-utils';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -261,6 +262,11 @@ async function handleSuccess({
       metadata: true,
       postId: true,
       nsfwLevel: true,
+      tools: {
+        select: {
+          toolId: true,
+        },
+      },
     },
   });
   if (!image) {
@@ -485,6 +491,18 @@ async function handleSuccess({
     }
 
     if (reviewKey) data.needsReview = reviewKey;
+    // Block NSFW images without meta:
+    if (
+      nsfw &&
+      !isValidAIGeneration({
+        ...image,
+        meta: image.meta as ImageMetadata | VideoMetadata,
+        tools: image.tools,
+      })
+    ) {
+      data.nsfwLevel = NsfwLevel.Blocked;
+      data.blockedFor = 'Could not confirm AI generation';
+    }
 
     if (nsfw && prompt) {
       // Determine if we need to block the image
