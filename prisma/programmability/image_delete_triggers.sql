@@ -3,6 +3,7 @@ RETURNS TRIGGER AS
 $$
 BEGIN
   DELETE FROM "TagsOnImageNew" WHERE "imageId" = OLD.id;
+  DELETE FROM "ImageResourceNew" WHERE "imageId" = OLD.id;
   RETURN OLD;
 END;
 $$

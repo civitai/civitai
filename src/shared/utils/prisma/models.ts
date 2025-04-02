@@ -118,7 +118,7 @@ export type CollectionItemStatus = "ACCEPTED" | "REVIEW" | "REJECTED";
 
 export type CollectionContributorPermission = "VIEW" | "ADD" | "ADD_REVIEW" | "MANAGE";
 
-export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop";
+export type HomeBlockType = "Collection" | "Announcement" | "Leaderboard" | "Social" | "Event" | "CosmeticShop" | "FeaturedModelVersion";
 
 export type Currency = "USD" | "BUZZ";
 
@@ -587,6 +587,7 @@ export interface Model {
   collectionItems?: CollectionItem[];
   generationCoverage?: GenerationCoverage[];
   flags?: ModelFlag[];
+  coveredCheckpoints?: CoveredCheckpoint[];
 }
 
 export interface ModelFlag {
@@ -697,6 +698,8 @@ export interface ModelVersion {
   recommendedTo?: RecommendedResource[];
   DonationGoal?: DonationGoal[];
   featuredInfo?: FeaturedModelVersion[];
+  ImageResourceNew?: ImageResourceNew[];
+  coveredCheckpoints?: CoveredCheckpoint[];
 }
 
 export interface ModelVersionEngagement {
@@ -1101,6 +1104,7 @@ export interface Image {
   flags?: ImageFlag[];
   ratingRequests?: ImageRatingRequest[];
   tagsNew?: TagsOnImageNew[];
+  ImageResourceNew?: ImageResourceNew[];
 }
 
 export interface ImageFlag {
@@ -1142,6 +1146,22 @@ export interface ImageResource {
   image?: Image;
   strength: number | null;
   detected: boolean;
+}
+
+export interface ImageResourceNew {
+  imageId: number;
+  image?: Image;
+  modelVersionId: number;
+  modelVersion?: ModelVersion;
+  strength: number | null;
+  detected: boolean;
+}
+
+export interface ResourceOverride {
+  hash: string;
+  modelVersionId: number;
+  type: ModelHashType;
+  createdAt: Date;
 }
 
 export interface ImageMetric {
@@ -2537,6 +2557,8 @@ export interface AuctionBase {
   quantity: number;
   minPrice: number;
   active: boolean;
+  runForDays: number;
+  validForDays: number;
   auctions?: Auction[];
   recurringBids?: BidRecurring[];
 }
@@ -2591,6 +2613,13 @@ export interface FeaturedModelVersion {
   validFrom: Date;
   validTo: Date;
   position: number;
+}
+
+export interface CoveredCheckpoint {
+  model_id: number;
+  version_id: number;
+  model?: Model;
+  modelVersion?: ModelVersion;
 }
 
 export interface ModerationRule {
@@ -3244,7 +3273,6 @@ export interface ModelTag {
 }
 
 export interface ImageResourceHelper {
-  id: number;
   imageId: number;
   image?: Image;
   reviewId: number | null;
@@ -3252,8 +3280,7 @@ export interface ImageResourceHelper {
   reviewDetails: string | null;
   reviewCreatedAt: Date | null;
   name: string | null;
-  hash: string | null;
-  modelVersionId: number | null;
+  modelVersionId: number;
   modelVersionName: string | null;
   modelVersionCreatedAt: Date | null;
   modelId: number | null;
@@ -3268,7 +3295,6 @@ export interface ImageResourceHelper {
 }
 
 export interface PostResourceHelper {
-  id: number;
   postId: number;
   post?: Post;
   reviewId: number | null;
@@ -3277,7 +3303,8 @@ export interface PostResourceHelper {
   reviewDetails: string | null;
   reviewCreatedAt: Date | null;
   name: string | null;
-  modelVersionId: number | null;
+  imageId: number;
+  modelVersionId: number;
   modelVersionName: string | null;
   modelVersionCreatedAt: Date | null;
   modelId: number | null;

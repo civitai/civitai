@@ -22,7 +22,11 @@ import {
 } from '~/server/common/enums';
 import { getImageGenerationProcess } from '~/server/common/model-helpers';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
+import {
+  combineSqlWithParams,
+  getDbWithoutLag,
+  preventReplicationLag,
+} from '~/server/db/db-helpers';
 import { pgDbRead } from '~/server/db/pgDb';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient } from '~/server/meilisearch/client';
@@ -125,7 +129,7 @@ import {
   ReportStatus,
   ReviewReactions,
 } from '~/shared/utils/prisma/enums';
-import { ImageResource } from '~/shared/utils/prisma/models';
+import { ImageResourceNew } from '~/shared/utils/prisma/models';
 import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { promptWordReplace } from '~/utils/metadata/audit';
@@ -139,6 +143,7 @@ import {
   ImageModerationSchema,
   IngestImageInput,
   ingestImageSchema,
+  RemoveImageResourceSchema,
 } from './../schema/image.schema';
 import { uniqBy } from 'lodash-es';
 import { withRetries } from '~/utils/errorHandling';
@@ -411,7 +416,6 @@ export const getImageDetail = async ({ id }: GetByIdInput) => {
         select: {
           id: true,
           modelVersion: { select: { id: true, name: true } },
-          name: true,
           detected: true,
         },
       },
@@ -832,7 +836,7 @@ export const getAllImages = async (
   // Filter to specific model/review content
   const prioritizeUser = !!prioritizedUserIds?.length; // [x]
   if (!prioritizeUser && (modelId || modelVersionId || reviewId)) {
-    from = `FROM "ImageResource" irr`;
+    from = `FROM "ImageResourceNew" irr`;
     joins.push(`JOIN "Image" i ON i.id = irr."imageId"`);
     if (reviewId) {
       joins.push(`JOIN "ResourceReview" re ON re."modelVersionId" = irr."modelVersionId"`);
@@ -1095,7 +1099,7 @@ export const getAllImages = async (
   if (baseModels?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "ModelVersion" mv
-      RIGHT JOIN "ImageResource" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
+      RIGHT JOIN "ImageResourceNew" ir ON ir."imageId" = i.id AND ir."modelVersionId" = mv.id
       WHERE mv."baseModel" IN (${Prisma.join(baseModels)})
     )`);
   }
@@ -1199,7 +1203,7 @@ export const getAllImages = async (
         includeBaseModel
           ? `(
             SELECT mv."baseModel"
-            FROM "ImageResource" ir
+            FROM "ImageResourceNew" ir
             LEFT JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
             LEFT JOIN "Model" m ON mv."modelId" = m.id
             WHERE m."type" = 'Checkpoint' AND ir."imageId" = i.id
@@ -2135,9 +2139,8 @@ export async function getTagNamesForImages(imageIds: number[]) {
 export async function getResourceIdsForImages(imageIds: number[]) {
   const imageResourcesArr = await dbRead.$queryRaw<{ imageId: number; modelVersionId: number }[]>`
     SELECT "imageId", "modelVersionId"
-    FROM "ImageResource"
-    WHERE "imageId" IN (${Prisma.join(imageIds)})
-      AND "modelVersionId" IS NOT NULL
+    FROM "ImageResourceNew"
+    WHERE "imageId" IN (${Prisma.join(imageIds)});
   `;
   const imageResources = imageResourcesArr.reduce((acc, { imageId, modelVersionId }) => {
     if (!acc[imageId]) acc[imageId] = [];
@@ -2313,7 +2316,7 @@ export const getImage = async ({
 export const getImageResources = async ({ id }: GetByIdInput) => {
   const resources = await dbRead.$queryRaw<ImageResourceHelperModel[]>`
     SELECT
-      irh."id",
+      irh."imageId",
       irh."reviewId",
       irh."reviewRating",
       irh."reviewDetails",
@@ -2731,15 +2734,18 @@ export const getImagesForPosts = async ({
   });
 };
 
-export const removeImageResource = async ({ id }: GetByIdInput) => {
+export const removeImageResource = async ({
+  imageId,
+  modelVersionId,
+}: RemoveImageResourceSchema) => {
   try {
-    const resource = await dbWrite.imageResource.delete({
-      where: { id },
+    const resource = await dbWrite.imageResourceNew.delete({
+      where: { imageId_modelVersionId: { imageId, modelVersionId } },
     });
-    if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
+    // if (!resource) throw throwNotFoundError(`No image resource with id ${id}`);
 
-    purgeImageGenerationDataCache(id);
-    purgeCache({ tags: [`image-resources-${id}`] });
+    purgeImageGenerationDataCache(imageId);
+    // purgeCache({ tags: [`image-resources-${imageId}`] });
 
     return resource;
   } catch (error) {
@@ -3507,16 +3513,6 @@ export const getImageModerationReviewQueue = async ({
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
   }
 
-  if (tagReview) {
-    AND.push(Prisma.sql`EXISTS (
-      SELECT 1 FROM "TagsOnImageDetails" toi
-      WHERE toi."imageId" = i.id AND toi."needsReview"
-    )`);
-    AND.push(Prisma.sql`
-      i."nsfwLevel" < ${NsfwLevel.Blocked}
-    `);
-  }
-
   if (tagIds?.length) {
     AND.push(Prisma.sql`EXISTS (
       SELECT 1 FROM "TagsOnImageDetails" toi
@@ -3531,20 +3527,27 @@ export const getImageModerationReviewQueue = async ({
   let cursorProp = 'i."id"';
   let cursorDirection = 'DESC';
 
-  if (reportReview) {
-    // Add this to the WHERE:
-    AND.push(Prisma.sql`report."status" = 'Pending'`);
-    // Also, update sorter to most recent:
-    orderBy = `report."createdAt" ASC`;
-    cursorProp = 'report.id';
-    cursorDirection = 'ASC';
-  }
+  if (tagReview) {
+    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review)`);
+    AND.push(Prisma.sql`
+      i."nsfwLevel" < ${NsfwLevel.Blocked}
+    `);
+  } else {
+    if (reportReview) {
+      // Add this to the WHERE:
+      AND.push(Prisma.sql`report."status" = 'Pending'`);
+      // Also, update sorter to most recent:
+      orderBy = `report."createdAt" ASC`;
+      cursorProp = 'report.id';
+      cursorDirection = 'ASC';
+    }
 
-  if (cursor) {
-    // Random sort cursor is handled by the WITH query
-    const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
-    if (cursorProp)
-      AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+    if (cursor) {
+      // Random sort cursor is handled by the WITH query
+      const cursorOperator = cursorDirection === 'DESC' ? '<' : '>';
+      if (cursorProp)
+        AND.push(Prisma.sql`${Prisma.raw(cursorProp)} ${Prisma.raw(cursorOperator)} ${cursor}`);
+    }
   }
 
   // TODO: find a better way to handle different select/join for each type of review
@@ -3552,6 +3555,19 @@ export const getImageModerationReviewQueue = async ({
   const additionalQuery = queryKey ? imageReviewQueueJoinMap[queryKey] : undefined;
 
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
+    ${Prisma.raw(
+      tagReview
+        ? `
+            WITH tags_review AS (
+              SELECT "imageId"
+              FROM "TagsOnImageDetails" WHERE "needsReview"
+              AND NOT "disabled"
+              ${cursor ? `AND "imageId" <= ${cursor}` : ''}
+              ORDER BY ("imageId", "tagId") DESC
+              LIMIT ${limit + 1}
+            )`
+        : ''
+    )}
     -- Image moderation queue
     SELECT
       i.id,
@@ -3601,6 +3617,11 @@ export const getImageModerationReviewQueue = async ({
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
     nextCursor = nextItem?.cursorId;
+  }
+
+  if (tagReview) {
+    const nextItem = rawImages.pop();
+    if (rawImages.length > 0) nextCursor = nextItem?.cursorId;
   }
 
   const imageIds = rawImages.map((i) => i.id);
@@ -4377,7 +4398,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
   const { rows: resources } = await pgDbRead.query<{
-    id: number;
+    imageId: number;
+    modelVersionId: number;
     strength?: number;
     modelId: number;
     modelName: string;
@@ -4387,7 +4409,8 @@ export async function getImageGenerationData({ id }: { id: number }) {
     baseModel: string;
   }>(Prisma.sql`
     SELECT
-      ir.id,
+      ir."imageId",
+      ir."modelVersionId",
       ir.strength,
       m.id as "modelId",
       m.name as "modelName",
@@ -4395,7 +4418,7 @@ export async function getImageGenerationData({ id }: { id: number }) {
       mv.id as "versionId",
       mv.name as "versionName",
       mv."baseModel" as "baseModel"
-    FROM "ImageResource" ir
+    FROM "ImageResourceNew" ir
     JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
     JOIN "Model" m on mv."modelId" = m.id
       WHERE ir."imageId" = ${id}
@@ -4669,6 +4692,26 @@ export async function updateImageMinor({ id, minor }: UpdateImageMinorInput) {
   return image;
 }
 
+export async function getImageResourcesFromImageId({
+  imageId,
+  tx,
+}: {
+  imageId: number;
+  tx?: Prisma.TransactionClient;
+}) {
+  const dbClient = tx ?? dbWrite;
+  const computed = await dbClient.$queryRaw<
+    {
+      id: number;
+      modelversionid: number | null;
+      hash: string | null;
+      strength: number | null;
+      detected: boolean;
+    }[]
+  >`SELECT * FROM get_image_resources(${imageId}::int)`;
+  return computed;
+}
+
 export async function createImageResources({
   imageId,
   tx,
@@ -4678,38 +4721,33 @@ export async function createImageResources({
 }) {
   const dbClient = tx ?? dbWrite;
   // Read the resources based on complex metadata and hash matches
-  const resources = await dbClient.$queryRaw<
-    (ImageResource & { modelversionid?: number })[]
-  >`SELECT * FROM get_image_resources(${imageId}::int)`;
+  const resources = await getImageResourcesFromImageId({ imageId, tx });
   if (!resources.length) return null;
 
-  const resourcesWithModelVersions = uniqBy(
-    resources.filter((x) => x.modelversionid),
-    'modelversionid'
-  );
-  const resourcesWithoutModelVersions = uniqBy(
-    resources.filter((x) => !x.modelversionid),
-    'name'
-  );
-
-  const sql: Prisma.Sql[] = [...resourcesWithModelVersions, ...resourcesWithoutModelVersions].map(
-    (r) => Prisma.sql`
-        (${r.id}, ${r.modelVersionId ?? r.modelversionid}, ${r.name}, ${r.hash}, ${r.strength}, ${
-      r.detected
+  const withModelVersionId = resources
+    .map((x) => {
+      if (!x.modelversionid) return null;
+      return x;
     })
-      `
-  );
+    .filter(isDefined);
+  const resourcesWithModelVersions = uniqBy(withModelVersionId, 'modelversionid');
 
-  // Write the resources to the image
-  await dbClient.$executeRaw`
-    INSERT INTO "ImageResource" ("imageId", "modelVersionId", name, hash, strength, detected)
-    VALUES ${Prisma.join(sql, ',')}
-    ON CONFLICT ("imageId", "modelVersionId", "name") DO UPDATE
-    SET
-      detected = excluded.detected,
-      hash = excluded.hash,
-      strength = excluded.strength;
-  `;
+  if (resourcesWithModelVersions.length) {
+    const values = Prisma.join(
+      resourcesWithModelVersions.map(
+        (r) => Prisma.sql`(${r.id}, ${r.modelversionid}, ${r.strength}, ${r.detected})`
+      )
+    );
+
+    await dbClient.$queryRaw`
+      INSERT INTO "ImageResourceNew" ("imageId", "modelVersionId", strength, detected)
+      VALUES ${values}
+      ON CONFLICT ("imageId", "modelVersionId") DO UPDATE
+      SET
+        detected = excluded.detected,
+        strength = excluded.strength;
+    `;
+  }
 
   return resources;
 }

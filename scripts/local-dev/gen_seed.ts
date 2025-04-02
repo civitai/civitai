@@ -29,7 +29,6 @@ import {
   ReviewReactions,
   ScanResultCode,
   TagEngagementType,
-  TagSource,
   TagType,
   ToolType,
   TrainingStatus,
@@ -143,7 +142,7 @@ const insertClickhouseRows = async (table: string, data: any[][]) => {
 const truncateRows = async () => {
   console.log('Truncating tables');
   await pgDbWrite.query(
-    'TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique" RESTART IDENTITY CASCADE'
+    `TRUNCATE TABLE "User", "Tag", "Leaderboard", "AuctionBase", "Tool", "Technique", "TagsOnImageNew", "EntityMetric", "JobQueue", "KeyValue", "ImageRank", "ModelVersionRank", "UserRank", "TagRank", "ArticleRank", "CollectionRank" RESTART IDENTITY CASCADE`
   );
 };
 
@@ -172,7 +171,7 @@ const genUsers = (num: number, includeCiv = false) => {
       false,
       'civitai',
       true,
-      '2022-11-13 00:00:00.000',
+      '2021-11-13 00:00:00.000',
       null,
       null,
       null,
@@ -208,7 +207,7 @@ const genUsers = (num: number, includeCiv = false) => {
       true, // shownsfw
       'test-mod', // username
       true, // isMod
-      '2022-11-13 00:00:00.000',
+      '2021-11-13 00:00:00.000',
       null, // deletedAt
       null, // bannedAt
       null,
@@ -620,7 +619,7 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
       faker.number.int({ min: 1, max: 8 }), // index // TODO needs other indices?
       fbool(0.01), // inaccurate
       rand(constants.baseModels), // baseModel
-      rand(['{}', '{"imageNsfw": "None"}', '{"imageNsfw": "X"}']), // meta
+      rand(['{}', '{"imageNsfwLevel": 1}', '{"imageNsfwLevel": 8}']), // meta
       0, // earlyAccessTimeframe // TODO check model early access
       isPublished ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // publishedAt
       rand([null, 1, 2]), // clipSkip
@@ -1021,7 +1020,7 @@ const genPosts = (
       created, // createdAt
       rand([created, faker.date.between({ from: created, to: Date.now() }).toISOString()]), // updatedAt
       !isPublished ? null : faker.date.between({ from: created, to: Date.now() }).toISOString(), // publishedAt
-      !isPublished ? null : `{"imageNsfw": "${rand(Object.values(NsfwLevel))}"}`, // metadata
+      !isPublished ? null : `{"imageNsfwLevel": "${rand(Object.values(NsfwLevel))}"}`, // metadata
       fbool(0.01), // tosViolation
       null, // collectionId // TODO
       randw([
@@ -1154,6 +1153,7 @@ const genImages = (num: number, userIds: number[], postIds: number[]) => {
       'urn:air:mixture:model:huggingface:Civitai/mixtureMovieRater', // aiModel
       created, // sortAt
       -1 * faker.number.int({ min: 1e12 }), // pHash // this is actually a bigInt but faker does weird stuff
+      fbool(0.05), // minor
     ];
 
     ret.push(row);
@@ -1841,31 +1841,19 @@ const genTagsOnPosts = (num: number, tagIds: number[], postIds: number[]) => {
 };
 
 /**
- * TagsOnImage
+ * TagsOnImageNew
  */
 const genTagsOnImages = (num: number, tagIds: number[], imageIds: number[]) => {
   const ret: (number | boolean | null | string)[][] = [];
 
   for (let step = 1; step <= num; step++) {
-    const created = faker.date.past({ years: 3 }).toISOString();
-    const isAutomated = fbool();
-    const isDisabled = fbool(0.01);
     const imageId = rand(imageIds);
     const existTags = ret.filter((r) => (r[0] as number) === imageId).map((r) => r[1] as number);
 
     const row = [
       imageId, // imageId
       rand(without(tagIds, ...existTags)), // tagId
-      created, // createdAt
-      isAutomated, // automated
-      isAutomated ? faker.number.int(99) : null, // confidence
-      isDisabled, // disabled
-      false, // needsReview
-      isDisabled ? faker.date.between({ from: created, to: Date.now() }).toISOString() : null, // disabledAt
-      isAutomated
-        ? rand([TagSource.WD14, TagSource.Rekognition, TagSource.Computed])
-        : TagSource.User, // source
-      'Voted', // tagDisabledReason
+      rand([18502, 10340, 10339, 10310, 14433, 14432, 10332, 10334]), // attributes // TODO, honestly, this is the best i got
     ];
 
     ret.push(row);
@@ -2409,6 +2397,17 @@ const genHomeBlocks = (collectionData: { id: number; type: CollectionType }[]) =
       false,
       null,
     ],
+    [
+      7, // id
+      '2025-03-20 18:13:12.053', // createdAt
+      null, // updatedAt
+      -1, // userId
+      `{"title": "Featured Models", "description": "A list of all featured models on the site."}`, // meta
+      4, // index
+      'FeaturedModelVersion', // type
+      false, // permanent
+      null, // sourceId
+    ],
   ];
 };
 
@@ -2453,7 +2452,7 @@ Diminishing returns up to 120 entries`,
 	  AND mvm.timeframe = 'Month'
 	  AND mv.status = 'Published'
 	  AND m.status = 'Published'
-	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+	  AND (mv.meta->>'imageNsfwLevel')::int < 4
 ), entries_ranked AS (
 	SELECT
 		*,
@@ -2518,7 +2517,7 @@ This leaderboard is experimental and temporary`,
 	  AND mvm.timeframe = 'AllTime'
 	  AND mv.status = 'Published'
 	  AND m.status = 'Published'
-	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+	  AND (mv.meta->>'imageNsfwLevel')::int < 4
 ), entries_ranked AS (
 	SELECT
 		*,
@@ -2643,7 +2642,7 @@ First model added in the last 30 days`,
 	  AND mvm.timeframe = 'Month'
 	  AND mv.status = 'Published'
 	  AND m.status = 'Published'
-	  AND mv.meta->>'imageNsfw' IN ('None', 'Soft')
+	  AND (mv.meta->>'imageNsfwLevel')::int < 4
 		AND NOT EXISTS (
 			SELECT 1 FROM "Model" mo
 			WHERE
@@ -2690,61 +2689,73 @@ const genAuctionBases = () => {
       1, // id
       'Model', // type
       null, // ecosystem
-      'Boosted Checkpoints', // name
+      'Featured Checkpoints', // name
       40, // quantity
       1000, // minPrice
       true, // active
-      'boosted-checkpoints', // slug
+      'featured-checkpoints', // slug
+      7, // runForDays
+      7, // validForDays
     ],
     [
       2, // id
       'Model', // type
       'Pony', // ecosystem
-      'Boosted Resources - Pony', // name
+      'Featured Resources - Pony', // name
       20, // quantity
       500, // minPrice
       true, // active
-      'boosted-resources-pony', // slug
+      'featured-resources-pony', // slug
+      1, // runForDays
+      1, // validForDays
     ],
     [
       3, // id
       'Model', // type
       'Illustrious', // ecosystem
-      'Boosted Resources - Illustrious', // name
+      'Featured Resources - Illustrious', // name
       20, // quantity
       500, // minPrice
       false, // active
-      'boosted-resources-illustrious', // slug
+      'featured-resources-illustrious', // slug
+      1, // runForDays
+      1, // validForDays
     ],
     [
       4, // id
       'Model', // type
       'Flux1', // ecosystem
-      'Boosted Resources - Flux', // name
+      'Featured Resources - Flux', // name
       10, // quantity
       200, // minPrice
       true, // active
-      'boosted-resources-flux', // slug
+      'featured-resources-flux', // slug
+      1, // runForDays
+      1, // validForDays
     ],
     [
       5, // id
       'Model', // type
       'SDXL', // ecosystem
-      'Boosted Resources - SDXL', // name
+      'Featured Resources - SDXL', // name
       40, // quantity
       500, // minPrice
       true, // active
-      'boosted-resources-sdxl', // slug
+      'featured-resources-sdxl', // slug
+      1, // runForDays
+      1, // validForDays
     ],
     [
       6, // id
       'Model', // type
       'SD1', // ecosystem
-      'Boosted Resources - SD1', // name
+      'Featured Resources - SD1', // name
       40, // quantity
       500, // minPrice
       true, // active
-      'boosted-resources-sd1', // slug
+      'featured-resources-sd1', // slug
+      1, // runForDays
+      1, // validForDays
     ],
   ];
 };
@@ -2977,7 +2988,7 @@ const genRows = async (truncate = true) => {
   await insertRows('TagsOnPost', tagsOnPosts, false);
 
   const tagsOnImages = genTagsOnImages(Math.ceil(numRows * 3), tagIds, imageIds);
-  await insertRows('TagsOnImage', tagsOnImages, false);
+  await insertRows('TagsOnImageNew', tagsOnImages, false);
 
   const tagsOnModels = genTagsOnModels(Math.ceil(numRows * 3), tagIds, modelIds);
   await insertRows('TagsOnModels', tagsOnModels, false);
@@ -3209,8 +3220,8 @@ const main = async () => {
     'ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO "postgres"'
   );
   await pgDbWrite.query('GRANT ALL ON ALL TABLES IN schema public TO "postgres"');
+
   await genRows();
-  await pgDbWrite.query('REFRESH MATERIALIZED VIEW "CoveredCheckpointDetails"');
 
   await genNotificationRows();
 

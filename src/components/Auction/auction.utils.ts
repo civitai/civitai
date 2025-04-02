@@ -3,8 +3,9 @@ import type { GetAuctionBySlugReturn } from '~/server/services/auction.service';
 import { getBaseModelResourceTypes } from '~/shared/constants/generation.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
 
-type ResourceOptions = Exclude<ResourceSelectOptions['resources'], undefined>;
+export const modelsToAddToCollection = 3;
 
+type ResourceOptions = Exclude<ResourceSelectOptions['resources'], undefined>;
 export const getModelTypesForAuction = (ab: GetAuctionBySlugReturn['auctionBase'] | undefined) => {
   if (!ab) return [] as ResourceOptions;
 

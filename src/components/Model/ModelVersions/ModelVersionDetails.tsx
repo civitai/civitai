@@ -107,6 +107,7 @@ import {
 } from '~/server/common/constants';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
 import { unpublishReasons } from '~/server/common/moderation-helpers';
+import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getFileDisplayName, getPrimaryFile } from '~/server/utils/model-helpers';
 import {
   Availability,
@@ -137,7 +138,13 @@ const useStyles = createStyles(() => ({
   },
 }));
 
-export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteClick }: Props) {
+export function ModelVersionDetails({
+  model,
+  version,
+  image,
+  onBrowseClick,
+  onFavoriteClick,
+}: Props) {
   const user = useCurrentUser();
   const { classes, cx } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
@@ -197,14 +204,14 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 
   const isEarlyAccess = !!version?.earlyAccessEndsAt && version.earlyAccessEndsAt > new Date();
   const earlyAccessConfig = version?.earlyAccessConfig;
-  const canGenerate =
+  const couldGenerate =
     isSelectableInGenerator &&
     features.imageGeneration &&
-    version.canGenerate &&
     (!isEarlyAccess ||
       !!earlyAccessConfig?.chargeForGeneration ||
       !!earlyAccessConfig?.freeGeneration ||
       hasGeneratePermissions);
+  const canGenerate = couldGenerate && version.canGenerate;
   const publishVersionMutation = trpc.modelVersion.publish.useMutation();
   const publishModelMutation = trpc.model.publish.useMutation();
   const requestReviewMutation = trpc.model.requestReview.useMutation();
@@ -367,9 +374,13 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
               <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
             </IconBadge>
           )}
-          {version.canGenerate && (
+          {canGenerate ? (
             <GenerateButton
-              modelVersionId={version.id}
+              model={model}
+              version={version}
+              versionId={version.id}
+              image={image}
+              canGenerate={canGenerate}
               data-activity="create:version-stat"
               disabled={isLoadingAccess}
               generationPrice={
@@ -385,9 +396,24 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
               </IconBadge>
             </GenerateButton>
+          ) : (
+            <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+              <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
+            </IconBadge>
           )}
         </Group>
       ),
+    },
+    {
+      label: 'Generation',
+      value: (
+        <ModelVersionPopularity
+          versionId={version.id}
+          isCheckpoint={model.type === ModelType.Checkpoint}
+          listenForUpdates={true}
+        />
+      ),
+      visible: canGenerate && features.auctions && model.type === ModelType.Checkpoint,
     },
     {
       label: 'Reviews',
@@ -525,18 +551,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
     },
   ];
 
-  const getFileDetails = (
-    file: ModelById['modelVersions'][number]['files'][number],
-    showPop = false
-  ) => (
+  const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
     <Group position="apart" noWrap spacing={0}>
-      {showPop && version.canGenerate && (
-        <ModelVersionPopularity
-          versionId={version.id}
-          isCheckpoint={model.type === ModelType.Checkpoint}
-          listenForUpdates={true}
-        />
-      )}
       <Group>
         <VerifiedText file={file} />
         <Group spacing={4}>
@@ -549,7 +565,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
       </Group>
     </Group>
   );
-  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile, true);
+  const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile);
 
   const downloadMenuItems = filesVisible.map((file) =>
     !archived ? (
@@ -676,10 +692,14 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             </Button>
           ) : showPublishButton ? (
             <Stack spacing={4}>
-              {version.canGenerate && isOwnerOrMod && (
+              {couldGenerate && isOwnerOrMod && (
                 <GenerateButton
+                  model={model}
+                  version={version}
+                  versionId={version.id}
+                  image={image}
+                  canGenerate={canGenerate}
                   data-tour="model:create"
-                  modelVersionId={version.id}
                   data-activity="create:model"
                   py={8}
                 />
@@ -722,10 +742,14 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             <Stack spacing={4}>
               <Group spacing="xs" className={classes.ctaContainer}>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
-                  {canGenerate && (
+                  {couldGenerate && (
                     <GenerateButton
+                      model={model}
+                      version={version}
+                      versionId={version.id}
+                      image={image}
+                      canGenerate={canGenerate}
                       data-tour="model:create"
-                      modelVersionId={version.id}
                       data-activity="create:model"
                       sx={{ flex: '2 !important', paddingLeft: 8, paddingRight: 12 }}
                       disabled={isLoadingAccess || !!model.mode}
@@ -971,8 +995,8 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
             <AlertWithIcon color="blue" iconColor="blue" icon={<IconBrush size={16} />} size="sm">
               {isDownloadable && !isLoadingAccess ? (
                 <Text>
-                  You've set this model to Generation-Only. Other users will not be able to download
-                  this model. Click{' '}
+                  You&apos;ve set this model to Generation-Only. Other users will not be able to
+                  download this model. Click{' '}
                   <Text
                     component={Link}
                     variant="link"
@@ -1444,6 +1468,7 @@ export function ModelVersionDetails({ model, version, onBrowseClick, onFavoriteC
 type Props = {
   version: ModelById['modelVersions'][number];
   model: ModelById;
+  image: ImagesInfiniteModel | undefined;
   onBrowseClick?: VoidFunction;
   onFavoriteClick?: (ctx: { versionId?: number; setTo: boolean }) => void;
 };

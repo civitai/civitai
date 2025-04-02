@@ -29,7 +29,7 @@ import { ModerationRuleAction, TagSource } from '~/shared/utils/prisma/enums';
 
 export type ContentRule = {
   type: 'content';
-  target: ('prompt' | 'title' | 'description')[];
+  target: ('prompt' | 'name' | 'description')[];
   match: string; // Can be a regex (i.e.: /robot/gmi) or a simple string
 };
 

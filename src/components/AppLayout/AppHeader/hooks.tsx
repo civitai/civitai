@@ -152,7 +152,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconGavel,
           color: theme.colors.yellow[theme.fn.primaryShade()],
           label: 'Auctions',
-          newUntil: new Date('2025-03-20'),
+          newUntil: new Date('2025-04-07'),
         },
         {
           href: '/product/link',
@@ -199,7 +199,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           icon: IconGavel,
           color: theme.colors.yellow[theme.fn.primaryShade()],
           label: 'Auctions',
-          newUntil: new Date('2025-03-20'),
+          newUntil: new Date('2025-04-07'),
         },
         {
           href: '/product/link',

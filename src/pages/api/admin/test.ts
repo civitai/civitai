@@ -20,6 +20,13 @@ import {
   setWorkflowDefinition,
 } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import {
+  getWorkflowDefinitions,
+  setWorkflowDefinition,
+} from '~/server/services/orchestrator/comfy/comfy.utils';
+import { WorkflowDefinition } from '~/server/services/orchestrator/types';
+import { pgDbWrite } from '~/server/db/pgDb';
+import { tagIdsForImagesCache } from '~/server/redis/caches';
 
 type Row = {
   userId: number;
@@ -89,14 +96,31 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //     // needsReview: false,
     //   },
     // ]);
+    // for (const workflow of workflows) {
+    //   setWorkflowDefinition(workflow.key, workflow);
+    // }
 
-    for (const workflow of workflows) {
-      await setWorkflowDefinition(workflow.key, workflow);
-    }
+    const imageTags = await dbWrite.tagsOnImageDetails.findMany({
+      where: { imageId: { in: [66447372] }, disabled: false },
+      select: {
+        imageId: true,
+        source: true,
+        tagId: true,
+      },
+    });
+    const dbTags = imageTags.map((x) => x.tagId);
 
-    const result = await getWorkflowDefinitions();
+    await tagIdsForImagesCache.bust(66447372);
+    const cache = await tagIdsForImagesCache.fetch(66447372);
+    const tags = Object.values(cache).flatMap((x) => x.tags);
 
-    res.status(200).send(result);
+    const fromDb = await dbWrite.tag.findMany({ where: { id: { in: dbTags } } });
+    const fromCache = await dbWrite.tag.findMany({ where: { id: { in: tags } } });
+
+    res.status(200).send({
+      fromDb,
+      fromCache,
+    });
   } catch (e) {
     console.log(e);
     res.status(400).end();
