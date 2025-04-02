@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useStorage } from '~/hooks/useStorage';
-import { SignalMessages, SignalTopic } from '~/server/common/enums';
+import { NewOrderImageRating, SignalMessages, SignalTopic } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 
 // TODO.newOrder: complete signal setup
@@ -58,4 +58,48 @@ export const useJoinKnightsNewOrder = () => {
     joinKnightsNewOrder: joinKnightsNewOrderMutation.mutateAsync,
     isLoading: isInitialLoading || joinKnightsNewOrderMutation.isLoading,
   };
+};
+
+export const useQueryKnightsNewOrderImageQueue = (opts?: { enabled?: boolean }) => {
+  const { playerData } = useJoinKnightsNewOrder();
+
+  const { data = [], isLoading } = trpc.games.newOrder.getImagesQueue.useQuery(
+    { limit: 100 },
+    { ...opts, enabled: !!playerData && opts?.enabled !== false }
+  );
+
+  return { data, isLoading };
+};
+
+export const ratingExplanationMap = {
+  [NewOrderImageRating.Sanctified]: {
+    description: 'Wholly pure, divine, and without blemish',
+    icon: '✨',
+    shade: 'white',
+  },
+  [NewOrderImageRating.Blessed]: {
+    description: 'Nearly pure, but with minor imperfections',
+    icon: '🕊️',
+    shade: 'gold',
+  },
+  [NewOrderImageRating.Virtuous]: {
+    description: 'Mostly righteous, but contains elements that may need guidance',
+    icon: '🔥',
+    shade: 'silver',
+  },
+  [NewOrderImageRating.Tempted]: {
+    description: 'Contains some questionable elements, requiring discernment',
+    icon: '⚖️',
+    shade: 'bronze',
+  },
+  [NewOrderImageRating.Tainted]: {
+    description: 'Clearly impure, but not wholly lost. Needs caution',
+    icon: '⚔',
+    shade: 'red',
+  },
+  [NewOrderImageRating.Damned]: {
+    description: 'Beyond redemption, fully corrupted',
+    icon: '☠️',
+    shade: 'black',
+  },
 };

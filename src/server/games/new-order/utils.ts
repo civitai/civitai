@@ -44,7 +44,9 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     }
 
     const data = await sysRedis.hGetAll(key);
-    return Object.values(data).map(Number);
+    return Object.values(data)
+      .slice(0, limit ?? 100)
+      .map(Number);
   }
 
   async function getCount(id: number) {

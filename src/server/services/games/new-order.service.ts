@@ -500,7 +500,12 @@ export async function getImagesQueue({
     if (imageIds.length >= imageCount) break;
   }
 
-  return shuffle(imageIds.slice(0, imageCount));
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+  });
+
+  return shuffle(images.slice(0, imageCount));
 }
 
 async function isImageInQueue({

@@ -80,7 +80,7 @@ export const gamesRouter = router({
   newOrder: router({
     join: guardedProcedure.mutation(({ ctx }) => joinGame({ userId: ctx.user.id })),
     getPlayer: guardedProcedure.query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
-    getImageQueue: guardedProcedure
+    getImagesQueue: guardedProcedure
       .input(getImageQueueSchema)
       .query(({ input, ctx }) => getImagesQueue({ ...input, playerId: ctx.user.id })),
     smitePlayer: moderatorProcedure
