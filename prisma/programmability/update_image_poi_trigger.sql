@@ -8,7 +8,7 @@ BEGIN
         JOIN "ModelVersion" mv ON mv.id = ir."modelVersionId"
         JOIN "Model" m ON m.id = mv."modelId"
         WHERE ir."imageId" = i.id AND m.id = NEW.id AND i."needsReview" IS NULL
-          AND i."nsfwLevel" > 0; -- Only mark images that has been ingested
+          AND i."nsfwLevel" > 1; -- Only mark images that has been ingested and level is PG-13+
     ELSE
         -- If poi is false, remove the review mark if no other POI models are associated
         UPDATE "Image" i SET "needsReview" = null
