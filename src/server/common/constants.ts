@@ -1115,9 +1115,11 @@ export type DomainSettings = {
   systemHomeBlockIds: number[];
   excludedSystemHomeBlockIds: number[];
   allowedNsfwLevels: NsfwLevel[];
-  publicNsfwLevels?: NsfwLevel[];
   // Optionally defines what value to look for in the user for this domain.
   browsingLevelKey: 'browsingLevel' | 'redBrowsingLevel';
+  publicNsfwLevels?: NsfwLevel[];
+  // Doing any here is a bit dangerous, but we need to do it for the red domain.
+  generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
 };
 
 export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
@@ -1152,8 +1154,11 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     excludedSystemHomeBlockIds: [],
     publicNsfwLevels: [NsfwLevel.R, NsfwLevel.X],
     browsingLevelKey: 'redBrowsingLevel',
+    generationDefaultValues: {
+      denoise: 0.65,
+    },
   },
-};
+} as const;
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
   const { host } = req.headers;

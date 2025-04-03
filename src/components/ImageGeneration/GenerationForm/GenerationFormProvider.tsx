@@ -39,6 +39,7 @@ import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 
 // #region [schemas]
 
@@ -237,10 +238,10 @@ export function useGenerationForm() {
 
 export function GenerationFormProvider({ children }: { children: React.ReactNode }) {
   const storeData = useGenerationStore((state) => state.data);
-
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const type = useGenerationFormStore((state) => state.type);
+  const domainSettings = useDomainSettings();
 
   const getValues = useCallback(
     (storageValues: any): any => {
@@ -393,6 +394,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
+        ...(domainSettings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
