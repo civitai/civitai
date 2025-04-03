@@ -252,7 +252,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
       return getDefaultValues(storageValues);
     },
-    [currentUser, status] // eslint-disable-line
+    [currentUser, status, domainSettings] // eslint-disable-line
   );
 
   const prevBaseModelRef = useRef<BaseModelSetType | null>();
@@ -377,6 +377,19 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (domainSettings.generationDefaultValues) {
+      const { generationDefaultValues } = domainSettings;
+      Object.keys(generationDefaultValues).forEach((key) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const value = generationDefaultValues[key as keyof generationDefaultValues];
+        if (value !== undefined) {
+          form.setValue(key as keyof PartialFormData, value);
+        }
+      });
+    }
+  }, [domainSettings, form]);
   // #endregion
 
   // #region [handlers]
