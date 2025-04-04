@@ -381,8 +381,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   useEffect(() => {
     if (domainSettings.generationDefaultValues) {
       const { generationDefaultValues } = domainSettings;
-      Object.keys(generationDefaultValues).forEach((key) => {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      Object.keys(generationDefaultValues ?? {}).forEach((key) => {
+        // @ts-ignore
         const value = generationDefaultValues[key as keyof generationDefaultValues];
         if (value !== undefined) {
           form.setValue(key as keyof PartialFormData, value);

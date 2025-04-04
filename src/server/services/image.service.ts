@@ -4235,6 +4235,7 @@ export async function addImageTools({
     },
     select: {
       id: true,
+      url: true,
     },
   });
 
