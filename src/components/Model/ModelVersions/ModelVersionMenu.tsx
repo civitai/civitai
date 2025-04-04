@@ -8,6 +8,7 @@ import {
   IconTrash,
   IconFileSettings,
   IconCloudX,
+  IconAi,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -169,11 +170,10 @@ export function ModelVersionMenu({
 
         {currentUser?.isModerator && showToggleCoverage && (
           <>
-            <Menu.Divider />
-            <Menu.Label>Moderation zone</Menu.Label>
             <Menu.Item
               disabled={isLoading}
-              icon={isLoading ? <Loader size="xs" /> : undefined}
+              icon={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
+              color="yellow"
               onClick={() =>
                 handleToggleCoverage({
                   modelId: modelId,
