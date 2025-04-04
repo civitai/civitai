@@ -68,6 +68,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         resources: image.data.resourceHelper,
         tools: image.data.tools,
         meta: image.data.meta as ImageMetaProps,
+        tags: image.data.tags,
       })
   );
   const canPublish = hasImages && !isReordering && isAiVerified;

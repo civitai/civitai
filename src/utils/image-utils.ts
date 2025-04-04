@@ -6,6 +6,7 @@ import { fetchBlob } from '~/utils/file-utils';
 import { ImageMetaProps } from '~/server/schema/image.schema';
 import { NSFWLevel } from '@civitai/client';
 import { NsfwLevel } from '~/server/common/enums';
+import { TagType } from '~/shared/utils/prisma/enums';
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
@@ -109,6 +110,12 @@ type ImageForAiVerification = {
   meta?: ImageMetaProps | null;
   tools?: any[] | null;
   resources?: any[] | null;
+  tags?:
+    | {
+        nsfwLevel: number;
+        type: TagType;
+      }[]
+    | null;
 };
 
 /**
@@ -119,12 +126,16 @@ type ImageForAiVerification = {
  */
 
 export function isValidAIGeneration(image: ImageForAiVerification) {
-  if (image.nsfwLevel < NsfwLevel.R) return true; // PG images are alright for us anyway.
+  if (image.nsfwLevel !== 0 && image.nsfwLevel < NsfwLevel.R) return true; // PG images are alright for us anyway.
   if (image.meta?.prompt) return true;
   if (image.tools?.length) return true;
   if (image.resources?.length) return true;
   if (image.meta?.comfy) return true;
   if (image.meta?.extra) return true;
 
-  return false;
+  return (
+    image.tags?.some((tag) => {
+      tag.nsfwLevel >= NsfwLevel.R && tag.type === TagType.Moderation;
+    }) ?? true
+  );
 }
