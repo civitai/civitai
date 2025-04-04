@@ -68,7 +68,7 @@ const featureFlags = createFeatureFlags({
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
     availability: ['user'],
   },
-  bounties: ['public'],
+  bounties: ['public', 'blue', 'green'],
   newsroom: ['public'],
   safety: ['public'],
   csamReports: ['granted'],
@@ -96,14 +96,15 @@ const featureFlags = createFeatureFlags({
   experimentalGen: ['mod'],
   imageIndex: ['public'],
   imageIndexFeed: ['public'],
+  // #region [Domain Specific Features]
   isGreen: ['public', 'green'],
   isBlue: ['public', 'blue'],
   isRed: ['public', 'red'],
   canViewNsfw: ['public', 'blue', 'red'],
   canBuyBuzz: ['public', 'green'],
-  customPaymentProvider: ['public'],
-  // Temporarily disabled until we change ads provider -Manuel
   adsEnabled: ['public', 'blue'],
+  // #endregion
+  // Temporarily disabled until we change ads provider -Manuel
   paddleAdjustments: ['granted'],
   announcements: ['granted'],
   blocklists: ['granted'],
@@ -147,8 +148,14 @@ const hasFeature = (
       ([key, domain]) => domain && availableServers.includes(key as ServerAvailability)
     );
 
-    serverMatch = domains.some(([key, domain]) => {
-      if (key === 'blue' && ['stage.civitai.com', 'dev.civitai.com'].includes(host)) return true;
+    serverMatch = domains.some(([color, domain]) => {
+      if (
+        color === 'blue' &&
+        ['stage.civitai.com', 'dev.civitai.com'].includes(host) &&
+        // No reason to forcefully enable `isBlue` if we can avoid it. The app doesn't rely on it for the most part.
+        key !== 'isBlue'
+      )
+        return true;
       return host === domain;
     });
     // if server doesn't match, return false regardless of other availability flags

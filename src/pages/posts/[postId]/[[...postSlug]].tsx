@@ -21,7 +21,7 @@ export default function PostDetailPage({
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ctx, ssg, session }) => {
+  resolver: async ({ ctx, ssg, session, domainSettings }) => {
     const params = (ctx.params ?? {}) as { postId: string };
     const postId = Number(params.postId);
     if (!isNumber(postId)) return { notFound: true };
@@ -48,6 +48,7 @@ export const getServerSideProps = createServerSideProps({
       await ssg?.image.getInfinite.prefetchInfinite({
         postId,
         pending: !!session?.user,
+        disablePoi: domainSettings?.disablePoi,
       });
       await ssg?.post.getContestCollectionDetails.prefetch({ id: postId });
       await ssg?.hiddenPreferences.getHidden.prefetch();

@@ -5,10 +5,6 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 export const usePaymentProvider = () => {
   const featureFlags = useFeatureFlags();
 
-  if (!featureFlags.customPaymentProvider) {
-    return PaymentProvider.Stripe; //
-  }
-
   if (
     env.NEXT_PUBLIC_DEFAULT_PAYMENT_PROVIDER === PaymentProvider.Paddle &&
     !env.NEXT_PUBLIC_PADDLE_TOKEN

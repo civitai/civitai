@@ -249,6 +249,7 @@ export const getModelsRaw = async ({
     excludedUserIds,
     collectionTagId,
     availability,
+    disablePoi,
     isFeatured,
   } = input;
 
@@ -309,6 +310,10 @@ export const getModelsRaw = async ({
     AND.push(
       Prisma.sql`(m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier")`
     );
+  }
+
+  if (disablePoi) {
+    AND.push(Prisma.sql`m."poi" = false`);
   }
 
   if (needsReview && sessionUser?.isModerator) {
@@ -721,6 +726,14 @@ export const getModelsRaw = async ({
         // If not getting full details, only return the latest version
         if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
 
+        if (!!input.excludedTagIds && input.excludedTagIds.length) {
+          // Support for excluded tags
+          const hasExcludedTag = data.tags.some((tag) =>
+            (input.excludedTagIds ?? []).includes(tag.tagId)
+          );
+          if (hasExcludedTag) return null;
+        }
+
         return {
           ...model,
           rank: {
@@ -802,7 +815,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     clubId,
   } = input;
 
-  const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
   let isPrivate = false;

@@ -37,6 +37,7 @@ import {
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { isValidAIGeneration } from '~/utils/image-utils';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -261,6 +262,11 @@ async function handleSuccess({
       metadata: true,
       postId: true,
       nsfwLevel: true,
+      tools: {
+        select: {
+          toolId: true,
+        },
+      },
     },
   });
   if (!image) {
@@ -421,6 +427,8 @@ async function handleSuccess({
       (image.meta as Prisma.JsonObject)?.['negativePrompt'] as string | undefined
     );
 
+    const data: Prisma.ImageUpdateInput = {};
+
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
@@ -458,8 +466,17 @@ async function handleSuccess({
         )
         SELECT bool_or(poi) "poi", bool_or(minor) "minor" FROM to_check;
       `;
-      if (minor) reviewKey = 'minor';
-      if (poi) reviewKey = 'poi';
+      if (minor) {
+        reviewKey = 'minor';
+        // TODO: Currently,  the code assumes minor = true as being safe minor.
+        // I'd argue we don't want this.
+        // data.minor = true;
+      }
+      if (poi) {
+        reviewKey = 'poi';
+        // Makes this image tied to POI.
+        data.poi = true;
+      }
     }
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
       reviewKey = 'minor';
@@ -473,10 +490,23 @@ async function handleSuccess({
       if (isNewUser) reviewKey = 'newUser';
     }
 
-    const data: Prisma.ImageUpdateInput = {};
     if (reviewKey) data.needsReview = reviewKey;
+    // Block NSFW images without meta:
+    if (
+      nsfw &&
+      !isValidAIGeneration({
+        ...image,
+        // Make it so that if we have NSFW tags we treat it as R+
+        nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.R : NsfwLevel.PG),
+        meta: image.meta as ImageMetadata | VideoMetadata,
+        tools: image.tools,
+      })
+    ) {
+      data.ingestion = ImageIngestionStatus.Blocked;
+      data.blockedFor = BlockedReason.AiNotVerified;
+    }
 
-    if (nsfw && prompt) {
+    if (nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {
       // Determine if we need to block the image
       const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
       if (!success) {

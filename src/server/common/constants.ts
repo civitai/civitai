@@ -2,7 +2,7 @@ import type { MantineTheme } from '@mantine/core';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
-import { BanReasonCode, ModelSort } from '~/server/common/enums';
+import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { GenerationResource } from '~/server/services/generation/generation.service';
 import {
@@ -1106,6 +1106,61 @@ export const colorDomains = {
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
 export type ColorDomain = keyof typeof colorDomains;
+
+export type DomainSettings = {
+  color: ColorDomain;
+  excludedTagIds: number[];
+  disablePoi: boolean;
+  disableNsfwLevelControl: boolean;
+  systemHomeBlockIds: number[];
+  excludedSystemHomeBlockIds: number[];
+  allowedNsfwLevels: NsfwLevel[];
+  // Optionally defines what value to look for in the user for this domain.
+  browsingLevelKey: 'browsingLevel' | 'redBrowsingLevel';
+  publicNsfwLevels?: NsfwLevel[];
+  // Doing any here is a bit dangerous, but we need to do it for the red domain.
+  generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
+  appendedAdminAttentionReasons?: string[];
+};
+
+export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
+  green: {
+    color: 'green',
+    excludedTagIds: [],
+    disablePoi: false,
+    allowedNsfwLevels: [NsfwLevel.PG],
+    disableNsfwLevelControl: true,
+    systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
+    browsingLevelKey: 'browsingLevel',
+  },
+  blue: {
+    color: 'blue',
+    excludedTagIds: [],
+    disablePoi: false,
+    allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    disableNsfwLevelControl: false,
+    systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
+    publicNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13],
+    browsingLevelKey: 'browsingLevel',
+  },
+  red: {
+    color: 'red',
+    excludedTagIds: [],
+    disablePoi: true,
+    allowedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    disableNsfwLevelControl: false,
+    systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
+    publicNsfwLevels: [NsfwLevel.R, NsfwLevel.X],
+    browsingLevelKey: 'redBrowsingLevel',
+    generationDefaultValues: {
+      denoise: 0.65,
+    },
+    appendedAdminAttentionReasons: ['Not AI Generated'],
+  },
+} as const;
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
   const { host } = req.headers;

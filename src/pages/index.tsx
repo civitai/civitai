@@ -7,8 +7,12 @@ import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.const
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   useSSG: true,
-  resolver: async ({ ssg }) => {
-    if (ssg) await ssg.homeBlock.getHomeBlocks.prefetch();
+  resolver: async ({ ssg, domainSettings }) => {
+    if (ssg)
+      await ssg.homeBlock.getHomeBlocks.prefetch({
+        excludedSystemHomeBlockIds: domainSettings?.excludedSystemHomeBlockIds,
+        systemHomeBlockIds: domainSettings?.systemHomeBlockIds,
+      });
 
     return { props: {} };
   },

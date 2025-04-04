@@ -3,6 +3,7 @@ import { createReportForm } from './create-report-form';
 import { InputRadioGroup, InputTextArea } from '~/libs/form';
 import { reportAdminAttentionDetailsSchema } from '~/server/schema/report.schema';
 import { Radio } from '@mantine/core';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 
 const reasons = [
   'Potential security concern',
@@ -14,10 +15,12 @@ const reasons = [
 export const AdminAttentionForm = createReportForm({
   schema: reportAdminAttentionDetailsSchema,
   Element: () => {
+    const domainSettings = useDomainSettings();
+    const { appendedAdminAttentionReasons } = domainSettings;
     return (
       <>
         <InputRadioGroup name="reason" label="Reason" withAsterisk orientation="vertical">
-          {reasons.map((value, index) => (
+          {[...reasons, ...(appendedAdminAttentionReasons ?? [])].map((value, index) => (
             <Radio key={index} value={value} label={value} />
           ))}
         </InputRadioGroup>
