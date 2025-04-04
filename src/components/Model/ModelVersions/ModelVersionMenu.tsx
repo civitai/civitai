@@ -20,6 +20,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -44,6 +45,7 @@ export function ModelVersionMenu({
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
+  const features = useFeatureFlags();
 
   const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation();
   function handleBustCache() {
@@ -168,7 +170,7 @@ export function ModelVersionMenu({
           </Menu.Item>
         )}
 
-        {currentUser?.isModerator && showToggleCoverage && (
+        {currentUser?.isModerator && showToggleCoverage && features.impersonation && (
           <>
             <Menu.Item
               disabled={isLoading}
