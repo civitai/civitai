@@ -1120,6 +1120,7 @@ export type DomainSettings = {
   publicNsfwLevels?: NsfwLevel[];
   // Doing any here is a bit dangerous, but we need to do it for the red domain.
   generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
+  appendedAdminAttentionReasons?: string[];
 };
 
 export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
@@ -1157,6 +1158,7 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
     generationDefaultValues: {
       denoise: 0.65,
     },
+    appendedAdminAttentionReasons: ['Not AI Generated'],
   },
 } as const;
 
