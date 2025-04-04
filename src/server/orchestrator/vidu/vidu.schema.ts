@@ -43,4 +43,4 @@ const viduImg2VidConfig = new VideoGenerationConfig({
   metadataDisplayProps: ['style', 'duration', 'seed'],
 });
 
-export const viduVideoGenerationConfig = [viduTxt2ImgConfig, viduImg2VidConfig];
+export const viduVideoGenerationConfig = [viduTxt2ImgConfig];
