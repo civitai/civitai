@@ -55,6 +55,7 @@ export const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realisti
 export const trainingDetailsBaseModelsXL = ['sdxl', 'pony', 'illustrious'] as const;
 export const trainingDetailsBaseModels35 = ['sd3_medium', 'sd3_large'] as const;
 export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
+export const trainingDetailsBaseModelsVideo = ['hunyuan'] as const; // wan
 const trainingDetailsBaseModelCustom = z
   .string()
   .refine((value) => /^civitai:\d+@\d+$/.test(value ?? '') || isAir(value ?? ''));
@@ -66,6 +67,7 @@ const trainingDetailsBaseModels = [
   ...trainingDetailsBaseModelsXL,
   ...trainingDetailsBaseModels35,
   ...trainingDetailsBaseModelsFlux,
+  ...trainingDetailsBaseModelsVideo,
 ] as const;
 
 export type TrainingDetailsBaseModelList = (typeof trainingDetailsBaseModels)[number];

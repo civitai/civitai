@@ -1,4 +1,5 @@
-import { Button, createStyles, Group, Image, Radio, Stack, Text } from '@mantine/core';
+import { Badge, Button, createStyles, Group, Image, Radio, Stack, Text } from '@mantine/core';
+import { IconCheck, IconX } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { z } from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
@@ -51,33 +52,77 @@ const RadioImg = ({
   value,
   src,
   description,
+  type,
+  canUseImg,
+  canUseVid,
 }: {
   value: string;
   src: string;
   description: string;
-}) => (
-  <Radio
-    value={value}
-    label={
+  type: 'img' | 'vid';
+  canUseImg: boolean;
+  canUseVid: boolean;
+}) => {
+  const caption = (
+    <>
+      <div className="mb-2 flex items-center justify-around">
+        <Badge
+          color={canUseImg ? 'green' : 'pink.1'}
+          leftSection={canUseImg ? <IconCheck size={14} /> : <IconX size={14} />}
+        >
+          Images
+        </Badge>
+        <Badge
+          color={canUseVid ? 'teal' : 'pink.1'}
+          leftSection={canUseVid ? <IconCheck size={14} /> : <IconX size={14} />}
+        >
+          Videos
+        </Badge>
+      </div>
+      <Text fz="lg" fw={500}>
+        {value}
+      </Text>
+      <Text>{description}</Text>
+    </>
+  );
+
+  const media =
+    type === 'img' ? (
       <Image
         src={src}
-        width={170}
+        width={180}
         height={255}
         alt={value}
         radius="sm"
-        caption={
-          <>
-            <Text fz="lg" fw={500}>
-              {value}
-            </Text>
-            <Text>{description}</Text>
-          </>
-        }
+        caption={caption}
         withPlaceholder
       />
-    }
-  />
-);
+    ) : (
+      <figure>
+        <video
+          loop
+          playsInline
+          disablePictureInPicture
+          muted
+          autoPlay
+          controls={false}
+          height={255}
+          width={180}
+          className="!h-[255px] object-cover"
+        >
+          <source src={src.replace('.mp4', '.webm')} type="video/webm" />
+          <source src={src} type="video/mp4" />
+        </video>
+        <figcaption>
+          <Text color="dimmed" align="center" mt={10}>
+            {caption}
+          </Text>
+        </figcaption>
+      </figure>
+    );
+
+  return <Radio value={value} label={media} />;
+};
 
 export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const queryUtils = trpc.useUtils();
@@ -262,18 +307,35 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
         >
           <RadioImg
             value="Character"
-            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/c42020cf-ca49-4b4d-b0e6-1807463f90ad/width=1024/00834-2746643195.jpeg"
             description="A specific person or character, realistic or anime"
+            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/c42020cf-ca49-4b4d-b0e6-1807463f90ad/width=1024/00834-2746643195.jpeg"
+            type="img"
+            canUseImg={true}
+            canUseVid={true}
           />
           <RadioImg
             value="Style"
-            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/9829c1d2-6c99-40a6-b882-057209a86bee/width=1024/00104-1775031745.jpeg"
             description="A time period, art style, or general look and feel"
+            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/9829c1d2-6c99-40a6-b882-057209a86bee/width=1024/00104-1775031745.jpeg"
+            type="img"
+            canUseImg={true}
+            canUseVid={true}
           />
           <RadioImg
             value="Concept"
-            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/55418f7b-7d7d-4284-abea-35d684c48b78/width=2667/00454.jpeg"
             description="Objects, clothing, anatomy, poses, etc."
+            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/55418f7b-7d7d-4284-abea-35d684c48b78/width=1024/00454.jpeg"
+            type="img"
+            canUseImg={true}
+            canUseVid={true}
+          />
+          <RadioImg
+            value="Effect"
+            description="Animations or video effects."
+            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/02e7cb76-2fec-43a9-ab0d-8369a785c4cb/ocean.mp4"
+            type="vid"
+            canUseImg={false}
+            canUseVid={true}
           />
         </InputRadioGroup>
         <InputText name="name" label="Name" placeholder="Name" withAsterisk />

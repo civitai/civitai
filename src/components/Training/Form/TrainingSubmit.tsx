@@ -618,7 +618,12 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <Divider />
       </Stack>
 
-      <ModelSelect selectedRun={selectedRun} modelId={model.id} numImages={thisNumImages} />
+      <ModelSelect
+        selectedRun={selectedRun}
+        modelId={model.id}
+        trainingType={thisTrainingDetails?.type ?? 'Character'}
+        numImages={thisNumImages}
+      />
 
       {['flux', 'sd35'].includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&

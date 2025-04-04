@@ -25,6 +25,7 @@ import { getPrecision } from '~/components/Training/Form/TrainingCommon';
 import {
   optimizerArgMap,
   optimizerArgMapFlux,
+  optimizerArgMapVideo,
   trainingSettings,
 } from '~/components/Training/Form/TrainingParams';
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
@@ -135,6 +136,8 @@ export const AdvancedSettings = ({
     if (selectedRun.baseType === 'flux') {
       newOptimizerArgs =
         optimizerArgMapFlux[selectedRun.params.optimizerType][selectedRun.params.engine];
+    } else if (selectedRun.baseType === 'video') {
+      newOptimizerArgs = optimizerArgMapVideo[selectedRun.params.optimizerType] ?? '';
     } else {
       newOptimizerArgs = optimizerArgMap[selectedRun.params.optimizerType] ?? '';
     }
@@ -429,6 +432,9 @@ export const AdvancedSettings = ({
                     // TODO re-enable x-flux
                     if (ts.name === 'engine') {
                       options = options.filter((o) => o !== 'x-flux');
+                    }
+                    if (ts.name === 'optimizerType' && selectedRun.baseType === 'video') {
+                      options = options.filter((o) => o !== 'Prodigy');
                     }
 
                     inp = (

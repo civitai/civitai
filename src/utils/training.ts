@@ -9,7 +9,7 @@ import type {
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-export const trainingBaseModelType = ['sd15', 'sdxl', 'sd35', 'flux'] as const;
+export const trainingBaseModelType = ['sd15', 'sdxl', 'sd35', 'flux', 'video'] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
 export const engineTypes = ['kohya', 'x-flux', 'rapid'] as const;
@@ -114,6 +114,22 @@ export const trainingModelInfo: {
     air: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     baseModel: 'Flux.1 D',
   },
+  hunyuan: {
+    label: 'Hunyuan',
+    pretty: 'Hunyuan (Vid)',
+    type: 'video',
+    description: 'Performant video generation.',
+    air: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512', // TODO
+    baseModel: 'Hunyuan Video',
+  },
+  // wan: {
+  //   label: 'Wan',
+  //   pretty: 'Wan (Vid)',
+  //   type: 'video',
+  //   description: '',
+  //   air: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
+  //   baseModel: 'Wan Video'
+  // },
 };
 
 export const rapidEta = 5;

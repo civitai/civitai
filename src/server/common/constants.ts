@@ -114,7 +114,7 @@ export const constants = {
     'Config',
     'Archive',
   ],
-  trainingModelTypes: ['Character', 'Style', 'Concept'],
+  trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],

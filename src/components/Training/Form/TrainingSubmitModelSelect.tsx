@@ -16,6 +16,7 @@ import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
+import { tmTypes } from '~/components/Training/Form/TrainingBasicInfo';
 import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
 import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
@@ -25,6 +26,7 @@ import {
   trainingDetailsBaseModels15,
   trainingDetailsBaseModels35,
   trainingDetailsBaseModelsFlux,
+  trainingDetailsBaseModelsVideo,
   trainingDetailsBaseModelsXL,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
@@ -196,10 +198,12 @@ const ModelSelector = ({
 export const ModelSelect = ({
   selectedRun,
   modelId,
+  trainingType,
   numImages,
 }: {
   selectedRun: TrainingRun;
   modelId: number;
+  trainingType: tmTypes;
   numImages: number | undefined;
 }) => {
   const status = useTrainingServiceStatus();
@@ -253,6 +257,21 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsFlux as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelVideo =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsVideo as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+
+  // TODO move this logic to the actual const
+  const canDoImg =
+    trainingType === 'Character' || trainingType === 'Style' || trainingType === 'Concept';
+  const canDoVideo =
+    trainingType === 'Character' ||
+    trainingType === 'Style' ||
+    trainingType === 'Concept' ||
+    trainingType === 'Effect';
+  const canDoCustom = canDoImg;
 
   return (
     <>
@@ -279,49 +298,66 @@ export const ModelSelect = ({
         <Card withBorder mt={8} p="sm">
           <Card.Section inheritPadding withBorder py="sm">
             <Stack spacing="xs">
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="violet"
-                name="SD 1.5"
-                value={baseModel15}
-                baseType="sd15"
-                makeDefaultParams={makeDefaultParams}
-              />
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="grape"
-                name="SDXL"
-                value={baseModelXL}
-                baseType="sdxl"
-                makeDefaultParams={makeDefaultParams}
-              />
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="pink"
-                name="SD 3.5"
-                value={baseModel35}
-                baseType="sd35"
-                makeDefaultParams={makeDefaultParams}
-                isNew={new Date() < new Date('2024-11-10')}
-              />
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="red"
-                name="Flux"
-                value={baseModelFlux}
-                baseType="flux"
-                makeDefaultParams={makeDefaultParams}
-                isNew={new Date() < new Date('2024-09-01')}
-              />
-              <ModelSelector
-                selectedRun={selectedRun}
-                color="cyan"
-                name="Custom"
-                value=""
-                baseType="sdxl" // unused
-                makeDefaultParams={makeDefaultParams}
-                isCustom
-              />
+              {canDoImg && (
+                <>
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="violet"
+                    name="SD 1.5"
+                    value={baseModel15}
+                    baseType="sd15"
+                    makeDefaultParams={makeDefaultParams}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="grape"
+                    name="SDXL"
+                    value={baseModelXL}
+                    baseType="sdxl"
+                    makeDefaultParams={makeDefaultParams}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="pink"
+                    name="SD 3.5"
+                    value={baseModel35}
+                    baseType="sd35"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew={new Date() < new Date('2024-11-10')}
+                  />
+                  <ModelSelector
+                    selectedRun={selectedRun}
+                    color="red"
+                    name="Flux"
+                    value={baseModelFlux}
+                    baseType="flux"
+                    makeDefaultParams={makeDefaultParams}
+                    isNew={new Date() < new Date('2024-09-01')}
+                  />
+                </>
+              )}
+              {canDoVideo && (
+                <ModelSelector
+                  selectedRun={selectedRun}
+                  color="teal"
+                  name="Video"
+                  value={baseModelVideo}
+                  baseType="video"
+                  makeDefaultParams={makeDefaultParams}
+                  isNew={new Date() < new Date('2025-04-30')}
+                />
+              )}
+              {canDoCustom && (
+                <ModelSelector
+                  selectedRun={selectedRun}
+                  color="cyan"
+                  name="Custom"
+                  value=""
+                  baseType="sdxl" // unused
+                  makeDefaultParams={makeDefaultParams}
+                  isCustom
+                />
+              )}
             </Stack>
           </Card.Section>
           {formBaseModel && (

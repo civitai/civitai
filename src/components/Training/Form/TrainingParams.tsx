@@ -35,6 +35,11 @@ export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTyp
     rapid: '(empty)',
   },
 };
+export const optimizerArgMapVideo: { [key in OptimizerTypes]: string } = {
+  Adafactor: '',
+  AdamW8Bit: '',
+  Prodigy: '',
+};
 
 type BaseTrainingSettingsType = {
   name: keyof TrainingDetailsParams;
@@ -135,6 +140,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       },
       sd3_medium: { all: { default: 5 } },
       sd3_large: { all: { default: 5 } },
+      hunyuan: { all: { min: 1, max: 20 } },
     },
   },
   {
@@ -173,6 +179,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       },
       sd3_medium: { all: { default: 4, max: 4 } },
       sd3_large: { all: { default: 4, max: 4 } },
+      hunyuan: { all: { default: 2, min: 1, max: 4 } },
     },
   },
   {
@@ -216,6 +223,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sdxl: { all: { min: 1024, max: 2048, default: 1024 } },
       pony: { all: { min: 1024, max: 2048, default: 1024 } },
       illustrious: { all: { min: 1024, max: 2048, default: 1024 } },
+      hunyuan: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
     },
   },
   {
@@ -255,6 +263,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       sd3_large: {
         all: { disabled: true },
       },
+      hunyuan: {
+        all: { disabled: true },
+      },
     },
   },
   {
@@ -284,6 +295,9 @@ export const trainingSettings: TrainingSettingsType[] = [
       sd3_large: {
         all: { disabled: true },
       },
+      hunyuan: {
+        all: { disabled: true },
+      },
     },
   },
   {
@@ -298,6 +312,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       anime: { all: { default: 2 } },
       flux_dev: { 'x-flux': { disabled: true, default: 0, min: 0, max: 0 } },
+      hunyuan: {
+        all: { disabled: true, default: 0, min: 0, max: 0 },
+      },
     },
   },
   {
@@ -309,6 +326,9 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       flux_dev: {
         'x-flux': { disabled: true },
+      },
+      hunyuan: {
+        all: { disabled: true },
       },
     },
   },
@@ -327,6 +347,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       },
       sd3_medium: { all: { default: 1e-5 } },
       sd3_large: { all: { default: 1e-5 } },
+      hunyuan: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
     },
   },
   {
@@ -343,6 +364,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: { all: { disabled: true, default: 0, max: 0 } },
       sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
       sd3_large: { all: { disabled: true, default: 0, max: 0 } },
+      hunyuan: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -355,6 +377,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       pony: { all: { default: 'cosine' } },
       flux_dev: { 'x-flux': { default: 'cosine', disabled: true } },
+      hunyuan: { all: { default: 'constant' } },
     },
   },
   {
@@ -371,6 +394,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: {
         'x-flux': { disabled: true, default: 0, min: 0, max: 0 },
       },
+      hunyuan: { all: { default: 1 } },
     },
   },
   {
@@ -394,6 +418,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       pony: { all: { default: 0 } },
       flux_dev: { 'x-flux': { disabled: true, default: 0, max: 0 } },
+      hunyuan: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -439,6 +464,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 8 } },
       flux_dev: { 'x-flux': { disabled: true, default: 1, min: 1, max: 1 } },
+      hunyuan: { all: { default: 1 } },
     },
   },
   {
@@ -453,6 +479,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       pony: { all: { default: 0.03 } },
       flux_dev: { 'x-flux': { disabled: true, default: 0, min: 0, max: 0 } },
+      hunyuan: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
   {
@@ -493,6 +520,7 @@ export const trainingSettings: TrainingSettingsType[] = [
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
         'x-flux': { default: optimizerArgMapFlux.AdamW8Bit['x-flux'] },
       },
+      hunyuan: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
     },
   },
 ];
