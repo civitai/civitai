@@ -1,0 +1,31 @@
+.raterBadge {
+  position: relative;
+  cursor: default;
+  border: 1px solid theme('colors.blue.5');
+  padding-left: 5px;
+  background-color: theme('colors.gray.0');
+  
+  div {
+    position: absolute;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    background-color: theme('colors.blue.5');
+    opacity: 0.3;
+  }
+
+  span {
+    display: flex;
+    align-items: center;
+  }
+
+  svg {
+    margin-right: 5px;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .raterBadge {
+    background-color: theme('colors.dark.4');
+  }
+}

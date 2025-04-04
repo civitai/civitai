@@ -351,15 +351,6 @@ export enum SignalTopic {
   NewOrderQueue = 'new-order-queue', // with :queueId
 }
 
-export enum NewOrderImageRating {
-  Sanctified = 'Sanctified',
-  Blessed = 'Blessed',
-  Virtuous = 'Virtuous',
-  Tempted = 'Tempted',
-  Tainted = 'Tainted',
-  Damned = 'Damned',
-}
-
 export enum NewOrderImageRatingStatus {
   Correct = 'Correct',
   Pending = 'Pending',
@@ -369,9 +360,9 @@ export enum NewOrderImageRatingStatus {
 }
 
 export enum NewOrderDamnedReason {
-  None = 'None',
+  InappropriateMinors = 'InappropriateMinors',
+  RealisticMinors = 'RealisticMinors',
+  InappropriateRealPerson = 'InappropriateRealPerson',
   Bestiality = 'Bestiality',
-  Deepfake = 'Deepfake',
-  Incest = 'Incest',
-  CSAM = 'CSAM',
+  GraphicViolence = 'GraphicViolence',
 }

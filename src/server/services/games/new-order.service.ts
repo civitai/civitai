@@ -1,7 +1,6 @@
 import { ReactQueryDevtoolsPanel } from '@tanstack/react-query-devtools';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import {
-  NewOrderImageRating,
   NewOrderImageRatingStatus,
   ImageSort,
   NsfwLevel,
@@ -137,22 +136,13 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   return smite;
 }
 
-const NewOrderImageRatingToNsfwLevel: Record<NewOrderImageRating, NsfwLevel> = {
-  [NewOrderImageRating.Sanctified]: NsfwLevel.PG,
-  [NewOrderImageRating.Blessed]: NsfwLevel.PG13,
-  [NewOrderImageRating.Virtuous]: NsfwLevel.R,
-  [NewOrderImageRating.Tempted]: NsfwLevel.X,
-  [NewOrderImageRating.Tainted]: NsfwLevel.XXX,
-  [NewOrderImageRating.Damned]: NsfwLevel.Blocked,
-};
-
 export async function addImageRating({
   playerId,
   imageId,
   rating,
   damnedReason,
   chTracker,
-}: AddImageRatingInput & { chTracker?: Tracker }) {
+}: AddImageRatingInput & { playerId: number; chTracker?: Tracker }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   const player = await dbRead.newOrderPlayer.findUnique({
@@ -188,7 +178,7 @@ export async function addImageRating({
 
   // TODO.newOrder: adjust status based on rating distance
   const status =
-    image.nsfwLevel === NewOrderImageRatingToNsfwLevel[rating]
+    image.nsfwLevel === rating
       ? NewOrderImageRatingStatus.Correct
       : NewOrderImageRatingStatus.Failed;
 
@@ -281,7 +271,7 @@ export async function addImageRating({
     }
 
     // Check if they all voted damned:
-    if (keys.length === 1 && keys[0].endsWith(NewOrderImageRating.Damned)) {
+    if (keys.length === 1 && keys[0].endsWith(`${NsfwLevel.Blocked}`)) {
       // TODO.newOrder: Handle damned image. Send to mods.
       processed = true;
     }
@@ -296,23 +286,19 @@ export async function addImageRating({
       });
     }
 
-    const rating = keys[0].split('-')[1] as NewOrderImageRating;
-    const ratedNsfwLevel = NewOrderImageRatingToNsfwLevel[rating];
+    const rating = Number(keys[0].split('-')[1]);
     const currentNsfwLevel = image.nsfwLevel;
 
-    if (ratedNsfwLevel !== currentNsfwLevel && !processed) {
+    if (rating !== currentNsfwLevel && !processed) {
       // Check if lower:
-      if (ratedNsfwLevel < currentNsfwLevel) {
+      if (rating < currentNsfwLevel) {
         // Raise to templars because they lowered the rating.
         await addImageToQueue({
           imageId,
           rankType: NewOrderRankType.Templar,
           priority: 1,
         });
-      } else if (
-        ratedNsfwLevel > currentNsfwLevel &&
-        Flags.increaseByBits(ratedNsfwLevel) !== currentNsfwLevel
-      ) {
+      } else if (rating > currentNsfwLevel && Flags.increaseByBits(rating) !== currentNsfwLevel) {
         // Raise to templars because the diff. is more than 1 level up:
         await addImageToQueue({
           imageId,
@@ -323,7 +309,7 @@ export async function addImageRating({
         // Else, we're good :)
         await dbWrite.image.update({
           where: { id: imageId },
-          data: { nsfwLevel: ratedNsfwLevel },
+          data: { nsfwLevel: rating },
         });
       }
 

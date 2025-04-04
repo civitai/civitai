@@ -518,6 +518,7 @@ export class Tracker {
 
   public newOrderImageRating(
     values: AddImageRatingInput & {
+      playerId: number;
       status: NewOrderImageRatingStatus;
       grantedExp: number;
       multiplier: number;

@@ -1,25 +1,25 @@
-import { useState } from 'react';
-import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useStorage } from '~/hooks/useStorage';
-import { NewOrderImageRating, SignalMessages, SignalTopic } from '~/server/common/enums';
+import {
+  NewOrderDamnedReason,
+  NsfwLevel,
+  SignalMessages,
+  SignalTopic,
+} from '~/server/common/enums';
+import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 // TODO.newOrder: complete signal setup
 export const useKnightsNewOrderListener = () => {
   const queryUtils = trpc.useUtils();
-  const [imagesQueue, setImagesQueue] = useStorage({
-    key: 'kono-image-queue',
-    type: 'localStorage',
-    defaultValue: [] as ImageProps[],
-  });
 
   useSignalTopic(SignalTopic.NewOrderPlayer);
   useSignalTopic(SignalTopic.NewOrderQueue);
 
   // Used to update player stats (exp, fervor, blessed buzz, rank, etc.)
   useSignalConnection(SignalMessages.NewOrderPlayerUpdate, (data) => {
-    // console.log(data);
     queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
       if (!old) return old;
 
@@ -29,14 +29,21 @@ export const useKnightsNewOrderListener = () => {
 
   // Used to update the current image queue
   useSignalConnection(SignalMessages.NewOrderQueueUpdate, (data) => {
-    // console.log(data);
-    setImagesQueue((old) => [...old, ...data]);
+    queryUtils.games.newOrder.getImagesQueue.setData({ limit: 100 }, (old) => {
+      if (!old) return old;
+
+      return [...old, ...data];
+    });
   });
 };
 
 export const useJoinKnightsNewOrder = () => {
   const queryUtils = trpc.useUtils();
-  const [joined, setJoined] = useState(false);
+  const [joined, setJoined] = useStorage({
+    key: 'joined-kono',
+    type: 'localStorage',
+    defaultValue: false,
+  });
 
   const joinKnightsNewOrderMutation = trpc.games.newOrder.join.useMutation({
     onSuccess: (result) => {
@@ -57,6 +64,7 @@ export const useJoinKnightsNewOrder = () => {
     playerData,
     joinKnightsNewOrder: joinKnightsNewOrderMutation.mutateAsync,
     isLoading: isInitialLoading || joinKnightsNewOrderMutation.isLoading,
+    joined,
   };
 };
 
@@ -71,35 +79,34 @@ export const useQueryKnightsNewOrderImageQueue = (opts?: { enabled?: boolean }) 
   return { data, isLoading };
 };
 
-export const ratingExplanationMap = {
-  [NewOrderImageRating.Sanctified]: {
-    description: 'Wholly pure, divine, and without blemish',
-    icon: '✨',
-    shade: 'white',
-  },
-  [NewOrderImageRating.Blessed]: {
-    description: 'Nearly pure, but with minor imperfections',
-    icon: '🕊️',
-    shade: 'gold',
-  },
-  [NewOrderImageRating.Virtuous]: {
-    description: 'Mostly righteous, but contains elements that may need guidance',
-    icon: '🔥',
-    shade: 'silver',
-  },
-  [NewOrderImageRating.Tempted]: {
-    description: 'Contains some questionable elements, requiring discernment',
-    icon: '⚖️',
-    shade: 'bronze',
-  },
-  [NewOrderImageRating.Tainted]: {
-    description: 'Clearly impure, but not wholly lost. Needs caution',
-    icon: '⚔',
-    shade: 'red',
-  },
-  [NewOrderImageRating.Damned]: {
-    description: 'Beyond redemption, fully corrupted',
-    icon: '☠️',
-    shade: 'black',
-  },
+export const useAddImageRatingMutation = () => {
+  const queryUtils = trpc.useUtils();
+  const addRatingMutation = trpc.games.newOrder.addRating.useMutation({
+    onSuccess: (_, payload) => {
+      queryUtils.games.newOrder.getImagesQueue.setData({ limit: 100 }, (old) => {
+        if (!old) return old;
+
+        return old.filter((image) => image.id !== payload.imageId);
+      });
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
+    },
+  });
+
+  const handleAddRating = (input: Omit<AddImageRatingInput, 'playerId'>) => {
+    return addRatingMutation.mutateAsync(input);
+  };
+
+  return { addRating: handleAddRating, isLoading: addRatingMutation.isLoading };
 };
+
+export const ratingOptions = [...browsingLevels, NsfwLevel.Blocked];
+
+export const damnedReasonOptions = [
+  NewOrderDamnedReason.InappropriateMinors,
+  NewOrderDamnedReason.RealisticMinors,
+  NewOrderDamnedReason.InappropriateRealPerson,
+  NewOrderDamnedReason.Bestiality,
+  NewOrderDamnedReason.GraphicViolence,
+] as const;
