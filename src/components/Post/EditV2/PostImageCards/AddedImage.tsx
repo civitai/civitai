@@ -82,6 +82,7 @@ import { isDefined } from '~/utils/type-guards';
 import { CustomCard } from './CustomCard';
 import { BlockedReason } from '~/server/common/enums';
 import { isValidAIGeneration } from '~/utils/image-utils';
+import { VotableTagModel } from '~/libs/tags';
 
 // #region [types]
 type SimpleMetaPropsKey = keyof typeof simpleMetaProps;
@@ -608,6 +609,7 @@ function EditDetail() {
     isPendingManualAssignment,
   } = useAddedImageContext();
   const postId = usePostEditStore((state) => state.post?.id);
+  const updateImage = usePostEditStore((state) => state.updateImage);
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
 
@@ -1046,6 +1048,11 @@ function EditDetail() {
               nsfwLevel={image.nsfwLevel}
               collapsible
               canAdd
+              onTagsLoaded={(tags) => {
+                updateImage(image.id, (img) => {
+                  img.tags = tags.map((t) => ({ ...t, imageId: image.id }));
+                });
+              }}
             />
           </>
         )}

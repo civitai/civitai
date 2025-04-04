@@ -78,10 +78,11 @@ export function PostEditForm() {
         <Alert color="red">
           <div className="flex flex-col gap-2">
             <p>
-              Some images&rsquo; rating levels are not available in this domain. This means that
-              users will not be able to see them unelss they access the relevant Civitai domain.
+              <span className="font-bold">Note</span>: Some image rating levels are not supported on
+              this domain. As a result, those images will not be visible here. To view them, please
+              visit the appropriate Civitai domain
             </p>
-            <p>Rating levels avialable on this domain are as follows</p>
+            <p>The supported rating levels on this domain are:</p>
             <div className="flex flex-wrap gap-2">
               {domainSettings.allowedNsfwLevels.map((level) => (
                 <Badge key={level} color="dark" variant="filled">
