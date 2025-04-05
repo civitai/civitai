@@ -13,7 +13,7 @@ import {
   TextInput,
   NumberInput,
 } from '@mantine/core';
-import { Carousel } from '@mantine/carousel';
+
 import { IconArrowLeft, IconCheck, IconPlus, IconX } from '@tabler/icons-react';
 import { useState } from 'react';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -30,6 +30,7 @@ import { getRandom, shuffle } from '~/utils/array-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { ChoppedLayout } from '~/components/Chopped/chopped.components';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 
 export function Complete() {
   const submissions = useChoppedStore((state) =>
@@ -54,15 +55,19 @@ export function Complete() {
       //   </div>
       // }
     >
-      <Carousel className="w-full" withIndicators>
-        {submissions.map((submission) => (
-          <Carousel.Slide key={submission.id}>
-            <div className="flex justify-center">
-              <ChoppedUserSubmission submission={submission} />
-            </div>
-          </Carousel.Slide>
-        ))}
-      </Carousel>
+      <Embla className="w-full" withIndicators>
+        <Embla.Viewport>
+          <Embla.Container className="flex">
+            {submissions.map((submission, index) => (
+              <Embla.Slide key={submission.id} index={index} className="flex-[0_0_100%]">
+                <div className="flex justify-center">
+                  <ChoppedUserSubmission submission={submission} />
+                </div>
+              </Embla.Slide>
+            ))}
+          </Embla.Container>
+        </Embla.Viewport>
+      </Embla>
     </ChoppedLayout>
   );
 }

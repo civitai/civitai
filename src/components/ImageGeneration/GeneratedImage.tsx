@@ -1,4 +1,3 @@
-import { Carousel, Embla, useAnimationOffsetEffect } from '@mantine/carousel';
 import {
   ActionIcon,
   Center,
@@ -73,6 +72,8 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { WorkflowDefinitionKey } from '~/server/services/orchestrator/comfy/comfy.types';
 import { useGeneratedItemStore } from '~/components/Generation/stores/generated-item.store';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { EmblaCarouselType } from 'embla-carousel';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -200,7 +201,7 @@ export function GeneratedImage({
       className={clsx('max-h-full max-w-full', classes.imageWrapper)}
       style={{ aspectRatio: image.aspectRatio ?? image.width / image.height }}
     >
-      {inView && (
+      {(isLightbox || inView) && (
         <>
           <div
             className={clsx('relative flex flex-1 flex-col items-center justify-center', {
@@ -410,8 +411,6 @@ const useStyles = createStyles((theme, _params, getRef) => {
   };
 });
 
-const TRANSITION_DURATION = 200;
-
 export function GeneratedImageLightbox({
   image,
   request,
@@ -422,8 +421,8 @@ export function GeneratedImageLightbox({
   const dialog = useDialogContext();
   const { steps } = useGetTextToImageRequestsImages();
 
-  const [embla, setEmbla] = useState<Embla | null>(null);
-  useAnimationOffsetEffect(embla, TRANSITION_DURATION);
+  const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
+  // useAnimationOffsetEffect(embla, TRANSITION_DURATION);
 
   useHotkeys([
     ['ArrowLeft', () => embla?.scrollPrev()],
@@ -433,7 +432,7 @@ export function GeneratedImageLightbox({
   const images = steps.flatMap((step) =>
     step.images
       .filter((x) => x.status === 'succeeded')
-      .map((image) => ({ ...image, params: { ...step.params, seed: image.seed } }))
+      .map((image) => ({ ...image, params: { ...step.params, seed: image.seed }, step }))
   );
 
   const [slide, setSlide] = useState(() => {
@@ -444,41 +443,36 @@ export function GeneratedImageLightbox({
   return (
     <Modal {...dialog} closeButtonLabel="Close lightbox" fullScreen>
       <IntersectionObserverProvider id="generated-image-lightbox">
-        <Carousel
+        <Embla
           align="center"
-          slideGap="md"
-          slidesToScroll={1}
+          withControls
           controlSize={40}
-          initialSlide={slide}
-          getEmblaApi={setEmbla}
-          withKeyboardEvents={false}
-          onSlideChange={setSlide}
+          startIndex={slide}
           loop
+          onSlideChange={setSlide}
+          withKeyboardEvents={false}
+          setEmbla={setEmbla}
         >
-          {steps.flatMap((step) =>
-            step.images
-              .filter((x) => x.status === 'succeeded')
-              .map((image) => (
-                <Carousel.Slide
+          <Embla.Viewport>
+            <Embla.Container className="flex" style={{ height: 'calc(100vh - 84px)' }}>
+              {images.map((image, index) => (
+                <Embla.Slide
                   key={`${image.workflowId}_${image.id}`}
-                  style={{
-                    height: 'calc(100vh - 84px)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
+                  index={index}
+                  className="flex flex-[0_0_100%] items-center justify-center"
                 >
                   {image.url && (
                     <GeneratedImage
-                      image={{ ...image, params: { ...step.params, seed: image.seed } } as any} // TODO - fix this
+                      image={image} // TODO - fix this
                       request={request}
-                      step={step}
+                      step={image.step}
                     />
                   )}
-                </Carousel.Slide>
-              ))
-          )}
-        </Carousel>
+                </Embla.Slide>
+              ))}
+            </Embla.Container>
+          </Embla.Viewport>
+        </Embla>
       </IntersectionObserverProvider>
       <div
         style={{

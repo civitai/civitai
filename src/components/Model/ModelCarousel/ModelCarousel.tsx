@@ -1,4 +1,3 @@
-import { Carousel } from '@mantine/carousel';
 import {
   ActionIcon,
   Box,
@@ -28,6 +27,7 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -156,120 +156,127 @@ function ModelCarouselContent({
     );
 
   return (
-    <Carousel
+    <Embla
       key={modelId}
-      className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
-      classNames={classes}
-      slideSize="50%"
-      breakpoints={[{ maxWidth: 'md', slideSize: '100%', slideGap: 2 }]}
-      slideGap="xl"
       align={images.length > 2 ? 'start' : 'center'}
-      slidesToScroll="auto"
+      slidesToScroll={1}
       withControls={images.length > 2 ? true : false}
       controlSize={mobile ? 32 : 56}
       loop
+      initialHeight={mobile ? 300 : 600}
     >
-      {images.map((image) => {
-        const fromCommunity = image.user.id !== modelUserId;
-        return (
-          <Carousel.Slide key={image.id}>
-            <Center h="100%" w="100%">
-              <div style={{ width: '100%', position: 'relative' }}>
-                <ImageGuard2 image={image} connectType="model" connectId={modelId}>
-                  {(safe) => (
-                    <>
-                      <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
-                      <Stack spacing="xs" align="flex-end" className="absolute right-2 top-2 z-10">
-                        <ImageContextMenu image={image} />
-                        {features.imageGeneration && (image.hasPositivePrompt ?? image.hasMeta) && (
-                          <HoverActionButton
-                            label="Remix"
-                            size={30}
-                            color="white"
-                            variant="filled"
-                            data-activity="remix:model-carousel"
-                            data-tour="model:remix"
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-
-                              generationPanel.open({
-                                type: image.type,
-                                id: image.id,
-                              });
-
-                              if (running) helpers?.next();
-                            }}
-                          >
-                            <IconBrush stroke={2.5} size={16} />
-                          </HoverActionButton>
-                        )}
-                      </Stack>
-                      <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
-                        <Indicator
-                          label="From Community"
-                          radius="sm"
-                          position="top-center"
-                          size={24}
-                          disabled={!fromCommunity}
-                          withBorder
+      <Embla.Viewport>
+        <Embla.Container className="-ml-3 flex @md:-ml-6">
+          {images.map((image, index) => {
+            const fromCommunity = image.user.id !== modelUserId;
+            return (
+              <Embla.Slide
+                key={image.id}
+                index={index}
+                className="flex flex-[0_0_100%] items-center justify-center pl-3 @md:flex-[0_0_50%] @md:pl-6"
+              >
+                <div className="relative w-full">
+                  <ImageGuard2 image={image} connectType="model" connectId={modelId}>
+                    {(safe) => (
+                      <>
+                        <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+                        <Stack
+                          spacing="xs"
+                          align="flex-end"
+                          className="absolute right-2 top-2 z-10"
                         >
-                          <ImagePreview
-                            image={image}
-                            edgeImageProps={{ width: 450 }}
-                            aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
-                            // radius="md"
-                            style={{ width: '100%' }}
-                            nsfw={!safe}
-                          />
-                        </Indicator>
-                      </RoutedDialogLink>
-                      <Reactions
-                        entityId={image.id}
-                        entityType="image"
-                        reactions={image.reactions}
-                        metrics={{
-                          likeCount: image.stats?.likeCountAllTime,
-                          dislikeCount: image.stats?.dislikeCountAllTime,
-                          heartCount: image.stats?.heartCountAllTime,
-                          laughCount: image.stats?.laughCountAllTime,
-                          cryCount: image.stats?.cryCountAllTime,
-                        }}
-                        readonly={!safe}
-                        className={classes.reactions}
-                        targetUserId={image.user.id}
-                      />
-                      {image.hasMeta && (
-                        <div className="absolute bottom-0.5 right-0.5 z-10">
-                          <ImageMetaPopover2 imageId={image.id} type={image.type}>
-                            <ActionIcon variant="transparent" size="lg">
-                              <IconInfoCircle
+                          <ImageContextMenu image={image} />
+                          {features.imageGeneration &&
+                            (image.hasPositivePrompt ?? image.hasMeta) && (
+                              <HoverActionButton
+                                label="Remix"
+                                size={30}
                                 color="white"
-                                filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
-                                opacity={0.8}
-                                strokeWidth={2.5}
-                                size={26}
-                              />
-                            </ActionIcon>
-                          </ImageMetaPopover2>
-                        </div>
-                      )}
-                    </>
-                  )}
-                </ImageGuard2>
-              </div>
-            </Center>
-          </Carousel.Slide>
-        );
-      })}
-      {hiddenExplained.hasHidden && (
-        <Carousel.Slide>
-          <Card withBorder component={Center} mih={450} h="100%" w="100%">
-            <ExplainHiddenImages {...hiddenExplained} />
-          </Card>
-        </Carousel.Slide>
-      )}
-    </Carousel>
+                                variant="filled"
+                                data-activity="remix:model-carousel"
+                                data-tour="model:remix"
+                                onClick={(e) => {
+                                  e.preventDefault();
+                                  e.stopPropagation();
+
+                                  generationPanel.open({
+                                    type: image.type,
+                                    id: image.id,
+                                  });
+
+                                  if (running) helpers?.next();
+                                }}
+                              >
+                                <IconBrush stroke={2.5} size={16} />
+                              </HoverActionButton>
+                            )}
+                        </Stack>
+                        <RoutedDialogLink name="imageDetail" state={{ imageId: image.id, images }}>
+                          <Indicator
+                            label="From Community"
+                            radius="sm"
+                            position="top-center"
+                            size={24}
+                            disabled={!fromCommunity}
+                            withBorder
+                          >
+                            <ImagePreview
+                              image={image}
+                              edgeImageProps={{ width: 450 }}
+                              aspectRatio={(image.width ?? 1) / (image.height ?? 1)}
+                              // radius="md"
+                              style={{ width: '100%' }}
+                              nsfw={!safe}
+                            />
+                          </Indicator>
+                        </RoutedDialogLink>
+                        <Reactions
+                          entityId={image.id}
+                          entityType="image"
+                          reactions={image.reactions}
+                          metrics={{
+                            likeCount: image.stats?.likeCountAllTime,
+                            dislikeCount: image.stats?.dislikeCountAllTime,
+                            heartCount: image.stats?.heartCountAllTime,
+                            laughCount: image.stats?.laughCountAllTime,
+                            cryCount: image.stats?.cryCountAllTime,
+                          }}
+                          readonly={!safe}
+                          className={classes.reactions}
+                          targetUserId={image.user.id}
+                        />
+                        {image.hasMeta && (
+                          <div className="absolute bottom-0.5 right-0.5 z-10">
+                            <ImageMetaPopover2 imageId={image.id} type={image.type}>
+                              <ActionIcon variant="transparent" size="lg">
+                                <IconInfoCircle
+                                  color="white"
+                                  filter="drop-shadow(1px 1px 2px rgb(0 0 0 / 50%)) drop-shadow(0px 5px 15px rgb(0 0 0 / 60%))"
+                                  opacity={0.8}
+                                  strokeWidth={2.5}
+                                  size={26}
+                                />
+                              </ActionIcon>
+                            </ImageMetaPopover2>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </ImageGuard2>
+                </div>
+              </Embla.Slide>
+            );
+          })}
+          {hiddenExplained.hasHidden && (
+            <Embla.Slide className="flex-[0_0_100%] pl-3 @md:flex-[0_0_50%] @md:pl-6">
+              <Card withBorder component={Center} mih={450} h="100%" w="100%">
+                <ExplainHiddenImages {...hiddenExplained} />
+              </Card>
+            </Embla.Slide>
+          )}
+        </Embla.Container>
+      </Embla.Viewport>
+    </Embla>
   );
 }
 
