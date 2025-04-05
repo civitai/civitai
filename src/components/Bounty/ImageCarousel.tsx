@@ -1,9 +1,7 @@
-import { Carousel } from '@mantine/carousel';
 import { ActionIcon, Box, Card, Center, createStyles, Loader } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
-import { useEffect, useMemo } from 'react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
@@ -14,6 +12,9 @@ import {
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { breakpoints } from '~/utils/tailwind';
+import { useMemo } from 'react';
 
 const useStyles = createStyles((theme) => ({
   control: {
@@ -114,7 +115,6 @@ export function ImageCarouselContent({
   mobile = false,
   onClick,
   isLoading: loading,
-  onImageChange,
 }: Props) {
   const { classes, cx } = useStyles();
 
@@ -134,12 +134,6 @@ export function ImageCarouselContent({
   const isLoading = loading || loadingPreferences;
   const hiddenExplained = useExplainHiddenImages(transformed);
 
-  useEffect(() => {
-    if (filteredImages.length > 0) {
-      onImageChange?.(mobile ? [filteredImages[0]] : filteredImages.slice(0, 2));
-    }
-  }, [filteredImages]);
-
   if (isLoading)
     return (
       <Box
@@ -158,57 +152,50 @@ export function ImageCarouselContent({
     );
 
   return (
-    <Box pos="relative">
-      <Carousel
-        key={connectId}
-        className={cx(
-          !mobile && classes.carousel,
-          mobile && classes.mobileBlock,
-          isLoading && classes.loadingCarousel
-        )}
-        classNames={classes}
-        slideSize="50%"
-        breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-        slideGap="xl"
-        align={filteredImages.length > 1 ? 'start' : 'center'}
-        slidesToScroll="auto"
-        withControls={filteredImages.length > 2 ? true : false}
-        controlSize={mobile ? 32 : 56}
-        loop
-        onSlideChange={(index) => {
-          if (onImageChange) {
-            onImageChange(
-              mobile ? [filteredImages[index]] : filteredImages.slice(index, index + 2)
-            );
-          }
-        }}
-      >
-        {filteredImages.map((image) => (
-          <Carousel.Slide key={image.id}>
-            <Box
-              sx={{ cursor: 'pointer' }}
-              onClick={onClick ? () => onClick(image) : undefined}
-              tabIndex={0}
-              role="button"
-              onKeyDown={
-                onClick
-                  ? (e) => {
-                      const keyDown = e.key !== undefined ? e.key : e.keyCode;
-                      if (
-                        keyDown === 'Enter' ||
-                        keyDown === 13 ||
-                        ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
-                        keyDown === 32
-                      ) {
-                        // (prevent default so the page doesn't scroll when pressing space)
-                        e.preventDefault();
-                        onClick(image);
-                      }
-                    }
-                  : undefined
-              }
+    <Embla
+      key={connectId}
+      align={filteredImages.length > 1 ? 'start' : 'center'}
+      slidesToScroll={1}
+      withControls={filteredImages.length > 2 ? true : false}
+      controlSize={mobile ? 32 : 56}
+      breakpoints={{
+        [`(min-width: ${breakpoints.sm}px)`]: {
+          slidesToScroll: 2,
+        },
+      }}
+      loop
+    >
+      <Embla.Viewport>
+        <Embla.Container className="flex">
+          {filteredImages.map((image, index) => (
+            <Embla.Slide
+              key={image.id}
+              index={index}
+              className="flex-[0_0_100%] pl-3 @md:flex-[0_0_50%] @md:pl-6"
             >
-              <Center className="size-full">
+              <div
+                className="flex cursor-pointer items-center justify-center"
+                onClick={onClick ? () => onClick(image) : undefined}
+                tabIndex={0}
+                role="button"
+                onKeyDown={
+                  onClick
+                    ? (e) => {
+                        const keyDown = e.key !== undefined ? e.key : e.keyCode;
+                        if (
+                          keyDown === 'Enter' ||
+                          keyDown === 13 ||
+                          ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
+                          keyDown === 32
+                        ) {
+                          // (prevent default so the page doesn't scroll when pressing space)
+                          e.preventDefault();
+                          onClick(image);
+                        }
+                      }
+                    : undefined
+                }
+              >
                 <div className="relative w-full">
                   <ImageGuard2 image={image} connectType={connectType} connectId={connectId}>
                     {(safe) => (
@@ -237,19 +224,22 @@ export function ImageCarouselContent({
                     )}
                   </ImageGuard2>
                 </div>
-              </Center>
-            </Box>
-          </Carousel.Slide>
-        ))}
-        {hiddenExplained.hasHidden && (
-          <Carousel.Slide>
-            <Card withBorder component={Center} mih={450} h="100%" w="100%">
-              <ExplainHiddenImages {...hiddenExplained} />
-            </Card>
-          </Carousel.Slide>
-        )}
-      </Carousel>
-    </Box>
+              </div>
+            </Embla.Slide>
+          ))}
+          {hiddenExplained.hasHidden && (
+            <Embla.Slide
+              index={filteredImages.length}
+              className="flex-[0_0_100%] pl-3 @md:flex-[0_0_50%] @md:pl-6"
+            >
+              <Card withBorder component={Center} mih={450} h="100%" w="100%">
+                <ExplainHiddenImages {...hiddenExplained} />
+              </Card>
+            </Embla.Slide>
+          )}
+        </Embla.Container>
+      </Embla.Viewport>
+    </Embla>
   );
 }
 
@@ -258,5 +248,4 @@ type Props = {
   mobile?: boolean;
   onClick?: (image: ImageProps) => void;
   isLoading?: boolean;
-  onImageChange?: (images: ImageProps[]) => void;
 } & ImageGuardConnect;

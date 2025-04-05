@@ -1,14 +1,6 @@
 const plugin = require('tailwindcss/plugin');
 const colors = require('tailwindcss/colors');
-const { keyframes } = require('@mantine/core');
-
-const breakpoints = {
-  xs: '576px',
-  sm: '768px',
-  md: '992px',
-  lg: '1200px',
-  xl: '1400px',
-};
+const { breakpoints } = require('./src/utils/tailwind')
 
 const fontFamilies = [
   '"-apple-system"',
