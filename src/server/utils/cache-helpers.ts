@@ -213,7 +213,9 @@ export function createCachedArray<T extends object>({
     }
 
     // Invalidate cache
-    const invaliDate = new Date(Date.now() + (options.debounceTime ?? debounceTime) * 1000);
+    const invaliDate = new Date(
+      Date.now() - ttl * 1000 + (options.debounceTime ?? debounceTime) * 1000
+    );
     const updates = cacheResults.filter(
       (x) => x !== null && 'cachedAt' in x && x.cachedAt !== invaliDate
     ) as T[];
@@ -221,7 +223,13 @@ export function createCachedArray<T extends object>({
     const toCache = Object.fromEntries(
       updates.map((x) => [x[idKey], { ...x, cachedAt: invaliDate }])
     );
-    await redis.packed.mSet(toCache);
+    const EX = ttl * 2;
+    if (Object.keys(toCache).length > 0)
+      await Promise.all(
+        Object.entries(toCache).map(([id, cache]) =>
+          redis.packed.set(`${key}:${id}`, cache, { EX })
+        )
+      );
 
     log(`Invalidated ${ids.length} ${key} items: ${ids.join(', ')}`);
   }

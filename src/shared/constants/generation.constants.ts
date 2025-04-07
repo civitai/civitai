@@ -618,6 +618,11 @@ export const engineDefinitions: EnginesDictionary = {
     label: 'Mochi',
     description: `Mochi 1 preview, by creators [https://www.genmo.ai](https://www.genmo.ai) is an open state-of-the-art video generation model with high-fidelity motion and strong prompt adherence in preliminary evaluation`,
   },
+  vidu: {
+    label: 'Vidu',
+    description: '',
+    whatIf: ['duration'],
+  },
 };
 
 export const generationFormWorkflowConfigurations = videoGenerationConfig;

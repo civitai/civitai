@@ -677,7 +677,6 @@ export function ModelVersionDetails({
               modelVersionId={version.id}
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
-              mobile
             />
           )}
           {showRequestReview ? (
@@ -1446,7 +1445,6 @@ export function ModelVersionDetails({
               modelVersionId={version.id}
               modelUserId={model.user.id}
               limit={CAROUSEL_LIMIT}
-              onBrowseClick={onBrowseClick}
             />
           )}
           {model.description ? (

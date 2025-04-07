@@ -1,4 +1,4 @@
-import { Button, Menu, useMantineTheme } from '@mantine/core';
+import { Button, Loader, Menu, useMantineTheme } from '@mantine/core';
 import {
   IconBan,
   IconDotsVertical,
@@ -8,6 +8,7 @@ import {
   IconTrash,
   IconFileSettings,
   IconCloudX,
+  IconAi,
 } from '@tabler/icons-react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
@@ -18,6 +19,8 @@ import { useRouter } from 'next/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { useToggleCheckpointCoverageMutation } from '~/components/Model/model.utils';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 
 export function ModelVersionMenu({
   modelVersionId,
@@ -26,6 +29,8 @@ export function ModelVersionMenu({
   canDelete,
   active,
   published,
+  canGenerate,
+  showToggleCoverage,
 }: {
   modelVersionId: number;
   modelId: number;
@@ -33,28 +38,31 @@ export function ModelVersionMenu({
   canDelete: boolean;
   active: boolean;
   published: boolean;
+  canGenerate: boolean;
+  showToggleCoverage: boolean;
 }) {
   const router = useRouter();
   const currentUser = useCurrentUser();
   const theme = useMantineTheme();
   const queryUtils = trpc.useUtils();
+  const features = useFeatureFlags();
 
   const bustModelVersionCacheMutation = trpc.modelVersion.bustCache.useMutation();
   function handleBustCache() {
     bustModelVersionCacheMutation.mutate({ id: modelVersionId });
   }
 
-  // const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
-  // const handleToggleCoverage = async ({
-  //   modelId,
-  //   versionId,
-  // }: {
-  //   modelId: number;
-  //   versionId: number;
-  // }) => {
-  //   // Error is handled at the hook level
-  //   await toggle({ id: modelId, versionId }).catch(() => null);
-  // };
+  const { toggle, isLoading } = useToggleCheckpointCoverageMutation();
+  const handleToggleCoverage = async ({
+    modelId,
+    versionId,
+  }: {
+    modelId: number;
+    versionId: number;
+  }) => {
+    // Error is handled at the hook level
+    await toggle({ id: modelId, versionId }).catch(() => null);
+  };
 
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation({
     async onMutate(payload) {
@@ -162,25 +170,24 @@ export function ModelVersionMenu({
           </Menu.Item>
         )}
 
-        {/* {currentUser?.isModerator && showToggleCoverage && (
+        {currentUser?.isModerator && showToggleCoverage && features.impersonation && (
           <>
-            <Menu.Divider />
-            <Menu.Label>Moderation zone</Menu.Label>
             <Menu.Item
               disabled={isLoading}
-              icon={isLoading ? <Loader size="xs" /> : undefined}
+              icon={isLoading ? <Loader size="xs" /> : <IconAi size={14} stroke={1.5} />}
+              color="yellow"
               onClick={() =>
                 handleToggleCoverage({
-                  modelId: version.modelId,
-                  versionId: version.id,
+                  modelId: modelId,
+                  versionId: modelVersionId,
                 })
               }
               closeMenuOnClick={false}
             >
-              {version.canGenerate ? 'Remove from generation' : 'Add to generation'}
+              {canGenerate ? 'Remove from generation' : 'Add to generation'}
             </Menu.Item>
           </>
-        )} */}
+        )}
 
         <Menu.Item
           component={Link}
