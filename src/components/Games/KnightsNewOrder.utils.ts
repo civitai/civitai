@@ -1,3 +1,6 @@
+import { data } from 'motion/dist/react-m';
+import dynamic from 'next/dynamic';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useStorage } from '~/hooks/useStorage';
 import {
@@ -10,6 +13,8 @@ import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+
+const JudgementHistoryModal = dynamic(() => import('./NewOrder/JudgementHistory'));
 
 // TODO.newOrder: complete signal setup
 export const useKnightsNewOrderListener = () => {
@@ -78,6 +83,21 @@ export const useQueryKnightsNewOrderImageQueue = (opts?: { enabled?: boolean }) 
 
   return { data, isLoading };
 };
+export const useQueryInfiniteKnightsNewOrderHistory = (opts?: { enabled?: boolean }) => {
+  const { playerData } = useJoinKnightsNewOrder();
+  const { data, isLoading } = trpc.games.newOrder.getHistory.useInfiniteQuery(
+    { limit: 10 },
+    {
+      ...opts,
+      enabled: !!playerData && opts?.enabled !== false,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }
+  );
+
+  const flattenedData = data?.pages.flatMap((page) => page.items) ?? [];
+
+  return { data: flattenedData, isLoading };
+};
 
 export const useAddImageRatingMutation = () => {
   const queryUtils = trpc.useUtils();
@@ -110,3 +130,14 @@ export const damnedReasonOptions = [
   NewOrderDamnedReason.Bestiality,
   NewOrderDamnedReason.GraphicViolence,
 ] as const;
+
+export const ratingPlayBackRates: Record<string, number> = {
+  [NsfwLevel.PG]: 1.4,
+  [NsfwLevel.PG13]: 1.2,
+  [NsfwLevel.R]: 1,
+  [NsfwLevel.X]: 0.8,
+  [NsfwLevel.XXX]: 0.7,
+};
+
+export const openJudgementHistoryModal = () =>
+  dialogStore.trigger({ component: JudgementHistoryModal });

@@ -6,6 +6,7 @@ import { TransactionType } from '~/server/schema/buzz.schema';
 import {
   addImageRatingSchema,
   cleanseSmiteSchema,
+  getHistorySchema,
   getImageQueueSchema,
   smitePlayerSchema,
 } from '~/server/schema/games/new-order.schema';
@@ -15,6 +16,7 @@ import {
   cleanseSmite,
   getImagesQueue,
   getPlayerById,
+  getPlayerHistory,
   joinGame,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
@@ -83,6 +85,9 @@ export const gamesRouter = router({
     getImagesQueue: guardedProcedure
       .input(getImageQueueSchema)
       .query(({ input, ctx }) => getImagesQueue({ ...input, playerId: ctx.user.id })),
+    getHistory: guardedProcedure
+      .input(getHistorySchema)
+      .query(({ input, ctx }) => getPlayerHistory({ ...input, playerId: ctx.user.id })),
     smitePlayer: moderatorProcedure
       .input(smitePlayerSchema)
       .mutation(({ input, ctx }) => smitePlayer({ ...input, modId: ctx.user.id })),

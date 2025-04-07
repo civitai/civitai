@@ -1,4 +1,3 @@
-import { ReactQueryDevtoolsPanel } from '@tanstack/react-query-devtools';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import {
   NewOrderImageRatingStatus,
@@ -22,8 +21,10 @@ import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import {
   AddImageRatingInput,
   CleanseSmiteInput,
+  GetHistorySchema,
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 import { playerInfoSelect } from '~/server/selectors/user.selector';
 import { getAllImagesIndex } from '~/server/services/image.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -526,4 +527,57 @@ async function isImageInQueue({
   );
 
   return exists.find((x) => isDefined(x)) || null;
+}
+
+export async function getPlayerHistory({
+  limit,
+  playerId,
+  status,
+  cursor,
+}: GetHistorySchema & { playerId: number }) {
+  if (!clickhouse) throw throwInternalServerError('Not supported');
+
+  const AND = [`userId = ${playerId}`];
+  if (cursor) AND.push(`createdAt < '${cursor}'`);
+  if (status) AND.push(`status = '${status}'`);
+
+  const judgements = await clickhouse.$query<{
+    imageId: number;
+    rating: NsfwLevel;
+    status: NewOrderImageRatingStatus;
+    grantedExp: number;
+    multiplier: number;
+    createdAt: Date;
+  }>`
+    SELECT imageId, rating, status, grantedExp, multiplier, createdAt
+    FROM new_order_image_rating
+    WHERE ${AND.join(' AND ')}
+    ORDER BY createdAt DESC
+    LIMIT ${limit + 1}
+  `;
+  if (judgements.length === 0) return { items: [], nextCursor: null };
+
+  let nextCursor: Date | null = null;
+  if (judgements.length > limit) nextCursor = judgements.pop()?.createdAt ?? null;
+
+  const imageIds = judgements.map((j) => j.imageId);
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+  });
+
+  return {
+    items: judgements
+      .map((j) => {
+        const image = images.find((i) => i.id === j.imageId);
+        if (!image) return null;
+
+        return {
+          ...j,
+          image: { ...image, metadata: image.metadata as ImageMetaProps },
+        };
+      })
+      .filter(isDefined),
+    nextCursor,
+  };
 }

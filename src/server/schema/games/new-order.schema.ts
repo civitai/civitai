@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
+import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
 export type GetImageQueueSchema = z.infer<typeof getImageQueueSchema>;
@@ -27,4 +27,9 @@ export const addImageRatingSchema = z.object({
   imageId: z.number(),
   rating: z.nativeEnum(NsfwLevel),
   damnedReason: z.nativeEnum(NewOrderDamnedReason).optional(),
+});
+
+export type GetHistorySchema = z.infer<typeof getHistorySchema>;
+export const getHistorySchema = infiniteQuerySchema.extend({
+  status: z.nativeEnum(NewOrderImageRatingStatus).optional(),
 });

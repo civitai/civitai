@@ -14,7 +14,7 @@ export function LevelProgress({
   className,
 }: Props) {
   return (
-    <HoverCard withArrow>
+    <HoverCard position="bottom" withArrow withinPortal>
       <HoverCard.Target>
         <Badge size="lg" className={clsx(styles.raterBadge, className)}>
           {icon ?? <IconStarFilled strokeWidth={2.5} size={15} />}

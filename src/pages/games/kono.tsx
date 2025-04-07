@@ -1,6 +1,7 @@
 import { ActionIcon, Button, Kbd, Skeleton, Text, Tooltip } from '@mantine/core';
-import { useHotkeys } from '@mantine/hooks';
+import { HotkeyItem, useHotkeys } from '@mantine/hooks';
 import {
+  IconCrown,
   IconExternalLink,
   IconFlag,
   IconHistory,
@@ -10,11 +11,15 @@ import {
 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import GameErrorBoundary from '~/components/Games/GameErrorBoundary';
 import {
   damnedReasonOptions,
+  openJudgementHistoryModal,
   ratingOptions,
+  ratingPlayBackRates,
   useAddImageRatingMutation,
   useJoinKnightsNewOrder,
   useKnightsNewOrderListener,
@@ -23,6 +28,7 @@ import {
 import { PlayerCard } from '~/components/Games/PlayerCard';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useGameSounds } from '~/hooks/useGameSounds';
 import { useStorage } from '~/hooks/useStorage';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
 import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
@@ -69,73 +75,52 @@ export default function KnightsNewOrderPage() {
 
   useKnightsNewOrderListener();
 
+  const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
+
   const handleAddRating = async ({
     rating,
     damnedReason,
   }: Omit<AddImageRatingInput, 'playerId' | 'imageId'>) => {
     if (sendingRating || !currentImage) return;
 
-    await addRating({ imageId: currentImage.id, rating, damnedReason }).catch(() => null);
+    try {
+      playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
+      await addRating({ imageId: currentImage.id, rating, damnedReason });
+    } catch {
+      playSound('challengeFail');
+    }
   };
 
-  const handleAddRatingWithDamnedReason = async ({
-    damnedReason,
-  }: {
-    damnedReason: NewOrderDamnedReason;
-  }) => {
-    await handleAddRating({ rating: NsfwLevel.Blocked, damnedReason });
+  const handleAddDamnedReason = async ({ reason }: { reason: NewOrderDamnedReason }) => {
+    await handleAddRating({ rating: NsfwLevel.Blocked, damnedReason: reason });
     setDamnedReason({ open: false, reason: null });
   };
 
-  useHotkeys(
-    damnedReason.open
-      ? [
-          [
-            '1',
-            () =>
-              handleAddRatingWithDamnedReason({
-                damnedReason: NewOrderDamnedReason.InappropriateMinors,
-              }),
-          ],
-          [
-            '2',
-            () =>
-              handleAddRatingWithDamnedReason({
-                damnedReason: NewOrderDamnedReason.RealisticMinors,
-              }),
-          ],
-          [
-            '3',
-            () =>
-              handleAddRatingWithDamnedReason({
-                damnedReason: NewOrderDamnedReason.InappropriateRealPerson,
-              }),
-          ],
-          [
-            '4',
-            () =>
-              handleAddRatingWithDamnedReason({
-                damnedReason: NewOrderDamnedReason.Bestiality,
-              }),
-          ],
-          [
-            '5',
-            () =>
-              handleAddRatingWithDamnedReason({
-                damnedReason: NewOrderDamnedReason.GraphicViolence,
-              }),
-          ],
-          ['Escape', () => setDamnedReason({ open: false, reason: null })],
-        ]
-      : [
-          ['1', () => handleAddRating({ rating: NsfwLevel.PG })],
-          ['2', () => handleAddRating({ rating: NsfwLevel.PG13 })],
-          ['3', () => handleAddRating({ rating: NsfwLevel.R })],
-          ['4', () => handleAddRating({ rating: NsfwLevel.X })],
-          ['5', () => handleAddRating({ rating: NsfwLevel.XXX })],
-          ['6', () => setDamnedReason({ open: true, reason: null })],
-        ]
-  );
+  const hotKeys: HotkeyItem[] = damnedReason.open
+    ? [
+        ['1', () => handleAddDamnedReason({ reason: NewOrderDamnedReason.InappropriateMinors })],
+        ['2', () => handleAddDamnedReason({ reason: NewOrderDamnedReason.RealisticMinors })],
+        [
+          '3',
+          () => handleAddDamnedReason({ reason: NewOrderDamnedReason.InappropriateRealPerson }),
+        ],
+        ['4', () => handleAddDamnedReason({ reason: NewOrderDamnedReason.Bestiality })],
+        ['5', () => handleAddDamnedReason({ reason: NewOrderDamnedReason.GraphicViolence })],
+      ]
+    : [
+        ['1', () => handleAddRating({ rating: NsfwLevel.PG })],
+        ['2', () => handleAddRating({ rating: NsfwLevel.PG13 })],
+        ['3', () => handleAddRating({ rating: NsfwLevel.R })],
+        ['4', () => handleAddRating({ rating: NsfwLevel.X })],
+        ['5', () => handleAddRating({ rating: NsfwLevel.XXX })],
+        ['6', () => setDamnedReason({ open: true, reason: null })],
+      ];
+
+  useHotkeys([
+    ['m', () => setMuted((prev) => !prev)],
+    ['Escape', () => setDamnedReason({ open: false, reason: null })],
+    ...hotKeys,
+  ]);
 
   const currentImage = data[0];
 
@@ -166,10 +151,46 @@ export default function KnightsNewOrderPage() {
               />
             )}
             <div className="mt-2 flex flex-col gap-2">
-              <Button leftIcon={<IconHistory />} size="sm" variant="light" fullWidth>
+              <Button
+                variant="light"
+                leftIcon={<IconHistory />}
+                onClick={() => openJudgementHistoryModal()}
+                fullWidth
+              >
                 Judgement History
               </Button>
-              <Button leftIcon={<IconSkull />} size="sm" color="red" variant="light" fullWidth>
+              <Button
+                component={Link}
+                href="/leaderboard/knights-of-new-order"
+                color="yellow"
+                variant="light"
+                leftIcon={<IconCrown />}
+                fullWidth
+              >
+                View Leaderboard
+              </Button>
+              <Button
+                color="red"
+                variant="light"
+                leftIcon={<IconSkull />}
+                onClick={() => {
+                  dialogStore.trigger({
+                    component: ConfirmDialog,
+                    type: 'dialog',
+                    props: {
+                      title: 'Are you sure?',
+                      message: 'This will restart your career and reset all your progress.',
+                      labels: { cancel: 'No', confirm: `Yes, I'm sure` },
+                      onConfirm: async () => {
+                        // TODO.newOrder: implement restart career
+                        console.log('Restarting career...');
+                      },
+                      confirmProps: { color: 'red' },
+                    },
+                  });
+                }}
+                fullWidth
+              >
                 Restart Career
               </Button>
             </div>
@@ -205,13 +226,16 @@ export default function KnightsNewOrderPage() {
                         ? damnedReasonOptions.map((reason) => {
                             const damnedReason = NewOrderDamnedReason[reason];
 
-                            // TODO.newOrder: fix button label break
                             return (
                               <Button
                                 key={reason}
+                                classNames={{
+                                  root: 'h-auto',
+                                  label: 'whitespace-normal leading-normal text-center',
+                                }}
                                 maw={150}
                                 variant="default"
-                                onClick={() => handleAddRatingWithDamnedReason({ damnedReason })}
+                                onClick={() => handleAddDamnedReason({ reason: damnedReason })}
                               >
                                 {getDisplayName(damnedReason)}
                               </Button>
@@ -235,7 +259,11 @@ export default function KnightsNewOrderPage() {
                                   key={rating}
                                   variant={isBlocked ? 'filled' : 'default'}
                                   color={isBlocked ? 'red' : undefined}
-                                  onClick={() => isBlocked ? setDamnedReason({ open: true, reason: null }) : handleAddRating({ rating })}
+                                  onClick={() =>
+                                    isBlocked
+                                      ? setDamnedReason({ open: true, reason: null })
+                                      : handleAddRating({ rating })
+                                  }
                                 >
                                   {isBlocked ? <IconFlag size={18} /> : level}
                                 </Button>
@@ -245,7 +273,13 @@ export default function KnightsNewOrderPage() {
                     </Button.Group>
                     <div className="flex w-full justify-between gap-2">
                       <Text size="xs">
-                        Use the numbers <Kbd>1-6</Kbd> to rate.{damnedReason.open && (<>{' '}<Kbd>Esc</Kbd> to cancel</>)}
+                        Use the numbers <Kbd>1-6</Kbd> to rate.
+                        {damnedReason.open && (
+                          <>
+                            {' '}
+                            <Kbd>Esc</Kbd> to cancel
+                          </>
+                        )}
                       </Text>
                       <ActionIcon
                         size="sm"
