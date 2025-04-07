@@ -3528,7 +3528,7 @@ export const getImageModerationReviewQueue = async ({
   let cursorDirection = 'DESC';
 
   if (tagReview) {
-    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review)`);
+    AND.push(Prisma.sql`i.id IN (SELECT DISTINCT "imageId" FROM tags_review LIMIT ${limit + 1})`);
     AND.push(Prisma.sql`
       i."nsfwLevel" < ${NsfwLevel.Blocked}
     `);
@@ -3557,15 +3557,14 @@ export const getImageModerationReviewQueue = async ({
   const rawImages = await dbRead.$queryRaw<GetImageModerationReviewQueueRaw[]>`
     ${Prisma.raw(
       tagReview
-        ? `
-            WITH tags_review AS (
-              SELECT "imageId"
-              FROM "TagsOnImageDetails" WHERE "needsReview"
-              AND NOT "disabled"
-              ${cursor ? `AND "imageId" <= ${cursor}` : ''}
-              ORDER BY ("imageId", "tagId") DESC
-              LIMIT ${limit + 1}
-            )`
+        ? `WITH tags_review AS (
+            SELECT
+              toi."imageId"
+            FROM "TagsOnImageDetails" toi  JOIN "Image" i ON toi."imageId" = i.id
+            WHERE toi."needsReview" AND NOT toi."disabled" AND i."nsfwLevel" < 32
+            ${cursor ? `AND "imageId" <= ${cursor}` : ''}
+            ORDER BY (toi."imageId", toi."tagId") DESC
+          )`
         : ''
     )}
     -- Image moderation queue
@@ -3614,14 +3613,11 @@ export const getImageModerationReviewQueue = async ({
 
   let nextCursor: bigint | undefined;
 
+  console.log({ limit, raw: rawImages.length });
+
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
     nextCursor = nextItem?.cursorId;
-  }
-
-  if (tagReview) {
-    const nextItem = rawImages.pop();
-    if (rawImages.length > 0) nextCursor = nextItem?.cursorId;
   }
 
   const imageIds = rawImages.map((i) => i.id);

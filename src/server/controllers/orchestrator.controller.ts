@@ -95,7 +95,7 @@ export async function generate({
           ].filter(isDefined)
         ),
       ],
-      steps: [step as any], // TODO.orchestrator -  fix types
+      steps: [step],
       tips: {
         civitai: civitaiTip,
         creators: creatorTip,

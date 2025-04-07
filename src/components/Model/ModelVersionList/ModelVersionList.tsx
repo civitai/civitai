@@ -68,7 +68,13 @@ type State = {
   largerThanViewport: boolean;
 };
 
-export function ModelVersionList({ versions, selected, showExtraIcons, onVersionClick }: Props) {
+export function ModelVersionList({
+  versions,
+  selected,
+  showExtraIcons,
+  onVersionClick,
+  showToggleCoverage = false,
+}: Props) {
   const { classes, cx, theme } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
@@ -246,6 +252,8 @@ export function ModelVersionList({ versions, selected, showExtraIcons, onVersion
                 canDelete={versions.length > 1}
                 active={active}
                 published={published}
+                canGenerate={version.canGenerate}
+                showToggleCoverage={showToggleCoverage}
               />
               {/* <Menu withinPortal>
                 <Menu.Target>
@@ -380,4 +388,5 @@ type Props = {
   onVersionClick: (version: ModelById['modelVersions'][number]) => void;
   selected?: number;
   showExtraIcons?: boolean;
+  showToggleCoverage?: boolean;
 };
