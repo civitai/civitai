@@ -1,14 +1,6 @@
 const plugin = require('tailwindcss/plugin');
 const colors = require('tailwindcss/colors');
-const { keyframes } = require('@mantine/core');
-
-const breakpoints = {
-  xs: '576px',
-  sm: '768px',
-  md: '992px',
-  lg: '1200px',
-  xl: '1400px',
-};
+const { breakpoints } = require('./src/utils/tailwind')
 
 const fontFamilies = [
   '"-apple-system"',
@@ -221,6 +213,9 @@ module.exports = {
           },
           '.scrollbar-thin': {
             scrollbarWidth: 'thin',
+          },
+          '.transform-3d': {
+            transform: 'translate3d(0, 0, 0)'
           },
         }),
         addVariant('not-first', ({ modifySelectors, separator }) => {
