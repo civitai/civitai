@@ -102,6 +102,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const [selectedRunIndex, setSelectedRunIndex] = useState<number>(0);
   const selectedRun = runs[selectedRunIndex] ?? defaultRun;
+  // TODO create defaultVideoRun
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);

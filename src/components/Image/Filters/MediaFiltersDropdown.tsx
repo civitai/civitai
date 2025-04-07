@@ -26,7 +26,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { activeBaseModels, BaseModel } from '~/server/common/constants'; // Add this import
 import { GetInfiniteImagesInput } from '~/server/schema/image.schema';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
-import { getDisplayName } from '~/utils/string-helpers';
+import { getDisplayName, titleCase } from '~/utils/string-helpers';
 
 // TODO: adjust filter as we begin to support more media types
 const availableMediaTypes = Object.values(MediaType).filter(
@@ -193,7 +193,7 @@ export function MediaFiltersDropdown({
             >
               {availableMediaTypes.map((type, index) => (
                 <FilterChip key={index} value={type}>
-                  <span>{getDisplayName(type)}</span>
+                  <span>{titleCase(getDisplayName(type))}</span>
                 </FilterChip>
               ))}
             </Chip.Group>

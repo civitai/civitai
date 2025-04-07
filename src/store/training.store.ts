@@ -165,9 +165,10 @@ type TrainingImageStore = {
   updateRun: (modelId: number, runId: number, data: TrainingRunUpdate) => void;
 };
 
+// TODO create defaultVideoBase and baseType
 export const defaultBase = 'sdxl';
-export const defaultEngine = 'kohya';
 export const defaultBaseType = 'sdxl' as const;
+export const defaultEngine = 'kohya';
 const defaultParams = trainingSettings.reduce(
   (a, v) => ({
     ...a,
@@ -189,6 +190,7 @@ export const defaultRun = {
   buzzCost: 0,
   hasIssue: false,
 };
+// TODO create defaultVideoRun
 
 export const defaultTrainingState: TrainingDataState = {
   imageList: [] as ImageDataType[],
