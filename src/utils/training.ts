@@ -114,6 +114,7 @@ export const trainingModelInfo: {
     air: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     baseModel: 'Flux.1 D',
   },
+  //
   hunyuan: {
     label: 'Hunyuan',
     pretty: 'Hunyuan (Vid)',
