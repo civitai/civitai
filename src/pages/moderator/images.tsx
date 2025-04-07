@@ -859,8 +859,6 @@ function AppealActions({ selected, filters }: { selected: number[]; filters: Mix
   });
 
   const handleResolveAppeal = (status: AppealStatus) => {
-    if (!resolvedMessage) return;
-
     deselectAll();
     resolveAppealMutation.mutate({
       ids: selected,
