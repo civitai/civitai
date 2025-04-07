@@ -39,6 +39,7 @@ type EmblaStoreState = {
   scrollSnapList: number[];
   initialHeight?: CSSProperties['height'];
   withKeyboardEvents: boolean;
+  loop?: boolean;
   setSlidesInView: (fn: (indexes: number[]) => number[]) => void;
   setSelectedIndex: (index: number) => void;
   setCanScrollNext: (value: boolean) => void;
@@ -108,6 +109,7 @@ export function EmblaCarouselProvider({
         scrollSnapList: [],
         initialHeight,
         withKeyboardEvents,
+        loop,
         setSlidesInView: (fn) =>
           set((state) => {
             const slidesInView = Object.keys(state.slidesInView).map(Number);

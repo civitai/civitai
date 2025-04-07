@@ -28,51 +28,9 @@ import { ImageSort } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 const useStyles = createStyles((theme) => ({
-  control: {
-    svg: {
-      width: 24,
-      height: 24,
-
-      [containerQuery.smallerThan('sm')]: {
-        minWidth: 16,
-        minHeight: 16,
-      },
-    },
-  },
-  carousel: {
-    display: 'block',
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  mobileBlock: {
-    display: 'block',
-    [containerQuery.largerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  footer: {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    background: theme.fn.gradient({
-      from: 'rgba(37,38,43,0.8)',
-      to: 'rgba(37,38,43,0)',
-      deg: 0,
-    }),
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    zIndex: 10,
-    gap: 6,
-    padding: theme.spacing.xs,
-  },
   reactions: {
     position: 'absolute',
     bottom: 6,
@@ -86,23 +44,6 @@ const useStyles = createStyles((theme) => ({
     boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
     padding: 4,
   },
-  info: {
-    position: 'absolute',
-    bottom: 5,
-    right: 5,
-  },
-  viewport: {
-    overflowX: 'clip',
-    overflowY: 'visible',
-  },
-  contentOverlay: {
-    position: 'absolute',
-    width: '100%',
-    left: 0,
-    zIndex: 10,
-    padding: theme.spacing.sm,
-  },
-  top: { top: 0 },
 }));
 
 export function ModelCarousel(props: Props) {
@@ -113,17 +54,9 @@ export function ModelCarousel(props: Props) {
   );
 }
 
-function ModelCarouselContent({
-  modelId,
-  modelVersionId,
-  modelUserId,
-  // images,
-  mobile = false,
-  limit = 10,
-  onBrowseClick,
-}: Props) {
+function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10 }: Props) {
   const features = useFeatureFlags();
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
 
   const { running, helpers } = useTourContext();
 
@@ -137,30 +70,24 @@ function ModelCarouselContent({
   });
 
   const hiddenExplained = useExplainHiddenImages(flatData);
+  const mobile = useContainerSmallerThan('md');
 
   if (isLoading)
     return (
-      <Box
-        className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: mobile ? 300 : 600,
-        }}
-      >
-        <Center>
-          <Loader size="md" />
-        </Center>
-      </Box>
+      <div className="flex items-center justify-center" style={{ minHeight: mobile ? 300 : 600 }}>
+        <Loader size="md" />
+      </div>
     );
+
+  const totalItems = images.length + (hiddenExplained.hasHidden ? 1 : 0);
+  const slidesToShow = mobile ? 1 : 2;
 
   return (
     <Embla
       key={modelId}
-      align={images.length > 2 ? 'start' : 'center'}
+      align={totalItems > slidesToShow ? 'start' : 'center'}
       slidesToScroll={1}
-      withControls={images.length > 2 ? true : false}
+      withControls={totalItems > slidesToShow ? true : false}
       controlSize={mobile ? 32 : 56}
       loop
       initialHeight={mobile ? 300 : 600}
@@ -284,7 +211,5 @@ type Props = {
   modelVersionId: number;
   modelId: number;
   modelUserId: number;
-  mobile?: boolean;
   limit?: number;
-  onBrowseClick?: VoidFunction;
 };

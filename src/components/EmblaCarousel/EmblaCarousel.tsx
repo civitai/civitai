@@ -1,4 +1,4 @@
-import { CSSProperties, useCallback } from 'react';
+import { CSSProperties, useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import {
@@ -98,10 +98,21 @@ function EmblaViewport({ children, className, ...props }: React.HTMLProps<HTMLDi
 
 function EmblaContainer({ children, className, style, ...rest }: React.HTMLProps<HTMLDivElement>) {
   const height = useEmblaStore((state) => state.initialHeight);
+  const emblaApi = useEmblaStore((state) => state.emblaApi);
+  const loop = useEmblaStore((state) => state.loop ?? false);
+  const canScroll = useEmblaStore((state) => state.canScrollNext || state.canScrollPrev);
+  const [shouldDuplicate, setShouldDuplicate] = useState(false);
+
+  // this effect allows us to loop carousels where the content is not enough to allow looping without visible glitches
+  useEffect(() => {
+    if (emblaApi && loop && !emblaApi.internalEngine().slideLooper.canLoop() && canScroll)
+      setShouldDuplicate(true);
+  }, [emblaApi, loop, canScroll]);
 
   return (
     <div className={className} style={{ height, ...style }} {...rest}>
       {children}
+      {shouldDuplicate && children}
     </div>
   );
 }
@@ -160,12 +171,14 @@ function EmblaButton({
     ...props.style,
   } as CSSProperties;
 
+  const disabled = (type === 'next' ? !canScrollNext : !canScrollPrevious) ? true : undefined;
+
   return (
     <button
       {...props}
       style={style}
       className={clsx(
-        'flex size-[var(--control-size)] items-center justify-center rounded-full border-gray-3 bg-white text-black shadow-sm transition-opacity duration-150 hover:opacity-100',
+        'flex size-[--control-size] items-center justify-center rounded-full border-gray-3 bg-white text-black shadow-sm transition-opacity duration-150 hover:opacity-100 data-[disabled]:opacity-25 data-[disabled]:hover:opacity-25',
         'opacity-85',
         'dark:opacity-65',
         className
@@ -173,7 +186,7 @@ function EmblaButton({
       type="button"
       tabIndex={(type === 'next' ? canScrollNext : canScrollPrevious) ? 0 : -1}
       onClick={type === 'next' ? nextClick : previousClick}
-      data-disabled={type === 'next' ? !canScrollNext : !canScrollPrevious}
+      data-disabled={disabled}
     >
       {children}
     </button>

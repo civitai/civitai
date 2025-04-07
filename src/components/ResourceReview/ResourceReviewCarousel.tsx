@@ -1,14 +1,4 @@
-import {
-  ActionIcon,
-  AspectRatio,
-  Box,
-  Button,
-  Center,
-  Container,
-  createStyles,
-  Text,
-  Loader,
-} from '@mantine/core';
+import { ActionIcon, Box, Button, Container, createStyles, Text, Loader } from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { IconInfoCircle } from '@tabler/icons-react';
@@ -37,7 +27,7 @@ export function ResourceReviewCarousel({
   reviewId: number;
 }) {
   const { classes } = useStyles();
-  const mobile = useContainerSmallerThan('sm');
+  const mobile = useContainerSmallerThan('md');
 
   // today, typescript was not cool.
   // functions will only check extra parameters if it's fresh
@@ -54,13 +44,11 @@ export function ResourceReviewCarousel({
 
   const viewMore = data?.pages.some((x) => x.nextCursor !== undefined) ?? false;
 
+  const totalItems = images.length + (viewMore ? 1 : 0);
+  const slidesToShow = mobile ? 1 : 2;
+
   return (
-    <Box
-      mb="md"
-      sx={(theme) => ({
-        background: theme.colorScheme === 'dark' ? theme.colors.dark[9] : theme.colors.gray[2],
-      })}
-    >
+    <div className="mb-4 bg-gray-2 dark:bg-dark-9">
       <Container py="md">
         {isLoading ? (
           <div className="flex h-96 items-center justify-center">
@@ -69,8 +57,8 @@ export function ResourceReviewCarousel({
         ) : (
           <Embla
             key={reviewId}
-            align={images.length > 2 ? 'end' : 'center'}
-            withControls={images.length > 2 ? true : false}
+            align={totalItems > slidesToShow ? 'start' : 'center'}
+            withControls={totalItems > slidesToShow ? true : false}
             loop
           >
             <Embla.Viewport>
@@ -83,7 +71,7 @@ export function ResourceReviewCarousel({
                   >
                     <ImageGuard2 image={image} connectType="review" connectId={reviewId}>
                       {(safe) => (
-                        <div className="relative w-full">
+                        <div className="relative">
                           <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
                           <ImageContextMenu image={image} className="absolute right-2 top-2 z-10" />
 
@@ -141,27 +129,20 @@ export function ResourceReviewCarousel({
                   </Embla.Slide>
                 ))}
                 {viewMore && (
-                  <Embla.Slide className="flex flex-[0_0_100%] items-center pl-3 @md:flex-[0_0_50%] @md:pl-6">
-                    <AspectRatio
-                      ratio={1}
-                      sx={(theme) => ({
-                        width: '100%',
-                        borderRadius: theme.radius.md,
-                        overflow: 'hidden',
-                      })}
-                    >
+                  <Embla.Slide className="flex flex-[0_0_100%] items-center justify-center pl-3 @md:flex-[0_0_50%] @md:pl-6">
+                    <div className="aspect-square w-full max-w-[450px]">
                       <Button
                         component={Link}
                         href={`/images?view=feed&periodMode=stats&modelVersionId=${modelVersionId}&userId=${userId}`}
                         rel="nofollow"
                         variant="outline"
                         fullWidth
-                        className={classes.viewMore}
+                        className="size-full"
                         radius="md"
                       >
                         View more
                       </Button>
-                    </AspectRatio>
+                    </div>
                   </Embla.Slide>
                 )}
               </Embla.Container>
@@ -173,7 +154,7 @@ export function ResourceReviewCarousel({
           Images this user generated with this resource
         </Text>
       </Container>
-    </Box>
+    </div>
   );
 }
 
@@ -188,12 +169,6 @@ const useStyles = createStyles((theme) => ({
         minHeight: 16,
       },
     },
-  },
-
-  viewMore: {
-    maxHeight: '100%',
-    height: 500,
-    width: '100%',
   },
 
   footer: {

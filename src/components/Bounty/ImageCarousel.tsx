@@ -1,9 +1,8 @@
-import { ActionIcon, Box, Card, Center, createStyles, Loader } from '@mantine/core';
+import { ActionIcon, Card, Center, Loader } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImageGuard2, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -15,90 +14,7 @@ import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelP
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { breakpoints } from '~/utils/tailwind';
 import { useMemo } from 'react';
-
-const useStyles = createStyles((theme) => ({
-  control: {
-    svg: {
-      width: 24,
-      height: 24,
-
-      [containerQuery.smallerThan('sm')]: {
-        minWidth: 16,
-        minHeight: 16,
-      },
-    },
-  },
-  carousel: {
-    display: 'block',
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-  mobileBlock: {
-    display: 'block',
-    [containerQuery.largerThan('md')]: {
-      display: 'none',
-    },
-  },
-  loader: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%,-50%)',
-    zIndex: 1,
-  },
-  loadingCarousel: {
-    pointerEvents: 'none',
-    opacity: 0.5,
-  },
-  footer: {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    background: theme.fn.gradient({
-      from: 'rgba(37,38,43,0.8)',
-      to: 'rgba(37,38,43,0)',
-      deg: 0,
-    }),
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    zIndex: 10,
-    gap: 6,
-    padding: theme.spacing.xs,
-  },
-  reactions: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    borderRadius: theme.radius.sm,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-        : theme.colors.gray[0],
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    padding: 4,
-  },
-  info: {
-    position: 'absolute',
-    bottom: 5,
-    right: 5,
-  },
-  viewport: {
-    overflowX: 'clip',
-    overflowY: 'visible',
-  },
-  meta: {
-    position: 'absolute',
-    bottom: '10px',
-    right: '10px',
-  },
-}));
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 export function ImageCarousel(props: Props) {
   return (
@@ -112,12 +28,9 @@ export function ImageCarouselContent({
   images,
   connectType,
   connectId,
-  mobile = false,
   onClick,
   isLoading: loading,
 }: Props) {
-  const { classes, cx } = useStyles();
-
   const transformed = useMemo(
     () =>
       images.map((image) => ({
@@ -133,30 +46,24 @@ export function ImageCarouselContent({
   });
   const isLoading = loading || loadingPreferences;
   const hiddenExplained = useExplainHiddenImages(transformed);
+  const mobile = useContainerSmallerThan('md');
 
   if (isLoading)
     return (
-      <Box
-        className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: mobile ? 300 : 600,
-        }}
-      >
-        <Center>
-          <Loader size="md" />
-        </Center>
-      </Box>
+      <div className="flex items-center justify-center" style={{ minHeight: mobile ? 300 : 600 }}>
+        <Loader size="md" />
+      </div>
     );
+
+  const totalItems = filteredImages.length + (hiddenExplained.hasHidden ? 1 : 0);
+  const slidesToShow = mobile ? 1 : 2;
 
   return (
     <Embla
       key={connectId}
-      align={filteredImages.length > 1 ? 'start' : 'center'}
+      align={totalItems > slidesToShow ? 'start' : 'center'}
       slidesToScroll={1}
-      withControls={filteredImages.length > 2 ? true : false}
+      withControls={totalItems > slidesToShow ? true : false}
       controlSize={mobile ? 32 : 56}
       breakpoints={{
         [`(min-width: ${breakpoints.sm}px)`]: {
@@ -196,7 +103,7 @@ export function ImageCarouselContent({
                     : undefined
                 }
               >
-                <div className="relative w-full">
+                <div className="relative">
                   <ImageGuard2 image={image} connectType={connectType} connectId={connectId}>
                     {(safe) => (
                       <>
@@ -215,7 +122,7 @@ export function ImageCarouselContent({
                         />
                         {image.meta && (
                           <ImageMetaPopover meta={image.meta} imageId={image.id}>
-                            <ActionIcon variant="light" className={classes.meta}>
+                            <ActionIcon variant="light" className="absolute bottom-2.5 right-2.5">
                               <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                             </ActionIcon>
                           </ImageMetaPopover>

@@ -59,7 +59,7 @@ export function MasonryCarousel<TData>({
                 key={key}
                 id={key.toString()}
                 index={index}
-                className={clsx('pl-4', columnCount > 1 ? 'basis-[336px]' : 'flex-[0_0_100%]')}
+                className={clsx('pl-4', columnCount > 1 ? 'flex-[0_0_336px]' : 'flex-[0_0_100%]')}
               >
                 {createRenderElement(RenderComponent, index, item, height)}
               </Embla.Slide>
@@ -68,7 +68,7 @@ export function MasonryCarousel<TData>({
           {extra && (
             <Embla.Slide
               index={data.length}
-              className={clsx('pl-4', columnCount > 1 ? 'basis-[336px]' : 'flex-[0_0_100%]')}
+              className={clsx('pl-4', columnCount > 1 ? 'flex-[0_0_336px]' : 'flex-[0_0_100%]')}
             >
               {extra}
             </Embla.Slide>
