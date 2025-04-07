@@ -1,9 +1,10 @@
 import { Card, CardProps, Center, Loader, Text } from '@mantine/core';
 import { CSSProperties } from 'react';
-import { env } from '~/env/client';
+import { getAssistantUUID } from '~/components/Assistant/AssistantButton';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { isProd } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { isApril1 } from '~/utils/date-helpers';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { trpc } from '~/utils/trpc';
 
 export function AssistantChat({
@@ -15,14 +16,16 @@ export function AssistantChat({
   height?: CSSProperties['height'];
 }) {
   const currentUser = useCurrentUser();
+  const features = useFeatureFlags();
+  const { assistantPersonality } = useCurrentUserSettings();
 
   const { data: { token = null } = {}, isError } = trpc.user.getToken.useQuery(undefined, {
     enabled: !!currentUser,
   });
 
-  const gpttUUID = isApril1()
-    ? env.NEXT_PUBLIC_GPTT_UUID_ALT ?? env.NEXT_PUBLIC_GPTT_UUID
-    : env.NEXT_PUBLIC_GPTT_UUID;
+  const gpttUUID = getAssistantUUID(assistantPersonality ?? 'civbot');
+
+  if (!currentUser || !features.assistant) return null;
 
   return (
     <Card
