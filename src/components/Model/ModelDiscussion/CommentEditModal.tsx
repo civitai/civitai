@@ -1,10 +1,9 @@
-import { Button, Group, Modal, Stack, LoadingOverlay } from '@mantine/core';
+import { Button, Group, LoadingOverlay, Modal, Stack } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-
 import { useCatchNavigation } from '~/hooks/useCatchNavigation';
 import { Form, InputRTE, useForm } from '~/libs/form';
 import { commentUpsertInput } from '~/server/schema/comment.schema';
@@ -96,6 +95,7 @@ export default function CommentEditModal({ commentId }: { commentId?: number }) 
             includeControls={['formatting', 'link', 'mentions']}
             editorSize="xl"
             onSuperEnter={() => form.handleSubmit(handleSaveComment)()}
+            inputClasses="break-all"
             // withLinkValidation
           />
           <Group position="apart">
