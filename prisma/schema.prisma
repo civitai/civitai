@@ -934,6 +934,7 @@ model ModelMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
+  earnedAmount      Int             @default(0)
   updatedAt         DateTime        @default(now())
 
   @@id([modelId, timeframe])
@@ -955,6 +956,7 @@ model ModelVersionMetric {
   generationCount   Int             @default(0)
   thumbsUpCount     Int             @default(0)
   thumbsDownCount   Int             @default(0)
+  earnedAmount      Int             @default(0)
   updatedAt         DateTime        @default(now())
 
   @@id([modelVersionId, timeframe])
