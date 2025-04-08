@@ -8,6 +8,7 @@ import {
   getGenerationConfig,
   Sampler,
   maxUpscaleSize,
+  minDownscaleSize,
 } from '~/server/common/constants';
 import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
@@ -619,7 +620,7 @@ export const engineDefinitions: EnginesDictionary = {
   hunyuan: {
     label: 'Hunyuan',
     description: ``,
-    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale'],
+    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft'],
   },
   vidu: {
     label: 'Vidu',
@@ -665,4 +666,45 @@ export function getUpscaleFactor(original: GetUpscaleFactorProps, upscale: GetUp
   const s1 = original.width > original.height ? original.width : original.height;
   const s2 = upscale.width > upscale.height ? upscale.width : upscale.height;
   return Math.round((s2 / s1) * 10) / 10;
+}
+
+export function getScaledWidthHeight(width: number, height: number, factor: number) {
+  const originRatio = width / height;
+  const wf = width * factor;
+  const hf = height * factor;
+
+  const wLimits = getUpperLowerLimits(wf);
+  const hLimits = getUpperLowerLimits(hf);
+
+  const options: { ratio: number; width: number; height: number }[] = [];
+
+  for (const wl of wLimits) {
+    for (const hl of hLimits) {
+      options.push({ ratio: wl / hl, width: wl, height: hl });
+    }
+  }
+
+  const closestRatio = findClosest(
+    options.map(({ ratio }) => ratio),
+    originRatio
+  );
+  const closest = options.find(({ ratio }) => ratio === closestRatio)!;
+  return { width: closest.width, height: closest.height };
+}
+
+function getUpperLowerLimits(value: number) {
+  // return [...new Set([Math.floor, Math.ceil].map((fn) => fn(value / 64) * 64))];
+  return [
+    ...new Set(
+      [Math.floor, Math.ceil].flatMap((fn) => {
+        const val = fn(value / 64) * 64;
+        const arr = [val];
+        const lower = val - 64;
+        const upper = val + 64;
+        if (lower >= minDownscaleSize) arr.push(lower);
+        if (upper <= maxUpscaleSize) arr.push(upper);
+        return arr;
+      })
+    ),
+  ];
 }

@@ -92,6 +92,7 @@ export function GeneratedImage({
 }) {
   const { classes } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: image.id });
+  const [loaded, setLoaded] = useState(false);
   const selected = orchestratorImageSelect.useIsSelected({
     workflowId: request.id,
     stepName: step.name,
@@ -195,11 +196,23 @@ export function GeneratedImage({
 
   if (!available) return <></>;
 
+  function handleLoad() {
+    setLoaded(true);
+  }
+
+  function handleError() {
+    if (image.url.includes('nsfwLevel')) {
+      setNsfwLevelError(true);
+    }
+  }
+
   return (
     <TwCard
       ref={ref}
       className={clsx('max-h-full max-w-full', classes.imageWrapper)}
-      style={{ aspectRatio: image.aspectRatio ?? image.width / image.height }}
+      style={{
+        aspectRatio: image.aspectRatio ?? image.width / image.height,
+      }}
     >
       {(isLightbox || inView) && (
         <>
@@ -233,11 +246,11 @@ export function GeneratedImage({
               className="max-h-full w-auto max-w-full"
               disableWebm
               disablePoster
-              onError={(e) => {
-                // TODO: We might need a better solution there.
-                if (image.url.includes('nsfwLevel')) {
-                  setNsfwLevelError(true);
-                }
+              onLoad={handleLoad}
+              onError={handleError}
+              videoProps={{
+                onLoadedData: handleLoad,
+                onError: handleError,
               }}
             />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />

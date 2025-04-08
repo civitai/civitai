@@ -5,20 +5,21 @@ import {
   seedSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
+import { getScaledWidthHeight } from '~/shared/constants/generation.constants';
 import { numberEnum } from '~/utils/zod-helpers';
 
-export const hunyuanAspectRatios = ['2:1', '4:3', '1:1', '3:4', '1:2'] as const;
+export const hunyuanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const hunyuanDuration = [3, 5] as const;
 
 const hunyuanAspectRatioMap: Record<
   (typeof hunyuanAspectRatios)[number],
   { width: number; height: number }
 > = {
-  '2:1': { width: 896, height: 448 },
-  '4:3': { width: 768, height: 576 },
-  '1:1': { width: 704, height: 704 },
-  '3:4': { width: 576, height: 768 },
-  '1:2': { width: 448, height: 896 },
+  '16:9': { width: 1024, height: 576 },
+  '3:2': { width: 960, height: 640 },
+  '1:1': { width: 768, height: 768 },
+  '2:3': { width: 640, height: 960 },
+  '9:16': { width: 576, height: 1024 },
 };
 
 // {
@@ -69,6 +70,7 @@ export function HunyuanInput({
   draft,
   ...args
 }: z.infer<(typeof hunyuanVideoGenerationConfig)[number]['schema']>): HunyuanVdeoGenInput {
-  const { width, height } = hunyuanAspectRatioMap[aspectRatio];
+  const size = hunyuanAspectRatioMap[aspectRatio];
+  const { width, height } = draft ? getScaledWidthHeight(size.width, size.height, 0.5) : size;
   return { ...args, width, height };
 }

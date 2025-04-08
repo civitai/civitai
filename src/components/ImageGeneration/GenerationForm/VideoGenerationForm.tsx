@@ -600,6 +600,19 @@ function HunyuanTxt2VidGenerationForm() {
         label="Aspect Ratio"
         options={hunyuanAspectRatios}
       />
+      <InputSwitch
+        name="draft"
+        labelPosition="left"
+        label={
+          <div className="relative flex items-center gap-1">
+            <Input.Label>Draft Mode</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+              Draft Mode will generate videos faster, cheaper, and with slightly less quality. Use
+              this for exploring concepts quickly.
+            </InfoPopover>
+          </div>
+        }
+      />
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
