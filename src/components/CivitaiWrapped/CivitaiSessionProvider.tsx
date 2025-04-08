@@ -3,15 +3,15 @@ import { signIn, useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useMemo } from 'react';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
-import { useDomainSync } from '~/hooks/useDomainSync';
 import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 import { ColorDomain } from '~/server/common/constants';
-import { UserMeta } from '~/server/schema/user.schema';
 import {
   browsingModeDefaults,
   flagifyBrowsingLevel,
 } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import { useDomainSync } from '~/hooks/useDomainSync';
+import type { UserMeta } from '~/server/schema/user.schema';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,

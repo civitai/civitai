@@ -1356,6 +1356,11 @@ export const setUserSettingHandler = async ({
   try {
     const { id } = ctx.user;
     const { tourSettings: tour, ...restInput } = input;
+
+    if (restInput.assistantPersonality && !ctx.features.assistantPersonality) {
+      throw throwAuthorizationError('You do not have permission to perform this action');
+    }
+
     const { tourSettings, ...restSettings } = await getUserSettings(id);
     const newSettings = {
       ...restSettings,

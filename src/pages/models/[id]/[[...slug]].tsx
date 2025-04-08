@@ -119,6 +119,7 @@ import {
   CollectionType,
   ModelModifier,
   ModelStatus,
+  ModelType,
 } from '~/shared/utils/prisma/enums';
 import { ModelById } from '~/types/router';
 import { formatDate, isFutureDate } from '~/utils/date-helpers';
@@ -1121,7 +1122,7 @@ export default function ModelDetailsV2({
                   }
                 }}
                 showExtraIcons={isOwner || isModerator}
-                // showToggleCoverage={model.type === ModelType.Checkpoint}
+                showToggleCoverage={model.type === ModelType.Checkpoint}
               />
             </Group>
             {!!selectedVersion && (

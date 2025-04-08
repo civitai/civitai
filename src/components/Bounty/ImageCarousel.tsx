@@ -1,11 +1,8 @@
-import { Carousel } from '@mantine/carousel';
-import { ActionIcon, Box, Card, Center, createStyles, Loader } from '@mantine/core';
+import { ActionIcon, Card, Center, Loader } from '@mantine/core';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { ImagePreview } from '~/components/ImagePreview/ImagePreview';
 import { ImageProps } from '~/components/ImageViewer/ImageViewer';
-import { useEffect, useMemo } from 'react';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { ImageGuard2, ImageGuardConnect } from '~/components/ImageGuard/ImageGuard2';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
@@ -16,89 +13,10 @@ import {
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { DomainSettingsProvider } from '~/providers/DomainSettingsProvider';
 
-const useStyles = createStyles((theme) => ({
-  control: {
-    svg: {
-      width: 24,
-      height: 24,
-
-      [containerQuery.smallerThan('sm')]: {
-        minWidth: 16,
-        minHeight: 16,
-      },
-    },
-  },
-  carousel: {
-    display: 'block',
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-  mobileBlock: {
-    display: 'block',
-    [containerQuery.largerThan('md')]: {
-      display: 'none',
-    },
-  },
-  loader: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    transform: 'translate(-50%,-50%)',
-    zIndex: 1,
-  },
-  loadingCarousel: {
-    pointerEvents: 'none',
-    opacity: 0.5,
-  },
-  footer: {
-    display: 'flex',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    background: theme.fn.gradient({
-      from: 'rgba(37,38,43,0.8)',
-      to: 'rgba(37,38,43,0)',
-      deg: 0,
-    }),
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    zIndex: 10,
-    gap: 6,
-    padding: theme.spacing.xs,
-  },
-  reactions: {
-    position: 'absolute',
-    bottom: 6,
-    left: 6,
-    borderRadius: theme.radius.sm,
-    background:
-      theme.colorScheme === 'dark'
-        ? theme.fn.rgba(theme.colors.dark[6], 0.6)
-        : theme.colors.gray[0],
-    // backdropFilter: 'blur(13px) saturate(160%)',
-    boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    padding: 4,
-  },
-  info: {
-    position: 'absolute',
-    bottom: 5,
-    right: 5,
-  },
-  viewport: {
-    overflowX: 'clip',
-    overflowY: 'visible',
-  },
-  meta: {
-    position: 'absolute',
-    bottom: '10px',
-    right: '10px',
-  },
-}));
+import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { breakpoints } from '~/utils/tailwind';
+import { useMemo } from 'react';
+import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
 export function ImageCarousel(props: Props) {
   return (
@@ -114,13 +32,9 @@ export function ImageCarouselContent({
   images,
   connectType,
   connectId,
-  mobile = false,
   onClick,
   isLoading: loading,
-  onImageChange,
 }: Props) {
-  const { classes, cx } = useStyles();
-
   const transformed = useMemo(
     () =>
       images.map((image) => ({
@@ -136,83 +50,64 @@ export function ImageCarouselContent({
   });
   const isLoading = loading || loadingPreferences;
   const hiddenExplained = useExplainHiddenImages(transformed);
-
-  useEffect(() => {
-    if (filteredImages.length > 0) {
-      onImageChange?.(mobile ? [filteredImages[0]] : filteredImages.slice(0, 2));
-    }
-  }, [filteredImages]);
+  const mobile = useContainerSmallerThan('md');
 
   if (isLoading)
     return (
-      <Box
-        className={cx(!mobile && classes.carousel, mobile && classes.mobileBlock)}
-        sx={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          minHeight: mobile ? 300 : 600,
-        }}
-      >
-        <Center>
-          <Loader size="md" />
-        </Center>
-      </Box>
+      <div className="flex items-center justify-center" style={{ minHeight: mobile ? 300 : 600 }}>
+        <Loader size="md" />
+      </div>
     );
 
+  const totalItems = filteredImages.length + (hiddenExplained.hasHidden ? 1 : 0);
+  const slidesToShow = mobile ? 1 : 2;
+
   return (
-    <Box pos="relative">
-      <Carousel
-        key={connectId}
-        className={cx(
-          !mobile && classes.carousel,
-          mobile && classes.mobileBlock,
-          isLoading && classes.loadingCarousel
-        )}
-        classNames={classes}
-        slideSize="50%"
-        breakpoints={[{ maxWidth: 'sm', slideSize: '100%', slideGap: 2 }]}
-        slideGap="xl"
-        align={filteredImages.length > 1 ? 'start' : 'center'}
-        slidesToScroll="auto"
-        withControls={filteredImages.length > 2 ? true : false}
-        controlSize={mobile ? 32 : 56}
-        loop
-        onSlideChange={(index) => {
-          if (onImageChange) {
-            onImageChange(
-              mobile ? [filteredImages[index]] : filteredImages.slice(index, index + 2)
-            );
-          }
-        }}
-      >
-        {filteredImages.map((image) => (
-          <Carousel.Slide key={image.id}>
-            <Box
-              sx={{ cursor: 'pointer' }}
-              onClick={onClick ? () => onClick(image) : undefined}
-              tabIndex={0}
-              role="button"
-              onKeyDown={
-                onClick
-                  ? (e) => {
-                      const keyDown = e.key !== undefined ? e.key : e.keyCode;
-                      if (
-                        keyDown === 'Enter' ||
-                        keyDown === 13 ||
-                        ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
-                        keyDown === 32
-                      ) {
-                        // (prevent default so the page doesn't scroll when pressing space)
-                        e.preventDefault();
-                        onClick(image);
-                      }
-                    }
-                  : undefined
-              }
+    <Embla
+      key={connectId}
+      align={totalItems > slidesToShow ? 'start' : 'center'}
+      slidesToScroll={1}
+      withControls={totalItems > slidesToShow ? true : false}
+      controlSize={mobile ? 32 : 56}
+      breakpoints={{
+        [`(min-width: ${breakpoints.sm}px)`]: {
+          slidesToScroll: 2,
+        },
+      }}
+      loop
+    >
+      <Embla.Viewport>
+        <Embla.Container className="flex">
+          {filteredImages.map((image, index) => (
+            <Embla.Slide
+              key={image.id}
+              index={index}
+              className="flex-[0_0_100%] pl-3 @md:flex-[0_0_50%] @md:pl-6"
             >
-              <Center className="size-full">
-                <div className="relative w-full">
+              <div
+                className="flex cursor-pointer items-center justify-center"
+                onClick={onClick ? () => onClick(image) : undefined}
+                tabIndex={0}
+                role="button"
+                onKeyDown={
+                  onClick
+                    ? (e) => {
+                        const keyDown = e.key !== undefined ? e.key : e.keyCode;
+                        if (
+                          keyDown === 'Enter' ||
+                          keyDown === 13 ||
+                          ['Spacebar', ' '].indexOf(keyDown as string) >= 0 ||
+                          keyDown === 32
+                        ) {
+                          // (prevent default so the page doesn't scroll when pressing space)
+                          e.preventDefault();
+                          onClick(image);
+                        }
+                      }
+                    : undefined
+                }
+              >
+                <div className="relative">
                   <ImageGuard2 image={image} connectType={connectType} connectId={connectId}>
                     {(safe) => (
                       <>
@@ -231,7 +126,7 @@ export function ImageCarouselContent({
                         />
                         {image.meta && (
                           <ImageMetaPopover meta={image.meta} imageId={image.id}>
-                            <ActionIcon variant="light" className={classes.meta}>
+                            <ActionIcon variant="light" className="absolute bottom-2.5 right-2.5">
                               <IconInfoCircle color="white" strokeWidth={2.5} size={18} />
                             </ActionIcon>
                           </ImageMetaPopover>
@@ -240,19 +135,22 @@ export function ImageCarouselContent({
                     )}
                   </ImageGuard2>
                 </div>
-              </Center>
-            </Box>
-          </Carousel.Slide>
-        ))}
-        {hiddenExplained.hasHidden && (
-          <Carousel.Slide>
-            <Card withBorder component={Center} mih={450} h="100%" w="100%">
-              <ExplainHiddenImages {...hiddenExplained} />
-            </Card>
-          </Carousel.Slide>
-        )}
-      </Carousel>
-    </Box>
+              </div>
+            </Embla.Slide>
+          ))}
+          {hiddenExplained.hasHidden && (
+            <Embla.Slide
+              index={filteredImages.length}
+              className="flex-[0_0_100%] pl-3 @md:flex-[0_0_50%] @md:pl-6"
+            >
+              <Card withBorder component={Center} mih={450} h="100%" w="100%">
+                <ExplainHiddenImages {...hiddenExplained} />
+              </Card>
+            </Embla.Slide>
+          )}
+        </Embla.Container>
+      </Embla.Viewport>
+    </Embla>
   );
 }
 
@@ -261,5 +159,4 @@ type Props = {
   mobile?: boolean;
   onClick?: (image: ImageProps) => void;
   isLoading?: boolean;
-  onImageChange?: (images: ImageProps[]) => void;
 } & ImageGuardConnect;
