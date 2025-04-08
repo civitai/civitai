@@ -181,7 +181,8 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
         a setting sun.&quot;
       </Text>
       <Text mt="sm">
-        Preferred for <Badge color="red">Flux</Badge> and <Badge color="pink">SD3</Badge> models.
+        Preferred for <Badge color="red">Flux</Badge>, <Badge color="pink">SD3</Badge>, and{' '}
+        <Badge color="teal">Video</Badge> models.
       </Text>
     </Stack>
   ),

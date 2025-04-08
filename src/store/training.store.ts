@@ -165,10 +165,14 @@ type TrainingImageStore = {
   updateRun: (modelId: number, runId: number, data: TrainingRunUpdate) => void;
 };
 
-// TODO create defaultVideoBase and baseType
 export const defaultBase = 'sdxl';
 export const defaultBaseType = 'sdxl' as const;
 export const defaultEngine = 'kohya';
+
+export const defaultBaseVideo = 'hunyuan';
+export const defaultBaseTypeVideo = 'video' as const;
+export const defaultEngineVideo = 'musubi';
+
 const defaultParams = trainingSettings.reduce(
   (a, v) => ({
     ...a,
@@ -179,18 +183,37 @@ const defaultParams = trainingSettings.reduce(
   }),
   {} as TrainingDetailsParams
 );
-export const defaultRun = {
+const defaultParamsVideo = trainingSettings.reduce(
+  (a, v) => ({
+    ...a,
+    [v.name]:
+      v.overrides?.[defaultBaseVideo]?.all?.default ??
+      v.overrides?.[defaultBaseVideo]?.[defaultEngineVideo]?.default ??
+      v.default,
+  }),
+  {} as TrainingDetailsParams
+);
+
+const defaultRunBase = {
   id: 1,
-  base: defaultBase,
-  baseType: defaultBaseType,
   samplePrompts: ['', '', ''],
-  params: { ...defaultParams },
   staging: false,
   highPriority: false,
   buzzCost: 0,
   hasIssue: false,
 };
-// TODO create defaultVideoRun
+export const defaultRun = {
+  ...defaultRunBase,
+  params: { ...defaultParams },
+  base: defaultBase,
+  baseType: defaultBaseType,
+};
+export const defaultRunVideo = {
+  ...defaultRunBase,
+  params: { ...defaultParamsVideo },
+  base: defaultBaseVideo,
+  baseType: defaultBaseTypeVideo,
+};
 
 export const defaultTrainingState: TrainingDataState = {
   imageList: [] as ImageDataType[],

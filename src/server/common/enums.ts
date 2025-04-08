@@ -319,7 +319,7 @@ export enum OrchPriorityTypes {
 export enum OrchEngineTypes {
   Kohya = 'kohya',
   Rapid = 'flux-dev-fast',
-  'X-Flux' = 'x-flux',
+  Musubi = 'musubi',
 }
 
 export enum BlocklistType {

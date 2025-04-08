@@ -4,7 +4,6 @@ import {
   Box,
   Card,
   Checkbox,
-  Code,
   Group,
   Stack,
   Switch,
@@ -17,7 +16,6 @@ import {
 import { usePrevious } from '@mantine/hooks';
 import { IconAlertTriangle, IconChevronDown, IconConfetti } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
-import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { CivitaiTooltip } from '~/components/CivitaiWrapped/CivitaiTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -82,7 +80,7 @@ export const AdvancedSettings = ({
     defaultParams.engine = selectedRun.params.engine;
     defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
 
-    if (selectedRun.params.engine === 'kohya') {
+    if (selectedRun.params.engine !== 'rapid') {
       defaultParams.targetSteps = Math.ceil(
         ((numImages || 1) * defaultParams.numRepeats * defaultParams.maxTrainEpochs) /
           defaultParams.trainBatchSize
@@ -104,7 +102,6 @@ export const AdvancedSettings = ({
   // Set targetSteps automatically on value changes
   useEffect(() => {
     const { maxTrainEpochs, numRepeats, trainBatchSize, engine } = selectedRun.params;
-    if (engine === 'x-flux') return;
 
     const newSteps = Math.ceil(
       ((numImages || 1) * (numRepeats ?? 200) * maxTrainEpochs) / trainBatchSize
@@ -238,76 +235,64 @@ export const AdvancedSettings = ({
           },
         })}
       >
-        {selectedRun.params.engine === 'x-flux' ? (
-          <AlertWithIcon icon={<IconAlertTriangle />} color="yellow" iconColor="yellow" mb="md">
-            <Text>
-              Heads up: you&apos;re using <Code color="green">x-flux</Code>!
-              <br />
-              We currently do not provide sample images for LoRAs trained this way.
-              <br />
-              We are also working on expanding the list of supported training parameters.
-            </Text>
-          </AlertWithIcon>
-        ) : (
-          <Accordion.Item value="custom-prompts">
-            <Accordion.Control>
-              <Stack spacing={4}>
-                <Text>Sample Image Prompts</Text>
-                {openedSections.includes('custom-prompts') && (
-                  <Text size="xs" color="dimmed">
-                    Set your own prompts for any of the 3 sample images we generate for each epoch.
-                  </Text>
-                )}
-              </Stack>
-            </Accordion.Control>
-            <Accordion.Panel>
-              <Stack p="sm">
-                <TextInputWrapper
-                  label="Image #1"
-                  placeholder="Automatically set"
-                  value={selectedRun.samplePrompts[0]}
-                  onChange={(event) => {
-                    doUpdate({
-                      samplePrompts: [
-                        event.currentTarget.value,
-                        selectedRun.samplePrompts[1],
-                        selectedRun.samplePrompts[2],
-                      ],
-                    });
-                  }}
-                />
-                <TextInputWrapper
-                  label="Image #2"
-                  placeholder="Automatically set"
-                  value={selectedRun.samplePrompts[1]}
-                  onChange={(event) => {
-                    doUpdate({
-                      samplePrompts: [
-                        selectedRun.samplePrompts[0],
-                        event.currentTarget.value,
-                        selectedRun.samplePrompts[2],
-                      ],
-                    });
-                  }}
-                />
-                <TextInputWrapper
-                  label="Image #3"
-                  placeholder="Automatically set"
-                  value={selectedRun.samplePrompts[2]}
-                  onChange={(event) => {
-                    doUpdate({
-                      samplePrompts: [
-                        selectedRun.samplePrompts[0],
-                        selectedRun.samplePrompts[1],
-                        event.currentTarget.value,
-                      ],
-                    });
-                  }}
-                />
-              </Stack>
-            </Accordion.Panel>
-          </Accordion.Item>
-        )}
+        <Accordion.Item value="custom-prompts">
+          <Accordion.Control>
+            <Stack spacing={4}>
+              <Text>Sample Image Prompts</Text>
+              {openedSections.includes('custom-prompts') && (
+                <Text size="xs" color="dimmed">
+                  Set your own prompts for any of the 3 sample images we generate for each epoch.
+                </Text>
+              )}
+            </Stack>
+          </Accordion.Control>
+          <Accordion.Panel>
+            <Stack p="sm">
+              <TextInputWrapper
+                label="Image #1"
+                placeholder="Automatically set"
+                value={selectedRun.samplePrompts[0]}
+                onChange={(event) => {
+                  doUpdate({
+                    samplePrompts: [
+                      event.currentTarget.value,
+                      selectedRun.samplePrompts[1],
+                      selectedRun.samplePrompts[2],
+                    ],
+                  });
+                }}
+              />
+              <TextInputWrapper
+                label="Image #2"
+                placeholder="Automatically set"
+                value={selectedRun.samplePrompts[1]}
+                onChange={(event) => {
+                  doUpdate({
+                    samplePrompts: [
+                      selectedRun.samplePrompts[0],
+                      event.currentTarget.value,
+                      selectedRun.samplePrompts[2],
+                    ],
+                  });
+                }}
+              />
+              <TextInputWrapper
+                label="Image #3"
+                placeholder="Automatically set"
+                value={selectedRun.samplePrompts[2]}
+                onChange={(event) => {
+                  doUpdate({
+                    samplePrompts: [
+                      selectedRun.samplePrompts[0],
+                      selectedRun.samplePrompts[1],
+                      event.currentTarget.value,
+                    ],
+                  });
+                }}
+              />
+            </Stack>
+          </Accordion.Panel>
+        </Accordion.Item>
         {isValidRapid(selectedRun.baseType, selectedRun.params.engine) ? (
           <Card withBorder mt="md" p="sm">
             <Card.Section inheritPadding withBorder py="sm">
@@ -423,18 +408,24 @@ export const AdvancedSettings = ({
                   } else if (ts.type === 'select') {
                     let options = ts.options as string[];
 
+                    // Options overrides (eventually move this to normal override)
                     if (
                       ts.name === 'lrScheduler' &&
                       selectedRun.params.optimizerType === 'Prodigy'
                     ) {
                       options = options.filter((o) => o !== 'cosine_with_restarts');
                     }
-                    // TODO re-enable x-flux
-                    if (ts.name === 'engine') {
-                      options = options.filter((o) => o !== 'x-flux');
-                    }
+
                     if (ts.name === 'optimizerType' && selectedRun.baseType === 'video') {
                       options = options.filter((o) => o !== 'Prodigy');
+                    }
+
+                    if (ts.name === 'engine') {
+                      if (selectedRun.baseType === 'video') {
+                        options = options.filter((o) => o !== 'kohya' && o !== 'rapid');
+                      } else {
+                        options = options.filter((o) => o !== 'musubi');
+                      }
                     }
 
                     inp = (
@@ -507,7 +498,7 @@ export const AdvancedSettings = ({
                                 </Tooltip>
                               )}
                           </Group>
-                          {/*TODO re-enable when x-flux is back*/}
+                          {/* use this for new parameters */}
                           {/*{ts.name === 'engine' && selectedRun.baseType === 'flux' && (*/}
                           {/*  <Badge color="green">NEW</Badge>*/}
                           {/*)}*/}
@@ -517,7 +508,11 @@ export const AdvancedSettings = ({
                       ts.label
                     ),
                     value: inp,
-                    visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux'),
+                    visible: !(
+                      ts.name === 'engine' &&
+                      selectedRun.baseType !== 'flux' &&
+                      selectedRun.baseType !== 'video'
+                    ),
                   };
                 })}
               />

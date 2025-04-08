@@ -79,6 +79,8 @@ const maxSteps =
   (trainingSettings.find((ts) => ts.name === 'targetSteps') as NumberTrainingSettingsType).max ??
   10000;
 
+const prefersCaptions = ['flux', 'sd35', 'video'];
+
 const useStyles = createStyles((theme) => ({
   sticky: {
     backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
@@ -103,6 +105,11 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [selectedRunIndex, setSelectedRunIndex] = useState<number>(0);
   const selectedRun = runs[selectedRunIndex] ?? defaultRun;
   // TODO create defaultVideoRun
+
+  const allLabeled =
+    selectedRun.baseType === 'video'
+      ? (thisMetadata?.numCaptions ?? 0) >= (thisNumImages ?? 0)
+      : true;
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
@@ -626,7 +633,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         numImages={thisNumImages}
       />
 
-      {['flux', 'sd35'].includes(selectedRun.baseType) &&
+      {prefersCaptions.includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -654,7 +661,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             </Group>
           </AlertWithIcon>
         )}
-      {!['flux', 'sd35'].includes(selectedRun.baseType) &&
+      {!prefersCaptions.includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -682,6 +689,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             </Group>
           </AlertWithIcon>
         )}
+
+      {!allLabeled && (
+        <AlertWithIcon
+          icon={<IconAlertTriangle size={16} />}
+          iconColor="yellow"
+          radius={0}
+          size="md"
+          color="yellow"
+          mt="sm"
+        >
+          <Group spacing="sm" position="apart" noWrap>
+            <Text>Video training requires that all images are labeled.</Text>
+            <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
+          </Group>
+        </AlertWithIcon>
+      )}
 
       {formBaseModel && (
         <>
@@ -813,6 +836,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           disabled={
             blockedModels.includes(formBaseModel ?? '') ||
             !status.available ||
+            !allLabeled ||
             awaitInvalidate ||
             dryRunResult.isLoading
           }

@@ -46,6 +46,7 @@ const useStyles = createStyles((theme) => ({
       flexDirection: 'column',
       gap: theme.spacing.md,
     },
+    flexWrap: 'nowrap',
   },
   selectedRow: {
     border: `2px solid ${theme.fn.rgba(theme.colors.green[5], 0.7)}`,
@@ -160,7 +161,6 @@ const EpochRow = ({
                     // width={180}
                     className="w-full object-cover"
                   >
-                    <source src={url.replace('.mp4', '.webm')} type="video/webm" />
                     <source src={url} type="video/mp4" />
                   </video>
                 ) : (

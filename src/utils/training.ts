@@ -12,7 +12,7 @@ import { isDefined } from '~/utils/type-guards';
 export const trainingBaseModelType = ['sd15', 'sdxl', 'sd35', 'flux', 'video'] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
-export const engineTypes = ['kohya', 'x-flux', 'rapid'] as const;
+export const engineTypes = ['kohya', 'rapid', 'musubi'] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
@@ -175,8 +175,8 @@ export const getTrainingFields = {
   getEngine: (engine: TrainingDetailsParams['engine']) => {
     return engine === 'rapid'
       ? OrchEngineTypes.Rapid
-      : engine === 'x-flux'
-      ? OrchEngineTypes['X-Flux']
+      : engine === 'musubi'
+      ? OrchEngineTypes['Musubi']
       : OrchEngineTypes.Kohya;
   },
 };

@@ -21,17 +21,17 @@ export const optimizerArgMap: { [key in OptimizerTypes]: string } = {
 export const optimizerArgMapFlux: { [key in OptimizerTypes]: { [key in EngineTypes]: string } } = {
   Adafactor: {
     kohya: optimizerArgMap.Adafactor,
-    'x-flux': '(empty)',
+    musubi: '(empty)',
     rapid: '(empty)',
   },
   AdamW8Bit: {
     kohya: 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
-    'x-flux': 'weight_decay=0.01, eps=0.00000001, betas=(0.9, 0.999)',
+    musubi: '(empty)',
     rapid: '(empty)',
   },
   Prodigy: {
     kohya: optimizerArgMap.Prodigy,
-    'x-flux': '(empty)',
+    musubi: '(empty)',
     rapid: '(empty)',
   },
 };
@@ -118,7 +118,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     default: 'kohya',
     options: engineTypes,
     disabled: true,
-    overrides: { flux_dev: { all: { disabled: false } } },
+    overrides: {
+      flux_dev: { all: { disabled: false } },
+      hunyuan: { all: { default: 'musubi' } },
+    },
   },
   {
     name: 'maxTrainEpochs',
@@ -135,7 +138,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       illustrious: { all: { min: 1 } },
       flux_dev: {
         kohya: { default: 5 },
-        'x-flux': { default: 5, max: 5, min: 2 },
         rapid: { default: 1, min: 1, max: 1 },
       },
       sd3_medium: { all: { default: 5 } },
@@ -152,11 +154,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     min: 1,
     max: 5000,
     step: 1,
-    overrides: {
-      flux_dev: {
-        'x-flux': { disabled: true },
-      },
-    },
   },
   {
     name: 'trainBatchSize',
@@ -174,7 +171,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { default: 5, max: 5 } },
       illustrious: { all: { default: 4, max: 4 } },
       flux_dev: {
-        'x-flux': { default: 1, max: 1, disabled: true },
         kohya: { default: 4, max: 4 },
       },
       sd3_medium: { all: { default: 4, max: 4 } },
@@ -199,16 +195,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 10000,
     step: 1,
     disabled: true,
-    overrides: {
-      flux_dev: {
-        'x-flux': {
-          disabled: false,
-          default: 2500,
-          min: 1000,
-          hint: 'The number of target training steps.',
-        },
-      },
-    },
   },
   {
     name: 'resolution',
@@ -241,11 +227,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     hint: 'Sorts images into buckets by size for the purposes of training. If your training images are all the same size, you can turn this option off, but leaving it on has no effect.',
     type: 'bool',
     default: true,
-    overrides: {
-      flux_dev: {
-        'x-flux': { default: false, disabled: true },
-      },
-    },
   },
   {
     name: 'shuffleCaption',
@@ -311,7 +292,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       anime: { all: { default: 2 } },
-      flux_dev: { 'x-flux': { disabled: true, default: 0, min: 0, max: 0 } },
       hunyuan: {
         all: { disabled: true, default: 0, min: 0, max: 0 },
       },
@@ -324,9 +304,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'bool',
     default: false,
     overrides: {
-      flux_dev: {
-        'x-flux': { disabled: true },
-      },
       hunyuan: {
         all: { disabled: true },
       },
@@ -342,9 +319,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 1,
     step: 1e-5,
     overrides: {
-      flux_dev: {
-        'x-flux': { default: 5e-5 },
-      },
       sd3_medium: { all: { default: 1e-5 } },
       sd3_large: { all: { default: 1e-5 } },
       hunyuan: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
@@ -376,7 +350,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     options: lrSchedulerTypes,
     overrides: {
       pony: { all: { default: 'cosine' } },
-      flux_dev: { 'x-flux': { default: 'cosine', disabled: true } },
       hunyuan: { all: { default: 'constant' } },
     },
   },
@@ -391,9 +364,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 4,
     step: 1,
     overrides: {
-      flux_dev: {
-        'x-flux': { disabled: true, default: 0, min: 0, max: 0 },
-      },
       hunyuan: { all: { default: 1 } },
     },
   },
@@ -417,7 +387,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       pony: { all: { default: 0 } },
-      flux_dev: { 'x-flux': { disabled: true, default: 0, max: 0 } },
       hunyuan: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
@@ -435,7 +404,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { max: 256 } },
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 16 } },
-      flux_dev: { 'x-flux': { default: 16 }, kohya: { default: 2 } },
       sd3_medium: { all: { default: 2 } },
       sd3_large: { all: { default: 2 } },
     },
@@ -463,7 +431,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { max: 256, default: 32 } },
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 8 } },
-      flux_dev: { 'x-flux': { disabled: true, default: 1, min: 1, max: 1 } },
       hunyuan: { all: { default: 1 } },
     },
   },
@@ -478,7 +445,6 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 0.01,
     overrides: {
       pony: { all: { default: 0.03 } },
-      flux_dev: { 'x-flux': { disabled: true, default: 0, min: 0, max: 0 } },
       hunyuan: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
@@ -501,7 +467,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       sdxl: { all: { default: 'Adafactor' } },
       pony: { all: { default: 'Prodigy' } },
       illustrious: { all: { default: 'Adafactor' } },
-      flux_dev: { 'x-flux': { disabled: true } },
     },
   },
   {
@@ -518,7 +483,6 @@ export const trainingSettings: TrainingSettingsType[] = [
       illustrious: { all: { default: optimizerArgMap.Adafactor } },
       flux_dev: {
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
-        'x-flux': { default: optimizerArgMapFlux.AdamW8Bit['x-flux'] },
       },
       hunyuan: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
     },
