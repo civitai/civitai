@@ -36,6 +36,7 @@ const baseHunyuanSchema = z.object({
   frameRate: z.literal(24).default(24),
   duration: numberEnum(hunyuanDuration).default(3).catch(3),
   seed: seedSchema,
+  draft: z.boolean().optional(),
   steps: z.number().default(25),
 });
 
@@ -65,6 +66,7 @@ export const hunyuanVideoGenerationConfig = [hunyuanTxt2ImgConfig];
 
 export function HunyuanInput({
   aspectRatio,
+  draft,
   ...args
 }: z.infer<(typeof hunyuanVideoGenerationConfig)[number]['schema']>): HunyuanVdeoGenInput {
   const { width, height } = hunyuanAspectRatioMap[aspectRatio];

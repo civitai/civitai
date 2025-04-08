@@ -17,7 +17,7 @@ import {
   minimaxVideoGenerationConfig,
 } from '~/server/orchestrator/minimax/minimax.schema';
 import { MochiInput, mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
-import { viduVideoGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
+import { ViduInput, viduVideoGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
 
 export type VideoGenerationSchema = z.infer<(typeof videoGenerationConfig)[number]['schema']>;
 export const videoGenerationConfig = [
@@ -37,4 +37,5 @@ export const videoGenerationInput = {
   mochi: MochiInput,
   lightricks: LightricksInput,
   hunyuan: HunyuanInput,
+  vidu: ViduInput,
 } as const;
