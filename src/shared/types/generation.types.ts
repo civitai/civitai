@@ -13,4 +13,6 @@ export interface GenerationEngine {
   engine: OrchestratorEngine;
   disabled?: boolean;
   message?: string;
+  memberOnly?: boolean;
+  status?: 'mod-only' | 'published' | 'disabled';
 }
