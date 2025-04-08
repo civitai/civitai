@@ -588,7 +588,6 @@ type EnginesDictionary = Record<
     label: string;
     description: string | (() => React.ReactNode);
     whatIf?: string[];
-    memberOnly?: boolean;
   }
 >;
 
@@ -607,7 +606,6 @@ export const engineDefinitions: EnginesDictionary = {
     label: 'Lightricks',
     description: '',
     whatIf: ['duration', 'cfgScale', 'steps'],
-    // memberOnly: true,
   },
   haiper: {
     label: 'Haiper',

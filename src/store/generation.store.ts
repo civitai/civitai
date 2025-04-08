@@ -263,13 +263,19 @@ export const useRemixStore = create<{
 
 export function useVideoGenerationWorkflows() {
   const currentUser = useCurrentUser();
-  const isMember = (currentUser?.isPaidMember || currentUser?.isModerator) ?? false;
+  // TODO - handle member only
+  const isMember = currentUser?.isPaidMember ?? false;
   const { data, isLoading } = trpc.generation.getGenerationEngines.useQuery();
   const workflows = generationFormWorkflowConfigurations
     .map((config) => {
       const engine = data?.find((x) => x.engine === config.engine);
-      if (!engine) return null;
-      return { ...config, ...engine };
+      if (
+        !engine ||
+        (engine.status === 'mod-only' && !currentUser?.isModerator) ||
+        engine.status === 'disabled'
+      )
+        return null;
+      return { ...config, ...engine, memberOnly: engine.memberOnly };
     })
     .filter(isDefined);
 
@@ -280,10 +286,9 @@ export function useVideoGenerationWorkflows() {
         ?.filter((x) => {
           return sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid';
         })
-        .some((x) => x.engine === key && !x.disabled)
+        .some((x) => x.engine === key)
     )
-    .map((key) => ({ key, ...engineDefinitions[key] }))
-    .filter((x) => (x.memberOnly ? isMember : true));
+    .map((key) => ({ key, ...engineDefinitions[key] }));
 
   return { data: workflows, availableEngines, isLoading };
 }
