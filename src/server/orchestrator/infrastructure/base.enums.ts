@@ -11,6 +11,7 @@ export const OrchestratorEngine = {
   Mochi: 'mochi',
   Haiper: 'haiper',
   Minimax: 'minimax',
+  Vidu: 'vidu',
   Lightricks: 'lightricks',
   Hunyuan: 'hunyuan',
 } as const;

@@ -164,6 +164,7 @@ export function RichTextEditor({
   withLinkValidation,
   stickyToolbar,
   toolbarOffset = 70,
+  inputClasses,
   ...props
 }: Props) {
   const { classes } = useStyles();
@@ -265,8 +266,7 @@ export function RichTextEditor({
           }).extend({
             renderHTML(input) {
               const { HTMLAttributes } = input;
-              if (!HTMLAttributes.src || !this.parent)
-                return ['div', { 'data-youtube-video': '' }];
+              if (!HTMLAttributes.src || !this.parent) return ['div', { 'data-youtube-video': '' }];
 
               return this.parent(input);
             },
@@ -360,6 +360,7 @@ export function RichTextEditor({
       description={description}
       withAsterisk={withAsterisk}
       error={error}
+      className={inputClasses}
     >
       <RTE
         {...props}
@@ -506,4 +507,5 @@ type Props = Omit<RichTextEditorProps, 'editor' | 'children' | 'onChange'> &
     withLinkValidation?: boolean;
     stickyToolbar?: boolean;
     toolbarOffset?: number;
+    inputClasses?: string;
   };
