@@ -1147,13 +1147,73 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
   },
   red: {
     color: 'red',
-    excludedTagIds: [],
+    excludedTagIds: [
+      792, //marijuana
+      793, //weed
+      970, //gun
+      3163, //weapons
+      4036, //mind control
+      4037, //hypnosis
+      5161, //actor
+      5162, //actress
+      5188, //celebrity
+      5249, //real person
+      5351, //child
+      6941, //hypno
+      110376, //guns
+      111782, //weapon
+      112175, //firearm
+      112383, //drug products
+      112384, //drugs
+      112675, //weapon violence
+      113966, //drug use
+      113968, //drug paraphernalia
+      117875, //gunslinger
+      117934, //vomiting
+      121273, //children
+      122432, //hypnotic
+      124724, //molestation
+      124890, //sleep molestation
+      130818, //porn actress
+      130820, //adult actress
+      133182, //porn star
+      133935, //hypnotized
+      146968, //celebrity,
+      151615, //molester
+      153296, //vomit
+      154326, //toddler
+      161829, //male child
+      161864, //holding weapon
+      163032, //female child
+      164020, //incest
+      164047, //mother and daughter
+      164776, //father and daughter
+      164978, //antique firearm
+      165960, //mother and son
+      171899, //mindcontrol
+      174202, //cocaine
+      174809, //twincest
+      195393, //drug addict
+      201446, //firearms
+      210913, //drugged
+      215141, //gunshot
+      219093, //hypnotizing
+      223439, //molesting
+      224818, //drugs & tobacco
+      229694, //hypnotism
+      242816, //drug
+      249303, //hypnotist
+      259592, //molested
+      306619, //child present
+      368038, //wincest
+      370273, //recreational drugs
+    ],
     disablePoi: true,
-    allowedNsfwLevels: [NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
     disableNsfwLevelControl: false,
     systemHomeBlockIds: [],
     excludedSystemHomeBlockIds: [],
-    publicNsfwLevels: [NsfwLevel.R, NsfwLevel.X],
+    publicNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X],
     browsingLevelKey: 'redBrowsingLevel',
     generationDefaultValues: {
       denoise: 0.65,
