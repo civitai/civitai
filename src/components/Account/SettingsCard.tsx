@@ -1,22 +1,40 @@
-import { Card, Divider, Group, Select, Stack, Switch, Title } from '@mantine/core';
-
+import {
+  Badge,
+  Card,
+  Divider,
+  Group,
+  Select,
+  Stack,
+  Switch,
+  Text,
+  Title,
+  Tooltip,
+} from '@mantine/core';
+import produce from 'immer';
+import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
-import { showSuccessNotification } from '~/utils/notifications';
+import type { UserAssistantPersonality } from '~/server/schema/user.schema';
+import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import produce from 'immer';
-import { showErrorNotification } from '~/utils/notifications';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
+const normalizedToggleableFeatures = toggleableFeatures.filter(
+  (feature) => feature.key !== 'assistant'
+);
+const assistantToggleableFeatures = toggleableFeatures.filter(
+  (feature) => feature.key === 'assistant'
+);
 
 export function SettingsCard() {
   const user = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  const flags = useFeatureFlags();
 
   const { mutate, isLoading } = trpc.user.update.useMutation({
     async onSuccess() {
@@ -26,12 +44,16 @@ export function SettingsCard() {
     },
   });
 
+  const { assistantPersonality } = useCurrentUserSettings();
+  const { mutate: mutateSetting, isLoading: isLoadingSetting } = useMutateUserSettings();
+
   if (!user) return null;
 
   return (
     <Card withBorder id="settings">
       <Stack>
         <Title order={2}>Browsing Settings</Title>
+
         <Divider label="Image Preferences" mb={-12} />
         <Group noWrap grow>
           <AutoplayGifsToggle />
@@ -98,7 +120,58 @@ export function SettingsCard() {
             disabled={isLoading}
           />
         </Group>
-        {toggleableFeatures.length > 0 && <ToggleableFeatures />}
+
+        {!!assistantToggleableFeatures && (
+          <>
+            <Divider label="Assistant Preferences" />
+            <Stack>
+              <ToggleableFeatures data={assistantToggleableFeatures} />
+              <Tooltip
+                withArrow
+                color="gray"
+                offset={-10}
+                label={!flags.assistantPersonality ? 'Available to subscribers only' : undefined}
+                disabled={flags.assistantPersonality}
+              >
+                <div>
+                  <Select
+                    label={
+                      <Group mb={4} spacing="xs">
+                        <Text>Personality</Text>
+                        {new Date() < new Date('2025-04-21') && <Badge color="green">New</Badge>}
+                      </Group>
+                    }
+                    name="assistantPersonality"
+                    disabled={isLoadingSetting || !flags.assistantPersonality}
+                    data={[
+                      {
+                        value: 'civbot',
+                        label: 'CivBot',
+                      },
+                      {
+                        value: 'civchan',
+                        label: 'CivChan',
+                      },
+                    ]}
+                    value={assistantPersonality ?? 'civbot'}
+                    onChange={(value: UserAssistantPersonality) => {
+                      if (flags.assistantPersonality) {
+                        mutateSetting({ assistantPersonality: value });
+                      }
+                    }}
+                  />
+                </div>
+              </Tooltip>
+            </Stack>
+          </>
+        )}
+
+        {normalizedToggleableFeatures.length > 0 && (
+          <>
+            <Divider label="Features" />
+            <ToggleableFeatures data={normalizedToggleableFeatures} />
+          </>
+        )}
       </Stack>
     </Card>
   );
@@ -118,7 +191,7 @@ function AutoplayGifsToggle() {
   );
 }
 
-function ToggleableFeatures() {
+function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
   const flags = useFeatureFlags();
   const queryUtils = trpc.useUtils();
   const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
@@ -154,7 +227,7 @@ function ToggleableFeatures() {
 
   return (
     <>
-      {toggleableFeatures.map((feature) => (
+      {data.map((feature) => (
         <Switch
           name={feature.key}
           key={feature.key}
