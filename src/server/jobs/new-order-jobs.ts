@@ -51,8 +51,7 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
         SELECT
           userId,
           SUM(exp * multiplier) as balance
-
-        FROM newOrderImageRating
+        FROM knights_new_order_image_rating
         WHERE createdAt BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'
           AND (status = 'Correct' OR status = 'Failed')
       `;
@@ -109,9 +108,10 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
 
 type DailyResetQueryResult = {
   userId: number;
-  status: NewOrderImageRatingStatus;
-  grantedExp: number;
-  multiplier: number;
+  exp: number;
+  correctJudgements: number;
+  failedJudgements: number;
+  totalJudgements: number;
 };
 
 const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async () => {
@@ -120,29 +120,101 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
 
   // startDate is 6 days ago
   const endDate = new Date();
-  const startDate = dayjs(endDate).subtract(6, 'day').toDate();
+  // Apr. 10, 2025 as Start Date
+  const startDate = dayjs().day(10).month(4).year(2025).startOf('day').toDate();
 
   log(
     `DailyReset:: Getting judgements from ${startDate.toISOString()} to ${endDate.toISOString()}`
   );
-  const judgements = await clickhouse
+
+  const users = await dbRead.newOrderPlayer.findMany({
+    where: { rankType: { not: NewOrderRankType.Acolyte } },
+    select: { userId: true, startAt: true },
+  });
+
+  if (!users.length) {
+    log('DailyReset:: No users found');
+    return;
+  }
+
+  const json = users.map((u) => JSON.stringify(u));
+
+  const userData = await clickhouse
     .query({
       query: `
-        SELECT userId, status, grantedExp, multiplier
-        FROM newOrderImageRating
-        WHERE createdAt BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'
-          AND status NOT IN ('AcolyteCorrect', 'AcolyteFailed')
+        WITH u AS (
+          SELECT 
+            json,
+            JSONExtractRaw(json, 'userId') "userId",
+            JSONExtractRaw(json, 'startAt') "startAt"
+          FROM arrayJoin(${json})
+        ) SELECT 
+          knoir."userId",
+          SUM(
+              -- Make it so we ignore elements before a reset.
+              if (knoir."createdAt" > u."startAt", 1, 0) *
+              exp * multiplier
+          ) as exp,
+          SUM(
+              -- Make it so we ignore elements before a reset.
+              if (knoir."createdAt" > u."startAt" AND knoir."status" = 'Correct', 1, 0)
+          ) as correctJudgements,
+          SUM(
+              -- Make it so we ignore elements before a reset.
+              if (knoir."createdAt" > u."startAt" AND knoir."status" = 'Failed', 1, 0)
+          ) as failedJudgements,
+          SUM(
+              -- Make it so we ignore elements before a reset.
+              if (knoir."createdAt" > u."startAt", 1, 0)
+          ) as totalJudgements
+        FROM knights_new_order_image_rating  knoir
+        JOIN u ON knoir."userId" = users."userId"
+        WHERE knoir."createdAt" BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'
+          AND knoir."status" NOT IN ('AcolyteCorrect', 'AcolyteFailed')
       `,
       format: 'JSONEachRow',
     })
     .then((result) => result.json<DailyResetQueryResult[]>());
-  if (!judgements.length) {
+
+  if (!userData.length) {
     log('DailyReset:: No judgements found');
     return;
   }
 
+  const batches = chunk(userData, 500);
+  let loopCount = 1;
+  for (const batch of batches) {
+    log(`DailyReset:: Processing judgements :: ${loopCount} of ${batches.length}`);
+    const batchWithFervor = batch.map((b) => ({
+      ...b,
+      fervor: calculateFervor({
+        correctJudgements: b.correctJudgements,
+        allJudgements: b.totalJudgements,
+      }),
+    }));
+
+    await dbWrite.$queryRaw`
+      WITH affected AS (
+        SELECT
+          (value ->> 'userId')::int as "userId",
+          (value ->> 'exp')::int as "exp",
+          (value ->> 'fervor')::int as "fervor"
+        FROM json_array_elements(${JSON.stringify(batchWithFervor)}::json)
+      )
+      UPDATE "NewOrderPlayer" 
+      SET "exp" = affected.exp,
+          "fervor" = affected.fervor,
+      FROM affected
+      WHERE "NewOrderPlayer"."userId" = affected."userId"
+    `;
+
+    log(`DailyReset:: Processing judgements :: ${loopCount} of ${batches.length} :: done`);
+    loopCount++;
+  }
+  log('DailyReset:: Processing judgements :: done');
+
   // Clean up counters
-  const userIds = removeDuplicates(judgements.map((j) => j.userId));
+  const userIds = userData.map((j) => j.userId);
   await Promise.all([
     ...userIds.map((id) => correctJudgementsCounter.reset({ id })),
     ...userIds.map((id) => allJudmentsCounter.reset({ id })),
@@ -150,26 +222,6 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     ...userIds.map((id) => expCounter.reset({ id })),
   ]);
   log('DailyReset:: Cleared counters');
-
-  const batches = chunk(judgements, 500);
-  let loopCount = 1;
-  for (const batch of batches) {
-    log(`DailyReset:: Processing judgements :: ${loopCount} of ${batches.length}`);
-    // TODO.newOrder: confirm this is correct way to do it without overloading the db
-    batch.forEach(async (r) => {
-      await updatePlayerStats({
-        playerId: r.userId,
-        status: r.status,
-        exp: r.grantedExp * r.multiplier,
-        writeToDb: true,
-      });
-    });
-
-    log(`DailyReset:: Processing judgements :: ${loopCount} of ${batches.length} :: done`);
-    loopCount++;
-  }
-
-  log('DailyReset:: Processing judgements :: done');
 });
 
 const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', async () => {
@@ -182,7 +234,7 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
     .query({
       query: `
         SELECT userId, status
-        FROM newOrderImageRating
+        FROM knights_new_order_image_rating
         WHERE createdAt BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'
           AND status NOT IN ('AcolyteCorrect', 'AcolyteFailed')
       `,
