@@ -157,7 +157,7 @@ export function QueueItem({
     });
   };
 
-  const { prompt, ...details } = params;
+  const { prompt, ...details } = 'prompt' in params ? params : { ...params, prompt: undefined };
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -256,11 +256,13 @@ export function QueueItem({
               </Alert>
             )}
 
-            <ContentClamp maxHeight={36} labelSize="xs">
-              <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
-                {prompt}
-              </Text>
-            </ContentClamp>
+            {prompt && (
+              <ContentClamp maxHeight={36} labelSize="xs">
+                <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
+                  {prompt}
+                </Text>
+              </ContentClamp>
+            )}
 
             <div className="-my-2">
               {workflowDefinition && (

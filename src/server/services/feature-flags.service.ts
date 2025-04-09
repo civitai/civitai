@@ -68,6 +68,7 @@ const featureFlags = createFeatureFlags({
     description: `A helpful chat assistant that can answer questions about Stable Diffusion, Civitai, and more! We're still training it, so please report any issues you find!`,
     availability: ['user'],
   },
+  assistantPersonality: ['bronze', 'silver', 'gold'],
   bounties: ['public'],
   newsroom: ['public'],
   safety: ['public'],

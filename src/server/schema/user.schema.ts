@@ -205,6 +205,9 @@ const generationSettingsSchema = z.object({
   advancedMode: z.boolean().optional(),
 });
 
+export const userAssistantPersonality = z.enum(['civbot', 'civchan']);
+export type UserAssistantPersonality = z.infer<typeof userAssistantPersonality>;
+
 export type UserSettingsInput = z.input<typeof userSettingsSchema>;
 export type UserSettingsSchema = z.infer<typeof userSettingsSchema>;
 export const userSettingsSchema = z.object({
@@ -213,6 +216,7 @@ export const userSettingsSchema = z.object({
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
   chat: userSettingsChat.optional(),
+  assistantPersonality: userAssistantPersonality.optional(),
   airEmail: z.string().email().optional(),
   creatorsProgramCodeOfConductAccepted: z.union([z.boolean().optional(), z.date().optional()]),
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
@@ -243,6 +247,7 @@ export const setUserSettingsInput = z.object({
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
+  assistantPersonality: userAssistantPersonality.optional(),
 });
 
 export const dismissAlertSchema = z.object({ alertId: z.string() });

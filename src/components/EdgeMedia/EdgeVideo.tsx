@@ -74,6 +74,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       thumbnailUrl,
       disableWebm,
       disablePoster,
+      onLoad,
+      onError,
       ...props
     },
     forwardedRef
@@ -130,6 +132,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     }, []);
 
     const handleLoadedData = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
+      props.onLoadedData?.(e);
       setState((current) => ({ ...current, loaded: true }));
       e.currentTarget.style.opacity = '1';
     }, []);
@@ -241,6 +244,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           muted={state.muted}
           style={style}
           onLoadedData={handleLoadedData}
+          onLoad={onLoad}
           controls={html5Controls}
           onClick={handleTogglePlayPause}
           onPlaying={() => setState((current) => ({ ...current, isPlaying: true }))}
@@ -256,6 +260,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture
           preload="none"
+          onError={onError}
           {...props}
         >
           {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}

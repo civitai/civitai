@@ -4,6 +4,7 @@ import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { createJob, getJobDate } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
+import { purgeWeeklyEarnedStats } from '~/server/metrics/model.metrics';
 import type {
   DetailsFailedRecurringBid,
   DetailsWonAuction,
@@ -18,7 +19,7 @@ import {
 } from '~/server/services/auction.service';
 import { createBuzzTransaction, refundTransaction } from '~/server/services/buzz.service';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
-import { bustFeaturedModelsCache } from '~/server/services/model.service';
+import { bustFeaturedModelsCache, getTopWeeklyEarners } from '~/server/services/model.service';
 import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { withRetries } from '~/server/utils/errorHandling';
@@ -59,6 +60,8 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
 
     if (currentStep <= 1) {
       await handlePreviousAuctions(now);
+      // Updates available checkpoints
+      // Includes the top earners
       log('-----------');
     }
 
@@ -69,6 +72,7 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
 
     if (currentStep <= 3) {
       await createNewAuctions(now);
+      // Purges the weekly stats for checkpoints
       log('-----------');
     }
 
@@ -199,6 +203,7 @@ const _fetchAuctionsWithBids = async (now: Dayjs) => {
   });
 };
 
+const TOP_EARNER_LIMIT = 20;
 const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerType[]) => {
   const winnerIds = winners.map((w) => w.entityId);
   const entityNames = Object.fromEntries(winnerIds.map((w) => [w, null as string | null]));
@@ -265,6 +270,17 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
             TRUNCATE TABLE "CoveredCheckpoint"
           `;
 
+          // Add top earning checkpoints
+          const topEarners = await getTopWeeklyEarners(true);
+          checkpoints.push(
+            ...topEarners.slice(0, TOP_EARNER_LIMIT).map((e) => ({
+              model_id: e.modelId,
+              version_id: e.modelVersionId,
+              type: 'Checkpoint' as const,
+            }))
+          );
+
+          // Add winning checkpoints
           if (checkpoints.length) {
             await tx.coveredCheckpoint.createMany({
               data: checkpoints.map((c) => ({
@@ -520,8 +536,16 @@ const createNewAuctions = async (now: Dayjs) => {
     select: { id: true, auctionBaseId: true },
     skipDuplicates: true,
   });
-
   log(newAuctions.length, 'new auctions');
+
+  // If new checkpoint auction, clear prior week earned stats
+  const checkpointAuctionBase = auctionBases.find((ab) => ab.slug === 'featured-checkpoints');
+  const checkpointAuction = newAuctions.some((a) => a.auctionBaseId === checkpointAuctionBase?.id);
+  if (checkpointAuction) {
+    log('Checkpoint auction created, purging weekly stats');
+    await purgeWeeklyEarnedStats(dbWrite);
+    log('Purged weekly stats');
+  }
 
   await dbKV.set(kvKey, 4);
 };

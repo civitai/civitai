@@ -484,6 +484,7 @@ export const REDIS_KEYS = {
     NEW_ORDER: {
       RANKS: 'new-order:ranks',
     },
+    TOP_EARNERS: 'packed:caches:top-earners',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

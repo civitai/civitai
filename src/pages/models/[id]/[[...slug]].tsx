@@ -311,6 +311,7 @@ export default function ModelDetailsV2({
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
+  const buzzEarned = tippedAmount + (model?.rank?.tippedAmountCountAllTime ?? 0) + (model?.modelVersions?.reduce((acc, version) => acc + (version.rank?.earnedAmountAllTime ?? 0), 0) ?? 0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
     useModelVersionPermission({ modelVersionId: selectedVersion?.id });
@@ -704,10 +705,8 @@ export default function ModelDetailsV2({
                           />
                         }
                       >
-                        <Text className={classes.modelBadgeText}>
-                          {abbreviateNumber(
-                            (model.rank?.tippedAmountCountAllTime ?? 0) + tippedAmount
-                          )}
+                        <Text className={classes.modelBadgeText} title={buzzEarned.toLocaleString()}>
+                          {abbreviateNumber(buzzEarned)}
                         </Text>
                       </IconBadge>
                     </InteractiveTipBuzzButton>
