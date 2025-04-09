@@ -1,4 +1,4 @@
-import { ActionIcon, Button, Kbd, Skeleton, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Button, Kbd, Skeleton, Text, ThemeIcon, Tooltip } from '@mantine/core';
 import { HotkeyItem, useHotkeys } from '@mantine/hooks';
 import {
   IconArrowBackUp,
@@ -6,6 +6,7 @@ import {
   IconExternalLink,
   IconFlag,
   IconHistory,
+  IconShieldStar,
   IconSkull,
   IconVolume,
   IconVolumeOff,
@@ -71,8 +72,8 @@ export default function KnightsNewOrderPage() {
     defaultValue: false,
   });
 
-  const { join, playerData, isLoading, joined, resetCareer, resetting } = useJoinKnightsNewOrder();
-  const { addRating, isLoading: sendingRating } = useAddImageRating();
+  const { join, playerData, isLoading, joined, resetCareer } = useJoinKnightsNewOrder();
+  const { addRating } = useAddImageRating();
   const { data, isLoading: loadingImagesQueue } = useQueryKnightsNewOrderImageQueue();
 
   useKnightsNewOrderListener();
@@ -84,7 +85,7 @@ export default function KnightsNewOrderPage() {
     rating,
     damnedReason,
   }: Omit<AddImageRatingInput, 'playerId' | 'imageId'>) => {
-    if (sendingRating || !currentImage) return;
+    if (!currentImage) return;
 
     try {
       playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
@@ -130,12 +131,26 @@ export default function KnightsNewOrderPage() {
   return (
     <GameErrorBoundary>
       {!isLoading && !playerData && !joined ? (
-        <div>
-          <h1>Knights of New Order</h1>
-          <p>Welcome to page Knights New Order</p>
-          <div className="flex gap-4">
-            <Button variant="outline">Learn More</Button>
-            <Button onClick={() => join()}>Join Game</Button>
+        <div className="flex h-[calc(100%-var(--footer-height)-65px)] items-center justify-center p-4">
+          <div className="mx-auto flex w-full max-w-[448px] flex-col items-center gap-4 text-center">
+            <ThemeIcon
+              className="rounded-full border border-orange-5"
+              size={128}
+              color="orange"
+              variant="light"
+            >
+              <IconShieldStar className="size-16" />
+            </ThemeIcon>
+            <h1 className="text-4xl font-bold tracking-tight text-orange-5 md:text-5xl">
+              Knights of New Order
+            </h1>
+            <p>Forge your destiny in a realm of honor and glory</p>
+            <Button color="orange.5" size="lg" onClick={() => join()} fullWidth>
+              Join Game
+            </Button>
+            <Button className="text-orange-5" variant="white" size="lg" fullWidth>
+              Learn More
+            </Button>
           </div>
         </div>
       ) : isLoading ? (
@@ -194,7 +209,7 @@ export default function KnightsNewOrderPage() {
               </Button>
             </div>
           </div>
-          <div className="flex w-full flex-col items-center justify-center gap-4 px-4 md:h-[calc(100%-var(--footer-height)-56px)] md:overflow-hidden">
+          <div className="flex w-full flex-col items-center justify-center gap-4 px-4 md:h-[calc(100%-var(--footer-height)-65px)] md:overflow-hidden">
             <Skeleton visible={loadingImagesQueue} width={700} height={525} maw="100%" animate>
               {currentImage ? (
                 <div className="flex h-full flex-col items-center gap-4">

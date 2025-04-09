@@ -191,7 +191,7 @@ export async function addImageRating({
   if (chTracker) {
     try {
       await chTracker.newOrderImageRating({
-        playerId,
+        userId: playerId,
         imageId,
         rating,
         status:
@@ -334,6 +334,7 @@ export async function updatePlayerStats({
   exp: number;
   writeToDb?: boolean;
 }) {
+  // TODO.newOrder: check math for fervor
   const allJudgements = await allJudmentsCounter.increment({ id: playerId });
   const correctJudgements =
     status === NewOrderImageRatingStatus.Correct

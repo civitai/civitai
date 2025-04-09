@@ -518,13 +518,13 @@ export class Tracker {
 
   public newOrderImageRating(
     values: AddImageRatingInput & {
-      playerId: number;
+      userId: number;
       status: NewOrderImageRatingStatus;
       grantedExp: number;
       multiplier: number;
     }
   ) {
-    return this.track('newOrderImageRating', values);
+    return this.track('knights_new_order_image_rating', values);
   }
 
   public entityMetric(values: {
