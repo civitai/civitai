@@ -241,6 +241,7 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
       format: 'JSONEachRow',
     })
     .then((result) => result.json<{ userId: number; status: NewOrderImageRatingStatus }[]>());
+
   if (!judgements.length) {
     log('PickTemplars :: No judgements found');
     return;
@@ -248,9 +249,15 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
 
   const userIds = judgements.map((j) => j.userId);
   const players = await dbRead.newOrderPlayer.findMany({
-    where: { userId: { in: userIds }, rankType: NewOrderRankType.Knight },
+    where: {
+      userId: { in: userIds },
+      rankType: {
+        in: [NewOrderRankType.Knight, NewOrderRankType.Templar],
+      },
+    },
     select: { userId: true },
   });
+
   if (!players.length) {
     log('PickTemplars :: No players found');
     return;
@@ -286,12 +293,23 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
   const candidates = await sysRedis.zRange(REDIS_SYS_KEYS.NEW_ORDER.FERVOR, 0, 11, {
     REV: true,
   });
+
   console.log(`PickTemplars :: Candidates: ${candidates}`);
 
   const playerIds = candidates.map(Number);
+  // Update the new templars:
   await dbWrite.newOrderPlayer.updateMany({
     where: { userId: { in: playerIds } },
     data: { rankType: NewOrderRankType.Templar },
+  });
+
+  // Update the new knights:
+  await dbWrite.newOrderPlayer.updateMany({
+    where: {
+      userId: { in: players.filter((p) => !playerIds.includes(p.userId)).map((p) => p.userId) },
+      rankType: NewOrderRankType.Knight,
+    },
+    data: { rankType: NewOrderRankType.Knight },
   });
 
   log('PickTemplars :: Picking templars :: done');
@@ -319,6 +337,7 @@ const newOrderCleanseSmites = createJob('new-order-cleanse-smites', '0 0 * * *',
       playerId: smite.targetPlayerId,
     });
   });
+
   await limitConcurrency(cleanseTasks, 5);
 
   log(`CleanseSmites :: Cleansing smites :: done`);
