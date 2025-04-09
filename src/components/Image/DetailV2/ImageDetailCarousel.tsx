@@ -83,8 +83,8 @@ export function ImageDetailCarousel({
   // }, [embla]);
 
   useHotkeys([
-    ['ArrowLeft', () => embla?.scrollNext()],
-    ['ArrowRight', () => embla?.scrollPrev()],
+    ['ArrowLeft', () => embla?.scrollPrev()],
+    ['ArrowRight', () => embla?.scrollNext()],
   ]);
 
   const ref = useResizeObserver<HTMLDivElement>(() => {

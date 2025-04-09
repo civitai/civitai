@@ -174,6 +174,7 @@ export const CommentForm = ({
             content: cx(classes.content, 'rounded-3xl'),
           }}
           data-testid="comment-form"
+          inputClasses="break-all"
         />
         {focused && (
           <Group position="right">

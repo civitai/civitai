@@ -1,10 +1,14 @@
-import { Prisma } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
+import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { templateHandler } from '~/server/db/db-helpers';
 import { createMetricProcessor, MetricProcessorRunContext } from '~/server/metrics/base.metrics';
 import { executeRefresh, snippets } from '~/server/metrics/metric-helpers';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { modelsSearchIndex } from '~/server/search-index';
+import { getLastAuctionReset } from '~/server/services/auction.service';
+import { bustFetchThroughCache } from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
 import { createLogger } from '~/utils/logging';
@@ -14,6 +18,7 @@ const BATCH_SIZE = 1000;
 
 type ModelMetricContext = MetricProcessorRunContext & {
   queuedModelVersions: number[];
+  isBeginningOfDay: boolean;
 };
 
 export const modelMetrics = createMetricProcessor({
@@ -23,6 +28,7 @@ export const modelMetrics = createMetricProcessor({
     //---------------------------------------
     const ctx = ctxRaw as ModelMetricContext;
     ctx.queuedModelVersions = [];
+    ctx.isBeginningOfDay = dayjs(ctx.lastUpdate).isSame(dayjs().subtract(1, 'day'), 'day');
     if (ctx.queue.length > 0) {
       const queuedModelVersions = await ctx.db.$queryRaw<{ id: number }[]>`
         SELECT id
@@ -39,6 +45,7 @@ export const modelMetrics = createMetricProcessor({
       getGenerationTasks(ctx),
       getVersionRatingTasks(ctx),
       getVersionBuzzTasks(ctx),
+      getVersionBuzzEarnedTasks(ctx),
     ]);
     log('modelVersionMetrics update', versionTasks.flat().length, 'tasks');
     for (const tasks of versionTasks) await limitConcurrency(tasks, 5);
@@ -52,6 +59,10 @@ export const modelMetrics = createMetricProcessor({
     ]);
     log('modelMetrics update', modelTasks.flat().length, 'tasks');
     for (const tasks of modelTasks) await limitConcurrency(tasks, 5);
+
+    // If beginning of day - clear top earners cache
+    //---------------------------------------
+    if (ctx.isBeginningOfDay) bustFetchThroughCache(REDIS_KEYS.CACHES.TOP_EARNERS);
 
     // Update the search index
     //---------------------------------------
@@ -332,6 +343,70 @@ async function getVersionBuzzTasks(ctx: ModelMetricContext) {
   return tasks;
 }
 
+async function getVersionBuzzEarnedTasks(ctx: ModelMetricContext) {
+  // Is ctx.lastUpdate from yesterday?
+  if (!ctx.isBeginningOfDay) {
+    log('Skipping buzz earned tasks');
+    return [];
+  }
+
+  const auctionReset = await getLastAuctionReset();
+  if (!auctionReset) {
+    log('No auction start date found');
+    return [];
+  }
+
+  const data = await ctx.ch.$query<{ modelVersionId: number }>`
+      WITH affected AS (
+        SELECT DISTINCT modelVersionId
+        FROM buzz_resource_compensation
+        WHERE date = toStartOfDay(${ctx.lastUpdate})
+      )
+      SELECT
+      modelVersionId,
+      SUM(total) as earned,
+      sumIf(total, date >= ${auctionReset}) as earned_week -- Since Auction Reset
+      FROM buzz_resource_compensation
+      WHERE modelVersionId IN (SELECT modelVersionId FROM affected)
+      GROUP BY modelVersionId;
+  `;
+
+  const tasks = chunk(data, BATCH_SIZE).map((batchData, i) => async () => {
+    ctx.jobContext.checkIfCanceled();
+    log('getVersionBuzzEarnedTasks', i + 1, 'of', tasks.length);
+
+    const json = JSON.stringify(batchData);
+    await executeRefresh(ctx)`
+      INSERT INTO "ModelVersionMetric" ("modelVersionId", timeframe, "earnedAmount")
+      SELECT mvm.modelVersionId,
+             mvm.timeframe,
+             mvm.earned
+      FROM (
+        SELECT
+          CAST(mvs::json ->> 'modelVersionId' AS INT) AS modelVersionId,
+          tf.timeframe,
+          CAST(
+              CASE
+                WHEN tf.timeframe = 'Week' THEN mvs::json ->> 'earned_week'
+                WHEN tf.timeframe = 'AllTime' THEN mvs::json ->> 'earned'
+              END
+          AS int) as earned
+        FROM json_array_elements('${json}'::json) mvs
+        CROSS JOIN (SELECT unnest(enum_range(NULL::"MetricTimeframe")) AS timeframe) tf
+      ) mvm
+      WHERE mvm.earned IS NOT NULL
+        AND mvm.modelVersionId IN (SELECT id FROM "ModelVersion")
+      ON CONFLICT ("modelVersionId", timeframe) DO UPDATE
+        SET "earnedAmount" = EXCLUDED."earnedAmount",
+            "updatedAt"     = now();
+    `;
+
+    log('getVersionBuzzEarnedTasks', i + 1, 'of', tasks.length, 'done');
+  });
+
+  return tasks;
+}
+
 async function getModelRatingTasks(ctx: ModelMetricContext) {
   const affected = await getAffected(ctx, 'Model')`
     -- Get recent model reviews
@@ -522,13 +597,14 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
     log('getModelTasks', i + 1, 'of', tasks.length);
     await executeRefresh(ctx)`
       -- Migrate model thumbs up metrics
-      INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", "imageCount", "generationCount", "updatedAt")
+      INSERT INTO "ModelMetric" ("modelId", timeframe, "downloadCount", "imageCount", "generationCount", "earnedAmount", "updatedAt")
       SELECT
         mv."modelId",
         mvm.timeframe,
         SUM(mvm."downloadCount") "downloadCount",
         SUM(mvm."imageCount") "imageCount",
         SUM(mvm."generationCount") "generationCount",
+        SUM(mvm."earnedAmount") "earnedAmount",
         now() "updatedAt"
       FROM "ModelVersionMetric" mvm
       JOIN "ModelVersion" mv ON mv.id = mvm."modelVersionId"
@@ -536,10 +612,30 @@ async function getVersionAggregationTasks(ctx: ModelMetricContext) {
         AND mv."modelId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
       GROUP BY mv."modelId", mvm.timeframe
       ON CONFLICT ("modelId", timeframe) DO UPDATE
-        SET "updatedAt" = now(), "downloadCount" = EXCLUDED."downloadCount", "imageCount" = EXCLUDED."imageCount", "generationCount" = EXCLUDED."generationCount";
+        SET "updatedAt" = now(),
+        "downloadCount" = EXCLUDED."downloadCount",
+        "imageCount" = EXCLUDED."imageCount",
+        "generationCount" = EXCLUDED."generationCount",
+        "earnedAmount" = EXCLUDED."earnedAmount";
     `;
     log('getModelTasks', i + 1, 'of', tasks.length, 'done');
   });
 
   return tasks;
+}
+
+export async function purgeWeeklyEarnedStats(db: PrismaClient) {
+  await db.$executeRaw`
+    UPDATE "ModelVersionMetric" SET "earnedAmount" = 0
+    WHERE "earnedAmount" > 0 AND timeframe = 'Week'
+    -- Only purge old records
+    AND "updatedAt" < date_trunc('day', now())
+  `;
+
+  await db.$executeRaw`
+    UPDATE "ModelMetric" SET "earnedAmount" = 0
+    WHERE "earnedAmount" > 0 AND timeframe = 'Week'
+    -- Only purge old records
+    AND "updatedAt" < date_trunc('day', now())
+  `;
 }

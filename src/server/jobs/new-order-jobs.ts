@@ -128,11 +128,11 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   const judgements = await clickhouse
     .query({
       query: `
-      SELECT userId, status, grantedExp, multiplier
-      FROM newOrderImageRating
-      WHERE createdAt BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'
-        AND status NOT IN ('AcolyteCorrect', 'AcolyteFailed')
-    `,
+        SELECT userId, status, grantedExp, multiplier
+        FROM newOrderImageRating
+        WHERE createdAt BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'
+          AND status NOT IN ('AcolyteCorrect', 'AcolyteFailed')
+      `,
       format: 'JSONEachRow',
     })
     .then((result) => result.json<DailyResetQueryResult[]>());

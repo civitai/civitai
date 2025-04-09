@@ -1,18 +1,17 @@
-import { Anchor, Badge, Group, Stack, Text, Button, Menu, ActionIcon } from '@mantine/core';
+import { ActionIcon, Anchor, Badge, Button, Group, Menu, Stack, Text } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import {
+  IconArrowBackUp,
   IconDotsVertical,
-  IconTrash,
   IconEdit,
   IconFlag,
-  IconArrowBackUp,
+  IconTrash,
 } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
-
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ReactionPicker } from '~/components/ReactionPicker/ReactionPicker';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';

@@ -208,3 +208,15 @@ export function roundDownToPowerOfTwo(value: number) {
 
   return result >> 1; // Divide by 2 to get the largest power of 2 less than or equal to the value
 }
+
+/** greatest common denominator */
+const gcd = (a: number, b: number): number => (a ? gcd(b % a, a) : b);
+
+/** lowest common multiple */
+const lcm = (a: number, b: number): number => (a * b) / gcd(a, b);
+
+/** get the ration of two numbers using their greatest common denominator */
+export function getRatio(a: number, b: number) {
+  const c = gcd(a, b);
+  return [a / c, b / c].join(':');
+}

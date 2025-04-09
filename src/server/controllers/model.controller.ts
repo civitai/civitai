@@ -290,6 +290,7 @@ export const getModelHandler = async ({ input, ctx }: { input: GetByIdInput; ctx
             ratingAllTime: Number(versionMetrics?.rating?.toFixed(2) ?? 0),
             thumbsUpCountAllTime: versionMetrics?.thumbsUpCount ?? 0,
             thumbsDownCountAllTime: versionMetrics?.thumbsDownCount ?? 0,
+            earnedAmountAllTime: versionMetrics?.earnedAmount ?? 0,
           },
           posts: posts.filter((x) => x.modelVersionId === version.id).map((x) => ({ id: x.id })),
           hashes,
