@@ -47,64 +47,54 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   log(
     `BlessedBuzz :: Getting correct judgements from ${startDate.toISOString()} to ${endDate.toISOString()}`
   );
-  const correctJudgements = await clickhouse
-    .query({
-      query: `
+  const judgements = await clickhouse.$query<{ userId: number; balance: number }>`
         SELECT
           userId,
-          imageId,
-          grantedExp,
-          multiplier
+          SUM(exp * multiplier) as balance
+
         FROM newOrderImageRating
         WHERE createdAt BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'
-          AND status = 'Correct'
-      `,
-      format: 'JSONEachRow',
-    })
-    .then((result) => result.json<BlessedBuzzQueryResult[]>());
-  if (!correctJudgements.length) {
+          AND (status = 'Correct' OR status = 'Failed')
+      `;
+
+  const positiveBalanceJudgements = judgements.filter((j) => j.balance > 0);
+
+  if (!positiveBalanceJudgements.length) {
     log('BlessedBuzz :: No correct judgements found');
     return;
   }
-  log(`BlessedBuzz :: Found ${correctJudgements.length} correct judgements`);
+  log(`BlessedBuzz :: Found ${positiveBalanceJudgements.length} correct judgements`);
 
   // Get current player data for knights and templars only
   const players = await dbRead.newOrderPlayer.findMany({
     where: {
-      userId: { in: correctJudgements.map((j) => j.userId) },
+      userId: { in: positiveBalanceJudgements.map((j) => j.userId) },
       rankType: { not: NewOrderRankType.Acolyte },
     },
     select: { userId: true },
   });
 
-  // Calculate total grantedExp for each player
-  const playerExp = players.reduce((acc, player) => {
-    const judgement = correctJudgements.find((j) => j.userId === player.userId);
-    if (judgement) {
-      // TODO.newOrder: confirm the math here
-      acc[player.userId] = {
-        imageId: judgement.imageId,
-        buzzAmount:
-          ((acc[player.userId]?.buzzAmount || 0) + judgement.grantedExp * judgement.multiplier) /
-          1000,
-      };
-    }
-    return acc;
-  }, {} as Record<number, { imageId: number; buzzAmount: number }>);
+  const validPlayers = positiveBalanceJudgements.filter((j) =>
+    players.some((p) => p.userId === j.userId)
+  );
+
+  if (!validPlayers.length) {
+    log('BlessedBuzz :: No valid players found');
+    return;
+  }
 
   // Create buzz transactions in batches
-  const userIds = Object.keys(playerExp).map(Number);
-  const batches = chunk(userIds, 100);
+  const batches = chunk(validPlayers, 100);
   let loopCount = 1;
   for (const batch of batches) {
     log(`BlessedBuzz :: Creating buzz transactions :: ${loopCount} of ${batches.length}`);
-    const transactions = batch.map((userId) => ({
+    const transactions = batch.map((validPlayer) => ({
       fromAccountId: 0,
-      toAccountId: userId,
-      amount: playerExp[userId].buzzAmount,
+      toAccountId: validPlayer.userId,
+      amount: validPlayer.balance,
       type: TransactionType.Reward,
       description: 'Content Moderation Correct Judgement',
-      externalTransactionId: `new-order-${userId}-${playerExp[userId].imageId}`,
+      externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
     }));
 
     await createBuzzTransactionMany(transactions);
@@ -112,7 +102,7 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
     loopCount++;
   }
 
-  await Promise.all(userIds.map((id) => blessedBuzzCounter.reset({ id })));
+  await Promise.all(validPlayers.map(({ userId: id }) => blessedBuzzCounter.reset({ id })));
 
   log('BlessedBuzz :: Granting Blessed Buzz :: done');
 });
