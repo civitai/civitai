@@ -24,7 +24,7 @@ import {
   GetHistorySchema,
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
-import { ImageMetaProps } from '~/server/schema/image.schema';
+import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect } from '~/server/selectors/user.selector';
 import { getAllImagesIndex } from '~/server/services/image.service';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -33,7 +33,6 @@ import {
   throwInternalServerError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 import { MetricTimeframe, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
@@ -378,7 +377,7 @@ export function calculateFervor({
   return correctJudgements * correctPercentage * Math.E ** (allJudgements * -1);
 }
 
-async function resetPlayer({ playerId }: { playerId: number }) {
+export async function resetPlayer({ playerId }: { playerId: number }) {
   await dbWrite.$transaction([
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
@@ -465,10 +464,10 @@ export async function addImageToQueue({
 
 export async function getImagesQueue({
   playerId,
-  imageCount,
+  imageCount = 20,
 }: {
   playerId: number;
-  imageCount: number;
+  imageCount?: number;
 }) {
   const player = await getPlayerById({ playerId });
 
@@ -491,6 +490,17 @@ export async function getImagesQueue({
     where: { id: { in: imageIds } },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
+
+  // If player is templar, get images ratings
+  if (player.rankType === NewOrderRankType.Templar) {
+    const ratings = await sysRedis.hGetAll(
+      `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageIds.join(',')}`
+    );
+    images.forEach((image) => {
+      const rating = ratings[`${image.id}-${player.rank.name}`];
+      if (rating) image.nsfwLevel = Number(rating);
+    });
+  }
 
   return shuffle(images.slice(0, imageCount));
 }
@@ -560,7 +570,7 @@ export async function getPlayerHistory({
   let nextCursor: Date | null = null;
   if (judgements.length > limit) nextCursor = judgements.pop()?.createdAt ?? null;
 
-  const imageIds = judgements.map((j) => j.imageId);
+  const imageIds = judgements.map((j) => j.imageId).sort();
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
@@ -568,13 +578,13 @@ export async function getPlayerHistory({
 
   return {
     items: judgements
-      .map((j) => {
-        const image = images.find((i) => i.id === j.imageId);
+      .map(({ imageId, ...data }) => {
+        const image = images.find((i) => i.id === imageId);
         if (!image) return null;
 
         return {
-          ...j,
-          image: { ...image, metadata: image.metadata as ImageMetaProps },
+          ...data,
+          image: { ...image, metadata: image.metadata as ImageMetadata },
         };
       })
       .filter(isDefined),

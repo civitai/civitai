@@ -1,6 +1,7 @@
 import { ActionIcon, Button, Kbd, Skeleton, Text, Tooltip } from '@mantine/core';
 import { HotkeyItem, useHotkeys } from '@mantine/hooks';
 import {
+  IconArrowBackUp,
   IconCrown,
   IconExternalLink,
   IconFlag,
@@ -20,7 +21,7 @@ import {
   openJudgementHistoryModal,
   ratingOptions,
   ratingPlayBackRates,
-  useAddImageRatingMutation,
+  useAddImageRating,
   useJoinKnightsNewOrder,
   useKnightsNewOrderListener,
   useQueryKnightsNewOrderImageQueue,
@@ -29,6 +30,7 @@ import { PlayerCard } from '~/components/Games/PlayerCard';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useGameSounds } from '~/hooks/useGameSounds';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useStorage } from '~/hooks/useStorage';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
 import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
@@ -69,13 +71,14 @@ export default function KnightsNewOrderPage() {
     defaultValue: false,
   });
 
-  const { joinKnightsNewOrder, playerData, isLoading, joined } = useJoinKnightsNewOrder();
-  const { addRating, isLoading: sendingRating } = useAddImageRatingMutation();
+  const { join, playerData, isLoading, joined, resetCareer, resetting } = useJoinKnightsNewOrder();
+  const { addRating, isLoading: sendingRating } = useAddImageRating();
   const { data, isLoading: loadingImagesQueue } = useQueryKnightsNewOrderImageQueue();
 
   useKnightsNewOrderListener();
 
   const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
+  const mobile = useIsMobile({ breakpoint: 'md' });
 
   const handleAddRating = async ({
     rating,
@@ -92,8 +95,8 @@ export default function KnightsNewOrderPage() {
   };
 
   const handleAddDamnedReason = async ({ reason }: { reason: NewOrderDamnedReason }) => {
-    await handleAddRating({ rating: NsfwLevel.Blocked, damnedReason: reason });
     setDamnedReason({ open: false, reason: null });
+    await handleAddRating({ rating: NsfwLevel.Blocked, damnedReason: reason });
   };
 
   const hotKeys: HotkeyItem[] = damnedReason.open
@@ -132,7 +135,7 @@ export default function KnightsNewOrderPage() {
           <p>Welcome to page Knights New Order</p>
           <div className="flex gap-4">
             <Button variant="outline">Learn More</Button>
-            <Button onClick={() => joinKnightsNewOrder()}>Join Game</Button>
+            <Button onClick={() => join()}>Join Game</Button>
           </div>
         </div>
       ) : isLoading ? (
@@ -176,15 +179,11 @@ export default function KnightsNewOrderPage() {
                 onClick={() => {
                   dialogStore.trigger({
                     component: ConfirmDialog,
-                    type: 'dialog',
                     props: {
                       title: 'Are you sure?',
                       message: 'This will restart your career and reset all your progress.',
                       labels: { cancel: 'No', confirm: `Yes, I'm sure` },
-                      onConfirm: async () => {
-                        // TODO.newOrder: implement restart career
-                        console.log('Restarting career...');
-                      },
+                      onConfirm: async () => await resetCareer(),
                       confirmProps: { color: 'red' },
                     },
                   });
@@ -195,8 +194,8 @@ export default function KnightsNewOrderPage() {
               </Button>
             </div>
           </div>
-          <div className="flex h-[calc(100%-var(--footer-height)-56px)] w-full flex-col items-center justify-center gap-4 overflow-hidden">
-            <Skeleton visible={loadingImagesQueue} width={700} height={525} animate>
+          <div className="flex w-full flex-col items-center justify-center gap-4 px-4 md:h-[calc(100%-var(--footer-height)-56px)] md:overflow-hidden">
+            <Skeleton visible={loadingImagesQueue} width={700} height={525} maw="100%" animate>
               {currentImage ? (
                 <div className="flex h-full flex-col items-center gap-4">
                   <div className="relative h-full">
@@ -221,56 +220,71 @@ export default function KnightsNewOrderPage() {
                     </ActionIcon>
                   </div>
                   <div className="flex flex-col gap-2">
-                    <Button.Group>
-                      {damnedReason.open
-                        ? damnedReasonOptions.map((reason) => {
-                            const damnedReason = NewOrderDamnedReason[reason];
+                    <div className="flex flex-nowrap gap-2">
+                      {damnedReason.open && (
+                        <Tooltip label="Cancel">
+                          <Button
+                            variant="default"
+                            className="md:h-full"
+                            onClick={() => setDamnedReason({ open: false, reason: null })}
+                          >
+                            <IconArrowBackUp />
+                          </Button>
+                        </Tooltip>
+                      )}
+                      <Button.Group
+                        orientation={mobile && damnedReason.open ? 'vertical' : 'horizontal'}
+                      >
+                        {damnedReason.open
+                          ? damnedReasonOptions.map((reason) => {
+                              const damnedReason = NewOrderDamnedReason[reason];
 
-                            return (
-                              <Button
-                                key={reason}
-                                classNames={{
-                                  root: 'h-auto',
-                                  label: 'whitespace-normal leading-normal text-center',
-                                }}
-                                maw={150}
-                                variant="default"
-                                onClick={() => handleAddDamnedReason({ reason: damnedReason })}
-                              >
-                                {getDisplayName(damnedReason)}
-                              </Button>
-                            );
-                          })
-                        : ratingOptions.map((rating) => {
-                            const level = NsfwLevel[rating];
-                            const isBlocked = level === 'Blocked';
-
-                            return (
-                              <Tooltip
-                                key={rating}
-                                label={browsingLevelDescriptions[rating]}
-                                position="top"
-                                openDelay={1000}
-                                maw={350}
-                                withArrow
-                                multiline
-                              >
+                              return (
                                 <Button
-                                  key={rating}
-                                  variant={isBlocked ? 'filled' : 'default'}
-                                  color={isBlocked ? 'red' : undefined}
-                                  onClick={() =>
-                                    isBlocked
-                                      ? setDamnedReason({ open: true, reason: null })
-                                      : handleAddRating({ rating })
-                                  }
+                                  key={reason}
+                                  classNames={{
+                                    root: 'md:h-auto md:max-w-[150px]',
+                                    label: 'whitespace-normal leading-normal text-center',
+                                  }}
+                                  variant="default"
+                                  onClick={() => handleAddDamnedReason({ reason: damnedReason })}
+                                  fullWidth
                                 >
-                                  {isBlocked ? <IconFlag size={18} /> : level}
+                                  {getDisplayName(damnedReason)}
                                 </Button>
-                              </Tooltip>
-                            );
-                          })}
-                    </Button.Group>
+                              );
+                            })
+                          : ratingOptions.map((rating) => {
+                              const level = NsfwLevel[rating];
+                              const isBlocked = level === 'Blocked';
+
+                              return (
+                                <Tooltip
+                                  key={rating}
+                                  label={browsingLevelDescriptions[rating]}
+                                  position="top"
+                                  openDelay={1000}
+                                  maw={350}
+                                  withArrow
+                                  multiline
+                                >
+                                  <Button
+                                    key={rating}
+                                    variant={isBlocked ? 'filled' : 'default'}
+                                    color={isBlocked ? 'red' : undefined}
+                                    onClick={() =>
+                                      isBlocked
+                                        ? setDamnedReason({ open: true, reason: null })
+                                        : handleAddRating({ rating })
+                                    }
+                                  >
+                                    {isBlocked ? <IconFlag size={18} /> : level}
+                                  </Button>
+                                </Tooltip>
+                              );
+                            })}
+                      </Button.Group>
+                    </div>
                     <div className="flex w-full justify-between gap-2">
                       <Text size="xs">
                         Use the numbers <Kbd>1-6</Kbd> to rate.

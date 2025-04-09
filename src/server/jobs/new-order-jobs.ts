@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import {
   allJudmentsCounter,
   blessedBuzzCounter,
@@ -68,11 +68,11 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   }
   log(`BlessedBuzz :: Found ${correctJudgements.length} correct judgements`);
 
-  // Get current player data for knights only
+  // Get current player data for knights and templars only
   const players = await dbRead.newOrderPlayer.findMany({
     where: {
       userId: { in: correctJudgements.map((j) => j.userId) },
-      rankType: NewOrderRankType.Knight,
+      rankType: { not: NewOrderRankType.Acolyte },
     },
     select: { userId: true },
   });
@@ -244,8 +244,13 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
   const candidates = await sysRedis.zRange(REDIS_SYS_KEYS.NEW_ORDER.FERVOR, 0, 11, {
     REV: true,
   });
-  // TODO.newOrder: Actually do something with the candidates
   console.log(`PickTemplars :: Candidates: ${candidates}`);
+
+  const playerIds = candidates.map(Number);
+  await dbWrite.newOrderPlayer.updateMany({
+    where: { userId: { in: playerIds } },
+    data: { rankType: NewOrderRankType.Templar },
+  });
 
   log('PickTemplars :: Picking templars :: done');
 });

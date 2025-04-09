@@ -18,6 +18,7 @@ import {
   getPlayerById,
   getPlayerHistory,
   joinGame,
+  resetPlayer,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
 import { guardedProcedure, moderatorProcedure, protectedProcedure, router } from '~/server/trpc';
@@ -83,7 +84,7 @@ export const gamesRouter = router({
     join: guardedProcedure.mutation(({ ctx }) => joinGame({ userId: ctx.user.id })),
     getPlayer: guardedProcedure.query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
     getImagesQueue: guardedProcedure
-      .input(getImageQueueSchema)
+      .input(getImageQueueSchema.optional())
       .query(({ input, ctx }) => getImagesQueue({ ...input, playerId: ctx.user.id })),
     getHistory: guardedProcedure
       .input(getHistorySchema)
@@ -97,5 +98,6 @@ export const gamesRouter = router({
     addRating: guardedProcedure
       .input(addImageRatingSchema)
       .mutation(({ input, ctx }) => addImageRating({ ...input, playerId: ctx.user.id })),
+    resetCareer: guardedProcedure.mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
   }),
 });

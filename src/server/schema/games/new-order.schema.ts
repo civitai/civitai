@@ -3,7 +3,7 @@ import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/se
 import { infiniteQuerySchema } from '~/server/schema/base.schema';
 
 export type GetImageQueueSchema = z.infer<typeof getImageQueueSchema>;
-export const getImageQueueSchema = infiniteQuerySchema.extend({
+export const getImageQueueSchema = z.object({
   // TODO: add playerId to the schema
   imageCount: z.number().optional().default(20),
 });

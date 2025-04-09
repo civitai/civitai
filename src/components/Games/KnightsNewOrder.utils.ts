@@ -1,5 +1,5 @@
-import { data } from 'motion/dist/react-m';
 import dynamic from 'next/dynamic';
+import { useMemo } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useStorage } from '~/hooks/useStorage';
@@ -9,7 +9,7 @@ import {
   SignalMessages,
   SignalTopic,
 } from '~/server/common/enums';
-import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
+import { AddImageRatingInput, GetHistorySchema } from '~/server/schema/games/new-order.schema';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -34,7 +34,7 @@ export const useKnightsNewOrderListener = () => {
 
   // Used to update the current image queue
   useSignalConnection(SignalMessages.NewOrderQueueUpdate, (data) => {
-    queryUtils.games.newOrder.getImagesQueue.setData({ limit: 100 }, (old) => {
+    queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
       if (!old) return old;
 
       return [...old, ...data];
@@ -65,10 +65,20 @@ export const useJoinKnightsNewOrder = () => {
     enabled: joined,
   });
 
+  const resetCareerMutation = trpc.games.newOrder.resetCareer.useMutation({
+    onSuccess: async () => {
+      await queryUtils.games.newOrder.getPlayer.invalidate();
+      await queryUtils.games.newOrder.getImagesQueue.invalidate();
+      await queryUtils.games.newOrder.getHistory.invalidate();
+    },
+  });
+
   return {
     playerData,
-    joinKnightsNewOrder: joinKnightsNewOrderMutation.mutateAsync,
+    join: joinKnightsNewOrderMutation.mutateAsync,
+    resetCareer: resetCareerMutation.mutateAsync,
     isLoading: isInitialLoading || joinKnightsNewOrderMutation.isLoading,
+    resetting: resetCareerMutation.isLoading,
     joined,
   };
 };
@@ -76,17 +86,20 @@ export const useJoinKnightsNewOrder = () => {
 export const useQueryKnightsNewOrderImageQueue = (opts?: { enabled?: boolean }) => {
   const { playerData } = useJoinKnightsNewOrder();
 
-  const { data = [], isLoading } = trpc.games.newOrder.getImagesQueue.useQuery(
-    { limit: 100 },
-    { ...opts, enabled: !!playerData && opts?.enabled !== false }
-  );
+  const { data = [], isLoading } = trpc.games.newOrder.getImagesQueue.useQuery(undefined, {
+    ...opts,
+    enabled: !!playerData && opts?.enabled !== false,
+  });
 
   return { data, isLoading };
 };
-export const useQueryInfiniteKnightsNewOrderHistory = (opts?: { enabled?: boolean }) => {
+export const useQueryInfiniteKnightsNewOrderHistory = (
+  filter?: Partial<GetHistorySchema>,
+  opts?: { enabled?: boolean }
+) => {
   const { playerData } = useJoinKnightsNewOrder();
-  const { data, isLoading } = trpc.games.newOrder.getHistory.useInfiniteQuery(
-    { limit: 10 },
+  const { data, ...rest } = trpc.games.newOrder.getHistory.useInfiniteQuery(
+    { limit: 10, ...filter },
     {
       ...opts,
       enabled: !!playerData && opts?.enabled !== false,
@@ -94,23 +107,29 @@ export const useQueryInfiniteKnightsNewOrderHistory = (opts?: { enabled?: boolea
     }
   );
 
-  const flattenedData = data?.pages.flatMap((page) => page.items) ?? [];
+  const flatData = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
 
-  return { data: flattenedData, isLoading };
+  return { images: flatData, ...rest };
 };
 
-export const useAddImageRatingMutation = () => {
+export const useAddImageRating = () => {
   const queryUtils = trpc.useUtils();
   const addRatingMutation = trpc.games.newOrder.addRating.useMutation({
-    onSuccess: (_, payload) => {
-      queryUtils.games.newOrder.getImagesQueue.setData({ limit: 100 }, (old) => {
+    onMutate: async (payload) => {
+      await queryUtils.games.newOrder.getImagesQueue.cancel();
+
+      const prev = queryUtils.games.newOrder.getImagesQueue.getData();
+      queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
         if (!old) return old;
 
         return old.filter((image) => image.id !== payload.imageId);
       });
+
+      return { prev };
     },
-    onError: (error) => {
+    onError: (error, _variables, context) => {
       showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
+      if (context?.prev) queryUtils.games.newOrder.getImagesQueue.setData(undefined, context.prev);
     },
   });
 
