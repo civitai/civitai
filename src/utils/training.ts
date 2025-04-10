@@ -136,7 +136,8 @@ export const trainingModelInfo: {
     pretty: 'Hunyuan 720p fp8',
     type: 'hunyuan',
     description: 'Performant video generation.',
-    air: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
+    // air: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
+    air: 'urn:air:hyv1:vae:huggingface:tencent/HunyuanVideo@main/hunyuan-video-t2v-720p/vae/pytorch_model.pt',
     baseModel: 'Hunyuan Video',
     isNew: false,
   },
@@ -193,7 +194,7 @@ export const getTrainingFields = {
     return engine === 'rapid'
       ? OrchEngineTypes.Rapid
       : engine === 'musubi'
-      ? OrchEngineTypes['Musubi']
+      ? OrchEngineTypes.Musubi
       : OrchEngineTypes.Kohya;
   },
 };
