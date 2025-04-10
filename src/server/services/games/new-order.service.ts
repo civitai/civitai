@@ -28,7 +28,7 @@ import {
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect } from '~/server/selectors/user.selector';
 import { getAllImagesIndex } from '~/server/services/image.service';
-import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
   throwInternalServerError,
@@ -230,6 +230,9 @@ export async function addImageRating({
     `${player.rank.name}-${rating}`,
     1
   );
+
+  // No need to await mainly cause it makes no difference as the user has a queue in general.
+  bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
 
   // Increase rating count for the image in the queue.
   await valueInQueue.pool.increment({ id: imageId, value: 1 });
@@ -446,14 +449,14 @@ async function getRankedImages(userId: number) {
     REDIS_KEYS.NEW_ORDER.RATED,
     async () => {
       const results = await clickhouse!.$query<{ imageId: number }>`
-        SELECT
-          "imageId"
+        SELECT 
+          DISTINCT "imageId"
         FROM knights_new_order_image_rating
         WHERE "userId" = ${userId}
     `;
       return results.map((r) => r.imageId);
     },
-    { ttl: CacheTTL.week }
+    { ttl: CacheTTL.xs }
   );
 
   return images;
