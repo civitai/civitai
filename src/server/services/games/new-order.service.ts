@@ -584,7 +584,7 @@ export async function getPlayerHistory({
     createdAt: Date;
   }>`
     SELECT imageId, rating, status, grantedExp, multiplier, createdAt
-    FROM new_order_image_rating
+    FROM knights_new_order_image_rating
     WHERE ${AND.join(' AND ')}
     ORDER BY createdAt DESC
     LIMIT ${limit + 1}

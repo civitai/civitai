@@ -1,3 +1,5 @@
+import { useIsMutating } from '@tanstack/react-query';
+import { getQueryKey } from '@trpc/react-query';
 import dynamic from 'next/dynamic';
 import { useMemo } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -50,6 +52,10 @@ export const useJoinKnightsNewOrder = () => {
     defaultValue: false,
   });
 
+  // Required to share loading state between components
+  const joinKey = getQueryKey(trpc.games.newOrder.join);
+  const joining = useIsMutating({ mutationKey: joinKey });
+
   const joinKnightsNewOrderMutation = trpc.games.newOrder.join.useMutation({
     onSuccess: (result) => {
       queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
@@ -77,7 +83,7 @@ export const useJoinKnightsNewOrder = () => {
     playerData,
     join: joinKnightsNewOrderMutation.mutateAsync,
     resetCareer: resetCareerMutation.mutateAsync,
-    isLoading: isInitialLoading || joinKnightsNewOrderMutation.isLoading,
+    isLoading: isInitialLoading || !!joining,
     resetting: resetCareerMutation.isLoading,
     joined,
   };
