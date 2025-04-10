@@ -14,6 +14,7 @@ import {
   correctJudgementsCounter,
   expCounter,
   fervorCounter,
+  getImageRatingsCounter,
   poolCounters,
   smitesCounter,
 } from '~/server/games/new-order/utils';
@@ -28,7 +29,11 @@ import {
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect } from '~/server/selectors/user.selector';
 import { getAllImagesIndex } from '~/server/services/image.service';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  cachedCounter,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
   throwInternalServerError,
@@ -179,16 +184,17 @@ export async function addImageRating({
 
   // TODO.newOrder: adjust status based on rating distance
   const status =
-    image.nsfwLevel === rating
-      ? NewOrderImageRatingStatus.Correct
-      : NewOrderImageRatingStatus.Failed;
+    player.rankType === NewOrderRankType.Acolyte
+      ? image.nsfwLevel === rating
+        ? NewOrderImageRatingStatus.Correct
+        : NewOrderImageRatingStatus.Failed
+      : // Knights / Templars leave the image in the pending status until their vote is confirmed.
+        NewOrderImageRatingStatus.Pending;
 
   // TODO.newOrder: grantedExp and multiplier
   const grantedExp = 100;
-  const multiplier = status === NewOrderImageRatingStatus.Correct ? 1 : -1;
+  const multiplier = status === NewOrderImageRatingStatus.Failed ? -1 : 1;
 
-  // TODO.newOrder: should we await this?
-  // TODO.newOrder: replace with clickhouse tracker
   if (chTracker) {
     try {
       await chTracker.newOrderImageRating({
@@ -225,11 +231,10 @@ export async function addImageRating({
   }
 
   // Increase rating count
-  await sysRedis.hIncrBy(
-    `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`,
-    `${player.rank.name}-${rating}`,
-    1
-  );
+  await getImageRatingsCounter(imageId).increment({
+    id: `${player.rank.name}-${rating}`,
+    value: 1,
+  });
 
   // No need to await mainly cause it makes no difference as the user has a queue in general.
   bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
@@ -250,6 +255,7 @@ export async function addImageRating({
         where: { id: smite.id },
         data: { remaining: smite.remaining - grantedExp * multiplier },
       });
+
       if (updatedSmite.remaining <= 0)
         await cleanseSmite({ id: updatedSmite.id, cleansedReason: 'Smite expired', playerId });
     }
@@ -267,7 +273,7 @@ export async function addImageRating({
   // Now, process what to do with the image:
   if (valueInQueue.rank === NewOrderRankType.Knight && ++valueInQueue.value >= 5) {
     // Image is now rated by enough players, we can process it.
-    const ratings = await sysRedis.hGetAll(`${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`);
+    const ratings = await getImageRatingsCounter(imageId).getAll();
     const keys = Object.keys(ratings);
     let processed = false;
 
@@ -332,12 +338,10 @@ export async function updatePlayerStats({
   playerId,
   status,
   exp,
-  writeToDb,
 }: {
   playerId: number;
   status: NewOrderImageRatingStatus;
   exp: number;
-  writeToDb?: boolean;
 }) {
   // TODO.newOrder: check math for fervor
   const allJudgements = await allJudmentsCounter.increment({ id: playerId });
@@ -353,13 +357,6 @@ export async function updatePlayerStats({
   const newExp = await expCounter.increment({ id: playerId, value: exp });
   // TODO.newOrder: adjust buzz based on conversion rate
   const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
-
-  if (writeToDb) {
-    await dbWrite.newOrderPlayer.update({
-      where: { userId: playerId },
-      data: { exp: newExp, fervor: newFervor },
-    });
-  }
 
   const stats = { exp: newExp, fervor: newFervor, blessedBuzz };
 
@@ -489,7 +486,7 @@ export async function addImageToQueue({
 
 export async function getImagesQueue({
   playerId,
-  imageCount = 20,
+  imageCount = 100,
 }: {
   playerId: number;
   imageCount?: number;
@@ -505,7 +502,8 @@ export async function getImagesQueue({
   const ratedImages = await getRankedImages(playerId);
 
   for (const pool of rankPools) {
-    const images = await pool.getAll(imageCount);
+    // We multiply by 10 to ensure we get enough images in case some are already rated.
+    const images = await pool.getAll(imageCount * 10);
     if (images.length === 0) continue;
 
     imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
@@ -518,16 +516,16 @@ export async function getImagesQueue({
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 
-  // If player is templar, get images ratings
-  if (player.rankType === NewOrderRankType.Templar) {
-    const ratings = await sysRedis.hGetAll(
-      `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageIds.join(',')}`
-    );
-    images.forEach((image) => {
-      const rating = ratings[`${image.id}-${player.rank.name}`];
-      if (rating) image.nsfwLevel = Number(rating);
-    });
-  }
+  // TODO.newOrder: Fix this to properly get all ratings for the images
+  // if (player.rankType === NewOrderRankType.Templar) {
+  //   const ratings = await sysRedis.hGetAll(
+  //     `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageIds.join(',')}`
+  //   );
+  //   images.forEach((image) => {
+  //     const rating = ratings[`${image.id}-${player.rank.name}`];
+  //     if (rating) image.nsfwLevel = Number(rating);
+  //   });
+  // }
 
   return shuffle(images.slice(0, imageCount));
 }
