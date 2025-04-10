@@ -542,6 +542,7 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
+  HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
@@ -620,6 +621,11 @@ export const engineDefinitions: EnginesDictionary = {
   hunyuan: {
     label: 'Hunyuan',
     description: ``,
+    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft'],
+  },
+  wan: {
+    label: 'Wan',
+    description: '',
     whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft'],
   },
   vidu: {
