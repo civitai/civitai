@@ -29,53 +29,61 @@ import {
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
-import { TrainingDetailsParams } from '~/server/schema/model-version.schema';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   defaultTrainingState,
-  TrainingRun,
-  TrainingRunUpdate,
+  defaultTrainingStateVideo,
+  getDefaultTrainingParams,
+  type TrainingRun,
+  type TrainingRunUpdate,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
 import { showInfoNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
-import { discountInfo, isValidRapid, rapidEta } from '~/utils/training';
+import {
+  discountInfo,
+  isValidRapid,
+  rapidEta,
+  trainingBaseModelTypesVideo,
+} from '~/utils/training';
 
 export const AdvancedSettings = ({
   selectedRun,
   modelId,
+  mediaType,
   maxSteps,
   numImages,
 }: {
   selectedRun: TrainingRun;
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
   maxSteps: number;
   numImages: number | undefined;
 }) => {
   const { updateRun } = trainingStore;
   const { triggerWord } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const theme = useMantineTheme();
   const previous = usePrevious(selectedRun);
   const [openedSections, setOpenedSections] = useState<string[]>([]);
 
   const doUpdate = (data: TrainingRunUpdate) => {
-    updateRun(modelId, selectedRun.id, data);
+    updateRun(modelId, mediaType, selectedRun.id, data);
   };
+
+  const runBase = selectedRun.base;
+  const isVideo = (trainingBaseModelTypesVideo as unknown as string[]).includes(
+    selectedRun.baseType
+  );
 
   useEffect(() => {
     if (previous?.id !== selectedRun.id) return;
-    const defaultParams = trainingSettings.reduce(
-      (a, v) => ({
-        ...a,
-        [v.name]:
-          v.overrides?.[selectedRun.base]?.all?.default ??
-          v.overrides?.[selectedRun.base]?.[selectedRun.params.engine]?.default ??
-          v.default,
-      }),
-      {} as TrainingDetailsParams
-    );
+    const defaultParams = getDefaultTrainingParams(runBase, selectedRun.params.engine);
 
     defaultParams.engine = selectedRun.params.engine;
     defaultParams.numRepeats = Math.max(1, Math.min(5000, Math.ceil(200 / (numImages || 1))));
@@ -133,7 +141,7 @@ export const AdvancedSettings = ({
     if (selectedRun.baseType === 'flux') {
       newOptimizerArgs =
         optimizerArgMapFlux[selectedRun.params.optimizerType][selectedRun.params.engine];
-    } else if (selectedRun.baseType === 'video') {
+    } else if (isVideo) {
       newOptimizerArgs = optimizerArgMapVideo[selectedRun.params.optimizerType] ?? '';
     } else {
       newOptimizerArgs = optimizerArgMap[selectedRun.params.optimizerType] ?? '';
@@ -191,7 +199,7 @@ export const AdvancedSettings = ({
             labelPosition="left"
             checked={selectedRun.params.engine === 'rapid'}
             onChange={(event) =>
-              updateRun(modelId, selectedRun.id, {
+              updateRun(modelId, mediaType, selectedRun.id, {
                 params: { engine: event.currentTarget.checked ? 'rapid' : 'kohya' }, // TODO ideally this would revert to the previous engine, but we only have 1 now
               })
             }
@@ -370,7 +378,7 @@ export const AdvancedSettings = ({
                 items={trainingSettings.map((ts) => {
                   let inp: React.ReactNode;
 
-                  const baseOverride = ts.overrides?.[selectedRun.base];
+                  const baseOverride = ts.overrides?.[runBase];
                   const override = baseOverride?.all ?? baseOverride?.[selectedRun.params.engine];
 
                   const disabledOverride = override?.disabled;
@@ -383,8 +391,8 @@ export const AdvancedSettings = ({
                   if (ts.type === 'int' || ts.type === 'number') {
                     // repeating for dumb ts
                     const tOverride =
-                      ts.overrides?.[selectedRun.base]?.all ??
-                      ts.overrides?.[selectedRun.base]?.[selectedRun.params.engine];
+                      ts.overrides?.[runBase]?.all ??
+                      ts.overrides?.[runBase]?.[selectedRun.params.engine];
 
                     inp = (
                       <NumberInputWrapper
@@ -416,12 +424,12 @@ export const AdvancedSettings = ({
                       options = options.filter((o) => o !== 'cosine_with_restarts');
                     }
 
-                    if (ts.name === 'optimizerType' && selectedRun.baseType === 'video') {
+                    if (ts.name === 'optimizerType' && isVideo) {
                       options = options.filter((o) => o !== 'Prodigy');
                     }
 
                     if (ts.name === 'engine') {
-                      if (selectedRun.baseType === 'video') {
+                      if (isVideo) {
                         options = options.filter((o) => o !== 'kohya' && o !== 'rapid');
                       } else {
                         options = options.filter((o) => o !== 'musubi');
@@ -508,11 +516,7 @@ export const AdvancedSettings = ({
                       ts.label
                     ),
                     value: inp,
-                    visible: !(
-                      ts.name === 'engine' &&
-                      selectedRun.baseType !== 'flux' &&
-                      selectedRun.baseType !== 'video'
-                    ),
+                    visible: !(ts.name === 'engine' && selectedRun.baseType !== 'flux' && !isVideo),
                   };
                 })}
               />

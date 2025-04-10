@@ -6,10 +6,11 @@ import { trainingSettings } from '~/components/Training/Form/TrainingParams';
 import { constants } from '~/server/common/constants';
 import type {
   TrainingDetailsBaseModel,
+  TrainingDetailsObj,
   TrainingDetailsParams,
 } from '~/server/schema/model-version.schema';
 import type { GenerationResource } from '~/server/services/generation/generation.service';
-import type { TrainingBaseModelType } from '~/utils/training';
+import { EngineTypes, TrainingBaseModelType } from '~/utils/training';
 
 export type ImageDataType = {
   url: string;
@@ -144,55 +145,114 @@ export type TrainingRunUpdate = Partial<Omit<TrainingRun, 'id' | 'params' | 'cus
 
 type TrainingImageStore = {
   [id: number]: TrainingDataState | undefined;
-  updateImage: (modelId: number, data: UpdateImageDataType) => void;
-  setImageList: (modelId: number, data: ImageDataType[]) => void;
-  setInitialImageList: (modelId: number, data: ImageDataType[]) => void;
-  setLabelType: (modelId: number, data: LabelTypes) => void;
-  setTriggerWord: (modelId: number, data: string) => void;
-  setTriggerWordInvalid: (modelId: number, data: boolean) => void;
-  setOwnRights: (modelId: number, data: boolean) => void;
-  setShareDataset: (modelId: number, data: boolean) => void;
-  setAttest: (modelId: number, data: Attest) => void;
-  setInitialLabelType: (modelId: number, data: LabelTypes) => void;
-  setInitialTriggerWord: (modelId: number, data: string) => void;
-  setInitialOwnRights: (modelId: number, data: boolean) => void;
-  setInitialShareDataset: (modelId: number, data: boolean) => void;
-  setAutoLabeling: (modelId: number, data: Partial<AutoLabelType>) => void;
-  setAutoTagging: (modelId: number, data: Partial<AutoTagSchemaType>) => void;
-  setAutoCaptioning: (modelId: number, data: Partial<AutoCaptionSchemaType>) => void;
-  addRun: (modelId: number, data?: Omit<TrainingRun, 'id'>) => void;
-  removeRun: (modelId: number, data: number) => void;
-  updateRun: (modelId: number, runId: number, data: TrainingRunUpdate) => void;
+  updateImage: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: UpdateImageDataType
+  ) => void;
+  setImageList: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: ImageDataType[]
+  ) => void;
+  setInitialImageList: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: ImageDataType[]
+  ) => void;
+  setLabelType: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: LabelTypes
+  ) => void;
+  setTriggerWord: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: string
+  ) => void;
+  setTriggerWordInvalid: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: boolean
+  ) => void;
+  setOwnRights: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: boolean
+  ) => void;
+  setShareDataset: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: boolean
+  ) => void;
+  setAttest: (modelId: number, mediaType: TrainingDetailsObj['mediaType'], data: Attest) => void;
+  setInitialLabelType: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: LabelTypes
+  ) => void;
+  setInitialTriggerWord: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: string
+  ) => void;
+  setInitialOwnRights: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: boolean
+  ) => void;
+  setInitialShareDataset: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: boolean
+  ) => void;
+  setAutoLabeling: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: Partial<AutoLabelType>
+  ) => void;
+  setAutoTagging: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: Partial<AutoTagSchemaType>
+  ) => void;
+  setAutoCaptioning: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data: Partial<AutoCaptionSchemaType>
+  ) => void;
+  addRun: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    data?: Omit<TrainingRun, 'id'>
+  ) => void;
+  removeRun: (modelId: number, mediaType: TrainingDetailsObj['mediaType'], data: number) => void;
+  updateRun: (
+    modelId: number,
+    mediaType: TrainingDetailsObj['mediaType'],
+    runId: number,
+    data: TrainingRunUpdate
+  ) => void;
 };
 
 export const defaultBase = 'sdxl';
 export const defaultBaseType = 'sdxl' as const;
 export const defaultEngine = 'kohya';
 
-export const defaultBaseVideo = 'hunyuan';
-export const defaultBaseTypeVideo = 'video' as const;
+export const defaultBaseVideo = 'hy_720_fp8';
+export const defaultBaseTypeVideo = 'hunyuan' as const;
 export const defaultEngineVideo = 'musubi';
 
-const defaultParams = trainingSettings.reduce(
-  (a, v) => ({
-    ...a,
-    [v.name]:
-      v.overrides?.[defaultBase]?.all?.default ??
-      v.overrides?.[defaultBase]?.[defaultEngine]?.default ??
-      v.default,
-  }),
-  {} as TrainingDetailsParams
-);
-const defaultParamsVideo = trainingSettings.reduce(
-  (a, v) => ({
-    ...a,
-    [v.name]:
-      v.overrides?.[defaultBaseVideo]?.all?.default ??
-      v.overrides?.[defaultBaseVideo]?.[defaultEngineVideo]?.default ??
-      v.default,
-  }),
-  {} as TrainingDetailsParams
-);
+export const getDefaultTrainingParams = (base: TrainingDetailsBaseModel, engine: EngineTypes) => {
+  return trainingSettings.reduce(
+    (a, v) => ({
+      ...a,
+      [v.name]:
+        v.overrides?.[base]?.all?.default ?? v.overrides?.[base]?.[engine]?.default ?? v.default,
+    }),
+    {} as TrainingDetailsParams
+  );
+};
 
 const defaultRunBase = {
   id: 1,
@@ -204,66 +264,89 @@ const defaultRunBase = {
 };
 export const defaultRun = {
   ...defaultRunBase,
-  params: { ...defaultParams },
+  params: getDefaultTrainingParams(defaultBase, defaultEngine),
   base: defaultBase,
   baseType: defaultBaseType,
 };
 export const defaultRunVideo = {
   ...defaultRunBase,
-  params: { ...defaultParamsVideo },
+  params: getDefaultTrainingParams(defaultBaseVideo, defaultEngineVideo),
   base: defaultBaseVideo,
   baseType: defaultBaseTypeVideo,
 };
 
+const defaultTrainingStateBase: Omit<TrainingDataState, 'labelType' | 'initialLabelType' | 'runs'> =
+  {
+    imageList: [] as ImageDataType[],
+    initialImageList: [] as ImageDataType[],
+    triggerWord: '',
+    triggerWordInvalid: false,
+    ownRights: false,
+    shareDataset: false,
+    attested: { status: false, error: '' },
+    initialTriggerWord: '',
+    initialOwnRights: false,
+    initialShareDataset: false,
+    autoLabeling: {
+      url: null,
+      isRunning: false,
+      total: 0,
+      successes: 0,
+      fails: [],
+    },
+    autoTagging: {
+      overwrite: overwriteDefault,
+      maxTags: autoLabelLimits.tag.tags.def,
+      threshold: autoLabelLimits.tag.threshold.def,
+      blacklist: '',
+      prependTags: '',
+      appendTags: '',
+    },
+    autoCaptioning: {
+      overwrite: overwriteDefault,
+      temperature: autoLabelLimits.caption.temperature.def,
+      maxNewTokens: autoLabelLimits.caption.maxNewTokens.def,
+    },
+  };
 export const defaultTrainingState: TrainingDataState = {
-  imageList: [] as ImageDataType[],
-  initialImageList: [] as ImageDataType[],
+  ...defaultTrainingStateBase,
   labelType: 'tag',
-  triggerWord: '',
-  triggerWordInvalid: false,
-  ownRights: false,
-  shareDataset: false,
-  attested: { status: false, error: '' },
   initialLabelType: 'tag',
-  initialTriggerWord: '',
-  initialOwnRights: false,
-  initialShareDataset: false,
-  autoLabeling: {
-    url: null,
-    isRunning: false,
-    total: 0,
-    successes: 0,
-    fails: [],
-  },
-  autoTagging: {
-    overwrite: overwriteDefault,
-    maxTags: autoLabelLimits.tag.tags.def,
-    threshold: autoLabelLimits.tag.threshold.def,
-    blacklist: '',
-    prependTags: '',
-    appendTags: '',
-  },
-  autoCaptioning: {
-    overwrite: overwriteDefault,
-    temperature: autoLabelLimits.caption.temperature.def,
-    maxNewTokens: autoLabelLimits.caption.maxNewTokens.def,
-  },
   runs: [{ ...defaultRun }],
+};
+export const defaultTrainingStateVideo: TrainingDataState = {
+  ...defaultTrainingStateBase,
+  labelType: 'caption',
+  initialLabelType: 'caption',
+  runs: [{ ...defaultRunVideo }],
 };
 
 export const getShortNameFromUrl = (i: ImageDataType) => {
   return `${i.url.split('/').pop() ?? 'unk'}.${i.type.split('/').pop() ?? 'jpg'}`;
 };
 
+const setModelState = (
+  state: TrainingImageStore,
+  modelId: number,
+  mediaType: TrainingDetailsObj['mediaType']
+) => {
+  if (!state[modelId])
+    state[modelId] = {
+      ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+    };
+  // TODO figure out how to tell TS that it exists now (no "!" below)
+};
+
 export const useTrainingImageStore = create<TrainingImageStore>()(
   immer((set) => ({
     updateImage: (
       modelId,
+      mediaType,
       { matcher, url, name, type, label, appendLabel, invalidLabel, source }
     ) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
-        // why is this not understanding the override I just did above?
+        setModelState(state, modelId, mediaType);
+
         state[modelId]!.imageList = state[modelId]!.imageList.map((i) => {
           const shortName = getShortNameFromUrl(i);
           if (shortName === matcher) {
@@ -293,99 +376,100 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         });
       });
     },
-    setImageList: (modelId, imgData) => {
+    setImageList: (modelId, mediaType, imgData) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.imageList = imgData;
       });
     },
-    setInitialImageList: (modelId, imgData) => {
+    setInitialImageList: (modelId, mediaType, imgData) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.initialImageList = imgData;
       });
     },
-    setLabelType: (modelId, v) => {
+    setLabelType: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.labelType = v;
       });
     },
-    setTriggerWord: (modelId, v) => {
+    setTriggerWord: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.triggerWord = v;
       });
     },
-    setTriggerWordInvalid: (modelId, v) => {
+    setTriggerWordInvalid: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.triggerWordInvalid = v;
       });
     },
-    setOwnRights: (modelId, v) => {
+    setOwnRights: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.ownRights = v;
       });
     },
-    setShareDataset: (modelId, v) => {
+    setShareDataset: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.shareDataset = v;
       });
     },
-    setAttest: (modelId, v) => {
+    setAttest: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.attested = v;
       });
     },
-    setInitialLabelType: (modelId, v) => {
+    setInitialLabelType: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.initialLabelType = v;
       });
     },
-    setInitialTriggerWord: (modelId, v) => {
+    setInitialTriggerWord: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.initialTriggerWord = v;
       });
     },
-    setInitialOwnRights: (modelId, v) => {
+    setInitialOwnRights: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.initialOwnRights = v;
       });
     },
-    setInitialShareDataset: (modelId, v) => {
+    setInitialShareDataset: (modelId, mediaType, v) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.initialShareDataset = v;
       });
     },
-    setAutoLabeling: (modelId, labelData) => {
+    setAutoLabeling: (modelId, mediaType, labelData) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.autoLabeling = { ...state[modelId]!.autoLabeling, ...labelData };
       });
     },
-    setAutoTagging: (modelId, labelData) => {
+    setAutoTagging: (modelId, mediaType, labelData) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.autoTagging = { ...state[modelId]!.autoTagging, ...labelData };
       });
     },
-    setAutoCaptioning: (modelId, labelData) => {
+    setAutoCaptioning: (modelId, mediaType, labelData) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
         state[modelId]!.autoCaptioning = { ...state[modelId]!.autoCaptioning, ...labelData };
       });
     },
-    addRun: (modelId, data) => {
+    addRun: (modelId, mediaType, data) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
+
         const lastNum = Math.max(1, ...state[modelId]!.runs.map((r) => r.id));
         const newData = data ?? defaultRun;
         const newRun = {
@@ -395,9 +479,10 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         state[modelId]!.runs.push(newRun);
       });
     },
-    removeRun: (modelId, id) => {
+    removeRun: (modelId, mediaType, id) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
+
         const thisState = state[modelId]!;
         // if (thisState.runs.length <= 1) return;
         const idx = thisState.runs.findIndex((r) => r.id === id);
@@ -409,9 +494,10 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         }
       });
     },
-    updateRun: (modelId, runId, data) => {
+    updateRun: (modelId, mediaType, runId, data) => {
       set((state) => {
-        if (!state[modelId]) state[modelId] = { ...defaultTrainingState };
+        setModelState(state, modelId, mediaType);
+
         const run = state[modelId]!.runs.find((r) => r.id === runId);
         if (run) {
           run.base = data.base ?? run.base;

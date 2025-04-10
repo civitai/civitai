@@ -18,12 +18,14 @@ import { TrainingImagesLabelTypeSelect } from '~/components/Training/Form/Traini
 import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import { UploadType } from '~/server/common/enums';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   AutoCaptionSchemaType,
   autoLabelLimits,
   AutoTagSchemaType,
   defaultTrainingState,
+  defaultTrainingStateVideo,
   getShortNameFromUrl,
   LabelTypes,
   overwriteList,
@@ -44,17 +46,22 @@ const maxImagesCaption = 60;
 
 const useSubmitImages = ({
   modelId,
+  mediaType,
   handleClose,
   type,
 }: {
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
   handleClose: () => void;
   type: LabelTypes;
 }) => {
   const { upload } = useS3UploadStore();
   const [loading, setLoading] = useState(false);
   const { autoTagging, autoCaptioning, imageList } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const { setAutoLabeling } = trainingStore;
 
@@ -100,7 +107,7 @@ const useSubmitImages = ({
             meta: {},
           },
           async ({ url }) => {
-            setAutoLabeling(modelId, {
+            setAutoLabeling(modelId, mediaType, {
               url,
               isRunning: false,
               total: filteredImages.length,
@@ -125,13 +132,25 @@ const useSubmitImages = ({
   return { loading, handleSubmit, disabled, numImages: filteredImages.length };
 };
 
-const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose: () => void }) => {
+const AutoTagSection = ({
+  modelId,
+  mediaType,
+  handleClose,
+}: {
+  modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
+  handleClose: () => void;
+}) => {
   const { autoTagging } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const { setAutoTagging } = trainingStore;
   const { loading, handleSubmit, numImages } = useSubmitImages({
     modelId,
+    mediaType,
     handleClose,
     type: 'tag',
   });
@@ -162,7 +181,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
             };
           })}
           onChange={(o) =>
-            setAutoTagging(modelId, { overwrite: o as AutoTagSchemaType['overwrite'] })
+            setAutoTagging(modelId, mediaType, { overwrite: o as AutoTagSchemaType['overwrite'] })
           }
           fullWidth
           radius="sm"
@@ -182,7 +201,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
         min={autoLabelLimits.tag.tags.min}
         max={autoLabelLimits.tag.tags.max}
         onChange={(value) => {
-          setAutoTagging(modelId, { maxTags: value });
+          setAutoTagging(modelId, mediaType, { maxTags: value });
         }}
       />
       <NumberInputWrapper
@@ -200,14 +219,14 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
         precision={1}
         step={0.1}
         onChange={(value) => {
-          setAutoTagging(modelId, { threshold: value });
+          setAutoTagging(modelId, mediaType, { threshold: value });
         }}
       />
 
       <TextInputWrapper
         value={autoTagging.blacklist}
         onChange={(event) => {
-          setAutoTagging(modelId, { blacklist: event.currentTarget.value });
+          setAutoTagging(modelId, mediaType, { blacklist: event.currentTarget.value });
         }}
         label={
           <Group spacing={4} noWrap>
@@ -222,7 +241,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
       <TextInputWrapper
         value={autoTagging.prependTags}
         onChange={(event) => {
-          setAutoTagging(modelId, { prependTags: event.currentTarget.value });
+          setAutoTagging(modelId, mediaType, { prependTags: event.currentTarget.value });
         }}
         label={
           <Group spacing={4} noWrap>
@@ -237,7 +256,7 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
       <TextInputWrapper
         value={autoTagging.appendTags}
         onChange={(event) => {
-          setAutoTagging(modelId, { appendTags: event.currentTarget.value });
+          setAutoTagging(modelId, mediaType, { appendTags: event.currentTarget.value });
         }}
         label={
           <Group spacing={4} noWrap>
@@ -264,17 +283,23 @@ const AutoTagSection = ({ modelId, handleClose }: { modelId: number; handleClose
 
 const AutoCaptionSection = ({
   modelId,
+  mediaType,
   handleClose,
 }: {
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
   handleClose: () => void;
 }) => {
   const { autoCaptioning } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const { setAutoCaptioning } = trainingStore;
   const { loading, handleSubmit, numImages, disabled } = useSubmitImages({
     modelId,
+    mediaType,
     handleClose,
     type: 'caption',
   });
@@ -335,7 +360,9 @@ const AutoCaptionSection = ({
             };
           })}
           onChange={(o) =>
-            setAutoCaptioning(modelId, { overwrite: o as AutoCaptionSchemaType['overwrite'] })
+            setAutoCaptioning(modelId, mediaType, {
+              overwrite: o as AutoCaptionSchemaType['overwrite'],
+            })
           }
           fullWidth
           radius="sm"
@@ -359,7 +386,7 @@ const AutoCaptionSection = ({
         precision={2}
         step={0.01}
         onChange={(value) => {
-          setAutoCaptioning(modelId, { temperature: value });
+          setAutoCaptioning(modelId, mediaType, { temperature: value });
         }}
         disabled={disabled}
       />
@@ -377,7 +404,7 @@ const AutoCaptionSection = ({
         min={autoLabelLimits.caption.maxNewTokens.min}
         max={autoLabelLimits.caption.maxNewTokens.max}
         onChange={(value) => {
-          setAutoCaptioning(modelId, { maxNewTokens: value });
+          setAutoCaptioning(modelId, mediaType, { maxNewTokens: value });
         }}
         disabled={disabled}
       />
@@ -394,23 +421,32 @@ const AutoCaptionSection = ({
   );
 };
 
-export const AutoLabelModal = ({ modelId }: { modelId: number }) => {
+export const AutoLabelModal = ({
+  modelId,
+  mediaType,
+}: {
+  modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
+}) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const { labelType } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
 
   return (
     <Modal {...dialog} centered size="md" radius="md" title="Automatically label your images">
       <Stack>
         <Text>Label Type</Text>
-        <TrainingImagesLabelTypeSelect modelId={modelId} />
+        <TrainingImagesLabelTypeSelect modelId={modelId} mediaType={mediaType} />
         <Divider />
         {labelType === 'caption' ? (
-          <AutoCaptionSection modelId={modelId} handleClose={handleClose} />
+          <AutoCaptionSection modelId={modelId} mediaType={mediaType} handleClose={handleClose} />
         ) : (
-          <AutoTagSection modelId={modelId} handleClose={handleClose} />
+          <AutoTagSection modelId={modelId} mediaType={mediaType} handleClose={handleClose} />
         )}
       </Stack>
     </Modal>

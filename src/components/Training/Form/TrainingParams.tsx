@@ -48,12 +48,15 @@ type BaseTrainingSettingsType = {
   disabled?: boolean;
 };
 
+// nb: could allow the other for either allowing custom or being strict
+type TypeTrainingBaseModel = TrainingDetailsBaseModel; // TrainingDetailsBaseModelList
+
 type SelectTrainingSettingsType = {
   type: 'select';
   options: readonly string[];
   default: string;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: {
+    [key in TypeTrainingBaseModel]?: {
       [key in EngineTypes | 'all']?: Partial<
         Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
           Omit<SelectTrainingSettingsType, 'type' | 'overrides' | 'options'> // could allow options override
@@ -65,7 +68,7 @@ type BoolTrainingSettingsType = {
   type: 'bool';
   default: boolean;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: {
+    [key in TypeTrainingBaseModel]?: {
       [key in EngineTypes | 'all']?: Partial<
         Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
           Omit<BoolTrainingSettingsType, 'type' | 'overrides'>
@@ -80,7 +83,7 @@ export type NumberTrainingSettingsType = {
   step: number;
   default: number | undefined;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: {
+    [key in TypeTrainingBaseModel]?: {
       [key in EngineTypes | 'all']?: Partial<
         Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
           Omit<NumberTrainingSettingsType, 'type' | 'overrides' | 'step'> // could allow step override
@@ -92,7 +95,7 @@ type StringTrainingSettingsType = {
   type: 'string';
   default: string;
   overrides?: {
-    [key in TrainingDetailsBaseModel]?: {
+    [key in TypeTrainingBaseModel]?: {
       [key in EngineTypes | 'all']?: Partial<
         Pick<BaseTrainingSettingsType, 'disabled' | 'hint'> &
           Omit<StringTrainingSettingsType, 'type' | 'overrides'>
@@ -120,7 +123,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     disabled: true,
     overrides: {
       flux_dev: { all: { disabled: false } },
-      hunyuan: { all: { default: 'musubi' } },
+      hy_720_fp8: { all: { default: 'musubi' } },
     },
   },
   {
@@ -142,7 +145,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       },
       sd3_medium: { all: { default: 5 } },
       sd3_large: { all: { default: 5 } },
-      hunyuan: { all: { min: 1, max: 20 } },
+      hy_720_fp8: { all: { min: 1, max: 20 } },
     },
   },
   {
@@ -175,7 +178,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       },
       sd3_medium: { all: { default: 4, max: 4 } },
       sd3_large: { all: { default: 4, max: 4 } },
-      hunyuan: { all: { default: 2, min: 1, max: 4 } },
+      hy_720_fp8: { all: { default: 2, min: 1, max: 4 } },
     },
   },
   {
@@ -209,7 +212,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sdxl: { all: { min: 1024, max: 2048, default: 1024 } },
       pony: { all: { min: 1024, max: 2048, default: 1024 } },
       illustrious: { all: { min: 1024, max: 2048, default: 1024 } },
-      hunyuan: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
+      hy_720_fp8: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
     },
   },
   {
@@ -244,7 +247,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sd3_large: {
         all: { disabled: true },
       },
-      hunyuan: {
+      hy_720_fp8: {
         all: { disabled: true },
       },
     },
@@ -276,7 +279,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sd3_large: {
         all: { disabled: true },
       },
-      hunyuan: {
+      hy_720_fp8: {
         all: { disabled: true },
       },
     },
@@ -292,7 +295,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       anime: { all: { default: 2 } },
-      hunyuan: {
+      hy_720_fp8: {
         all: { disabled: true, default: 0, min: 0, max: 0 },
       },
     },
@@ -304,7 +307,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'bool',
     default: false,
     overrides: {
-      hunyuan: {
+      hy_720_fp8: {
         all: { disabled: true },
       },
     },
@@ -321,7 +324,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       sd3_medium: { all: { default: 1e-5 } },
       sd3_large: { all: { default: 1e-5 } },
-      hunyuan: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
+      hy_720_fp8: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
     },
   },
   {
@@ -338,7 +341,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: { all: { disabled: true, default: 0, max: 0 } },
       sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
       sd3_large: { all: { disabled: true, default: 0, max: 0 } },
-      hunyuan: { all: { disabled: true, default: 0, max: 0 } },
+      hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -350,7 +353,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     options: lrSchedulerTypes,
     overrides: {
       pony: { all: { default: 'cosine' } },
-      hunyuan: { all: { default: 'constant' } },
+      hy_720_fp8: { all: { default: 'constant' } },
     },
   },
   {
@@ -364,7 +367,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 4,
     step: 1,
     overrides: {
-      hunyuan: { all: { default: 1 } },
+      hy_720_fp8: { all: { default: 1 } },
     },
   },
   {
@@ -387,7 +390,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       pony: { all: { default: 0 } },
-      hunyuan: { all: { disabled: true, default: 0, max: 0 } },
+      hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -431,7 +434,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { max: 256, default: 32 } },
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 8 } },
-      hunyuan: { all: { default: 1 } },
+      hy_720_fp8: { all: { default: 1 } },
     },
   },
   {
@@ -445,7 +448,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 0.01,
     overrides: {
       pony: { all: { default: 0.03 } },
-      hunyuan: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
   {
@@ -484,7 +487,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       flux_dev: {
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
-      hunyuan: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
+      hy_720_fp8: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
     },
   },
 ];

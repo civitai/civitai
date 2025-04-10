@@ -14,8 +14,10 @@ import { IconFilter, IconPhoto, IconSearch, IconX } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { HighlightWithinTextarea } from 'react-highlight-within-textarea';
 import { blankTagStr } from '~/components/Training/Form/TrainingImages';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
   defaultTrainingState,
+  defaultTrainingStateVideo,
   getShortNameFromUrl,
   ImageDataType,
   trainingStore,
@@ -37,16 +39,21 @@ const useStyles = createStyles(() => ({
 export const TrainingImagesCaptions = ({
   imgData,
   modelId,
+  mediaType,
   searchCaption,
 }: {
   imgData: ImageDataType;
   modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
   searchCaption: string;
 }) => {
   const { classes } = useStyles();
   const [captionTxt, setCaptionTxt] = useState('');
   const { autoLabeling } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const { updateImage } = trainingStore;
   const debounce = useDebouncer(1000);
@@ -67,7 +74,7 @@ export const TrainingImagesCaptions = ({
           setCaptionTxt(v);
           debounce(() => {
             if (imgData.label !== v) {
-              updateImage(modelId, {
+              updateImage(modelId, mediaType, {
                 matcher: getShortNameFromUrl(imgData),
                 label: v,
               });

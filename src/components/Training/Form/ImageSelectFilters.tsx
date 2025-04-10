@@ -13,14 +13,15 @@ import {
 import { IconChevronDown, IconFilter } from '@tabler/icons-react';
 import { uniq } from 'lodash-es';
 import React, { useState } from 'react';
-import { ImageSelectFilter } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
+import type { ImageSelectFilter } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { useFilterStyles } from '~/components/ImageGeneration/GenerationForm/ResourceSelectFilters';
-import { tmTypes } from '~/components/Training/Form/TrainingBasicInfo';
 import { trainingStatusFields } from '~/components/User/UserTrainingModels';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { BaseModel, constants } from '~/server/common/constants';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
+import { titleCase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { isDefined } from '~/utils/type-guards';
 
@@ -44,6 +45,7 @@ export function ImageSelectFiltersTrainingDropdown({
     (isDefined(selectFilters.labelType) ? 1 : 0) +
     ((selectFilters.statuses?.length ?? 0) > 0 ? 1 : 0) +
     ((selectFilters.types?.length ?? 0) > 0 ? 1 : 0) +
+    ((selectFilters.mediaTypes?.length ?? 0) > 0 ? 1 : 0) +
     ((selectFilters.baseModels?.length ?? 0) > 0 ? 1 : 0);
 
   const clearFilters = () => {
@@ -52,6 +54,7 @@ export function ImageSelectFiltersTrainingDropdown({
       labelType: null,
       statuses: [],
       types: [],
+      mediaTypes: [],
       baseModels: [],
     };
     setSelectFilters(reset);
@@ -142,11 +145,30 @@ export function ImageSelectFiltersTrainingDropdown({
           ))}
         </Chip.Group>
 
+        <Divider label="Media Type" labelProps={{ weight: 'bold', size: 'sm' }} />
+        <Chip.Group
+          spacing={8}
+          value={selectFilters.mediaTypes}
+          onChange={(ts: TrainingDetailsObj['mediaType'][]) =>
+            setSelectFilters((f) => ({ ...f, mediaTypes: ts }))
+          }
+          multiple
+          my={4}
+        >
+          {constants.trainingMediaTypes.map((ty) => (
+            <Chip key={ty} value={ty} {...chipProps}>
+              <span>{titleCase(ty)}</span>
+            </Chip>
+          ))}
+        </Chip.Group>
+
         <Divider label="Type" labelProps={{ weight: 'bold', size: 'sm' }} />
         <Chip.Group
           spacing={8}
           value={selectFilters.types}
-          onChange={(ts: tmTypes[]) => setSelectFilters((f) => ({ ...f, types: ts }))}
+          onChange={(ts: TrainingDetailsObj['type'][]) =>
+            setSelectFilters((f) => ({ ...f, types: ts }))
+          }
           multiple
           my={4}
         >

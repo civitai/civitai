@@ -118,6 +118,7 @@ export default function ImageSelectModal({
     labelType: null,
     statuses: [],
     types: [],
+    mediaTypes: [],
     baseModels: [],
   });
 

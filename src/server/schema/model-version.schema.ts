@@ -51,22 +51,31 @@ export const recipeSchema = z.object({
   multiplier: z.number(),
 });
 
+const trainingDetailsBaseModelCustom = z
+  .string()
+  .refine((value) => /^civitai:\d+@\d+$/.test(value ?? '') || isAir(value ?? ''));
+export type TrainingDetailsBaseModelCustom = z.infer<typeof trainingDetailsBaseModelCustom>;
+
 export const trainingDetailsBaseModels15 = ['sd_1_5', 'anime', 'semi', 'realistic'] as const;
 export const trainingDetailsBaseModelsXL = ['sdxl', 'pony', 'illustrious'] as const;
 export const trainingDetailsBaseModels35 = ['sd3_medium', 'sd3_large'] as const;
 export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
-export const trainingDetailsBaseModelsVideo = ['hunyuan'] as const; // wan
-const trainingDetailsBaseModelCustom = z
-  .string()
-  .refine((value) => /^civitai:\d+@\d+$/.test(value ?? '') || isAir(value ?? ''));
+export const trainingDetailsBaseModelsHunyuan = ['hy_720_fp8'] as const;
+export const trainingDetailsBaseModelsWan = [] as const;
 
-export type TrainingDetailsBaseModelCustom = z.infer<typeof trainingDetailsBaseModelCustom>;
-
-const trainingDetailsBaseModels = [
+const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
   ...trainingDetailsBaseModelsXL,
   ...trainingDetailsBaseModels35,
   ...trainingDetailsBaseModelsFlux,
+] as const;
+const trainingDetailsBaseModelsVideo = [
+  ...trainingDetailsBaseModelsHunyuan,
+  ...trainingDetailsBaseModelsWan,
+] as const;
+
+const trainingDetailsBaseModels = [
+  ...trainingDetailsBaseModelsImage,
   ...trainingDetailsBaseModelsVideo,
 ] as const;
 
@@ -115,6 +124,7 @@ export const trainingDetailsObj = z.object({
     .optional(), // nb: this is not optional when submitting
   baseModelType: z.enum(trainingBaseModelType).optional(),
   type: z.enum(constants.trainingModelTypes),
+  mediaType: z.enum(constants.trainingMediaTypes).optional().default('image'),
   // triggerWord: z.string().optional(),
   params: trainingDetailsParams.optional(),
   samplePrompts: z.array(z.string()).optional(),

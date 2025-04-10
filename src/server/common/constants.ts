@@ -114,6 +114,7 @@ export const constants = {
     'Config',
     'Archive',
   ],
+  trainingMediaTypes: ['image', 'video'],
   trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
@@ -461,7 +462,6 @@ export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
-
 export type BaseModel = (typeof constants.baseModels)[number];
 
 class BaseModelSet<TBaseModel> {

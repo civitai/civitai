@@ -1,9 +1,8 @@
-import { Badge, Button, createStyles, Group, Image, Radio, Stack, Text } from '@mantine/core';
-import { IconCheck, IconX } from '@tabler/icons-react';
-import React, { useState } from 'react';
+import { Button, createStyles, Group, Image, Input, Radio, Stack, Text } from '@mantine/core';
+import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
-import { Form, InputRadioGroup, InputText, useForm } from '~/libs/form';
+import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
 import { BaseModel, constants } from '~/server/common/constants';
 import { ModelVersionUpsertInput, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
@@ -16,9 +15,45 @@ import {
 import { TrainingModelData } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
+import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
-export type tmTypes = (typeof constants.trainingModelTypes)[number];
+type tmTypes = TrainingDetailsObj['type'];
+type tMediaTypes = TrainingDetailsObj['mediaType'];
+
+const trainingModelTypesMap: {
+  [p in tmTypes]: {
+    allowedTypes: ('image' | 'video')[];
+    description: string;
+    src: string;
+    type: 'img' | 'vid';
+  };
+} = {
+  Character: {
+    allowedTypes: ['image', 'video'],
+    description: 'A specific person or character, realistic or anime',
+    src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/c42020cf-ca49-4b4d-b0e6-1807463f90ad/width=1024/00834-2746643195.jpeg',
+    type: 'img',
+  },
+  Style: {
+    allowedTypes: ['image', 'video'],
+    description: 'A time period, art style, or general look and feel',
+    src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/9829c1d2-6c99-40a6-b882-057209a86bee/width=1024/00104-1775031745.jpeg',
+    type: 'img',
+  },
+  Concept: {
+    allowedTypes: ['image', 'video'],
+    description: 'Objects, clothing, anatomy, poses, etc.',
+    src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/55418f7b-7d7d-4284-abea-35d684c48b78/width=1024/00454.jpeg',
+    type: 'img',
+  },
+  Effect: {
+    allowedTypes: ['video'],
+    description: 'Animations or video effects',
+    src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/02e7cb76-2fec-43a9-ab0d-8369a785c4cb/ocean.mp4',
+    type: 'vid',
+  },
+};
 
 const useStyles = createStyles((theme) => ({
   centerRadio: {
@@ -53,32 +88,14 @@ const RadioImg = ({
   src,
   description,
   type,
-  canUseImg,
-  canUseVid,
 }: {
   value: string;
   src: string;
   description: string;
   type: 'img' | 'vid';
-  canUseImg: boolean;
-  canUseVid: boolean;
 }) => {
   const caption = (
     <>
-      <div className="mb-2 flex items-center justify-around">
-        <Badge
-          color={canUseImg ? 'green' : 'pink.1'}
-          leftSection={canUseImg ? <IconCheck size={14} /> : <IconX size={14} />}
-        >
-          Images
-        </Badge>
-        <Badge
-          color={canUseVid ? 'teal' : 'pink.1'}
-          leftSection={canUseVid ? <IconCheck size={14} /> : <IconX size={14} />}
-        >
-          Videos
-        </Badge>
-      </div>
       <Text fz="lg" fw={500}>
         {value}
       </Text>
@@ -131,10 +148,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const thisModelVersion = model?.modelVersions[0];
   const thisTrainingDetails = thisModelVersion?.trainingDetails as TrainingDetailsObj | undefined;
   const existingTrainingModelType = thisTrainingDetails?.type ?? undefined;
-
-  const [trainingModelType, setTrainingModelType] = useState<tmTypes | undefined>(
-    existingTrainingModelType
-  );
+  const existingTrainingMediaType = thisTrainingDetails?.mediaType ?? 'image';
 
   const { classes } = useStyles();
 
@@ -146,14 +160,19 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
     trainingModelType: z.enum(constants.trainingModelTypes, {
       errorMap: () => ({ message: 'A model type must be chosen.' }),
     }),
+    trainingMediaType: z.enum(constants.trainingMediaTypes, {
+      errorMap: () => ({ message: 'A media type must be chosen.' }),
+    }),
   });
 
-  const defaultValues: Omit<z.infer<typeof schema>, 'trainingModelType'> & {
+  const defaultValues: Omit<z.infer<typeof schema>, 'trainingModelType' | 'trainingMediaType'> & {
     trainingModelType: tmTypes | undefined;
+    trainingMediaType: tMediaTypes | undefined;
   } = {
     ...model,
     name: model?.name ?? '',
     trainingModelType: existingTrainingModelType,
+    trainingMediaType: existingTrainingMediaType,
   };
   const form = useForm({
     schema,
@@ -162,6 +181,10 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
     shouldUnregister: false,
   });
 
+  const [trainingModelType, trainingMediaType] = form.watch([
+    'trainingModelType',
+    'trainingMediaType',
+  ]);
   const { isDirty } = form.formState;
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation();
@@ -198,7 +221,10 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           : ('SD 1.5' as const), // this is not really correct, but it needs something there
         trainedWords: thisModelVersion ? thisModelVersion.trainedWords : [],
         trainingStatus: TrainingStatus.Pending,
-        trainingDetails: { type: trainingModelType as tmTypes },
+        trainingDetails: {
+          type: trainingModelType,
+          mediaType: trainingMediaType,
+        },
         uploadType: ModelUploadType.Trained,
       };
 
@@ -223,6 +249,7 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
                         | undefined
                         | null) || {}),
                       type: trainingModelType,
+                      mediaType: trainingMediaType,
                     },
                   },
                   ...old.modelVersions.filter((mv) => mv.id !== versionId),
@@ -283,8 +310,8 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
         status: ModelStatus.Draft,
         type: ModelType.LORA,
         uploadType: ModelUploadType.Trained,
-        ...(trainingModelType
-          ? { tagsOnModels: [{ name: trainingModelType.toLowerCase(), isCategory: true }] }
+        ...(rest.trainingModelType
+          ? { tagsOnModels: [{ name: rest.trainingModelType.toLowerCase(), isCategory: true }] }
           : {}),
       });
     } else {
@@ -292,51 +319,59 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
     }
   };
 
+  useEffect(() => {
+    if (
+      trainingModelType &&
+      !trainingModelTypesMap[trainingModelType].allowedTypes.includes(trainingMediaType)
+    ) {
+      form.setValue('trainingModelType', 'Character');
+    }
+  }, [trainingMediaType]);
+
   return (
     <Form form={form} onSubmit={handleSubmit}>
       <Stack>
+        <Input.Wrapper
+          label="Choose your media type"
+          labelProps={{ w: '100%', pb: 10 }}
+          withAsterisk
+          // error={'A media type must be chosen'}
+          // errorProps={{ mt: 'xs' }}
+        >
+          <InputSegmentedControl
+            name="trainingMediaType"
+            radius="sm"
+            data={constants.trainingMediaTypes.map((mt) => ({
+              label: titleCase(mt),
+              value: mt,
+            }))}
+            fullWidth
+            styles={(theme) => ({
+              root: {
+                border: `1px solid ${
+                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
+                }`,
+              },
+            })}
+          />
+        </Input.Wrapper>
         <InputRadioGroup
-          value={trainingModelType}
-          onChange={(v) => {
-            setTrainingModelType(v as tmTypes);
-          }}
+          // value={trainingModelType}
+          // onChange={(v) => {
+          //   setTrainingModelType(v as tmTypes);
+          // }}
           className={classes.centerRadio} // why is this not easier to do?
           name="trainingModelType"
           label="Choose your LoRA type"
           withAsterisk
         >
-          <RadioImg
-            value="Character"
-            description="A specific person or character, realistic or anime"
-            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/c42020cf-ca49-4b4d-b0e6-1807463f90ad/width=1024/00834-2746643195.jpeg"
-            type="img"
-            canUseImg={true}
-            canUseVid={true}
-          />
-          <RadioImg
-            value="Style"
-            description="A time period, art style, or general look and feel"
-            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/9829c1d2-6c99-40a6-b882-057209a86bee/width=1024/00104-1775031745.jpeg"
-            type="img"
-            canUseImg={true}
-            canUseVid={true}
-          />
-          <RadioImg
-            value="Concept"
-            description="Objects, clothing, anatomy, poses, etc."
-            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/55418f7b-7d7d-4284-abea-35d684c48b78/width=1024/00454.jpeg"
-            type="img"
-            canUseImg={true}
-            canUseVid={true}
-          />
-          <RadioImg
-            value="Effect"
-            description="Animations or video effects."
-            src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/02e7cb76-2fec-43a9-ab0d-8369a785c4cb/ocean.mp4"
-            type="vid"
-            canUseImg={false}
-            canUseVid={true}
-          />
+          {Object.entries(trainingModelTypesMap)
+            .filter(([, v]) =>
+              !!trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true
+            )
+            .map(([k, v]) => (
+              <RadioImg value={k} description={v.description} src={v.src} type={v.type} key={k} />
+            ))}
         </InputRadioGroup>
         <InputText name="name" label="Name" placeholder="Name" withAsterisk />
       </Stack>

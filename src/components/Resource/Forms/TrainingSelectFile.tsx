@@ -23,7 +23,6 @@ import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton'
 import { ModelWithTags } from '~/components/Resource/Wizard/ModelWizard';
 import { GenerateButton } from '~/components/RunStrategy/GenerateButton';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
-import { isTrainingVideo } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
@@ -217,7 +216,7 @@ export default function TrainingSelectFile({
   const modelFile = modelVersion.files.find((f) => f.type === 'Training Data');
   const existingModelFile = modelVersion.files.find((f) => f.type === 'Model');
   const trainingResults = modelFile?.metadata?.trainingResults;
-  const isVideo = isTrainingVideo(modelVersion.baseModel);
+  const isVideo = modelVersion.trainingDetails?.mediaType === 'video';
 
   const [selectedFile, setSelectedFile] = useState<string | undefined>(
     existingModelFile?.metadata?.selectedEpochUrl
