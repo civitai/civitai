@@ -25,9 +25,3 @@ export const generationSchema = z.discriminatedUnion('type', [
       .passthrough(),
   }),
 ]);
-
-export const requestPrioritySchema = z
-  .object({
-    type: z.enum(['default', 'kling', 'minimax', 'vidu']).default('default'),
-  })
-  .default({});

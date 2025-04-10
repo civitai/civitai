@@ -1,40 +1,23 @@
 import { HunyuanVdeoGenInput } from '@civitai/client';
 import z from 'zod';
+import { AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   seedSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
-import { getScaledWidthHeight } from '~/shared/constants/generation.constants';
 import { numberEnum } from '~/utils/zod-helpers';
 
 export const hunyuanAspectRatios = ['16:9', '3:2', '1:1', '2:3', '9:16'] as const;
 export const hunyuanDuration = [3, 5] as const;
 
-const hunyuanAspectRatioMap: Record<
-  (typeof hunyuanAspectRatios)[number],
-  { width: number; height: number }
-> = {
-  '16:9': { width: 1024, height: 576 },
-  '3:2': { width: 960, height: 640 },
-  '1:1': { width: 768, height: 768 },
-  '2:3': { width: 640, height: 960 },
-  '9:16': { width: 576, height: 1024 },
-};
-
-// {
-//   '16:9': { width: 720, height: 768 },
-//   '4:3': { width: 720, height: 960 },
-//   '1:1': { width: 720, height: 720 },
-//   '3:4': { width: 960, height: 720 },
-//   '9:16': { width: 768, height: 720 },
-// };
+const hunyuanAspectRatioMap = AspectRatioMap([...hunyuanAspectRatios], { multiplier: 16 });
 
 const baseHunyuanSchema = z.object({
   engine: z.literal('hunyuan'),
   workflow: z.string(),
-  cfgScale: z.number().min(1).max(10).default(10).catch(10),
-  frameRate: z.literal(24).default(24),
+  cfgScale: z.number().min(1).max(10).default(6).catch(6),
+  frameRate: z.literal(24).default(24).catch(24),
   duration: numberEnum(hunyuanDuration).default(3).catch(3),
   seed: seedSchema,
   draft: z.boolean().optional(),
@@ -70,7 +53,7 @@ export function HunyuanInput({
   draft,
   ...args
 }: z.infer<(typeof hunyuanVideoGenerationConfig)[number]['schema']>): HunyuanVdeoGenInput {
-  const size = hunyuanAspectRatioMap[aspectRatio];
-  const { width, height } = draft ? getScaledWidthHeight(size.width, size.height, 0.5) : size;
+  const resolution = draft ? 480 : 720;
+  const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize(resolution);
   return { ...args, width, height };
 }

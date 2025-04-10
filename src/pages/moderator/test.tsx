@@ -423,7 +423,7 @@ function ExampleSelect() {
 
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import { Page } from '~/components/AppLayout/Page';
-import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatio';
+import { AspectRatio, CustomAspectRatio } from '~/components/Generation/Input/AspectRatioInput';
 
 function ExamplePopover() {
   return (
