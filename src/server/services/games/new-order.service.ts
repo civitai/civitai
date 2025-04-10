@@ -1,4 +1,5 @@
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { CacheTTL } from '~/server/common/constants';
 import {
   NewOrderImageRatingStatus,
   ImageSort,
@@ -206,6 +207,7 @@ export async function addImageRating({
       });
     } catch (e) {
       const error = e as Error;
+      console.log(error);
       logToAxiom(
         {
           type: 'error',
@@ -439,6 +441,24 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
+async function getRankedImages(userId: number) {
+  const images = await fetchThroughCache(
+    REDIS_KEYS.NEW_ORDER.RATED,
+    async () => {
+      const results = await clickhouse!.$query<{ imageId: number }>`
+        SELECT
+          "imageId"
+        FROM knights_new_order_image_rating
+        WHERE "userId" = ${userId}
+    `;
+      return results.map((r) => r.imageId);
+    },
+    { ttl: CacheTTL.week }
+  );
+
+  return images;
+}
+
 export async function addImageToQueue({
   imageId,
   rankType,
@@ -478,11 +498,13 @@ export async function getImagesQueue({
       ? [...poolCounters.Templar, ...poolCounters.Knight]
       : poolCounters[player.rankType];
 
+  const ratedImages = await getRankedImages(playerId);
+
   for (const pool of rankPools) {
     const images = await pool.getAll(imageCount);
     if (images.length === 0) continue;
 
-    imageIds.push(...images);
+    imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
 
     if (imageIds.length >= imageCount) break;
   }
@@ -522,6 +544,7 @@ async function isImageInQueue({
       }))
     )
     .flat();
+
   const exists = await Promise.all(
     pools.map(async ({ pool, rank }) => {
       const exists = await pool.exists(imageId);

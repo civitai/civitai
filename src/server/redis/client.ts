@@ -549,6 +549,9 @@ export const REDIS_KEYS = {
     POOL_SIZE: 'packed:caches:creator-program:pool-size',
     POOL_FORECAST: 'packed:caches:creator-program:pool-forecast',
   },
+  NEW_ORDER: {
+    RATED: 'new-order:rated',
+  },
 } as const;
 
 // These are used as subkeys after a dynamic key, such as `user:13:stuff`
