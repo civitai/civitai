@@ -19,10 +19,10 @@ const baseWanSchema = z.object({
   workflow: z.string(),
   cfgScale: z.number().min(1).max(10).default(4).catch(4),
   frameRate: z.literal(16).default(16).catch(16),
-  duration: numberEnum(wanDuration).default(3).catch(3),
+  duration: numberEnum(wanDuration).default(5).catch(5),
   seed: seedSchema,
   draft: z.boolean().optional(),
-  steps: z.number().default(25),
+  steps: z.number().default(20),
 });
 
 const wanTxt2VidSchema = textEnhancementSchema.merge(baseWanSchema).extend({
@@ -53,7 +53,7 @@ export function WanInput({
   draft,
   ...args
 }: z.infer<(typeof wanVideoGenerationConfig)[number]['schema']>): WanVdeoGenInput {
-  const resolution = draft ? 480 : 720;
+  const resolution = draft ? 420 : 640;
   const hasSourceImage = 'sourceImage' in args;
   const sourceImage = hasSourceImage ? args.sourceImage.url : undefined;
 

@@ -626,7 +626,7 @@ function HunyuanTxt2VidGenerationForm() {
           data={hunyuanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
-      <InputNumberSlider
+      {/* <InputNumberSlider
         name="steps"
         label={
           <div className="flex items-center gap-1">
@@ -648,7 +648,7 @@ function HunyuanTxt2VidGenerationForm() {
         min={20}
         max={30}
         reverse
-      />
+      /> */}
       <InputNumberSlider
         name="cfgScale"
         label={
@@ -714,7 +714,7 @@ function WanTxt2VidGenerationForm() {
           data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
-      <InputNumberSlider
+      {/* <InputNumberSlider
         name="steps"
         label={
           <div className="flex items-center gap-1">
@@ -736,7 +736,7 @@ function WanTxt2VidGenerationForm() {
         min={20}
         max={30}
         reverse
-      />
+      /> */}
       <InputNumberSlider
         name="cfgScale"
         label={
@@ -791,7 +791,7 @@ function WanImg2VidGenerationForm() {
           data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
       </div>
-      <InputNumberSlider
+      {/* <InputNumberSlider
         name="steps"
         label={
           <div className="flex items-center gap-1">
@@ -813,7 +813,7 @@ function WanImg2VidGenerationForm() {
         min={20}
         max={30}
         reverse
-      />
+      /> */}
       <InputNumberSlider
         name="cfgScale"
         label={

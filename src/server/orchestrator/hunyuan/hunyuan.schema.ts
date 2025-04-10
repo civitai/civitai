@@ -3,6 +3,7 @@ import z from 'zod';
 import { AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
+  resourceSchema,
   seedSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
@@ -18,10 +19,12 @@ const baseHunyuanSchema = z.object({
   workflow: z.string(),
   cfgScale: z.number().min(1).max(10).default(6).catch(6),
   frameRate: z.literal(24).default(24).catch(24),
-  duration: numberEnum(hunyuanDuration).default(3).catch(3),
+  duration: numberEnum(hunyuanDuration).default(5).catch(5),
   seed: seedSchema,
   draft: z.boolean().optional(),
-  steps: z.number().default(25),
+  steps: z.number().default(20),
+  model: z.string().optional(),
+  loras: z.array(resourceSchema).default([]),
 });
 
 const hunyuanTxt2VidSchema = textEnhancementSchema.merge(baseHunyuanSchema).extend({
@@ -53,7 +56,7 @@ export function HunyuanInput({
   draft,
   ...args
 }: z.infer<(typeof hunyuanVideoGenerationConfig)[number]['schema']>): HunyuanVdeoGenInput {
-  const resolution = draft ? 480 : 720;
+  const resolution = draft ? 420 : 640;
   const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize(resolution);
-  return { ...args, width, height };
+  return { ...args, width, height, model: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512' };
 }

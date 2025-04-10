@@ -38,3 +38,9 @@ export const imageEnhancementSchema = baseSchema.extend({
   type: z.literal(GenerationType.img2vid).catch(GenerationType.img2vid),
   sourceImage: sourceImageSchema,
 });
+
+export type ResourceInput = z.input<typeof resourceSchema>;
+export const resourceSchema = z.object({
+  air: z.string(),
+  strength: z.number().default(1),
+});
