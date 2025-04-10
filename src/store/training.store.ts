@@ -227,6 +227,7 @@ type TrainingImageStore = {
     data?: Omit<TrainingRun, 'id'>
   ) => void;
   removeRun: (modelId: number, mediaType: TrainingDetailsObj['mediaType'], data: number) => void;
+  resetRuns: (modelId: number, mediaType: TrainingDetailsObj['mediaType']) => void;
   updateRun: (
     modelId: number,
     mediaType: TrainingDetailsObj['mediaType'],
@@ -471,7 +472,7 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
         setModelState(state, modelId, mediaType);
 
         const lastNum = Math.max(1, ...state[modelId]!.runs.map((r) => r.id));
-        const newData = data ?? defaultRun;
+        const newData = data ?? mediaType === 'video' ? defaultRunVideo : defaultRun;
         const newRun = {
           ...newData,
           id: lastNum + 1,
@@ -490,8 +491,15 @@ export const useTrainingImageStore = create<TrainingImageStore>()(
           thisState.runs.splice(idx, 1);
         }
         if (thisState.runs.length === 0) {
-          state[modelId]!.runs.push(defaultRun);
+          state[modelId]!.runs.push(mediaType === 'video' ? defaultRunVideo : defaultRun);
         }
+      });
+    },
+    resetRuns: (modelId, mediaType) => {
+      set((state) => {
+        setModelState(state, modelId, mediaType);
+
+        state[modelId]!.runs = [mediaType === 'video' ? defaultRunVideo : defaultRun];
       });
     },
     updateRun: (modelId, mediaType, runId, data) => {
@@ -540,5 +548,6 @@ export const trainingStore = {
   setAutoCaptioning: store.setAutoCaptioning,
   addRun: store.addRun,
   removeRun: store.removeRun,
+  resetRuns: store.resetRuns,
   updateRun: store.updateRun,
 };

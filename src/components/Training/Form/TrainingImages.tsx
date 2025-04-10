@@ -1101,6 +1101,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
+      if (thisMediaType === 'video' && imageList.some((i) => i.label.length === 0)) {
+        showErrorNotification({
+          error: new Error('All images must have a label for video training'),
+          autoClose: false,
+        });
+        return;
+      }
+
       const issues: string[] = [];
 
       const { blockedFor, success } = auditPrompt(triggerWord);

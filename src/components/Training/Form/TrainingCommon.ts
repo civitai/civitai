@@ -6,7 +6,6 @@ import { useCallback } from 'react';
 import { useSignalConnection } from '~/components/Signals/SignalsProvider';
 import { SignalMessages } from '~/server/common/enums';
 import { Orchestrator } from '~/server/http/orchestrator/orchestrator.types';
-import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import type { TrainingUpdateSignalSchema } from '~/server/schema/signals.schema';
 import type {
   AutoCaptionResponse,
@@ -151,11 +150,11 @@ export const useOrchestratorUpdateSignal = () => {
     if (!['Updated', 'Failed'].includes(type)) return;
 
     if (!isDefined(jobProperties)) return;
-    const { modelId } = jobProperties;
+    const { modelId, mediaType: mt } = jobProperties;
     const storeState = useTrainingImageStore.getState();
 
     // TODO get the mediaType back so we know which training state to use
-    const mediaType = 'image' as TrainingDetailsObj['mediaType'];
+    const mediaType = mt ?? 'image';
     const defaultState = mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
 
     const { autoLabeling, autoTagging, autoCaptioning } = storeState[modelId] ?? {

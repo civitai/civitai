@@ -1,8 +1,21 @@
-import { Button, createStyles, Group, Image, Input, Radio, Stack, Text } from '@mantine/core';
+import {
+  Badge,
+  Button,
+  createStyles,
+  Group,
+  Image,
+  Input,
+  Radio,
+  Stack,
+  Text,
+  Tooltip,
+} from '@mantine/core';
+import { IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
 import { goNext } from '~/components/Training/Form/TrainingCommon';
 import { Form, InputRadioGroup, InputSegmentedControl, InputText, useForm } from '~/libs/form';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { BaseModel, constants } from '~/server/common/constants';
 import { ModelVersionUpsertInput, TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import {
@@ -12,6 +25,7 @@ import {
   ModelUploadType,
   TrainingStatus,
 } from '~/shared/utils/prisma/enums';
+import { trainingStore } from '~/store/training.store';
 import { TrainingModelData } from '~/types/router';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -88,19 +102,24 @@ const RadioImg = ({
   src,
   description,
   type,
+  isNew,
 }: {
   value: string;
   src: string;
   description: string;
   type: 'img' | 'vid';
+  isNew?: boolean;
 }) => {
   const caption = (
-    <>
-      <Text fz="lg" fw={500}>
-        {value}
-      </Text>
+    <Stack spacing={0}>
+      <Group position="center" spacing="xs" className="!items-center !justify-center align-middle">
+        <Text fz="lg" fw={500}>
+          {value}
+        </Text>
+        {isNew && <Badge color="green">New</Badge>}
+      </Group>
       <Text>{description}</Text>
-    </>
+    </Stack>
   );
 
   const media =
@@ -144,6 +163,9 @@ const RadioImg = ({
 export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const queryUtils = trpc.useUtils();
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
+  const features = useFeatureFlags();
+
+  const { resetRuns } = trainingStore;
 
   const thisModelVersion = model?.modelVersions[0];
   const thisTrainingDetails = thisModelVersion?.trainingDetails as TrainingDetailsObj | undefined;
@@ -301,6 +323,14 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   });
 
   const handleSubmit = ({ ...rest }: z.infer<typeof schema>) => {
+    if (!features.videoTraining && trainingMediaType === 'video') {
+      showErrorNotification({
+        error: new Error('Video training not available'),
+        autoClose: false,
+      });
+      return;
+    }
+
     if (isDirty) {
       setAwaitInvalidate(true);
       // TODO [bw]: status draft is maybe wrong here if they can come back later
@@ -320,6 +350,8 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   };
 
   useEffect(() => {
+    if (model?.id && trainingMediaType) resetRuns(model.id, trainingMediaType);
+
     if (
       trainingModelType &&
       !trainingModelTypesMap[trainingModelType].allowedTypes.includes(trainingMediaType)
@@ -341,10 +373,29 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           <InputSegmentedControl
             name="trainingMediaType"
             radius="sm"
-            data={constants.trainingMediaTypes.map((mt) => ({
-              label: titleCase(mt),
-              value: mt,
-            }))}
+            data={constants.trainingMediaTypes.map((mt) => {
+              const videoNotAllowed = mt === 'video' && !features.videoTraining;
+
+              return {
+                label: (
+                  <Tooltip
+                    withinPortal
+                    disabled={!videoNotAllowed}
+                    label={videoNotAllowed ? 'Currently available to subscribers only' : undefined}
+                  >
+                    <Group spacing="xs" position="center">
+                      {mt === 'video' ? <IconVideo size={18} /> : <IconPhoto size={16} />}
+                      <Text>{titleCase(mt)}</Text>
+                      {mt === 'video' && new Date() < new Date('2025-04-30') && (
+                        <Badge color="green">New</Badge>
+                      )}
+                    </Group>
+                  </Tooltip>
+                ),
+                value: mt,
+                disabled: videoNotAllowed,
+              };
+            })}
             fullWidth
             styles={(theme) => ({
               root: {
@@ -356,10 +407,6 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
           />
         </Input.Wrapper>
         <InputRadioGroup
-          // value={trainingModelType}
-          // onChange={(v) => {
-          //   setTrainingModelType(v as tmTypes);
-          // }}
           className={classes.centerRadio} // why is this not easier to do?
           name="trainingModelType"
           label="Choose your LoRA type"
@@ -370,7 +417,14 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
               !!trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true
             )
             .map(([k, v]) => (
-              <RadioImg value={k} description={v.description} src={v.src} type={v.type} key={k} />
+              <RadioImg
+                value={k}
+                description={v.description}
+                src={v.src}
+                type={v.type}
+                isNew={k === 'Effect' && new Date() < new Date('2025-04-30')}
+                key={k}
+              />
             ))}
         </InputRadioGroup>
         <InputText name="name" label="Name" placeholder="Name" withAsterisk />
