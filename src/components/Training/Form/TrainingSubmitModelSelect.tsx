@@ -396,7 +396,7 @@ export const ModelSelect = ({
                     Note: custom models may see a higher failure rate than normal, and cost more
                     Buzz.
                   </AlertWithIcon>
-                ) : selectedRun.baseType === 'sd35' ? (
+                ) : selectedRun.baseType === 'hunyuan' || selectedRun.baseType === 'wan' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">
                     Note: this is an experimental build. Pricing, default settings, and results are
                     subject to change.
