@@ -1,4 +1,4 @@
-import { MiniMaxVideoGenModel } from '@civitai/client';
+import { MiniMaxVideoGenInput, MiniMaxVideoGenModel } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -40,3 +40,10 @@ const minimaxImg2VidConfig = new VideoGenerationConfig({
 });
 
 export const minimaxVideoGenerationConfig = [minimaxTxt2ImgConfig, minimaxImg2VidConfig];
+
+export function MinimaxInput(
+  args: z.infer<(typeof minimaxVideoGenerationConfig)[number]['schema']>
+): MiniMaxVideoGenInput {
+  const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
+  return { ...args, sourceImage };
+}

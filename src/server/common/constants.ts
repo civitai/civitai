@@ -989,6 +989,7 @@ export const generation = {
 } as const;
 export const maxRandomSeed = 2147483647;
 export const maxUpscaleSize = 3840;
+export const minDownscaleSize = 320;
 
 // export type GenerationBaseModel = keyof typeof generationConfig;
 

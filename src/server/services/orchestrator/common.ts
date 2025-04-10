@@ -433,6 +433,13 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
         }, 0) ?? 0,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
+      duration:
+        workflow.startedAt && workflow.completedAt
+          ? Math.round(
+              new Date(workflow.completedAt).getTime() / 1000 -
+                new Date(workflow.startedAt).getTime() / 1000
+            )
+          : undefined,
       steps: (workflow.steps ?? [])?.map((step) =>
         formatWorkflowStep({
           workflowId: workflow.id as string,
@@ -520,15 +527,6 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
       aspectRatio = width && height ? width / height : 16 / 9;
     } else if (params.type === 'txt2vid') {
       switch (params.engine) {
-        case 'lightricks':
-        case 'kling':
-        case 'haiper': {
-          if (params.aspectRatio) {
-            const [rw, rh] = params.aspectRatio.split(':').map(Number);
-            aspectRatio = rw / rh;
-          }
-          break;
-        }
         case 'minimax':
           aspectRatio = 16 / 9;
           break;
@@ -537,6 +535,13 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
           height = 480;
           aspectRatio = width / height;
           break;
+        default: {
+          if (params.aspectRatio) {
+            const [rw, rh] = params.aspectRatio.split(':').map(Number);
+            aspectRatio = rw / rh;
+          }
+          break;
+        }
         case 'vidu':
           width = 1280;
           height = 720;
@@ -582,7 +587,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     name: step.name,
     // workflow and quantity are only here because they are required for other components to function
     params: {
-      ...input,
+      ...params,
       sourceImage: sourceImage,
       workflow: videoMetadata.params?.workflow,
       quantity: 1,

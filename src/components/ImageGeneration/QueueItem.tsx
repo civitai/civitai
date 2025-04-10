@@ -58,6 +58,7 @@ import { orchestratorPendingStatuses } from '~/shared/constants/generation.const
 import { generationPanel, generationStore } from '~/store/generation.store';
 import { formatDateMin } from '~/utils/date-helpers';
 import { trpc } from '~/utils/trpc';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const PENDING_PROCESSING_STATUSES: WorkflowStatus[] = [
   ...orchestratorPendingStatuses,
@@ -79,6 +80,7 @@ export function QueueItem({
   filter: { marker?: string } | undefined;
 }) {
   const { classes, cx } = useStyle();
+  const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const [ref, inView] = useInViewDynamic({ id });
 
@@ -157,7 +159,7 @@ export function QueueItem({
     });
   };
 
-  const { prompt, ...details } = params;
+  const { prompt, ...details } = 'prompt' in params ? params : { ...params, prompt: undefined };
 
   const hasUnstableResources = resources.some((x) => unstableResources.includes(x.id));
   const overwriteStatusLabel =
@@ -215,6 +217,9 @@ export function QueueItem({
                     variant="badge"
                   />
                 )}
+              {request.duration && currentUser?.isModerator && (
+                <Badge color="yellow">Duration: {request.duration}</Badge>
+              )}
             </div>
             <div className="flex gap-1">
               <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
@@ -256,11 +261,13 @@ export function QueueItem({
               </Alert>
             )}
 
-            <ContentClamp maxHeight={36} labelSize="xs">
-              <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
-                {prompt}
-              </Text>
-            </ContentClamp>
+            {prompt && (
+              <ContentClamp maxHeight={36} labelSize="xs">
+                <Text lh={1.3} sx={{ wordBreak: 'break-all' }}>
+                  {prompt}
+                </Text>
+              </ContentClamp>
+            )}
 
             <div className="-my-2">
               {workflowDefinition && (

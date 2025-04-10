@@ -780,6 +780,7 @@ export interface ModelMetric {
   generationCount: number;
   thumbsUpCount: number;
   thumbsDownCount: number;
+  earnedAmount: number;
   updatedAt: Date;
 }
 
@@ -799,6 +800,7 @@ export interface ModelVersionMetric {
   generationCount: number;
   thumbsUpCount: number;
   thumbsDownCount: number;
+  earnedAmount: number;
   updatedAt: Date;
 }
 

@@ -411,7 +411,7 @@ const ImageGridImage = ({
           {
             url: compareKey,
             label:
-              type === 'generation'
+              type === 'generation' && 'prompt' in img.params
                 ? img.params.prompt
                 : type === 'uploaded'
                 ? img.meta?.prompt ?? ''

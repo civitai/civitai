@@ -1,4 +1,4 @@
-import { ViduVideoGenStyle } from '@civitai/client';
+import { ViduVideoGenInput, ViduVideoGenStyle } from '@civitai/client';
 import z from 'zod';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
@@ -44,3 +44,11 @@ const viduImg2VidConfig = new VideoGenerationConfig({
 });
 
 export const viduVideoGenerationConfig = [viduTxt2ImgConfig];
+
+export function ViduInput({
+  ...args
+}: z.infer<(typeof viduVideoGenerationConfig)[number]['schema']>): ViduVideoGenInput {
+  // const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
+  // return { ...args, sourceImage };
+  return { ...args };
+}

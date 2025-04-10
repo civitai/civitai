@@ -94,27 +94,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     //   setWorkflowDefinition(workflow.key, workflow);
     // }
 
-    const imageTags = await dbWrite.tagsOnImageDetails.findMany({
-      where: { imageId: { in: [66447372] }, disabled: false },
-      select: {
-        imageId: true,
-        source: true,
-        tagId: true,
-      },
-    });
-    const dbTags = imageTags.map((x) => x.tagId);
-
-    await tagIdsForImagesCache.bust(66447372);
-    const cache = await tagIdsForImagesCache.fetch(66447372);
-    const tags = Object.values(cache).flatMap((x) => x.tags);
-
-    const fromDb = await dbWrite.tag.findMany({ where: { id: { in: dbTags } } });
-    const fromCache = await dbWrite.tag.findMany({ where: { id: { in: tags } } });
-
-    res.status(200).send({
-      fromDb,
-      fromCache,
-    });
+    res.status(200).send({ ok: true });
   } catch (e) {
     console.log(e);
     res.status(400).end();

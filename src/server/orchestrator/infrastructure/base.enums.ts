@@ -13,6 +13,8 @@ export const OrchestratorEngine = {
   Minimax: 'minimax',
   Vidu: 'vidu',
   Lightricks: 'lightricks',
+  Hunyuan: 'hunyuan',
+  Wan: 'wan',
 } as const;
 export type OrchestratorEngine = (typeof orchestratorEngines)[number];
 const orchestratorEngines = Object.values(OrchestratorEngine);

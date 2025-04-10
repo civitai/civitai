@@ -1,4 +1,4 @@
-import { HaiperVideoGenModel } from '@civitai/client';
+import { HaiperVideoGenInput, HaiperVideoGenModel } from '@civitai/client';
 import {
   negativePromptSchema,
   seedSchema,
@@ -53,3 +53,10 @@ const haiperImg2VidConfig = new VideoGenerationConfig({
 });
 
 export const haiperVideoGenerationConfig = [haiperTxt2ImgConfig, haiperImg2VidConfig];
+
+export function HaiperInput(
+  args: z.infer<(typeof haiperVideoGenerationConfig)[number]['schema']>
+): HaiperVideoGenInput {
+  const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
+  return { ...args, sourceImage };
+}
