@@ -1,12 +1,6 @@
-import { ActionIcon, Button, Kbd, Skeleton, Text, Tooltip } from '@mantine/core';
+import { ActionIcon, Skeleton } from '@mantine/core';
 import { HotkeyItem, useHotkeys } from '@mantine/hooks';
-import {
-  IconArrowBackUp,
-  IconExternalLink,
-  IconFlag,
-  IconVolume,
-  IconVolumeOff,
-} from '@tabler/icons-react';
+import { IconExternalLink } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
@@ -14,29 +8,25 @@ import { Page } from '~/components/AppLayout/Page';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import GameErrorBoundary from '~/components/Games/GameErrorBoundary';
 import {
-  damnedReasonOptions,
-  ratingOptions,
   ratingPlayBackRates,
   useAddImageRating,
   useJoinKnightsNewOrder,
   useKnightsNewOrderListener,
   useQueryKnightsNewOrderImageQueue,
 } from '~/components/Games/KnightsNewOrder.utils';
+import { ImageRater } from '~/components/Games/NewOrder/ImageRater';
 import { MenuActions } from '~/components/Games/NewOrder/MenuActions';
 import { Welcome } from '~/components/Games/NewOrder/Welcome';
 import { PlayerCard } from '~/components/Games/PlayerCard';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useGameSounds } from '~/hooks/useGameSounds';
-import { useIsMobile } from '~/hooks/useIsMobile';
 import { useStorage } from '~/hooks/useStorage';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
 import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { browsingLevelDescriptions } from '~/shared/constants/browsingLevel.constants';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
-import { getDisplayName } from '~/utils/string-helpers';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -77,7 +67,6 @@ export default Page(
     useKnightsNewOrderListener();
 
     const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
-    const mobile = useIsMobile({ breakpoint: 'md' });
 
     const handleAddRating = async ({
       rating,
@@ -134,7 +123,7 @@ export default Page(
           <PageLoader />
         ) : playerData ? (
           <div className="-mt-4 flex h-full gap-4 bg-dark-9">
-            <div className="h-full w-[360px] shrink-0 overflow-y-auto bg-white p-4 dark:bg-dark-7">
+            <div className="hidden h-full w-[360px] shrink-0 overflow-y-auto bg-white p-4 md:block dark:bg-dark-7">
               {currentUser && (
                 <PlayerCard
                   user={currentUser}
@@ -147,118 +136,44 @@ export default Page(
               )}
               <MenuActions />
             </div>
-            <div className="flex size-full items-center justify-center gap-4 py-8 md:overflow-hidden">
+            <div className="flex size-full items-center justify-center gap-4 px-4 py-8 md:overflow-hidden md:px-0">
               {loadingImagesQueue && (
                 <Skeleton className="h-1/2 w-full max-w-sm p-4" visible animate />
               )}
               {currentImage ? (
                 <div className="flex h-full flex-col items-center justify-center gap-4">
-                  <div className="relative h-full max-h-[75%]">
-                    <EdgeMedia2
-                      src={currentImage.url}
-                      className="h-full w-auto max-w-full rounded-lg object-fill"
-                      type="image"
-                      width={700}
-                      contain
-                    />
-                    <ActionIcon
-                      component={Link}
-                      href={`/images/${currentImage.id}`}
-                      target="_blank"
-                      aria-label="Open image in new tab"
-                      size="sm"
-                      variant="light"
-                      color="dark"
-                      className="absolute bottom-2 right-2 text-white"
-                    >
-                      <IconExternalLink size={16} color="currentColor" />
-                    </ActionIcon>
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    <div className="flex flex-nowrap gap-2">
-                      {damnedReason.open && (
-                        <Tooltip label="Cancel">
-                          <Button
-                            variant="default"
-                            className="md:h-full"
-                            onClick={() => setDamnedReason({ open: false, reason: null })}
-                          >
-                            <IconArrowBackUp />
-                          </Button>
-                        </Tooltip>
-                      )}
-                      <Button.Group
-                        orientation={mobile && damnedReason.open ? 'vertical' : 'horizontal'}
-                      >
-                        {damnedReason.open
-                          ? damnedReasonOptions.map((reason) => {
-                              const damnedReason = NewOrderDamnedReason[reason];
-
-                              return (
-                                <Button
-                                  key={reason}
-                                  classNames={{
-                                    root: 'md:h-auto md:max-w-[150px]',
-                                    label: 'whitespace-normal leading-normal text-center',
-                                  }}
-                                  variant="default"
-                                  onClick={() => handleAddDamnedReason({ reason: damnedReason })}
-                                  fullWidth
-                                >
-                                  {getDisplayName(damnedReason)}
-                                </Button>
-                              );
-                            })
-                          : ratingOptions.map((rating) => {
-                              const level = NsfwLevel[rating];
-                              const isBlocked = level === 'Blocked';
-
-                              return (
-                                <Tooltip
-                                  key={rating}
-                                  label={browsingLevelDescriptions[rating]}
-                                  position="top"
-                                  openDelay={1000}
-                                  maw={350}
-                                  withArrow
-                                  multiline
-                                >
-                                  <Button
-                                    key={rating}
-                                    variant={isBlocked ? 'filled' : 'default'}
-                                    color={isBlocked ? 'red' : undefined}
-                                    onClick={() =>
-                                      isBlocked
-                                        ? setDamnedReason({ open: true, reason: null })
-                                        : handleAddRating({ rating })
-                                    }
-                                  >
-                                    {isBlocked ? <IconFlag size={18} /> : level}
-                                  </Button>
-                                </Tooltip>
-                              );
-                            })}
-                      </Button.Group>
-                    </div>
-                    <div className="flex w-full justify-between gap-2">
-                      <Text size="xs">
-                        Use the numbers <Kbd>1-6</Kbd> to rate.
-                        {damnedReason.open && (
-                          <>
-                            {' '}
-                            <Kbd>Esc</Kbd> to cancel
-                          </>
-                        )}
-                      </Text>
+                  <div className="flex h-full max-h-[75%] items-center justify-center">
+                    <div className="relative">
+                      <EdgeMedia2
+                        src={currentImage.url}
+                        className="size-full max-w-full rounded-lg"
+                        type="image"
+                        width={700}
+                        contain
+                      />
                       <ActionIcon
+                        component={Link}
+                        href={`/images/${currentImage.id}`}
+                        target="_blank"
+                        aria-label="Open image in new tab"
                         size="sm"
-                        variant="transparent"
-                        onClick={() => setMuted((prev) => !prev)}
+                        variant="light"
+                        color="dark"
+                        className="absolute bottom-2 right-2 text-white"
                       >
-                        {muted ? <IconVolumeOff size={16} /> : <IconVolume size={16} />}
+                        <IconExternalLink size={16} color="currentColor" />
                       </ActionIcon>
                     </div>
                   </div>
+                  <ImageRater
+                    muted={muted}
+                    onVolumeClick={() => setMuted((prev) => !prev)}
+                    onRatingClick={({ rating, damnedReason }) =>
+                      damnedReason
+                        ? handleAddDamnedReason({ reason: damnedReason })
+                        : handleAddRating({ rating })
+                    }
+                  />
                 </div>
               ) : null}
             </div>

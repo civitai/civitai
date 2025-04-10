@@ -21,6 +21,7 @@ import { getServerAuthSession } from '../utils/get-server-auth-session';
 import { Session } from 'next-auth';
 import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import { NewOrderImageRatingStatus } from '~/server/common/enums';
+import { data } from 'motion/dist/react-m';
 
 export type CustomClickHouseClient = ClickHouseClient & {
   $query: <T extends object>(
@@ -524,7 +525,7 @@ export class Tracker {
       multiplier: number;
     }
   ) {
-    return this.track('knights_new_order_image_rating', values);
+    return this.track('knights_new_order_image_rating', { ...values, createdAt: new Date() });
   }
 
   public entityMetric(values: {

@@ -282,7 +282,7 @@ export async function addImageRating({
       // Means there are multiple entries for this image. We must raise this to the Templars:
       // Add to templars queue:
       await addImageToQueue({
-        imageId,
+        imageIds: imageId,
         rankType: NewOrderRankType.Templar,
         priority: 1,
       });
@@ -296,14 +296,14 @@ export async function addImageRating({
       if (rating < currentNsfwLevel) {
         // Raise to templars because they lowered the rating.
         await addImageToQueue({
-          imageId,
+          imageIds: imageId,
           rankType: NewOrderRankType.Templar,
           priority: 1,
         });
       } else if (rating > currentNsfwLevel && Flags.increaseByBits(rating) !== currentNsfwLevel) {
         // Raise to templars because the diff. is more than 1 level up:
         await addImageToQueue({
-          imageId,
+          imageIds: imageId,
           rankType: NewOrderRankType.Templar,
           priority: 1,
         });
@@ -460,25 +460,26 @@ async function getRankedImages(userId: number) {
 }
 
 export async function addImageToQueue({
-  imageId,
+  imageIds,
   rankType,
   // Top is always 1. 3 is default priority
   priority = 3,
 }: {
-  imageId: number;
+  imageIds: number | number[];
   rankType: NewOrderRankType;
   priority?: 1 | 2 | 3;
 }) {
-  const image = await dbRead.image.findUnique({
-    where: { id: imageId },
+  imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
+  if (imageIds.length === 0) return false;
+
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
     select: { id: true },
   });
-
-  if (!image) return false;
+  if (images.length === 0) return false;
 
   const pools = poolCounters[rankType];
-
-  pools[priority - 1].getCount(imageId);
+  await Promise.all(images.map((image) => pools[priority - 1].getCount(image.id)));
 
   return true;
 }

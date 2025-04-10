@@ -22,7 +22,7 @@ import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useInView } from '~/hooks/useInView';
-import { NewOrderImageRatingStatus } from '~/server/common/enums';
+import { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { GetJudgementHistoryItem } from '~/types/router';
 
@@ -129,7 +129,7 @@ function JudgementHistoryItem({ data, height }: JudgementHistoryProps) {
     >
       {inView && (
         <>
-          <EdgeMedia2 src={image.url} type="image" width={450} />
+          <EdgeMedia2 src={image.url} className="h-full object-cover" type="image" width={450} />
 
           <ActionIcon
             component={Link}
@@ -144,23 +144,30 @@ function JudgementHistoryItem({ data, height }: JudgementHistoryProps) {
             <IconExternalLink size={16} color="currentColor" />
           </ActionIcon>
 
-          <div className="absolute left-0 top-0 flex w-full items-center justify-between gap-4 p-2">
-            <Badge
-              variant="filled"
-              color="gray"
-              className={borderClass}
-              leftSection={
-                status !== NewOrderImageRatingStatus.Pending ? (
-                  isCorrect ? (
-                    <IconCheck color={theme.colors.green[5]} size={18} />
-                  ) : (
-                    <IconX color={theme.colors.red[5]} size={18} />
-                  )
-                ) : null
-              }
-            >
-              {browsingLevelLabels[rating]}
-            </Badge>
+          <div className="absolute left-0 top-0 flex w-full justify-between gap-4 p-2">
+            <div className="relative flex flex-col gap-1">
+              <Badge
+                variant="filled"
+                color="gray"
+                className={borderClass}
+                leftSection={
+                  !isPending ? (
+                    isCorrect ? (
+                      <IconCheck color={theme.colors.green[5]} size={18} />
+                    ) : (
+                      <IconX color={theme.colors.red[5]} size={18} />
+                    )
+                  ) : null
+                }
+              >
+                {browsingLevelLabels[rating]}
+              </Badge>
+              {!isPending && !isCorrect && (
+                <Badge className="mx-2 border border-blue-5" variant="filled" color="gray">
+                  {browsingLevelLabels[image.nsfwLevel as NsfwLevel]}
+                </Badge>
+              )}
+            </div>
             {!isPending && (
               <Badge
                 variant="filled"
