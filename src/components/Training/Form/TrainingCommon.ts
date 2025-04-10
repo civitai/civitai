@@ -224,7 +224,7 @@ export const useOrchestratorUpdateSignal = () => {
       data = context.data as CaptionDataResponse;
 
       const tagList = Object.entries(data).map(([f, t]) => ({
-        [f]: t.joyCaption.caption,
+        [f]: t.joyCaption?.caption ?? '',
       }));
       const returnData: AutoCaptionResponse = Object.assign({}, ...tagList);
 
