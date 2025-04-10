@@ -23,11 +23,11 @@ function parseAspectRatio(value: string) {
 
 const getOptions = (options?: AspectRatioOptions) => ({ ...defaultOptions, ...options });
 
-const defaultOptions: AspectRatioOptions = {
+const defaultOptions = {
   min: minResolution,
   max: maxResolution,
   multiplier: 64,
-};
+} satisfies AspectRatioOptions;
 
 function getAspectRatioFromSize(
   { width, height }: { width: number; height: number },
