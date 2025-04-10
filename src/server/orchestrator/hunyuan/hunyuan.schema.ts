@@ -16,8 +16,8 @@ const hunyuanAspectRatioMap = AspectRatioMap([...hunyuanAspectRatios], { multipl
 const baseHunyuanSchema = z.object({
   engine: z.literal('hunyuan'),
   workflow: z.string(),
-  cfgScale: z.number().min(1).max(10).default(10).catch(10),
-  frameRate: z.literal(24).default(24),
+  cfgScale: z.number().min(1).max(10).default(6).catch(6),
+  frameRate: z.literal(24).default(24).catch(24),
   duration: numberEnum(hunyuanDuration).default(3).catch(3),
   seed: seedSchema,
   draft: z.boolean().optional(),

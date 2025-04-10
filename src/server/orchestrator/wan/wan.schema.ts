@@ -1,10 +1,12 @@
 import { WanVdeoGenInput } from '@civitai/client';
 import z from 'zod';
-import { AspectRatioMap } from '~/libs/generation/utils/AspectRatio';
+import { AspectRatioMap, AspectRatio } from '~/libs/generation/utils/AspectRatio';
 import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   seedSchema,
   textEnhancementSchema,
+  imageEnhancementSchema,
+  promptSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 
@@ -27,9 +29,9 @@ const wanTxt2VidSchema = textEnhancementSchema.merge(baseWanSchema).extend({
   aspectRatio: z.enum(wanAspectRatios).default('1:1').catch('1:1'),
 });
 
-// const wanImg2VidSchema = imageEnhancementSchema
-//   .merge(baseWanSchema)
-//   .extend({ prompt: promptSchema });
+const wanImg2VidSchema = imageEnhancementSchema
+  .merge(baseWanSchema)
+  .extend({ prompt: promptSchema });
 
 const wanTxt2ImgConfig = new VideoGenerationConfig({
   subType: 'txt2vid',
@@ -38,21 +40,29 @@ const wanTxt2ImgConfig = new VideoGenerationConfig({
   metadataDisplayProps: ['cfgScale', 'steps', 'aspectRatio', 'duration', 'seed'],
 });
 
-// const wanImg2VidConfig = new VideoGenerationConfig({
-//   subType: 'img2vid',
-//   engine: 'wan',
-//   schema: wanImg2VidSchema,
-//   metadataDisplayProps: ['cfgScale', 'mode', 'duration', 'seed'],
-// });
+const wanImg2VidConfig = new VideoGenerationConfig({
+  subType: 'img2vid',
+  engine: 'wan',
+  schema: wanImg2VidSchema,
+  metadataDisplayProps: ['cfgScale', 'steps', 'duration', 'seed', 'sourceImage'],
+});
 
-export const wanVideoGenerationConfig = [wanTxt2ImgConfig];
+export const wanVideoGenerationConfig = [wanTxt2ImgConfig, wanImg2VidConfig];
 
 export function WanInput({
-  aspectRatio,
   draft,
   ...args
 }: z.infer<(typeof wanVideoGenerationConfig)[number]['schema']>): WanVdeoGenInput {
   const resolution = draft ? 480 : 720;
-  const { width, height } = wanAspectRatioMap[aspectRatio].getSize(resolution);
-  return { ...args, width, height };
+  const hasSourceImage = 'sourceImage' in args;
+  const sourceImage = hasSourceImage ? args.sourceImage.url : undefined;
+
+  const ar = hasSourceImage
+    ? AspectRatio.fromSize(args.sourceImage, {
+        multiplier: 16,
+      })
+    : wanAspectRatioMap[args.aspectRatio];
+  const { width, height } = ar.getSize(resolution);
+
+  return { ...args, width, height, sourceImage };
 }

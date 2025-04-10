@@ -1,5 +1,7 @@
 import { maxResolution, minResolution } from '~/libs/generation/utils/constants';
 
+const gcd = (a: number, b: number): number => (a ? gcd(b % a, a) : b);
+
 function findClosest(array: number[], target: number) {
   return array.reduce((a, b) => {
     return Math.abs(b - target) < Math.abs(a - target) ? b : a;
@@ -19,26 +21,47 @@ function parseAspectRatio(value: string) {
   return match?.[0] ?? null;
 }
 
-function getSizeFromAspectRatioString(aspectRatio: string) {
-  const match = parseAspectRatio(aspectRatio);
-  if (!match) throw new Error('invalid aspect ratio syntax');
-  const [rw, rh] = match.split(':').map(Number);
-  const ratio = rw / rh;
-  const direction = ratio < 1 ? 'portrait' : 'landscape';
-  return {
-    rw,
-    rh,
-    ratio,
-    direction,
-  };
+const getOptions = (options?: AspectRatioOptions) => ({ ...defaultOptions, ...options });
+
+const defaultOptions: AspectRatioOptions = {
+  min: minResolution,
+  max: maxResolution,
+  multiplier: 64,
+};
+
+function getAspectRatioFromSize(
+  { width, height }: { width: number; height: number },
+  options?: AspectRatioOptions
+) {
+  const { multiplier } = getOptions(options);
+  const [w, h] = [width, height].map((val) => {
+    const offset = val % multiplier;
+    return val - offset;
+  });
+  const d = gcd(w, h);
+  return AspectRatio(`${w / d}:${h / d}`, options);
 }
 
 type AspectRatioOptions = { min?: number; max?: number; multiplier?: number };
 
 export function AspectRatio(aspectRatio: string, options?: AspectRatioOptions) {
-  const { min = minResolution, max = maxResolution, multiplier = 64 } = options ?? {};
+  const { min = minResolution, max = maxResolution, multiplier = 64 } = getOptions(options);
   const { rw, rh, direction, ratio } = getSizeFromAspectRatioString(aspectRatio);
   const sizes = new Map<number, { width: number; height: number }>();
+
+  function getSizeFromAspectRatioString(aspectRatio: string) {
+    const match = parseAspectRatio(aspectRatio);
+    if (!match) throw new Error('invalid aspect ratio syntax');
+    const [rw, rh] = match.split(':').map(Number);
+    const ratio = rw / rh;
+    const direction = ratio < 1 ? 'portrait' : 'landscape';
+    return {
+      rw,
+      rh,
+      ratio,
+      direction,
+    };
+  }
 
   function getMaxSize(resolution: number) {
     return Math.ceil(direction === 'landscape' ? resolution * (rw / rh) : resolution * (rh / rw));
@@ -108,6 +131,7 @@ export function AspectRatio(aspectRatio: string, options?: AspectRatioOptions) {
 }
 
 AspectRatio.parse = parseAspectRatio;
+AspectRatio.fromSize = getAspectRatioFromSize;
 
 export function AspectRatioMap<T extends string>(aspectRatios: T[], options?: AspectRatioOptions) {
   return aspectRatios.reduce(
