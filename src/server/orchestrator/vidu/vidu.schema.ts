@@ -43,11 +43,12 @@ const viduImg2VidConfig = new VideoGenerationConfig({
   metadataDisplayProps: ['style', 'duration', 'seed'],
 });
 
-export const viduVideoGenerationConfig = [viduTxt2ImgConfig, viduImg2VidConfig];
+export const viduVideoGenerationConfig = [viduTxt2ImgConfig];
 
 export function ViduInput({
   ...args
 }: z.infer<(typeof viduVideoGenerationConfig)[number]['schema']>): ViduVideoGenInput {
-  const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
-  return { ...args, sourceImage };
+  // const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
+  // return { ...args, sourceImage };
+  return { ...args };
 }
