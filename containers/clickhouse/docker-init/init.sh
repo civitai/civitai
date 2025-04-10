@@ -922,7 +922,8 @@ clickhouse client -n <<-EOSQL
     (
         provider LowCardinality(String),
         id           String,
-        nodeId       String,        name         String,
+        nodeId       String,
+        name         String,
         registeredAt DateTime,
         ecosystems Array(LowCardinality(String)),
         onDemandResources Array(LowCardinality(String)),
