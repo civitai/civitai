@@ -217,7 +217,7 @@ export function QueueItem({
                     variant="badge"
                   />
                 )}
-              {request.duration && currentUser?.isModerator && (
+              {!!request.duration && currentUser?.isModerator && (
                 <Badge color="yellow">Duration: {request.duration}</Badge>
               )}
             </div>

@@ -109,7 +109,7 @@ import {
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
 //   | { kind: 'training' | 'addResource' | 'modelVersion' };
-type GenerationResourceWithImage = GenerationResource & {
+export type GenerationResourceWithImage = GenerationResource & {
   image: SearchIndexDataMap['models'][number]['images'][number];
 };
 export type ResourceSelectModalProps = {
