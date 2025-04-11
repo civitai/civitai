@@ -1,3 +1,4 @@
+import { clickhouse } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
@@ -7,13 +8,13 @@ type NewOrderRedisKey = `${NewOrderRedisKeyString}${'' | `:${string}`}`;
 
 type CounterOptions = {
   key: NewOrderRedisKey;
-  fetchCount: (id: number) => Promise<number>;
+  fetchCount: (id: number | string) => Promise<number>;
   ttl?: number;
   ordered?: boolean;
 };
 
 function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: CounterOptions) {
-  async function populateCount(id: number) {
+  async function populateCount(id: number | string) {
     const fetchedCount = await fetchCount(id);
     if (ordered) {
       await Promise.all([
@@ -34,13 +35,13 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     // Returns all ids in the range of min and max
     // If ordered, returns the ids by the score in descending order.
     if (ordered) {
-      const data = await sysRedis.zRange(key, Infinity, -Infinity, {
+      const data = await sysRedis.zRangeWithScores(key, Infinity, -Infinity, {
         BY: 'SCORE',
         REV: true,
         LIMIT: { offset: 0, count: limit ?? 100 },
       });
 
-      return data.map(Number);
+      return data.map((x) => Number(x.value));
     }
 
     const data = await sysRedis.hGetAll(key);
@@ -49,7 +50,7 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
       .map(Number);
   }
 
-  async function getCount(id: number) {
+  async function getCount(id: number | string) {
     const countStr = ordered
       ? await sysRedis.zScore(key, id.toString())
       : await sysRedis.hGet(key, id.toString());
@@ -58,7 +59,7 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return Number(countStr);
   }
 
-  async function increment({ id, value = 1 }: { id: number; value?: number }) {
+  async function increment({ id, value = 1 }: { id: number | string; value?: number }) {
     let count = await getCount(id);
     if (!count) count = await populateCount(id);
 
@@ -69,7 +70,7 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
     return count + absValue;
   }
 
-  async function decrement({ id, value = 1 }: { id: number; value?: number }) {
+  async function decrement({ id, value = 1 }: { id: number | string; value?: number }) {
     let count = await getCount(id);
     if (!count) count = await populateCount(id);
 
@@ -150,7 +151,7 @@ export const poolCounters = {
   [NewOrderRankType.Acolyte]: poolKeys[NewOrderRankType.Acolyte].map((key) =>
     createCounter({
       key: key as NewOrderRedisKey,
-      fetchCount: async (imageId: number) => 0,
+      fetchCount: async () => 0,
       ttl: CacheTTL.week,
       ordered: true,
     })
@@ -158,7 +159,7 @@ export const poolCounters = {
   [NewOrderRankType.Knight]: poolKeys[NewOrderRankType.Knight].map((key) =>
     createCounter({
       key: key as NewOrderRedisKey,
-      fetchCount: async (imageId: number) => 0,
+      fetchCount: async () => 0,
       ttl: CacheTTL.week,
       ordered: true,
     })
@@ -166,9 +167,44 @@ export const poolCounters = {
   [NewOrderRankType.Templar]: poolKeys[NewOrderRankType.Templar].map((key) =>
     createCounter({
       key: key as NewOrderRedisKey,
-      fetchCount: async (imageId: number) => 0,
+      fetchCount: async () => 0,
       ttl: CacheTTL.week,
       ordered: true,
     })
   ),
+};
+
+export const getImageRatingsCounter = (imageId: number) => {
+  const key = `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`;
+  const counter = createCounter({
+    key: key as NewOrderRedisKey,
+    fetchCount: async (id: number | string) => {
+      if (typeof id !== 'string') {
+        return 0; // Do nothing, this is not intended here.
+      }
+
+      const [rank, nsfwLevel] = id.split('-');
+      if (!rank || !nsfwLevel) {
+        return 0;
+      }
+
+      if (!clickhouse) {
+        return 0;
+      }
+
+      const data = await clickhouse.$query<{ count: number }>`
+        SELECT
+          COUNT(*) as count
+        FROM knights_new_order_image_rating
+        WHERE "imageId" = ${imageId} AND "rank" = ${rank} AND "nsfwLevel" = ${nsfwLevel}
+      `;
+
+      const count = data[0]?.count ?? 0;
+      return count;
+    },
+    ttl: CacheTTL.day,
+    ordered: true,
+  });
+
+  return counter;
 };

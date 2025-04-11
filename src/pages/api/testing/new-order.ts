@@ -4,10 +4,11 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { addImageToQueue, getImagesQueue } from '~/server/services/games/new-order.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 
 const insertInQueueSchema = z.object({
   action: z.literal('insert-in-queue'),
-  imageId: z.coerce.number(),
+  imageIds: commaDelimitedNumberArray(),
   rankType: z.nativeEnum(NewOrderRankType),
   priority: z.coerce.number().default(1),
 });
@@ -31,10 +32,11 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const { action } = payload;
 
   if (action === 'insert-in-queue') {
-    const { imageId, rankType, priority } = payload;
+    const { imageIds, rankType, priority } = payload;
+    console.log({ imageIds });
 
     const added = await addImageToQueue({
-      imageId,
+      imageIds,
       rankType,
       priority: priority as 1 | 2 | 3,
     });

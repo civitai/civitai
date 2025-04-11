@@ -1,4 +1,5 @@
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { CacheTTL } from '~/server/common/constants';
 import {
   NewOrderImageRatingStatus,
   ImageSort,
@@ -13,6 +14,7 @@ import {
   correctJudgementsCounter,
   expCounter,
   fervorCounter,
+  getImageRatingsCounter,
   poolCounters,
   smitesCounter,
 } from '~/server/games/new-order/utils';
@@ -27,7 +29,11 @@ import {
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect } from '~/server/selectors/user.selector';
 import { getAllImagesIndex } from '~/server/services/image.service';
-import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  cachedCounter,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import {
   throwBadRequestError,
   throwInternalServerError,
@@ -178,16 +184,17 @@ export async function addImageRating({
 
   // TODO.newOrder: adjust status based on rating distance
   const status =
-    image.nsfwLevel === rating
-      ? NewOrderImageRatingStatus.Correct
-      : NewOrderImageRatingStatus.Failed;
+    player.rankType === NewOrderRankType.Acolyte
+      ? image.nsfwLevel === rating
+        ? NewOrderImageRatingStatus.Correct
+        : NewOrderImageRatingStatus.Failed
+      : // Knights / Templars leave the image in the pending status until their vote is confirmed.
+        NewOrderImageRatingStatus.Pending;
 
   // TODO.newOrder: grantedExp and multiplier
   const grantedExp = 100;
-  const multiplier = status === NewOrderImageRatingStatus.Correct ? 1 : -1;
+  const multiplier = status === NewOrderImageRatingStatus.Failed ? -1 : 1;
 
-  // TODO.newOrder: should we await this?
-  // TODO.newOrder: replace with clickhouse tracker
   if (chTracker) {
     try {
       await chTracker.newOrderImageRating({
@@ -206,6 +213,7 @@ export async function addImageRating({
       });
     } catch (e) {
       const error = e as Error;
+      console.log(error);
       logToAxiom(
         {
           type: 'error',
@@ -223,11 +231,13 @@ export async function addImageRating({
   }
 
   // Increase rating count
-  await sysRedis.hIncrBy(
-    `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`,
-    `${player.rank.name}-${rating}`,
-    1
-  );
+  await getImageRatingsCounter(imageId).increment({
+    id: `${player.rank.name}-${rating}`,
+    value: 1,
+  });
+
+  // No need to await mainly cause it makes no difference as the user has a queue in general.
+  bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
 
   // Increase rating count for the image in the queue.
   await valueInQueue.pool.increment({ id: imageId, value: 1 });
@@ -245,6 +255,7 @@ export async function addImageRating({
         where: { id: smite.id },
         data: { remaining: smite.remaining - grantedExp * multiplier },
       });
+
       if (updatedSmite.remaining <= 0)
         await cleanseSmite({ id: updatedSmite.id, cleansedReason: 'Smite expired', playerId });
     }
@@ -262,7 +273,7 @@ export async function addImageRating({
   // Now, process what to do with the image:
   if (valueInQueue.rank === NewOrderRankType.Knight && ++valueInQueue.value >= 5) {
     // Image is now rated by enough players, we can process it.
-    const ratings = await sysRedis.hGetAll(`${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageId}`);
+    const ratings = await getImageRatingsCounter(imageId).getAll();
     const keys = Object.keys(ratings);
     let processed = false;
 
@@ -280,7 +291,7 @@ export async function addImageRating({
       // Means there are multiple entries for this image. We must raise this to the Templars:
       // Add to templars queue:
       await addImageToQueue({
-        imageId,
+        imageIds: imageId,
         rankType: NewOrderRankType.Templar,
         priority: 1,
       });
@@ -294,14 +305,14 @@ export async function addImageRating({
       if (rating < currentNsfwLevel) {
         // Raise to templars because they lowered the rating.
         await addImageToQueue({
-          imageId,
+          imageIds: imageId,
           rankType: NewOrderRankType.Templar,
           priority: 1,
         });
       } else if (rating > currentNsfwLevel && Flags.increaseByBits(rating) !== currentNsfwLevel) {
         // Raise to templars because the diff. is more than 1 level up:
         await addImageToQueue({
-          imageId,
+          imageIds: imageId,
           rankType: NewOrderRankType.Templar,
           priority: 1,
         });
@@ -327,12 +338,10 @@ export async function updatePlayerStats({
   playerId,
   status,
   exp,
-  writeToDb,
 }: {
   playerId: number;
   status: NewOrderImageRatingStatus;
   exp: number;
-  writeToDb?: boolean;
 }) {
   // TODO.newOrder: check math for fervor
   const allJudgements = await allJudmentsCounter.increment({ id: playerId });
@@ -348,13 +357,6 @@ export async function updatePlayerStats({
   const newExp = await expCounter.increment({ id: playerId, value: exp });
   // TODO.newOrder: adjust buzz based on conversion rate
   const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
-
-  if (writeToDb) {
-    await dbWrite.newOrderPlayer.update({
-      where: { userId: playerId },
-      data: { exp: newExp, fervor: newFervor },
-    });
-  }
 
   const stats = { exp: newExp, fervor: newFervor, blessedBuzz };
 
@@ -439,33 +441,52 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
+async function getRankedImages(userId: number) {
+  const images = await fetchThroughCache(
+    REDIS_KEYS.NEW_ORDER.RATED,
+    async () => {
+      const results = await clickhouse!.$query<{ imageId: number }>`
+        SELECT 
+          DISTINCT "imageId"
+        FROM knights_new_order_image_rating
+        WHERE "userId" = ${userId}
+    `;
+      return results.map((r) => r.imageId);
+    },
+    { ttl: CacheTTL.xs }
+  );
+
+  return images;
+}
+
 export async function addImageToQueue({
-  imageId,
+  imageIds,
   rankType,
   // Top is always 1. 3 is default priority
   priority = 3,
 }: {
-  imageId: number;
+  imageIds: number | number[];
   rankType: NewOrderRankType;
   priority?: 1 | 2 | 3;
 }) {
-  const image = await dbRead.image.findUnique({
-    where: { id: imageId },
+  imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
+  if (imageIds.length === 0) return false;
+
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
     select: { id: true },
   });
-
-  if (!image) return false;
+  if (images.length === 0) return false;
 
   const pools = poolCounters[rankType];
-
-  pools[priority - 1].getCount(imageId);
+  await Promise.all(images.map((image) => pools[priority - 1].getCount(image.id)));
 
   return true;
 }
 
 export async function getImagesQueue({
   playerId,
-  imageCount = 20,
+  imageCount = 100,
 }: {
   playerId: number;
   imageCount?: number;
@@ -478,11 +499,14 @@ export async function getImagesQueue({
       ? [...poolCounters.Templar, ...poolCounters.Knight]
       : poolCounters[player.rankType];
 
+  const ratedImages = await getRankedImages(playerId);
+
   for (const pool of rankPools) {
-    const images = await pool.getAll(imageCount);
+    // We multiply by 10 to ensure we get enough images in case some are already rated.
+    const images = await pool.getAll(imageCount * 10);
     if (images.length === 0) continue;
 
-    imageIds.push(...images);
+    imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
 
     if (imageIds.length >= imageCount) break;
   }
@@ -492,16 +516,16 @@ export async function getImagesQueue({
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 
-  // If player is templar, get images ratings
-  if (player.rankType === NewOrderRankType.Templar) {
-    const ratings = await sysRedis.hGetAll(
-      `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageIds.join(',')}`
-    );
-    images.forEach((image) => {
-      const rating = ratings[`${image.id}-${player.rank.name}`];
-      if (rating) image.nsfwLevel = Number(rating);
-    });
-  }
+  // TODO.newOrder: Fix this to properly get all ratings for the images
+  // if (player.rankType === NewOrderRankType.Templar) {
+  //   const ratings = await sysRedis.hGetAll(
+  //     `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageIds.join(',')}`
+  //   );
+  //   images.forEach((image) => {
+  //     const rating = ratings[`${image.id}-${player.rank.name}`];
+  //     if (rating) image.nsfwLevel = Number(rating);
+  //   });
+  // }
 
   return shuffle(images.slice(0, imageCount));
 }
@@ -522,6 +546,7 @@ async function isImageInQueue({
       }))
     )
     .flat();
+
   const exists = await Promise.all(
     pools.map(async ({ pool, rank }) => {
       const exists = await pool.exists(imageId);
@@ -561,7 +586,7 @@ export async function getPlayerHistory({
     createdAt: Date;
   }>`
     SELECT imageId, rating, status, grantedExp, multiplier, createdAt
-    FROM new_order_image_rating
+    FROM knights_new_order_image_rating
     WHERE ${AND.join(' AND ')}
     ORDER BY createdAt DESC
     LIMIT ${limit + 1}

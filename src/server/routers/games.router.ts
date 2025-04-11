@@ -97,7 +97,9 @@ export const gamesRouter = router({
       .mutation(({ input }) => cleanseSmite({ ...input })),
     addRating: guardedProcedure
       .input(addImageRatingSchema)
-      .mutation(({ input, ctx }) => addImageRating({ ...input, playerId: ctx.user.id })),
+      .mutation(({ input, ctx }) =>
+        addImageRating({ ...input, playerId: ctx.user.id, chTracker: ctx.track })
+      ),
     resetCareer: guardedProcedure.mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
   }),
 });
