@@ -58,8 +58,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     let change = currentValue;
     const monthAccount = getMonthAccount();
 
-    200;
-
     if (userId) {
       // Get user's current balance
       const userBanked = await getBanked(userId);

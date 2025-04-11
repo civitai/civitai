@@ -81,4 +81,8 @@ export abstract class Flags {
   static diff(a: number, b: number) {
     return a & ~b;
   }
+
+  static increaseByBits(instance: number, bits = 1) {
+    return instance << bits;
+  }
 }

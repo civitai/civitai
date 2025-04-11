@@ -36,6 +36,7 @@ export const loginRedirectReasons = {
   rater: 'You need to be logged in to play the rating game',
   'switch-accounts': 'Log into the account you wish to add',
   shop: 'You need to be logged in to preview and purchase cosmetics',
+  'knights-new-order': 'You need to be logged in to join Knights of the New Order',
 };
 
 export type LoginRedirectReason = keyof typeof loginRedirectReasons;
