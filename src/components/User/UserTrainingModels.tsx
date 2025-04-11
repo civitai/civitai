@@ -19,12 +19,13 @@ import {
   Table,
   Text,
 } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
+import { useClipboard, useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   IconAlertCircle,
   IconCheck,
   IconCircleCheck,
+  IconCopy,
   IconExclamationCircle,
   IconExternalLink,
   IconFileDescription,
@@ -34,6 +35,7 @@ import {
 import { useRouter } from 'next/router';
 import React, { useState } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { DownloadButton } from '~/components/Model/ModelVersions/DownloadButton';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -148,6 +150,7 @@ export default function UserTrainingModels() {
   const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
+  const { copied, copy } = useClipboard();
 
   const [page, setPage] = useState(1);
   const [scrolled, setScrolled] = useState(false);
@@ -231,6 +234,10 @@ export default function UserTrainingModels() {
   };
 
   const hasTraining = items.length > 0;
+  const jobId =
+    modalData.file?.metadata?.trainingResults?.version === 2
+      ? modalData.file?.metadata?.trainingResults?.workflowId
+      : modalData.file?.metadata?.trainingResults?.jobId;
 
   return (
     <Stack>
@@ -267,7 +274,7 @@ export default function UserTrainingModels() {
               <th>Training Status</th>
               <th>Created</th>
               <th>Start</th>
-              <th>Missing info</th>
+              <th>Missing Info</th>
               <th>Actions</th>
             </tr>
           </thead>
@@ -544,6 +551,21 @@ export default function UserTrainingModels() {
                     'MMM D, YYYY hh:mm:ss A'
                   )
                 : 'Unknown',
+            },
+            {
+              label: 'Job ID',
+              value: (
+                <Group spacing="xs">
+                  <Text>{jobId ?? 'Unknown'}</Text>
+                  {!!jobId && (
+                    <ButtonTooltip withinPortal withArrow label="Copy - send this to support!">
+                      <ActionIcon size={18} p={0} onClick={() => copy(jobId)}>
+                        {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
+                      </ActionIcon>
+                    </ButtonTooltip>
+                  )}
+                </Group>
+              ),
             },
             {
               label: 'History',
