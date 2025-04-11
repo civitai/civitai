@@ -205,7 +205,7 @@ const genUsers = (num: number, includeCiv = false) => {
       1, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-mod', // username
+      'test_mod', // username
       true, // isMod
       '2021-11-13 00:00:00.000',
       null, // deletedAt
@@ -239,7 +239,7 @@ const genUsers = (num: number, includeCiv = false) => {
       2, // id
       true, // blurnsfw
       false, // shownsfw
-      'test-newbie', // username
+      'test_newbie', // username
       false, // isMod
       '2024-11-13 00:00:00.000',
       null, // deletedAt
@@ -273,7 +273,7 @@ const genUsers = (num: number, includeCiv = false) => {
       3, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-degen', // username
+      'test_degen', // username
       false, // isMod
       '2023-11-13 00:00:00.000',
       null, // deletedAt
@@ -307,7 +307,7 @@ const genUsers = (num: number, includeCiv = false) => {
       4, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-banned', // username
+      'test_banned', // username
       false, // isMod
       '2023-11-13 00:00:00.000',
       null, // deletedAt
@@ -341,7 +341,7 @@ const genUsers = (num: number, includeCiv = false) => {
       5, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-deleted', // username
+      'test_deleted', // username
       false, // isMod
       '2023-11-13 00:00:00.000',
       '2023-11-17 00:00:00.000', // deletedAt
@@ -375,7 +375,7 @@ const genUsers = (num: number, includeCiv = false) => {
       6, // id
       false, // blurnsfw
       true, // shownsfw
-      'test-muted', // username
+      'test_muted', // username
       false, // isMod
       '2023-11-13 00:00:00.000',
       null, // deletedAt
@@ -629,6 +629,7 @@ const genMvs = (num: number, modelData: { id: number; type: ModelUploadType }[])
         ? rand([
             '{}',
             '{"type": "Character"}',
+            '{"type": "Character", "mediaType": "video"}',
             '{"type": "Character", "params": {"engine": "kohya", "unetLR": 0.0005, "clipSkip": 1, "loraType": "lora", "keepTokens": 0, "networkDim": 32, "numRepeats": 14, "resolution": 512, "lrScheduler": "cosine_with_restarts", "minSnrGamma": 5, "noiseOffset": 0.1, "targetSteps": 1050, "enableBucket": true, "networkAlpha": 16, "optimizerType": "AdamW8Bit", "textEncoderLR": 0.00005, "maxTrainEpochs": 10, "shuffleCaption": false, "trainBatchSize": 2, "flipAugmentation": false, "lrSchedulerNumCycles": 3}, "staging": false, "baseModel": "realistic", "highPriority": false, "baseModelType": "sd15", "samplePrompts": ["", "", ""]}',
           ])
         : null, // trainingDetails

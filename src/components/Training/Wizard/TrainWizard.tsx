@@ -82,7 +82,7 @@ export default function TrainWizard() {
   }, [isNew, router.query.step, state.step]);
 
   return (
-    <Container size="sm">
+    <Container size="md">
       {modelLoading ? (
         <PageLoader text="Loading resource..." />
       ) : modelError ? (

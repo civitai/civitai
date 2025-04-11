@@ -28,7 +28,7 @@ alter table "CoveredCheckpoint"
       on update cascade;
 
 -- driveby
-CREATE INDEX CONCURRENTLY IF NOT EXISTS "ChatMember_chatId_idx" ON "ChatMember" ("chatId");
+CREATE INDEX IF NOT EXISTS "ChatMember_chatId_idx" ON "ChatMember" ("chatId");
 
 -- make ecosystem checkpoints separate
 CREATE TABLE "EcosystemCheckpoints" (

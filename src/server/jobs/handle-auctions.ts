@@ -343,7 +343,40 @@ const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerTyp
   // TODO limit concurrency
   for (const lostBid of lostBids) {
     const refundResps = await Promise.all(
-      lostBid.transactionIds.map((tid) => withRetries(() => refundTransaction(tid, 'Lost bid.')))
+      lostBid.transactionIds.map((tid) => {
+        try {
+          return withRetries(async () => {
+            try {
+              return await refundTransaction(tid, 'Lost bid.');
+            } catch (e) {
+              const err = e as Error;
+              logToAxiom({
+                name: 'handle-auctions',
+                type: 'error',
+                message: `Failed to refund bid`,
+                data: { tid },
+                error: err.message,
+                cause: err.cause,
+                stack: err.stack,
+              }).catch();
+              return { transactionId: null };
+            }
+          });
+        } catch (e) {
+          const err = e as Error;
+          logToAxiom({
+            name: 'handle-auctions',
+            type: 'error',
+            message: `Failed to run refund`,
+            data: { tid },
+            error: err.message,
+            cause: err.cause,
+            stack: err.stack,
+          }).catch();
+
+          return { transactionId: null };
+        }
+      })
     );
     if (refundResps.some((t) => !t.transactionId)) {
       logToAxiom({

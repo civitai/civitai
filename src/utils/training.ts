@@ -9,10 +9,15 @@ import type {
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
-export const trainingBaseModelType = ['sd15', 'sdxl', 'sd35', 'flux'] as const;
+export const trainingBaseModelTypesImage = ['sd15', 'sdxl', 'sd35', 'flux'] as const;
+export const trainingBaseModelTypesVideo = ['hunyuan', 'wan'] as const;
+export const trainingBaseModelType = [
+  ...trainingBaseModelTypesImage,
+  ...trainingBaseModelTypesVideo,
+] as const;
 export type TrainingBaseModelType = (typeof trainingBaseModelType)[number];
 
-export const engineTypes = ['kohya', 'x-flux', 'rapid'] as const;
+export const engineTypes = ['kohya', 'rapid', 'musubi'] as const;
 export type EngineTypes = (typeof engineTypes)[number];
 
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
@@ -29,6 +34,7 @@ export const trainingModelInfo: {
     description: string;
     air: string;
     baseModel: BaseModel;
+    isNew: boolean;
   };
 } = {
   sd_1_5: {
@@ -38,6 +44,7 @@ export const trainingModelInfo: {
     description: 'Useful for all purposes.',
     air: 'urn:air:sd1:checkpoint:civitai:127227@139180',
     baseModel: 'SD 1.5',
+    isNew: false,
   },
   anime: {
     label: 'Anime',
@@ -46,6 +53,7 @@ export const trainingModelInfo: {
     description: 'Results will have an anime aesthetic.',
     air: 'urn:air:sd1:checkpoint:civitai:84586@89927',
     baseModel: 'SD 1.5',
+    isNew: false,
   },
   semi: {
     label: 'Semi-realistic',
@@ -54,6 +62,7 @@ export const trainingModelInfo: {
     description: 'Results will be a blend of anime and realism.',
     air: 'urn:air:sd1:checkpoint:civitai:4384@128713',
     baseModel: 'SD 1.5',
+    isNew: false,
   },
   realistic: {
     label: 'Realistic',
@@ -62,6 +71,7 @@ export const trainingModelInfo: {
     description: 'Results will be extremely realistic.',
     air: 'urn:air:sd1:checkpoint:civitai:81458@132760',
     baseModel: 'SD 1.5',
+    isNew: false,
   },
   //
   sdxl: {
@@ -71,6 +81,7 @@ export const trainingModelInfo: {
     description: 'Useful for all purposes, and uses SDXL.',
     air: 'urn:air:sdxl:checkpoint:civitai:101055@128078',
     baseModel: 'SDXL 1.0',
+    isNew: false,
   },
   pony: {
     label: 'Pony',
@@ -79,6 +90,7 @@ export const trainingModelInfo: {
     description: 'Tailored to visuals of various anthro, feral, or humanoid species.',
     air: 'urn:air:sdxl:checkpoint:civitai:257749@290640',
     baseModel: 'Pony',
+    isNew: false,
   },
   illustrious: {
     label: 'Illustrious',
@@ -87,6 +99,7 @@ export const trainingModelInfo: {
     description: 'Optimized for illustration and animation.',
     air: 'urn:air:sdxl:checkpoint:civitai:795765@889818',
     baseModel: 'Illustrious',
+    isNew: false,
   },
   //
   sd3_medium: {
@@ -96,6 +109,7 @@ export const trainingModelInfo: {
     description: 'Designed for a balance of quality and efficiency.',
     air: 'urn:air:sd3:checkpoint:civitai:896953@1003708',
     baseModel: 'SD 3.5 Medium',
+    isNew: false,
   },
   sd3_large: {
     label: 'Large',
@@ -104,6 +118,7 @@ export const trainingModelInfo: {
     description: 'Designed for high-quality images across diverse styles.',
     air: 'urn:air:sd3:checkpoint:civitai:878387@983309',
     baseModel: 'SD 3.5 Large',
+    isNew: false,
   },
   //
   flux_dev: {
@@ -113,7 +128,27 @@ export const trainingModelInfo: {
     description: 'High-quality images and accurate text.',
     air: 'urn:air:flux1:checkpoint:civitai:618692@691639',
     baseModel: 'Flux.1 D',
+    isNew: false,
   },
+  //
+  hy_720_fp8: {
+    label: '720p fp8',
+    pretty: 'Hunyuan 720p fp8',
+    type: 'hunyuan',
+    description: 'Performant video generation.',
+    // air: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
+    air: 'urn:air:hyv1:vae:huggingface:tencent/HunyuanVideo@main/hunyuan-video-t2v-720p/vae/pytorch_model.pt',
+    baseModel: 'Hunyuan Video',
+    isNew: false,
+  },
+  // wan_2_1_720p: {
+  //   label: 'Wan',
+  //   pretty: 'Wan 2.1 720p',
+  //   type: 'wan',
+  //   description: '',
+  //   air: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
+  //   baseModel: 'Wan Video'
+  // },
 };
 
 export const rapidEta = 5;
@@ -158,8 +193,8 @@ export const getTrainingFields = {
   getEngine: (engine: TrainingDetailsParams['engine']) => {
     return engine === 'rapid'
       ? OrchEngineTypes.Rapid
-      : engine === 'x-flux'
-      ? OrchEngineTypes['X-Flux']
+      : engine === 'musubi'
+      ? OrchEngineTypes.Musubi
       : OrchEngineTypes.Kohya;
   },
 };

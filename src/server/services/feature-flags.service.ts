@@ -36,6 +36,7 @@ const featureFlags = createFeatureFlags({
   civitaiLink: ['mod', 'member'],
   stripe: ['mod'],
   imageTraining: ['user'],
+  videoTraining: ['mod', 'bronze', 'silver', 'gold'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],

@@ -182,10 +182,12 @@ export const autoTagHandler = async ({
   const { key, bucket } = parseKey(url);
   if (!bucket) throw throwBadRequestError('Invalid URL');
 
+  // todo check if this property comes through
+
   const payload: Orchestrator.Training.ImageAutoTagJobPayload = {
     mediaUrl: getUrl,
     modelId,
-    properties: { userId, modelId },
+    properties: { userId, modelId, mediaType: 'video' },
     retries: 0,
   };
 
@@ -224,7 +226,7 @@ export const autoCaptionHandler = async ({
   const payload: Orchestrator.Training.ImageAutoCaptionJobPayload = {
     mediaUrl: getUrl,
     modelId,
-    properties: { userId, modelId },
+    properties: { userId, modelId, mediaType: 'video' },
     retries: 0,
     model: 'joy-caption-pre-alpha',
     temperature,
