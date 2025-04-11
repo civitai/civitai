@@ -182,6 +182,11 @@ export async function addImageRating({
     return false;
   }
 
+  if (valueInQueue.value >= 2 && valueInQueue.rank === NewOrderRankType.Templar) {
+    // Ignore this vote, was rated by enough players.
+    return false;
+  }
+
   // TODO.newOrder: adjust status based on rating distance
   const status =
     player.rankType === NewOrderRankType.Acolyte
@@ -285,6 +290,11 @@ export async function addImageRating({
     if (keys.length === 1 && keys[0].endsWith(`${NsfwLevel.Blocked}`)) {
       // TODO.newOrder: Handle damned image. Send to mods.
       processed = true;
+      await addImageToQueue({
+        imageIds: imageId,
+        rankType: 'God',
+        priority: 1,
+      });
     }
 
     if (keys.length > 1 && !processed) {
@@ -328,6 +338,49 @@ export async function addImageRating({
       valueInQueue.pool.reset({ id: imageId });
       // TODO.newOrder: Send signal.
     }
+  }
+
+  // Process Templar rating:
+  if (valueInQueue.rank === NewOrderRankType.Templar && ++valueInQueue.value >= 2) {
+    // Image is now rated by enough players, we can process it.
+    const ratings = await getImageRatingsCounter(imageId).getAll();
+    const keys = Object.keys(ratings);
+    let processed = false;
+
+    if (keys.length === 0) {
+      throw throwBadRequestError('No ratings found for image');
+    }
+
+    const templarKeys = keys.filter((k) => k.startsWith(NewOrderRankType.Templar));
+
+    // Check if they all voted damned or have a disparity in ratings:
+    if (
+      (templarKeys.length === 1 && keys[0].endsWith(`${NsfwLevel.Blocked}`)) ||
+      templarKeys.length > 1
+    ) {
+      processed = true;
+      await addImageToQueue({
+        imageIds: imageId,
+        rankType: 'God',
+        priority: 1,
+      });
+    }
+
+    const rating = Number(keys[0].split('-')[1]);
+    const currentNsfwLevel = image.nsfwLevel;
+
+    if (rating !== currentNsfwLevel && !processed) {
+      // Else, we're good :)
+      await dbWrite.image.update({
+        where: { id: imageId },
+        data: { nsfwLevel: rating },
+      });
+      // TODO.newOrder: Update knights ratings as failure/success.
+    }
+
+    // Clear image from the pool:
+    valueInQueue.pool.reset({ id: imageId });
+    // TODO.newOrder: Send signal.
   }
 
   // TODO.newOrder: what else can we return here?
@@ -466,7 +519,7 @@ export async function addImageToQueue({
   priority = 3,
 }: {
   imageIds: number | number[];
-  rankType: NewOrderRankType;
+  rankType: NewOrderRankType | 'God';
   priority?: 1 | 2 | 3;
 }) {
   imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
@@ -479,7 +532,12 @@ export async function addImageToQueue({
   if (images.length === 0) return false;
 
   const pools = poolCounters[rankType];
-  await Promise.all(images.map((image) => pools[priority - 1].getCount(image.id)));
+  await Promise.all(
+    images.map((image) => {
+      const pool = pools[priority - 1] ?? pools[0];
+      return pool.getCount(image.id);
+    })
+  );
 
   return true;
 }
@@ -487,17 +545,20 @@ export async function addImageToQueue({
 export async function getImagesQueue({
   playerId,
   imageCount = 100,
+  isModerator,
 }: {
   playerId: number;
   imageCount?: number;
+  isModerator?: boolean;
 }) {
   const player = await getPlayerById({ playerId });
 
   const imageIds: number[] = [];
-  const rankPools =
-    player.rankType === NewOrderRankType.Templar
-      ? [...poolCounters.Templar, ...poolCounters.Knight]
-      : poolCounters[player.rankType];
+  const rankPools = isModerator
+    ? poolCounters.God
+    : player.rankType === NewOrderRankType.Templar
+    ? [...poolCounters.Templar, ...poolCounters.Knight]
+    : poolCounters[player.rankType];
 
   const ratedImages = await getRankedImages(playerId);
 
@@ -506,7 +567,10 @@ export async function getImagesQueue({
     const images = await pool.getAll(imageCount * 10);
     if (images.length === 0) continue;
 
-    imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
+    if (!isModerator) {
+      // Allow mods to see all images regardless of rating.
+      imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
+    }
 
     if (imageIds.length >= imageCount) break;
   }

@@ -41,13 +41,11 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
         LIMIT: { offset: 0, count: limit ?? 100 },
       });
 
-      return data.map((x) => Number(x.value));
+      return data.map((x) => x.value);
     }
 
     const data = await sysRedis.hGetAll(key);
-    return Object.values(data)
-      .slice(0, limit ?? 100)
-      .map(Number);
+    return Object.values(data).slice(0, limit ?? 100);
   }
 
   async function getCount(id: number | string) {
@@ -172,6 +170,14 @@ export const poolCounters = {
       ordered: true,
     })
   ),
+  God: [
+    createCounter({
+      key: `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:God`,
+      fetchCount: async () => 0,
+      ttl: CacheTTL.week,
+      ordered: true,
+    }),
+  ],
 };
 
 export const getImageRatingsCounter = (imageId: number) => {
