@@ -647,9 +647,9 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
     name: 'NoobAI License',
   },
-  hidream: {
-    url: 'https://github.com/HiDream-ai/HiDream-I1/blob/main/LICENSE',
-    name: 'HiDream License',
+  mit: {
+    url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/mit.md',
+    name: 'MIT',
   },
 };
 
@@ -697,7 +697,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   'Wan Video': baseLicenses['apache 2.0'],
-  HiDream: baseLicenses['hidream'],
+  HiDream: baseLicenses['mit'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

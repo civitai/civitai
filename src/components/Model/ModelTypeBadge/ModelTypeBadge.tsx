@@ -39,7 +39,7 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
   ODOR: <IconNose size={16} strokeWidth={2} />,
   Illustrious: 'IL',
   NoobAI: 'NAI',
-  HiDream: 'HiD',
+  HiDream: 'HID',
 };
 
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
