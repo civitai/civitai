@@ -169,7 +169,7 @@ export default WebhookEndpoint(async (req, res) => {
     axiom.info(`starting`);
     await lock(name, options.lockExpiration, noCheck);
 
-    const jobRunner = run();
+    const jobRunner = run({ req });
 
     async function cancelHandler() {
       await jobRunner.cancel();

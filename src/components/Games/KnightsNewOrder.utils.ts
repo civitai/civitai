@@ -11,7 +11,7 @@ import {
   SignalMessages,
   SignalTopic,
 } from '~/server/common/enums';
-import { AddImageRatingInput, GetHistorySchema } from '~/server/schema/games/new-order.schema';
+import { AddImageRatingInput, GetHistoryInput } from '~/server/schema/games/new-order.schema';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -100,7 +100,7 @@ export const useQueryKnightsNewOrderImageQueue = (opts?: { enabled?: boolean }) 
   return { data, isLoading };
 };
 export const useQueryInfiniteKnightsNewOrderHistory = (
-  filter?: Partial<GetHistorySchema>,
+  filter?: Partial<GetHistoryInput>,
   opts?: { enabled?: boolean }
 ) => {
   const { playerData } = useJoinKnightsNewOrder();

@@ -573,7 +573,7 @@ async function handleSuccess({
         }
         // TODO.newOrder: Priority 1 for knights is not being used for the most part. We might wanna change that based off of tags or smt.
         await addImageToQueue({
-          imageId: id,
+          imageIds: id,
           rankType: queueDetails.rankType,
           priority: queueDetails.priority,
         });

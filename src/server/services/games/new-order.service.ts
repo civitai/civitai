@@ -564,7 +564,7 @@ export async function getImagesQueue({
 
   for (const pool of rankPools) {
     // We multiply by 10 to ensure we get enough images in case some are already rated.
-    const images = await pool.getAll(imageCount * 10);
+    const images = (await pool.getAll(imageCount * 10)).map(Number);
     if (images.length === 0) continue;
 
     if (!isModerator) {
@@ -639,7 +639,7 @@ export async function getPlayerHistory({
 
   const AND = [`userId = ${playerId}`];
   if (cursor) AND.push(`createdAt < '${cursor}'`);
-  if (status) AND.push(`status = '${status}'`);
+  if (status?.length) AND.push(`status IN ('${status.join("','")}')`);
 
   const judgements = await clickhouse.$query<{
     imageId: number;

@@ -2,7 +2,7 @@ import { Button, ThemeIcon } from '@mantine/core';
 import { IconShieldStar } from '@tabler/icons-react';
 import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
 
-export function Welcome() {
+export function NewOrderJoin() {
   const { join } = useJoinKnightsNewOrder();
 
   return (

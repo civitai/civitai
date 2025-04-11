@@ -29,7 +29,7 @@ import { GetJudgementHistoryItem } from '~/types/router';
 export default function JudgementHistoryModal() {
   const dialog = useDialogContext();
 
-  const [activeTab, setActiveTab] = useState<NewOrderImageRatingStatus | undefined>();
+  const [activeTab, setActiveTab] = useState<NewOrderImageRatingStatus | undefined>(undefined);
 
   const { images, isLoading, isRefetching, hasNextPage, fetchNextPage } =
     useQueryInfiniteKnightsNewOrderHistory({ status: activeTab });
@@ -38,6 +38,9 @@ export default function JudgementHistoryModal() {
     <PageModal
       {...dialog}
       transition="scale"
+      size="80%"
+      transitionDuration={300}
+      classNames={{ header: 'items-start' }}
       title={
         <div className="flex flex-col gap-1">
           <h1 className="text-xl">Your Judgement History</h1>
@@ -46,23 +49,22 @@ export default function JudgementHistoryModal() {
             each judgement, including your rating, the final decision, and the image that was
             judged.
           </p>
+          <SegmentedControl
+            className="mt-2"
+            value={activeTab ?? 'All'}
+            onChange={(value) =>
+              setActiveTab(value === 'All' ? undefined : (value as NewOrderImageRatingStatus))
+            }
+            data={[
+              'All',
+              NewOrderImageRatingStatus.Correct,
+              NewOrderImageRatingStatus.Failed,
+              NewOrderImageRatingStatus.Pending,
+            ]}
+          />
         </div>
       }
-      transitionDuration={300}
-      fullScreen
     >
-      <SegmentedControl
-        value={activeTab ?? 'All'}
-        onChange={(value) =>
-          setActiveTab(value === 'All' ? undefined : (value as NewOrderImageRatingStatus))
-        }
-        data={[
-          'All',
-          NewOrderImageRatingStatus.Correct,
-          NewOrderImageRatingStatus.Failed,
-          NewOrderImageRatingStatus.Pending,
-        ]}
-      />
       <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
         <MasonryContainer py="xl">
           {isLoading ? (

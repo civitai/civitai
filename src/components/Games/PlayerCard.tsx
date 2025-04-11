@@ -1,4 +1,4 @@
-import { Card, ThemeIcon, Tooltip } from '@mantine/core';
+import { clsx, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconCoin, IconCrown, IconFlame, IconSkull, IconSword } from '@tabler/icons-react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -22,12 +22,14 @@ export function PlayerCard({
   smiteCount = 0,
   leaderboard,
   showStats,
+  className,
+  ...paperProps
 }: Props) {
   // TODO.newOrder: update this to calculate level progression based on the new order game
   const progression = calculateLevelProgression(exp);
 
   return (
-    <Card className="flex items-center gap-4" p="sm" shadow="md" withBorder>
+    <Paper className={clsx('flex items-center gap-4', className)} {...paperProps}>
       <UserAvatar user={user} size="xl" radius={999} />
       <div className="flex w-full flex-col gap-2">
         <div className="flex justify-between gap-2">
@@ -116,11 +118,11 @@ export function PlayerCard({
           </div>
         )}
       </div>
-    </Card>
+    </Paper>
   );
 }
 
-type Props = {
+type Props = PaperProps & {
   user: Omit<Partial<SimpleUser>, 'profilePicture' | 'deletedAt'>;
   rank: { type: NewOrderRankType; name: string; iconUrl?: string };
   exp: number;
@@ -129,4 +131,5 @@ type Props = {
   smiteCount?: number;
   showStats?: boolean;
   leaderboard?: number;
+  onClick?: VoidFunction;
 };

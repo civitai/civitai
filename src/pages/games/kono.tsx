@@ -14,19 +14,16 @@ import {
   useKnightsNewOrderListener,
   useQueryKnightsNewOrderImageQueue,
 } from '~/components/Games/KnightsNewOrder.utils';
-import { ImageRater } from '~/components/Games/NewOrder/ImageRater';
-import { MenuActions } from '~/components/Games/NewOrder/MenuActions';
-import { Welcome } from '~/components/Games/NewOrder/Welcome';
-import { PlayerCard } from '~/components/Games/PlayerCard';
+import { NewOrderImageRater } from '~/components/Games/NewOrder/NewOrderImageRater';
+import { NewOrderJoin } from '~/components/Games/NewOrder/NewOrderJoin';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useGameSounds } from '~/hooks/useGameSounds';
 import { useStorage } from '~/hooks/useStorage';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
 import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
+import { NewOrderSidebar } from '~/components/Games/NewOrder/NewOrderSidebar';
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -48,8 +45,6 @@ export const getServerSideProps = createServerSideProps({
 
 export default Page(
   function KnightsNewOrderPage() {
-    const currentUser = useCurrentUser();
-
     const [damnedReason, setDamnedReason] = useState<{
       open: boolean;
       reason: NewOrderDamnedReason | null;
@@ -60,13 +55,12 @@ export default Page(
       defaultValue: false,
     });
 
+    const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
     const { playerData, isLoading, joined } = useJoinKnightsNewOrder();
     const { addRating } = useAddImageRating();
     const { data, isLoading: loadingImagesQueue } = useQueryKnightsNewOrderImageQueue();
 
     useKnightsNewOrderListener();
-
-    const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
 
     const handleAddRating = async ({
       rating,
@@ -118,54 +112,40 @@ export default Page(
     return (
       <GameErrorBoundary>
         {!isLoading && !playerData && !joined ? (
-          <Welcome />
+          <NewOrderJoin />
         ) : isLoading ? (
           <PageLoader />
         ) : playerData ? (
-          <div className="-mt-4 flex h-full gap-4 bg-dark-9">
-            <div className="hidden h-full w-[360px] shrink-0 overflow-y-auto bg-white p-4 md:block dark:bg-dark-7">
-              {currentUser && (
-                <PlayerCard
-                  user={currentUser}
-                  rank={playerData.rank}
-                  exp={playerData.stats.exp}
-                  fervor={playerData.stats.fervor}
-                  gold={playerData.stats.blessedBuzz}
-                  showStats={playerData.rank.type !== NewOrderRankType.Acolyte}
-                />
-              )}
-              <MenuActions />
-            </div>
-            <div className="flex size-full items-center justify-center gap-4 px-4 py-8 md:overflow-hidden md:px-0">
+          <div className="relative -mt-3 flex h-full flex-col gap-4 bg-dark-9 p-4 md:flex-row md:p-0">
+            <NewOrderSidebar />
+            <div className="flex size-full items-center justify-between gap-4 px-4 md:justify-center md:overflow-hidden md:px-0">
               {loadingImagesQueue && (
                 <Skeleton className="h-1/2 w-full max-w-sm p-4" visible animate />
               )}
               {currentImage ? (
                 <div className="flex h-full flex-col items-center justify-center gap-4">
-                  <div className="flex h-full max-h-[75%] items-center justify-center">
-                    <div className="relative">
-                      <EdgeMedia2
-                        src={currentImage.url}
-                        className="size-full max-w-full rounded-lg"
-                        type="image"
-                        width={700}
-                        contain
-                      />
-                      <ActionIcon
-                        component={Link}
-                        href={`/images/${currentImage.id}`}
-                        target="_blank"
-                        aria-label="Open image in new tab"
-                        size="sm"
-                        variant="light"
-                        color="dark"
-                        className="absolute bottom-2 right-2 text-white"
-                      >
-                        <IconExternalLink size={16} color="currentColor" />
-                      </ActionIcon>
-                    </div>
+                  <div className="relative flex h-full max-h-[75%] items-center justify-center">
+                    <EdgeMedia2
+                      src={currentImage.url}
+                      className="size-full max-w-full rounded-lg object-contain"
+                      type="image"
+                      width={700}
+                      contain
+                    />
+                    <ActionIcon
+                      component={Link}
+                      href={`/images/${currentImage.id}`}
+                      target="_blank"
+                      aria-label="Open image in new tab"
+                      size="sm"
+                      variant="light"
+                      color="dark"
+                      className="absolute bottom-2 right-2 text-white"
+                    >
+                      <IconExternalLink size={16} color="currentColor" />
+                    </ActionIcon>
                   </div>
-                  <ImageRater
+                  <NewOrderImageRater
                     muted={muted}
                     onVolumeClick={() => setMuted((prev) => !prev)}
                     onRatingClick={({ rating, damnedReason }) =>
