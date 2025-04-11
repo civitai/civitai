@@ -57,7 +57,7 @@ export function NewOrderSidebar() {
           <UnstyledButton
             component={Link}
             className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
-            href="/leaderboard/knights-of-new-order"
+            href="/leaderboard/knights-new-order"
           >
             <Group>
               <ThemeIcon size="xl" color="yellow" variant="light">

@@ -12,6 +12,7 @@ import {
 } from '@mantine/core';
 import {
   IconArrowsHorizontal,
+  IconBadges,
   IconBolt,
   IconBookmark,
   IconBox,
@@ -207,6 +208,14 @@ const metricTypes: Record<
         <IconHexagonFilled {...iconProps} />
       </ThemeIcon>
     ),
+  }),
+  correctJudgements: () => ({
+    tooltip: 'Correct Judgements',
+    icon: <IconChecks {...iconProps} />,
+  }),
+  allJudgements: () => ({
+    tooltip: 'All Judgements',
+    icon: <IconBadges {...iconProps} />,
   }),
 };
 
