@@ -89,6 +89,7 @@ export const constants = {
     'CogVideoX',
     'NoobAI',
     'Wan Video',
+    'HiDream',
     'Other',
   ],
   hiddenBaseModels: [
@@ -543,6 +544,7 @@ export const baseModelSets = {
   CogVideoX: new BaseModelSet({ name: 'CogVideoX', baseModels: ['CogVideoX'] }),
   NoobAI: new BaseModelSet({ name: 'NoobAI', baseModels: ['NoobAI'] }),
   WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
+  HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
 };
 
 type BaseModelSets = typeof baseModelSets;
@@ -645,6 +647,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
     name: 'NoobAI License',
   },
+  hidream: {
+    url: 'https://github.com/HiDream-ai/HiDream-I1/blob/main/LICENSE',
+    name: 'HiDream License',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -691,6 +697,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   'Wan Video': baseLicenses['apache 2.0'],
+  HiDream: baseLicenses['hidream'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];
