@@ -132,9 +132,9 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) =>
       }).catch();
       throw error;
     }
-
-    log('end', dayjs().format());
   }
+
+  log('end', dayjs().format());
 });
 
 const cleanOldCollectionItems = async (now: Dayjs) => {
