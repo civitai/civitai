@@ -1,4 +1,5 @@
 import dayjs, { Dayjs } from 'dayjs';
+import utc from 'dayjs/plugin/utc';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
@@ -31,6 +32,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
 
+dayjs.extend(utc);
+
 const jobName = 'handle-auctions';
 const kvKey = `${jobName}-step`;
 
@@ -45,7 +48,7 @@ type WinnerType = PrepareBidsReturn[number] & {
 
 export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
   const [, setLastRun] = await getJobDate(jobName);
-  const now = dayjs();
+  const now = dayjs.utc();
 
   log('start', now.toDate());
 
