@@ -2,7 +2,7 @@ import type { MantineTheme } from '@mantine/core';
 import { Icon, IconBolt, IconCurrencyDollar, IconProps } from '@tabler/icons-react';
 import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
-import { BanReasonCode, ModelSort } from '~/server/common/enums';
+import { BanReasonCode, ModelSort, NsfwLevel } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { GenerationResource } from '~/server/services/generation/generation.service';
 import {
@@ -1114,6 +1114,121 @@ export const colorDomains = {
   red: env.NEXT_PUBLIC_SERVER_DOMAIN_RED,
 };
 export type ColorDomain = keyof typeof colorDomains;
+
+export type DomainSettings = {
+  color: ColorDomain;
+  excludedTagIds: number[];
+  disablePoi: boolean;
+  disableNsfwLevelControl: boolean;
+  systemHomeBlockIds: number[];
+  excludedSystemHomeBlockIds: number[];
+  allowedNsfwLevels: NsfwLevel[];
+  // Optionally defines what value to look for in the user for this domain.
+  browsingLevelKey: 'browsingLevel' | 'redBrowsingLevel';
+  publicNsfwLevels?: NsfwLevel[];
+  // Doing any here is a bit dangerous, but we need to do it for the red domain.
+  generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
+  appendedAdminAttentionReasons?: string[];
+};
+
+export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
+  green: {
+    color: 'green',
+    excludedTagIds: [],
+    disablePoi: false,
+    allowedNsfwLevels: [NsfwLevel.PG],
+    disableNsfwLevelControl: true,
+    systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
+    browsingLevelKey: 'browsingLevel',
+  },
+  blue: {
+    color: 'blue',
+    excludedTagIds: [],
+    disablePoi: false,
+    allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    disableNsfwLevelControl: false,
+    systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
+    publicNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13],
+    browsingLevelKey: 'browsingLevel',
+  },
+  red: {
+    color: 'red',
+    excludedTagIds: [
+      792, //marijuana
+      793, //weed
+      970, //gun
+      3163, //weapons
+      4036, //mind control
+      4037, //hypnosis
+      5161, //actor
+      5162, //actress
+      5188, //celebrity
+      5249, //real person
+      5351, //child
+      6941, //hypno
+      110376, //guns
+      111782, //weapon
+      112175, //firearm
+      112383, //drug products
+      112384, //drugs
+      112675, //weapon violence
+      113966, //drug use
+      113968, //drug paraphernalia
+      117875, //gunslinger
+      117934, //vomiting
+      121273, //children
+      122432, //hypnotic
+      124724, //molestation
+      124890, //sleep molestation
+      130818, //porn actress
+      130820, //adult actress
+      133182, //porn star
+      133935, //hypnotized
+      146968, //celebrity,
+      151615, //molester
+      153296, //vomit
+      154326, //toddler
+      161829, //male child
+      161864, //holding weapon
+      163032, //female child
+      164020, //incest
+      164047, //mother and daughter
+      164776, //father and daughter
+      164978, //antique firearm
+      165960, //mother and son
+      171899, //mindcontrol
+      174202, //cocaine
+      174809, //twincest
+      195393, //drug addict
+      201446, //firearms
+      210913, //drugged
+      215141, //gunshot
+      219093, //hypnotizing
+      223439, //molesting
+      224818, //drugs & tobacco
+      229694, //hypnotism
+      242816, //drug
+      249303, //hypnotist
+      259592, //molested
+      306619, //child present
+      368038, //wincest
+      370273, //recreational drugs
+    ],
+    disablePoi: true,
+    allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
+    disableNsfwLevelControl: false,
+    systemHomeBlockIds: [],
+    excludedSystemHomeBlockIds: [],
+    publicNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X],
+    browsingLevelKey: 'redBrowsingLevel',
+    generationDefaultValues: {
+      denoise: 0.65,
+    },
+    appendedAdminAttentionReasons: ['Not AI Generated'],
+  },
+} as const;
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
   const { host } = req.headers;

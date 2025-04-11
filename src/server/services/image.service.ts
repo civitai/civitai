@@ -709,6 +709,7 @@ type GetAllImagesRaw = {
   baseModel?: string;
   availability: Availability;
   minor: boolean;
+  poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
 };
@@ -760,6 +761,7 @@ export const getAllImages = async (
     baseModels,
     collectionTagId,
     excludedUserIds,
+    disablePoi,
   } = input;
   let { browsingLevel, userId: targetUserId } = input;
 
@@ -829,6 +831,10 @@ export const getAllImages = async (
 
   if (!isModerator) {
     AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+  }
+
+  if (disablePoi) {
+    AND.push(Prisma.sql`(i."poi" != TRUE)`);
   }
 
   let from = 'FROM "Image" i';
@@ -1194,6 +1200,7 @@ export const getAllImages = async (
       u."deletedAt",
       p."availability",
       i.minor,
+      i.poi,
       ${Prisma.raw(
         include.includes('metaSelect')
           ? '(CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta",'
@@ -1642,6 +1649,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
+    excludedTagIds,
+    disablePoi,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1658,6 +1667,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
+  }
+
+  if (disablePoi) {
+    filters.push(`(NOT poi = true)`);
   }
 
   // Filter
@@ -1752,6 +1765,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (nonRemixesOnly) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
+  }
+
+  if (excludedTagIds?.length) {
+    // Needed support for this in order to properly support multiple domains.
+    filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
   }
 
   /*
@@ -2209,6 +2227,7 @@ export const getImage = async ({
       i.metadata,
       i."nsfwLevel",
       i.minor,
+      i.poi,
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -2592,6 +2611,7 @@ export const getImagesForPosts = async ({
   browsingLevel,
   user,
   pending,
+  disablePoi,
 }: {
   postIds: number | number[];
   // excludedIds?: number[];
@@ -2599,6 +2619,7 @@ export const getImagesForPosts = async ({
   browsingLevel?: number;
   user?: SessionUser;
   pending?: boolean;
+  disablePoi?: boolean;
 }) => {
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
@@ -2630,6 +2651,10 @@ export const getImagesForPosts = async ({
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
+  }
+
+  if (disablePoi) {
+    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL)`);
   }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
@@ -2690,7 +2715,8 @@ export const getImagesForPosts = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      i.metadata->>'remixOfId' as "remixOfId"
+      i.metadata->>'remixOfId' as "remixOfId",
+      i.poi
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
@@ -3498,6 +3524,7 @@ type GetImageModerationReviewQueueRaw = {
   moderatorUsername?: string;
   removedAt?: Date;
   minor: boolean;
+  poi?: boolean;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3592,6 +3619,7 @@ export const getImageModerationReviewQueue = async ({
       p."title" "postTitle",
       i."index",
       i.minor,
+      i.poi,
       p."publishedAt",
       p."modelVersionId",
       u.username,
@@ -4197,6 +4225,27 @@ export async function addImageTools({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
+  // Update these images if blocked:
+  const updated = await dbRead.image.updateManyAndReturn({
+    where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
+    data: {
+      blockedFor: null,
+      // Ensures we do another run:
+      ingestion: 'Pending',
+    },
+    select: {
+      id: true,
+      url: true,
+    },
+  });
+
+  if (updated.length > 0) {
+    await ingestImageBulk({
+      images: updated,
+      lowPriority: true,
+    });
+  }
+
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }

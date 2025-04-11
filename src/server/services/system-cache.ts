@@ -7,6 +7,7 @@ import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
+import { ColorDomain, DEFAULT_DOMAIN_SETTINGS, DomainSettings } from '../common/constants';
 
 const log = createLogger('system-cache', 'green');
 
@@ -231,7 +232,20 @@ export async function getHomeExcludedTags() {
 export async function setLiveNow(isLive: boolean) {
   await redis.set(REDIS_KEYS.LIVE_NOW, isLive ? 'true' : 'false');
 }
+
 export async function getLiveNow() {
   const cachedLiveNow = await redis.get(REDIS_KEYS.LIVE_NOW);
   return cachedLiveNow === 'true';
+}
+
+export async function getDomainSettings(domain: ColorDomain) {
+  const cachedSettings = await sysRedis.get(`${REDIS_SYS_KEYS.SYSTEM.DOMAIN_SETTINGS}:${domain}`);
+  if (cachedSettings)
+    return {
+      // Ensures a bad setup doesn't screw us up:
+      ...DEFAULT_DOMAIN_SETTINGS[domain],
+      ...(JSON.parse(cachedSettings) as DomainSettings),
+    };
+
+  return DEFAULT_DOMAIN_SETTINGS[domain];
 }

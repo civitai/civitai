@@ -30,6 +30,7 @@ interface ExtendedUser {
   meta?: UserMeta;
   allowAds?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
+  redBrowsingLevel?: number;
   // TODO.briant - clean up user session data
   /*
     remove `deletedAt` from session user data

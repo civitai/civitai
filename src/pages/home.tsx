@@ -21,8 +21,10 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { env } from '~/env/client';
 import { isProd } from '~/env/other';
 import { useInView } from '~/hooks/useInView';
+import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 import { ImageSort, ModelSort } from '~/server/common/enums';
 import {
+  flagifyBrowsingLevel,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
@@ -31,12 +33,22 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { trpc } from '~/utils/trpc';
 
 export function Home() {
-  const { data: homeBlocks = [], isLoading } = trpc.homeBlock.getHomeBlocks.useQuery();
+  const domainSettings = useDomainSettings();
+  const flag = domainSettings.allowedNsfwLevels
+    ? flagifyBrowsingLevel(domainSettings.publicNsfwLevels ?? domainSettings.allowedNsfwLevels)
+    : 0;
+  const { data: homeBlocks = [], isLoading: isLoadingHomeBlocks } =
+    trpc.homeBlock.getHomeBlocks.useQuery({
+      excludedSystemHomeBlockIds: domainSettings.excludedSystemHomeBlockIds,
+      systemHomeBlockIds: domainSettings.systemHomeBlockIds,
+    });
   const { data: homeExcludedTags = [], isLoading: isLoadingExcludedTags } =
     trpc.tag.getHomeExcluded.useQuery(undefined, { trpc: { context: { skipBatch: true } } });
 
   const [displayModelsInfiniteFeed, setDisplayModelsInfiniteFeed] = useState(false);
   const { ref, inView } = useInView();
+
+  const isLoading = isLoadingHomeBlocks || domainSettings.isLoading;
 
   useEffect(() => {
     if (inView && !displayModelsInfiniteFeed) {
@@ -69,7 +81,7 @@ export function Home() {
             },
           })}
         >
-          <BrowsingLevelProvider browsingLevel={sfwBrowsingLevelsFlag}>
+          <BrowsingLevelProvider browsingLevel={flag || sfwBrowsingLevelsFlag}>
             {homeBlocks.map((homeBlock, i) => {
               const showAds = i % 2 === 1 && i > 0;
               return (
@@ -109,7 +121,7 @@ export function Home() {
               );
             })}
           </BrowsingLevelProvider>
-          <BrowsingLevelProvider browsingLevel={publicBrowsingLevelsFlag}>
+          <BrowsingLevelProvider browsingLevel={flag || publicBrowsingLevelsFlag}>
             {env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES ? (
               <Box ref={ref}>
                 <MasonryContainer py={32}>

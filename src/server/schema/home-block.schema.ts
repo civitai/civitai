@@ -63,6 +63,8 @@ export const getHomeBlocksInputSchema = z
     dismissed: z.array(z.number()).optional(),
     withCoreData: z.boolean().optional(),
     ownedOnly: z.boolean().optional(),
+    excludedSystemHomeBlockIds: z.array(z.number()).optional(),
+    systemHomeBlockIds: z.array(z.number()).optional(),
   })
   .partial()
   .default({ limit: 8 });
@@ -71,6 +73,8 @@ export type GetSystemHomeBlocksInputSchema = z.infer<typeof getSystemHomeBlocksI
 export const getSystemHomeBlocksInputSchema = z
   .object({
     permanent: z.boolean().optional(),
+    excludedSystemHomeBlockIds: z.array(z.number()).optional(),
+    systemHomeBlockIds: z.array(z.number()).optional(),
   })
   .partial();
 

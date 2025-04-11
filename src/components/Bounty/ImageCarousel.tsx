@@ -11,6 +11,8 @@ import {
   useExplainHiddenImages,
 } from '~/components/Image/ExplainHiddenImages/ExplainHiddenImages';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { DomainSettingsProvider } from '~/providers/DomainSettingsProvider';
+
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { breakpoints } from '~/utils/tailwind';
 import { useMemo } from 'react';
@@ -18,9 +20,11 @@ import { useContainerSmallerThan } from '~/components/ContainerProvider/useConta
 
 export function ImageCarousel(props: Props) {
   return (
-    <BrowsingLevelProvider>
-      <ImageCarouselContent {...props} />
-    </BrowsingLevelProvider>
+    <DomainSettingsProvider>
+      <BrowsingLevelProvider>
+        <ImageCarouselContent {...props} />
+      </BrowsingLevelProvider>
+    </DomainSettingsProvider>
   );
 }
 
