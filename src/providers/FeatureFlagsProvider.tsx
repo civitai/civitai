@@ -1,6 +1,6 @@
 import { useSession } from 'next-auth/react';
-import { createContext, useContext, useMemo, useState, useEffect } from 'react';
-import { getFeatureFlags, type FeatureAccess } from '~/server/services/feature-flags.service';
+import { createContext, useContext, useMemo, useState } from 'react';
+import { type FeatureAccess } from '~/server/services/feature-flags.service';
 import { trpc } from '~/utils/trpc';
 
 const FeatureFlagsCtx = createContext<FeatureAccess | null>(null);
@@ -16,7 +16,7 @@ export const FeatureFlagsProvider = ({
   flags: initialFlags,
 }: {
   children: React.ReactNode;
-  flags?: FeatureAccess;
+  flags: FeatureAccess;
 }) => {
   const session = useSession();
   // Ensures FE and BE feature flags are in sync for staging.
@@ -24,13 +24,7 @@ export const FeatureFlagsProvider = ({
     typeof location !== 'undefined'
       ? (location?.host ?? '').replace('stage.', '').replace('dev.', '')
       : '';
-  const [flags, setFlags] = useState(
-    initialFlags ?? getFeatureFlags({ user: session.data?.user, host })
-  );
-
-  useEffect(() => {
-    setFlags(getFeatureFlags({ user: session.data?.user, host }));
-  }, [session.data?.expires]);
+  const [flags, setFlags] = useState(initialFlags);
 
   const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(
     undefined,

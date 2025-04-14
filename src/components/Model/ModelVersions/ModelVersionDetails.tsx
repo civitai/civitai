@@ -19,6 +19,7 @@ import {
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
+  IconBolt,
   IconBrush,
   IconClock,
   IconCloudCheck,
@@ -122,7 +123,7 @@ import { ModelById } from '~/types/router';
 import { formatDate, formatDateMin } from '~/utils/date-helpers';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
-import { formatKBytes } from '~/utils/number-helpers';
+import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
@@ -370,7 +371,7 @@ export function ModelVersionDetails({
       value: (
         <Group spacing={4}>
           {!downloadsDisabled && (
-            <IconBadge radius="xs" icon={<IconDownload size={14} />}>
+            <IconBadge radius="xs" icon={<IconDownload size={14} />} tooltip="Downloads">
               <Text>{(version.rank?.downloadCountAllTime ?? 0).toLocaleString()}</Text>
             </IconBadge>
           )}
@@ -392,13 +393,18 @@ export function ModelVersionDetails({
               }
               onPurchase={() => onPurchase('generation')}
             >
-              <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+              <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
                 <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
               </IconBadge>
             </GenerateButton>
           ) : (
-            <IconBadge radius="xs" icon={<IconBrush size={14} />}>
+            <IconBadge radius="xs" icon={<IconBrush size={14} />} tooltip="Creations">
               <Text>{(version.rank?.generationCountAllTime ?? 0).toLocaleString()}</Text>
+            </IconBadge>
+          )}
+          {version.rank?.earnedAmountAllTime && (
+            <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
+              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>{abbreviateNumber(version.rank?.earnedAmountAllTime)}</Text>
             </IconBadge>
           )}
         </Group>

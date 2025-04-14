@@ -36,6 +36,7 @@ const featureFlags = createFeatureFlags({
   civitaiLink: ['mod', 'member'],
   stripe: ['mod'],
   imageTraining: ['user'],
+  videoTraining: ['mod', 'bronze', 'silver', 'gold'],
   imageTrainingResults: ['user'],
   sdxlGeneration: ['public'],
   questions: ['dev', 'mod'],
@@ -253,8 +254,8 @@ function getEnvOverrides() {
   const processFeatureAvailability: Partial<Record<FeatureFlagKey, FeatureAvailability[]>> = {};
   // Set flags from ENV
   for (const [key, value] of Object.entries(process.env)) {
-    if (!key.startsWith('NEXT_PUBLIC_FEATURE_FLAG_')) continue;
-    const featureKey = camelCase(key.replace('NEXT_PUBLIC_FEATURE_FLAG_', ''));
+    if (!key.startsWith('FEATURE_FLAG_')) continue;
+    const featureKey = camelCase(key.replace('FEATURE_FLAG_', ''));
     const availability: FeatureAvailability[] = [];
 
     for (const x of value?.split(',') ?? []) {

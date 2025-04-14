@@ -35,6 +35,7 @@ export const imageSelectFilterSchema = z.object({
   labelType: z.enum(constants.autoLabel.labelTypes).nullable(),
   statuses: z.array(z.nativeEnum(TrainingStatus)),
   types: z.array(z.enum(constants.trainingModelTypes)),
+  mediaTypes: z.array(z.enum(constants.trainingMediaTypes)),
   baseModels: z.array(z.enum(constants.baseModels)),
 });
 export type ImageSelectFilter = z.infer<typeof imageSelectFilterSchema>;

@@ -162,6 +162,16 @@ export const getRecentTrainingData = async ({
   if (filters.statuses?.length) {
     where.push({ modelVersion: { trainingStatus: { in: filters.statuses } } });
   }
+  if (filters.mediaTypes?.length) {
+    where.push({
+      OR: [
+        ...filters.mediaTypes.map((type) => ({
+          modelVersion: { trainingDetails: { path: ['mediaType'], equals: type } },
+        })),
+        // { modelVersion: { trainingDetails: { path: ['mediaType'], equals: undefined } } },
+      ],
+    });
+  }
   if (filters.types?.length) {
     where.push({
       OR: filters.types.map((type) => ({

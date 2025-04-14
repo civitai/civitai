@@ -1,0 +1,2 @@
+ALTER TABLE "ModelVersionMetric" ADD COLUMN "earnedAmount" INT DEFAULT 0 NOT NULL;
+ALTER TABLE "ModelMetric" ADD COLUMN "earnedAmount" INT DEFAULT 0 NOT NULL;

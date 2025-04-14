@@ -72,10 +72,12 @@ import { BaseModel, constants } from '~/server/common/constants';
 import { UploadType } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE, MIME_TYPES, ZIP_MIME_TYPE } from '~/server/common/mime-types';
 import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
 import { ModelFileVisibility } from '~/shared/utils/prisma/enums';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import {
   defaultTrainingState,
+  defaultTrainingStateVideo,
   getShortNameFromUrl,
   type ImageDataType,
   LabelTypes,
@@ -181,18 +183,28 @@ export const labelDescriptions: { [p in LabelTypes]: ReactNode } = {
         a setting sun.&quot;
       </Text>
       <Text mt="sm">
-        Preferred for <Badge color="red">Flux</Badge> and <Badge color="pink">SD3</Badge> models.
+        Preferred for <Badge color="red">Flux</Badge>, <Badge color="pink">SD3</Badge>, and{' '}
+        <Badge color="teal">Video</Badge> models.
       </Text>
     </Stack>
   ),
 };
 
-const LabelSelectModal = ({ modelId }: { modelId: number }) => {
+const LabelSelectModal = ({
+  modelId,
+  mediaType,
+}: {
+  modelId: number;
+  mediaType: TrainingDetailsObj['mediaType'];
+}) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
 
   const { labelType, imageList } = useTrainingImageStore(
-    (state) => state[modelId] ?? { ...defaultTrainingState }
+    (state) =>
+      state[modelId] ?? {
+        ...(mediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
   );
   const { setLabelType } = trainingStore;
 
@@ -207,7 +219,7 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
   const [labelValue, setLabelValue] = useState<LabelTypes>(estimatedType);
 
   const handleSelect = () => {
-    setLabelType(modelId, labelValue);
+    setLabelType(modelId, mediaType, labelValue);
     handleClose();
   };
 
@@ -259,6 +271,12 @@ const LabelSelectModal = ({ modelId }: { modelId: number }) => {
 };
 
 export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModelData> }) => {
+  const thisModelVersion = model.modelVersions[0];
+  const thisMediaType =
+    (thisModelVersion.trainingDetails as TrainingDetailsObj | undefined)?.mediaType ?? 'image';
+  const thisDefaultTrainingState =
+    thisMediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState;
+
   const {
     updateImage,
     setImageList,
@@ -291,7 +309,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     initialShareDataset,
     autoLabeling,
     autoCaptioning,
-  } = useTrainingImageStore((state) => state[model.id] ?? { ...defaultTrainingState });
+  } = useTrainingImageStore((state) => state[model.id] ?? { ...thisDefaultTrainingState });
 
   const [page, setPage] = useState(1);
   const [zipping, setZipping] = useState<boolean>(false);
@@ -313,7 +331,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
 
-  const thisModelVersion = model.modelVersions[0];
   const existingDataFile = thisModelVersion.files[0];
   const existingMetadata = existingDataFile?.metadata as FileMetadata | null;
 
@@ -546,13 +563,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       });
       filteredFiles.splice(MAX_FILES_ALLOWED - imageList.length);
     }
-    setImageList(model.id, imageList.concat(filteredFiles));
+    setImageList(model.id, thisMediaType, imageList.concat(filteredFiles));
 
     const labelsPresent = newFiles.map((nf) => nf.hasAnyLabelFiles).some((hl) => hl);
     if (labelsPresent) {
       dialogStore.trigger({
         component: LabelSelectModal,
-        props: { modelId: model.id },
+        props: { modelId: model.id, mediaType: thisMediaType },
       });
     }
 
@@ -646,7 +663,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation({
     async onSuccess(_response, request) {
-      setInitialTriggerWord(model.id, triggerWord);
+      setInitialTriggerWord(model.id, thisMediaType, triggerWord);
 
       queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
         if (!old) return old;
@@ -669,9 +686,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   });
   const updateFileMutation = trpc.modelFile.update.useMutation({
     async onSuccess(_response, request) {
-      setInitialLabelType(model.id, labelType);
-      setInitialOwnRights(model.id, ownRights);
-      setInitialShareDataset(model.id, shareDataset);
+      setInitialLabelType(model.id, thisMediaType, labelType);
+      setInitialOwnRights(model.id, thisMediaType, ownRights);
+      setInitialShareDataset(model.id, thisMediaType, shareDataset);
 
       queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
         if (!old) return old;
@@ -721,7 +738,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         disallowClose: false,
       });
 
-      setInitialImageList(model.id, imageList);
+      setInitialImageList(model.id, thisMediaType, imageList);
 
       queryUtils.training.getModelBasic.setData({ id: model.id }, (old) => {
         if (!old) return old;
@@ -794,7 +811,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to auto tag',
         autoClose: false,
       });
-      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling });
+      setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
   });
   const submitCaptionMutation = trpc.training.autoCaption.useMutation({
@@ -805,7 +822,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
         title: 'Failed to auto caption',
         autoClose: false,
       });
-      setAutoLabeling(model.id, { ...defaultTrainingState.autoLabeling });
+      setAutoLabeling(model.id, thisMediaType, { ...thisDefaultTrainingState.autoLabeling });
     },
   });
 
@@ -816,19 +833,19 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
       const fileOwnRights = existingMetadata?.ownRights ?? false;
       const fileShareDataset = existingMetadata?.shareDataset ?? false;
 
-      setLabelType(model.id, fileLabelType);
-      setInitialLabelType(model.id, fileLabelType);
-      setOwnRights(model.id, fileOwnRights);
-      setInitialOwnRights(model.id, fileOwnRights);
-      setShareDataset(model.id, fileShareDataset);
-      setInitialShareDataset(model.id, fileShareDataset);
+      setLabelType(model.id, thisMediaType, fileLabelType);
+      setInitialLabelType(model.id, thisMediaType, fileLabelType);
+      setOwnRights(model.id, thisMediaType, fileOwnRights);
+      setInitialOwnRights(model.id, thisMediaType, fileOwnRights);
+      setShareDataset(model.id, thisMediaType, fileShareDataset);
+      setInitialShareDataset(model.id, thisMediaType, fileShareDataset);
 
       const thisTrainedWord =
         thisModelVersion.trainedWords && thisModelVersion.trainedWords.length > 0
           ? thisModelVersion.trainedWords[0]
           : '';
-      setTriggerWord(model.id, thisTrainedWord);
-      setInitialTriggerWord(model.id, thisTrainedWord);
+      setTriggerWord(model.id, thisMediaType, thisTrainedWord);
+      setInitialTriggerWord(model.id, thisMediaType, thisTrainedWord);
 
       if (imageList.length === 0) {
         setLoadingZip(true);
@@ -836,9 +853,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           .then((files) => {
             if (files) {
               const flatFiles = files.parsedFiles.flat();
-              setImageList(model.id, flatFiles);
+              setImageList(model.id, thisMediaType, flatFiles);
               setInitialImageList(
                 model.id,
+                thisMediaType,
                 flatFiles.map((d) => ({ ...d }))
               );
             }
@@ -857,7 +875,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   useEffect(() => {
     if (autoLabeling.isRunning || !autoLabeling.url) return;
-    setAutoLabeling(model.id, { isRunning: true });
+    setAutoLabeling(model.id, thisMediaType, { isRunning: true });
 
     if (labelType === 'caption') {
       submitCaptionMutation.mutate({
@@ -1047,10 +1065,13 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
   const handleNext = async () => {
     if (!attested.status) {
-      setAttest(model.id, { ...attested, error: 'You must agree before proceeding.' });
+      setAttest(model.id, thisMediaType, {
+        ...attested,
+        error: 'You must agree before proceeding.',
+      });
       return;
     }
-    setAttest(model.id, { ...attested, error: '' });
+    setAttest(model.id, thisMediaType, { ...attested, error: '' });
 
     if (
       isEqual(imageList, initialImageList) &&
@@ -1080,17 +1101,25 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     }
 
     if (imageList.length) {
+      if (thisMediaType === 'video' && imageList.some((i) => i.label.length === 0)) {
+        showErrorNotification({
+          error: new Error('All images must have a label for video training'),
+          autoClose: false,
+        });
+        return;
+      }
+
       const issues: string[] = [];
 
       const { blockedFor, success } = auditPrompt(triggerWord);
       if (!success) {
         issues.push(...blockedFor);
         if (!triggerWordInvalid) {
-          setTriggerWordInvalid(model.id, true);
+          setTriggerWordInvalid(model.id, thisMediaType, true);
         }
       } else {
         if (triggerWordInvalid) {
-          setTriggerWordInvalid(model.id, false);
+          setTriggerWordInvalid(model.id, thisMediaType, false);
         }
       }
 
@@ -1100,14 +1129,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           if (!success) {
             issues.push(...blockedFor);
             if (!i.invalidLabel) {
-              updateImage(model.id, {
+              updateImage(model.id, thisMediaType, {
                 matcher: getShortNameFromUrl(i),
                 invalidLabel: true,
               });
             }
           } else {
             if (i.invalidLabel) {
-              updateImage(model.id, {
+              updateImage(model.id, thisMediaType, {
                 matcher: getShortNameFromUrl(i),
                 invalidLabel: false,
               });
@@ -1115,7 +1144,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
           }
         } else {
           if (i.invalidLabel) {
-            updateImage(model.id, {
+            updateImage(model.id, thisMediaType, {
               matcher: getShortNameFromUrl(i),
               invalidLabel: false,
             });
@@ -1341,7 +1370,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       onClick={() =>
                         dialogStore.trigger({
                           component: AutoLabelModal,
-                          props: { modelId: model.id },
+                          props: { modelId: model.id, mediaType: thisMediaType },
                         })
                       }
                     >
@@ -1379,7 +1408,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         labels: { cancel: 'Cancel', confirm: 'Confirm' },
                         centered: true,
                         onConfirm: () => {
-                          setImageList(model.id, []);
+                          setImageList(model.id, thisMediaType, []);
                           setAccordionUpload('uploading');
                         },
                       });
@@ -1456,12 +1485,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   <TextInput
                     placeholder='Add a trigger word, ex. "unique-word" (optional)'
                     value={triggerWord}
-                    onChange={(event) => setTriggerWord(model.id, event.currentTarget.value)}
+                    onChange={(event) =>
+                      setTriggerWord(model.id, thisMediaType, event.currentTarget.value)
+                    }
                     onBlur={() => {
                       const { blockedFor, success } = auditPrompt(triggerWord);
                       if (!success) {
                         if (!triggerWordInvalid) {
-                          setTriggerWordInvalid(model.id, true);
+                          setTriggerWordInvalid(model.id, thisMediaType, true);
                           showNotification({
                             icon: <IconX size={18} />,
                             autoClose: false,
@@ -1474,7 +1505,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         }
                       } else {
                         if (triggerWordInvalid) {
-                          setTriggerWordInvalid(model.id, false);
+                          setTriggerWordInvalid(model.id, thisMediaType, false);
                         }
                       }
                     }}
@@ -1483,7 +1514,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     rightSection={
                       <ActionIcon
                         onClick={() => {
-                          setTriggerWord(model.id, '');
+                          setTriggerWord(model.id, thisMediaType, '');
                         }}
                         disabled={!triggerWord.length}
                       >
@@ -1494,7 +1525,9 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                 </Group>
               </Paper>
             )}
-            {imageList.length > 0 && <TrainingImagesSwitchLabel modelId={model.id} />}
+            {imageList.length > 0 && (
+              <TrainingImagesSwitchLabel modelId={model.id} mediaType={thisMediaType} />
+            )}
             {imageList.length > 0 ? (
               labelType === 'caption' ? (
                 <TrainingImagesCaptionViewer
@@ -1509,6 +1542,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                   selectedTags={selectedTags}
                   setSelectedTags={setSelectedTags}
                   modelId={model.id}
+                  mediaType={thisMediaType}
                   numImages={filteredImages.length}
                 />
               )
@@ -1561,7 +1595,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                   size="md"
                                   disabled={autoLabeling.isRunning || !imgData.label.length}
                                   onClick={() => {
-                                    updateImage(model.id, {
+                                    updateImage(model.id, thisMediaType, {
                                       matcher: getShortNameFromUrl(imgData),
                                       label: '',
                                     });
@@ -1580,6 +1614,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                     const newLen = imageList.length - 1;
                                     setImageList(
                                       model.id,
+                                      thisMediaType,
                                       imageList.filter((i) => i.url !== imgData.url)
                                     );
                                     if (
@@ -1632,12 +1667,14 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                           <TrainingImagesCaptions
                             imgData={imgData}
                             modelId={model.id}
+                            mediaType={thisMediaType}
                             searchCaption={searchCaption}
                           />
                         ) : (
                           <TrainingImagesTags
                             imgData={imgData}
                             modelId={model.id}
+                            mediaType={thisMediaType}
                             selectedTags={selectedTags}
                           />
                         )}
@@ -1677,15 +1714,18 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                     label="I own the rights to all these images"
                     checked={ownRights}
                     onChange={(event) => {
-                      setOwnRights(model.id, event.currentTarget.checked);
-                      !event.currentTarget.checked && setShareDataset(model.id, false);
+                      setOwnRights(model.id, thisMediaType, event.currentTarget.checked);
+                      !event.currentTarget.checked &&
+                        setShareDataset(model.id, thisMediaType, false);
                     }}
                   />
                   <Checkbox
                     label="I want to share my dataset"
                     disabled={!ownRights}
                     checked={shareDataset}
-                    onChange={(event) => setShareDataset(model.id, event.currentTarget.checked)}
+                    onChange={(event) =>
+                      setShareDataset(model.id, thisMediaType, event.currentTarget.checked)
+                    }
                   />
                 </Stack>
               </Paper>
@@ -1709,7 +1749,10 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
               checked={attested.status}
               error={attested.error}
               onChange={(event) =>
-                setAttest(model.id, { status: event.currentTarget.checked, error: '' })
+                setAttest(model.id, thisMediaType, {
+                  status: event.currentTarget.checked,
+                  error: '',
+                })
               }
             />
           </div>

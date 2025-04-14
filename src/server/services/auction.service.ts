@@ -877,3 +877,17 @@ export const togglePauseRecurringBid = async ({
     },
   });
 };
+
+export async function getLastAuctionReset() {
+  const auctionReset = await dbWrite.$queryRaw<{ since_date: Date }[]>`
+    SELECT
+    a."validFrom" as since_date
+    FROM "Auction" a
+    JOIN "AuctionBase" ab ON ab.id = a."auctionBaseId"
+    WHERE ab.slug = 'featured-checkpoints' AND a.finalized
+    ORDER BY "endAt" DESC
+    LIMIT 1;
+  `;
+
+  return auctionReset[0]?.since_date ?? null;
+}

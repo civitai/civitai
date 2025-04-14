@@ -469,6 +469,7 @@ export const REDIS_KEYS = {
       IMAGES: 'packed:caches:mod-rules:images',
     },
     RESOURCE_OVERRIDES: 'packed:caches:resource-overrides',
+    TOP_EARNERS: 'packed:caches:top-earners',
   },
   RESEARCH: {
     RATINGS_COUNT: 'research:ratings-count',

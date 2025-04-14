@@ -59,6 +59,9 @@ import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { hunyuanAspectRatios, hunyuanDuration } from '~/server/orchestrator/hunyuan/hunyuan.schema';
+import { wanAspectRatios, wanDuration } from '~/server/orchestrator/wan/wan.schema';
+import { isDev } from '~/env/other';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -186,6 +189,12 @@ function EngineForm() {
       return <LightricksTxt2VidGenerationForm />;
     case 'lightricks-img2vid':
       return <LightricksImg2VidGenerationForm />;
+    case 'hunyuan-txt2vid':
+      return <HunyuanTxt2VidGenerationForm />;
+    case 'wan-txt2vid':
+      return <WanTxt2VidGenerationForm />;
+    case 'wan-img2vid':
+      return <WanImg2VidGenerationForm />;
     default:
       return null;
   }
@@ -582,6 +591,259 @@ function LightricksImg2VidGenerationForm() {
   );
 }
 
+function HunyuanTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="hunyuan">
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
+      <InputAspectRatioColonDelimited
+        name="aspectRatio"
+        label="Aspect Ratio"
+        options={hunyuanAspectRatios}
+      />
+      <InputSwitch
+        name="draft"
+        labelPosition="left"
+        label={
+          <div className="relative flex items-center gap-1">
+            <Input.Label>Draft Mode</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+              Draft Mode will generate videos faster, cheaper, and with slightly less quality. Use
+              this for exploring concepts quickly.
+            </InfoPopover>
+          </div>
+        }
+      />
+      <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={hunyuanDuration.map((value) => ({ label: `${value}s`, value }))}
+        />
+      </div>
+      {/* <InputNumberSlider
+        name="steps"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Steps</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              The number of iterations spent generating a video.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={20}
+        max={30}
+        reverse
+      /> */}
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={4}
+        max={8}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+function WanTxt2VidGenerationForm() {
+  return (
+    <FormWrapper engine="wan">
+      <InputTextArea
+        required
+        name="prompt"
+        label="Prompt"
+        placeholder="Your prompt goes here..."
+        autosize
+      />
+      <InputAspectRatioColonDelimited
+        name="aspectRatio"
+        label="Aspect Ratio"
+        options={wanAspectRatios}
+      />
+      <InputSwitch
+        name="draft"
+        labelPosition="left"
+        label={
+          <div className="relative flex items-center gap-1">
+            <Input.Label>Draft Mode</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+              Draft Mode will generate videos faster, cheaper, and with slightly less quality. Use
+              this for exploring concepts quickly.
+            </InfoPopover>
+          </div>
+        }
+      />
+      {/* <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
+        />
+      </div> */}
+      {/* <InputNumberSlider
+        name="steps"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Steps</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              The number of iterations spent generating a video.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={20}
+        max={30}
+        reverse
+      /> */}
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={2}
+        max={6}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
+function WanImg2VidGenerationForm() {
+  return (
+    <FormWrapper engine="wan">
+      <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
+      <InputSwitch
+        name="draft"
+        labelPosition="left"
+        label={
+          <div className="relative flex items-center gap-1">
+            <Input.Label>Draft Mode</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }} withinPortal>
+              Draft Mode will generate videos faster, cheaper, and with slightly less quality. Use
+              this for exploring concepts quickly.
+            </InfoPopover>
+          </div>
+        }
+      />
+      {/* <div className="flex flex-col gap-0.5">
+        <Input.Label>Duration</Input.Label>
+        <InputSegmentedControl
+          name="duration"
+          data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
+        />
+      </div> */}
+      {/* <InputNumberSlider
+        name="steps"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>Steps</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              The number of iterations spent generating a video.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Sampling_Steps"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={20}
+        max={30}
+        reverse
+      /> */}
+      <InputNumberSlider
+        name="cfgScale"
+        label={
+          <div className="flex items-center gap-1">
+            <Input.Label>CFG Scale</Input.Label>
+            <InfoPopover size="xs" iconProps={{ size: 14 }}>
+              Controls how closely the video generation follows the text prompt.{' '}
+              <Anchor
+                href="https://wiki.civitai.com/wiki/Classifier_Free_Guidance"
+                target="_blank"
+                rel="nofollow noreferrer"
+                span
+              >
+                Learn more
+              </Anchor>
+              .
+            </InfoPopover>
+          </div>
+        }
+        min={2}
+        max={6}
+        step={0.1}
+        precision={1}
+        reverse
+      />
+      <InputSeed name="seed" label="Seed" />
+    </FormWrapper>
+  );
+}
+
 function ViduTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="vidu">
@@ -705,6 +967,7 @@ function FormWrapper({
     try {
       validated = validateInput(workflow, data);
     } catch (e: any) {
+      if (isDev) console.error(e);
       const { message, path } = JSON.parse(e.message)?.[0] as any;
       form.setError(path?.[0] ?? '', { message });
     }

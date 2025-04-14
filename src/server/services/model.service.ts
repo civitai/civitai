@@ -53,7 +53,7 @@ import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosm
 import { associatedResourceSelect } from '~/server/selectors/model.selector';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { deleteBidsForModel } from '~/server/services/auction.service';
+import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
 import {
   getAvailableCollectionItemsFilterForUser,
@@ -121,6 +121,7 @@ import {
   SetAssociatedResourcesInput,
   SetModelsCategoryInput,
 } from './../schema/model.schema';
+import { clickhouse } from '~/server/clickhouse/client';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -3113,3 +3114,57 @@ export const toggleCannotPromote = async ({
     meta: updated.meta as ModelMeta | null,
   };
 };
+
+export async function getTopWeeklyEarners(fresh = false) {
+  if (fresh) await bustFetchThroughCache(REDIS_KEYS.CACHES.TOP_EARNERS);
+
+  const results = await fetchThroughCache(
+    REDIS_KEYS.CACHES.TOP_EARNERS,
+    async () => {
+      const auctionReset = await getLastAuctionReset();
+      if (!auctionReset) return [];
+
+      const topEarners = await clickhouse!.$query<{ modelVersionId: number; earned: number }>`
+        SELECT
+        modelVersionId,
+        cast(SUM(total) as int) as earned
+        FROM buzz_resource_compensation
+        WHERE date >= toStartOfDay(${auctionReset}::Date)
+        GROUP BY modelVersionId
+        ORDER BY earned DESC
+        LIMIT 100;
+      `;
+      const asArray = topEarners.map((x) => [x.modelVersionId, x.earned] as const);
+      const json = JSON.stringify(asArray);
+
+      const data = await dbWrite.$queryRawUnsafe<
+        { modelId: number; modelVersionId: number; earnedAmount: number }[]
+      >(`
+        WITH input_data AS (
+          SELECT
+            (value->>0)::INT AS modelVersionId,
+            (value->>1)::INT AS earned
+          FROM jsonb_array_elements('${json}'::jsonb) AS arr(value)
+        )
+        SELECT
+          m.id as "modelId",
+          mv.id as "modelVersionId",
+          i.earned as "earnedAmount"
+        FROM input_data i
+        JOIN "ModelVersion" mv ON mv.id = i.modelVersionId
+        JOIN "Model" m ON m.id = mv."modelId"
+        WHERE
+          m.type = 'Checkpoint'
+          AND mv.id NOT IN (SELECT id FROM "EcosystemCheckpoints")
+        ORDER BY i.earned DESC
+        LIMIT 100;
+      `);
+      return data;
+    },
+    { ttl: CacheTTL.day }
+  );
+  // TODO: fetch additional details about these models as needed, we just don't need to catch all that data...
+  // If it's expensive/slow, feel free to throw it in the cache instead...
+
+  return results;
+}
