@@ -2160,6 +2160,11 @@ export interface EntityCollaborator {
   lastMessageSentAt: Date | null;
 }
 
+export interface EcosystemCheckpoints {
+  id: number;
+  name: string;
+}
+
 export interface Club {
   id: number;
   userId: number;
