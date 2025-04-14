@@ -25,7 +25,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   },
   {
     href: '/content/2257',
-    children: '18 U.S.C. 2257',
+    children: '18 U.S.C. §2257',
   },
   {
     href: '/content/privacy',
