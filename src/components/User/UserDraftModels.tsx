@@ -15,8 +15,8 @@ import {
 } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useState } from 'react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
 
 import { NoContent } from '~/components/NoContent/NoContent';
 import { getModelWizardUrl } from '~/server/common/model-helpers';
@@ -101,7 +101,7 @@ export function UserDraftModels() {
               <th>Status</th>
               <th>Created</th>
               <th>Last Updated</th>
-              <th>Missing info</th>
+              <th>Missing Info</th>
               <th />
             </tr>
           </thead>

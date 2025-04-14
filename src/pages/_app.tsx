@@ -8,10 +8,10 @@ import duration from 'dayjs/plugin/duration';
 import isBetween from 'dayjs/plugin/isBetween';
 import minMax from 'dayjs/plugin/minMax';
 import relativeTime from 'dayjs/plugin/relativeTime';
-import utc from 'dayjs/plugin/utc';
 import timezone from 'dayjs/plugin/timezone';
+import utc from 'dayjs/plugin/utc';
 import { registerCustomProtocol } from 'linkifyjs';
-import type { Session } from 'next-auth';
+import type { Session, SessionUser } from 'next-auth';
 import { getToken } from 'next-auth/jwt';
 import { SessionProvider } from 'next-auth/react';
 import type { AppContext, AppProps } from 'next/app';
@@ -87,7 +87,7 @@ type CustomAppProps = {
   session: Session | null;
   colorScheme: ColorScheme;
   cookies: ParsedCookies;
-  flags?: FeatureAccess;
+  flags: FeatureAccess;
   seed: number;
   settings: UserSettingsSchema;
   canIndex: boolean;
@@ -265,7 +265,6 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const hasAuthCookie = Object.keys(cookies).some((x) => x.endsWith('civitai-token'));
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
-  const flags = getFeatureFlags({ host: request?.headers.host });
   const canIndex = Object.values(serverDomainMap).includes(request.headers.host);
   const token = await getToken({
     req: appContext.ctx.req as any,
@@ -273,7 +272,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     cookieName: civitaiTokenCookieName,
   });
 
-  const session = token?.user ? { user: token.user } : null;
+  const session = token?.user ? { user: token.user as SessionUser } : null;
+  const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host });
 
   const settings = await fetch(`${env.NEXT_PUBLIC_BASE_URL}/api/user/settings`, {
     headers: { ...request.headers } as HeadersInit,

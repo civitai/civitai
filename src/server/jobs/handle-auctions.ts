@@ -1,5 +1,6 @@
 import dayjs, { Dayjs } from 'dayjs';
 import utc from 'dayjs/plugin/utc';
+import { z } from 'zod';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
@@ -31,6 +32,7 @@ import {
   ModelType,
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 dayjs.extend(utc);
 
@@ -44,58 +46,95 @@ type WinnerType = PrepareBidsReturn[number] & {
   auctionId: number;
 };
 
-// TODO allow setting dates for chunks
+const schema = z.object({
+  steps: commaDelimitedStringArray().optional().default([]),
+  now: z.coerce.date().optional().default(dayjs.utc().toDate()),
+});
 
-export const handleAuctions = createJob(jobName, '1 0 * * *', async () => {
-  const [, setLastRun] = await getJobDate(jobName);
-  const now = dayjs.utc();
+export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) => {
+  const { steps, now: n } = schema.parse(req?.query ?? {});
+  const now = dayjs.utc(n);
+  log('now:', now.format());
 
-  log('start', now.toDate());
+  log('start', dayjs().format());
 
-  const currentStep = (await dbKV.get(kvKey, 0)) ?? 0;
-  log('currentStep', currentStep);
+  // steps implies a manual run
+  if (steps.length > 0) {
+    log('steps:', steps.join(', '));
 
-  try {
-    if (currentStep <= 0) {
+    if (steps.includes('1')) {
+      log('Running step 1');
       await cleanOldCollectionItems(now);
       log('-----------');
     }
-
-    if (currentStep <= 1) {
-      await handlePreviousAuctions(now);
-      // Updates available checkpoints
-      // Includes the top earners
+    if (steps.includes('2') || steps.includes('2a') || steps.includes('2b')) {
+      // pass 2 to run fully. pass 2a or 2b to run winners/losers respectively
+      log('Running step 2');
+      const runWinners = steps.includes('2a') || (!steps.includes('2a') && !steps.includes('2b'));
+      const runLosers = steps.includes('2b') || (!steps.includes('2a') && !steps.includes('2b'));
+      log('Running winners:', runWinners, ', losers:', runLosers);
+      await handlePreviousAuctions(now, runWinners, runLosers);
       log('-----------');
     }
-
-    if (currentStep <= 2) {
+    if (steps.includes('3')) {
+      log('Running step 3');
       await createRecurringBids(now);
       log('-----------');
     }
-
-    if (currentStep <= 3) {
+    if (steps.includes('4')) {
+      log('Running step 4');
       await createNewAuctions(now);
-      // Purges the weekly stats for checkpoints
       log('-----------');
     }
+  } else {
+    const [, setLastRun] = await getJobDate(jobName);
 
-    // TODO possibly send signals
+    const currentStep = (await dbKV.get(kvKey, 0)) ?? 0;
+    log('currentStep', currentStep);
 
-    log('end', dayjs().toDate());
+    try {
+      if (currentStep <= 0) {
+        await cleanOldCollectionItems(now);
+        await dbKV.set(kvKey, 1);
+        log('-----------');
+      }
 
-    await dbKV.set(kvKey, 0);
-    await setLastRun();
-  } catch (e) {
-    const error = e as Error;
-    logToAxiom({
-      type: 'error',
-      name: 'Failed to handle auctions',
-      message: error.message,
-      stack: error.stack,
-      cause: error.cause,
-    }).catch();
-    throw error;
+      if (currentStep <= 1) {
+        await handlePreviousAuctions(now);
+        await dbKV.set(kvKey, 2);
+        log('-----------');
+      }
+
+      if (currentStep <= 2) {
+        await createRecurringBids(now);
+        await dbKV.set(kvKey, 3);
+        log('-----------');
+      }
+
+      if (currentStep <= 3) {
+        await createNewAuctions(now);
+        await dbKV.set(kvKey, 4);
+        log('-----------');
+      }
+
+      // TODO possibly send signals
+
+      await dbKV.set(kvKey, 0);
+      await setLastRun();
+    } catch (e) {
+      const error = e as Error;
+      logToAxiom({
+        type: 'error',
+        name: 'Failed to handle auctions',
+        message: error.message,
+        stack: error.stack,
+        cause: error.cause,
+      }).catch();
+      throw error;
+    }
   }
+
+  log('end', dayjs().format());
 });
 
 const cleanOldCollectionItems = async (now: Dayjs) => {
@@ -113,11 +152,9 @@ const cleanOldCollectionItems = async (now: Dayjs) => {
 
   await bustOrchestratorModelCache(oldIds);
   log(oldIds.length, 'busted old cache');
-
-  await dbKV.set(kvKey, 1);
 };
 
-const handlePreviousAuctions = async (now: Dayjs) => {
+const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers = true) => {
   // Get the bids from previous auctions
   const allAuctionsWithBids = await _fetchAuctionsWithBids(now);
 
@@ -153,14 +190,20 @@ const handlePreviousAuctions = async (now: Dayjs) => {
 
       // Feature the winners
       if (winners.length > 0) {
-        await _handleWinnersForAuction(auctionRow, winners);
+        if (runWinners) {
+          log('Running winners');
+          await _handleWinnersForAuction(auctionRow, winners);
+        }
       } else {
         log('No winners.');
       }
 
       // Refund the losers
       if (losers.length > 0) {
-        await _refundLosersForAuction(auctionRow, losers);
+        if (runLosers) {
+          log('Running losers');
+          await _refundLosersForAuction(auctionRow, losers);
+        }
       } else {
         log('No losers.');
       }
@@ -175,8 +218,6 @@ const handlePreviousAuctions = async (now: Dayjs) => {
     });
     log('finalized auction', auctionRow.id);
   }
-
-  await dbKV.set(kvKey, 2);
 };
 
 type AuctionRow = Awaited<ReturnType<typeof _fetchAuctionsWithBids>>[number];
@@ -535,8 +576,6 @@ const createRecurringBids = async (now: Dayjs) => {
       }
     }
   }
-
-  await dbKV.set(kvKey, 3);
 };
 
 const createNewAuctions = async (now: Dayjs) => {
@@ -582,6 +621,4 @@ const createNewAuctions = async (now: Dayjs) => {
     await purgeWeeklyEarnedStats(dbWrite);
     log('Purged weekly stats');
   }
-
-  await dbKV.set(kvKey, 4);
 };
