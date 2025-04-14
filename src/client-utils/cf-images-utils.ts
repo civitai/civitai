@@ -133,7 +133,8 @@ export function useEdgeUrl(src: string, options: Omit<EdgeUrlProps, 'src'> | und
     url: getEdgeUrl(src, {
       ...options,
       anim,
-      transcode,
+      // TODO: hardcoded for now until we fix transcoding issues
+      transcode: false,
       type,
       optimized: optimized ? true : undefined,
     }),
