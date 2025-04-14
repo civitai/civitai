@@ -3,7 +3,7 @@ title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
 ---
 
-Last Updated: 01/30/2025
+Last Updated: 04/14/2025
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
@@ -29,6 +29,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - 5.3 **Purchase of Creator Content.** If you purchase any offerings of Creators through the Service, you agree to pay on a one-time or subscription basis as specified by the Creators. You agree that Creators have the right to determine pricing and/or subscription tiers for their offerings and may adjust such from time to time at their discretion. You are solely responsible for ensuring that you have sufficient Buzz in your Account for your purchase(s) and agree that your purchase(s) may be denied or canceled in the event that your Account balance is insufficient. If any User Content or channels are offered on a subscription basis, they will be subject to Section 5.7 below.
 
 - 5.4 **Refund**. As a customer, you are eligible for a refund in the following situations:
+
   - Recurring Technical Problems: If ongoing technical difficulties hinder your use of the platform.
   - Failure to Receive Buzz: If Buzz you've purchased isn't received or added to your account due to technical issues.
   - Flawed Resource: If digital products you've trained are substantially flawed beyond what could be reasonably attributed to user error.
@@ -36,6 +37,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   Refunds for expenditures on 3rd party services hosted via API on Civitai will only be granted if Civitai can secure a refund from the respective service provider. Please note that not all API services permit refunds, and Civitai's ability to issue a refund is contingent on this limitation.
 
   Civitai retains the right to refuse a refund in the following cases:
+
   - You were muted or removed from the platform for breaking content guidelines.
   - You are unable to achieve desired results through no technical fault of the platform.
   - You have changed your mind.
@@ -86,27 +88,58 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
   **The following User Content is expressly prohibited and may be flagged by or for our moderators:**
 
-- (a) Content depicting or intended to depict real individuals or minors (under 18) in a mature context. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safety);
-- (b) Content depicting or intended to depict photorealistic minors, regardless of context;
-- (c) Content promoting illegal or violent activities, including, but not limited to:
-  - child abuse and exploitation
-  - rape and domestic abuse
-  - illegal substances or product sales requiring permits/licenses (e.g., pharmaceuticals, narcotics, firearms)
-  - fraud, deception, or false impersonation
-  - brutal fights, graphic injuries, or human death
-  - graphic violence or bestiality
-- (d) "Loli", "lolicon", "shota", "shotacon" content;
-- (e) Content depicting scat, fecal matter, gaseous emission, object or lifeform being ejected from an anus, or coprophagia (the ingestion of fecal matter);
-- (f) Content falsely labeled as having been created or endorsed by another creator, or impersonates another creator on the Service.
-- (g) Bounties requesting the creation of a real-life person, deceased or living, are prohibited.
-- (h) AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" individuals.
-  For additional information about how content is moderated, please review our Content Moderation Policy.
+  Prohibited Content Includes (but is not limited to):
 
-  Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
+- (a) Content involving real individuals or minors (under 18) in any mature or suggestive context, including but not limited to:
+  - All stylized, anime, or cartoon content depicting children in inappropriate or sexualized situations. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safety).
+  - "Loli", "Lolicon", "Shota", or "Shotacon" content.
+  - Photorealistic minors in any context.
+
+- (b) Illegal or violent activities, including:
+  - Depictions of incest.
+  - Child abuse, exploitation, or endangerment.
+  - Rape, sexual violence, or domestic abuse.
+  - Depictions of human death, brutal violence, or graphic injuries.
+  - Bestiality.
+
+- (c) The following content depicted in any mature or suggestive context, including but not limited to;
+  - Firearms aimed at or pointed toward individuals.
+  - Mind-altered states including being drunk, drugged, under hypnosis, or mind control.
+  - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).
+
+- (d) Bodily excretions and related fetishes, including:
+  - Urine.
+  - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
+  - Vomit.
+  - Menstruation.
+  - Diapers (regardless of context).
+
+- (e) Self-harm, body image disorders, or promotion of dangerous behavior:
+  - Cutting, mutilation, or suicide themes.
+  - Depictions of anorexia, bulimia, or other disordered eating.
+
+- (f) Content that promotes hate, harm, or extremist ideologies, including:
+  - Hate speech or imagery targeting groups or individuals.
+  - Extremist propaganda or incitement to violence.
+
+- (g) Misleading or impersonated content:
+  - Falsely labeled content claiming to be from another creator.
+  - Impersonation of real individuals or creators.
+  - Bounties requesting likenesses of real people, living or deceased.
+
+- (h) Nudity-manipulating tools or AI workflows:
+  - AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" real individuals.
+
+Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
+
+In addition to the categories of explicitly prohibited content above, certain types of content are subject to additional requirements to ensure community safety, legal compliance, and content authenticity.
+
+- (i) Metadata Requirement for Mature or Suggestive Content:
+  - Any mature or sexually suggestive content must be accompanied by AI generation metadata, including prompts, model, sampler, seed, and other available generation parameters.
 
 - 9.7 **Reporting and Appeals.** You are encouraged to report any inappropriate User Content that violate these Terms or our published policies. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation. We reserve the right to suspend or terminate the accounts of Users who are found to be repeatedly violating these Terms or our published policies. Users can request an explanation or appeal a moderation decision by submitting an appeal through our Appeal Form for further review.
 
-1.   **Communications**
+1.  **Communications**
 
 - 10.1 **Push Notifications.** When you install our app on your mobile device, you agree to receive push notifications, which are messages an app sends you on your mobile device when you are not in the app. You can turn off notifications by visiting your mobile device’s “settings” page.
 
@@ -128,7 +161,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
 - 11.7 perform any fraudulent activity including impersonating any person or entity, claiming a false affiliation or identity, accessing any other Service account without permission;
 
-- 11.8  Creating or using multiple accounts for the primary purpose of accumulating Buzz, manipulating statistics, or otherwise gaining an unfair advantage.
+- 11.8 Creating or using multiple accounts for the primary purpose of accumulating Buzz, manipulating statistics, or otherwise gaining an unfair advantage.
 
 - 11.9 Using bots, scripts, or any form of automation to manipulate the system or statistics
 
