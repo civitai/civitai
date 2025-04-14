@@ -1647,6 +1647,7 @@ enum TagSource {
   Hive
   MinorDetection
   HiveDemographics
+  Clavata
 }
 
 model TagsOnImageNew {

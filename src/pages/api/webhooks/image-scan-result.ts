@@ -584,7 +584,12 @@ async function logScanResultError({
 const tagPreprocessors: Partial<Record<TagSource, (tags: IncomingTag[]) => IncomingTag[]>> = {
   [TagSource.WD14]: processWDTags,
   [TagSource.Hive]: processHiveTags,
+  [TagSource.Clavata]: processClavataTags,
 };
+
+function processClavataTags(tags: IncomingTag[]) {
+  return tags.map((tag) => ({ ...tag, confidence: 70, tag: tag.tag.toLowerCase() }));
+}
 
 function processWDTags(tags: IncomingTag[]) {
   return tags.map((tag) => {
