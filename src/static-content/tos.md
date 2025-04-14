@@ -135,7 +135,7 @@ Any content that violates one of the following terms above but has been self-cen
 In addition to the categories of explicitly prohibited content above, certain types of content are subject to additional requirements to ensure community safety, legal compliance, and content authenticity.
 
 - (i) Metadata Requirement for Mature or Suggestive Content:
-  - Any mature or sexually suggestive content must be accompanied by AI generation metadata, including prompts, model, sampler, seed, and other available generation parameters.
+  - Any mature or sexually suggestive content must be accompanied by AI generation metadata. At a minimum, this must include the prompt used. Where possible, additional metadata such as model name, sampler, seed, and any other available generation parameters should also be provided.
 
 - 9.7 **Reporting and Appeals.** You are encouraged to report any inappropriate User Content that violate these Terms or our published policies. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation. We reserve the right to suspend or terminate the accounts of Users who are found to be repeatedly violating these Terms or our published policies. Users can request an explanation or appeal a moderation decision by submitting an appeal through our Appeal Form for further review.
 
