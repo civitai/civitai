@@ -180,8 +180,8 @@ export const creatorsProgramSettleCash = createJob(
         SUM(if(toAccountType = 'cash-settled', -amount, amount)) as amount
       FROM buzzTransactions
       WHERE (
-        -- Settlements
-        fromAccountType = 'cash-pending'
+        -- To Settlements
+        fromAccountId = 0
         AND toAccountType = 'cash-settled'
       ) OR (
         -- Deposits
@@ -239,9 +239,18 @@ export const creatorsProgramSettleCash = createJob(
         throw e;
       }
     });
+    const affectedUsers = pendingCash.map((p) => p.userId);
+
+    // Notify users of cash settlement
+    await createNotification({
+      type: 'creator-program-funds-settled',
+      category: NotificationCategory.Creator,
+      key: `creator-program-funds-settled:${monthStr}`,
+      userIds: affectedUsers,
+      details: {},
+    });
 
     // Bust user caches
-    const affectedUsers = pendingCash.map((p) => p.userId);
     await userCashCache.bust(affectedUsers);
     await signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
