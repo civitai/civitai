@@ -43,6 +43,7 @@ import {
 } from '~/server/orchestrator/lightricks/lightricks.schema';
 import { viduDuration } from '~/server/orchestrator/vidu/vidu.schema';
 import {
+  baseModelResourceTypes,
   engineDefinitions,
   generationFormWorkflowConfigurations,
   WORKFLOW_TAGS,
@@ -62,6 +63,7 @@ import { trpc } from '~/utils/trpc';
 import { hunyuanAspectRatios, hunyuanDuration } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { wanAspectRatios, wanDuration } from '~/server/orchestrator/wan/wan.schema';
 import { isDev } from '~/env/other';
+import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -594,6 +596,12 @@ function LightricksImg2VidGenerationForm() {
 function HunyuanTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="hunyuan">
+      <InputResourceSelectMultipleStandalone
+        label="Loras"
+        name="resources"
+        options={{ resources: baseModelResourceTypes.HyV1 }}
+        buttonLabel="Add additional resource"
+      />
       <InputTextArea
         required
         name="prompt"
@@ -992,8 +1000,8 @@ function FormWrapper({
   useEffect(() => {
     if (type === 'video' && storeData && workflow) {
       const registered = Object.keys(form.getValues());
-      const { params } = storeData;
-      const validated = validateInput(workflow, params);
+      const { params, resources } = storeData;
+      const validated = validateInput(workflow, { ...params, resources });
       for (const [key, value] of Object.entries(validated)) {
         if (registered.includes(key) && key !== 'engine') form.setValue(key as any, value);
       }

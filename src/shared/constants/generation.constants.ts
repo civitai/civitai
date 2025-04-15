@@ -624,7 +624,7 @@ export const engineDefinitions: EnginesDictionary = {
   hunyuan: {
     label: 'Hunyuan',
     description: ``,
-    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft'],
+    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft', 'resources'],
   },
   wan: {
     label: 'Wan',

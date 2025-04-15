@@ -14,10 +14,11 @@ type ProcessedVideo = { type: 'video'; meta?: Record<string, unknown> } & AsyncR
 export type PreprocessFileReturnType = SharedProps & (ProcessedImage | ProcessedVideo);
 
 export async function preprocessFile(file: File): Promise<PreprocessFileReturnType> {
-  const type = MEDIA_TYPE[file.type];
+  const fileType = file.type === 'application/octet-stream' ? 'video/mp4' : file.type;
+  const type = MEDIA_TYPE[fileType];
   const data = {
     name: file.name,
-    mimeType: file.type,
+    mimeType: fileType,
   };
 
   switch (type) {
