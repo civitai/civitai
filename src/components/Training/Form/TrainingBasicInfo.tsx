@@ -381,7 +381,8 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
                   <Tooltip
                     withinPortal
                     disabled={!videoNotAllowed}
-                    label={videoNotAllowed ? 'Currently available to subscribers only' : undefined}
+                    // label={videoNotAllowed ? 'Currently available to subscribers only' : undefined}
+                    label="Temporarily disabled - check back soon!"
                   >
                     <Group spacing="xs" position="center">
                       {mt === 'video' ? <IconVideo size={18} /> : <IconPhoto size={16} />}

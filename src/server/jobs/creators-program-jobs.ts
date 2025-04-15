@@ -31,6 +31,7 @@ import {
 import { signalClient } from '~/utils/signal-client';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { createNotification } from '~/server/services/notification.service';
+import { logToAxiom } from '~/server/logging/client';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
@@ -175,47 +176,68 @@ export const creatorsProgramSettleCash = createJob(
 
     const pendingCash = await clickhouse.$query<{ userId: number; amount: number }>`
       SELECT
-        toAccountId as userId,
-        SUM(if(toAccountType = 'cash-settled', amount, -amount)) as amount
+        toAccountId as "userId",
+        SUM(if(toAccountType = 'cash-settled', -amount, amount)) as amount
       FROM buzzTransactions
       WHERE (
         -- Settlements
-        fromAccountType = 'cash-settled'
+        fromAccountType = 'cash-pending'
         AND toAccountType = 'cash-settled'
       ) OR (
         -- Deposits
         fromAccountId = 0
-        AND toAccountType = 'cash-settled'
+        AND toAccountType = 'cash-pending'
       )
-      GROUP BY userId
-      HAVING amount > 0;
+      GROUP BY "userId" 
+      HAVING amount > 0
     `;
 
     // Settle pending cash transactions from bank with retry
     const monthStr = dayjs().format('YYYY-MM');
     await withRetries(async () => {
-      createBuzzTransactionMany(
-        pendingCash.map(({ userId, amount }) => ({
-          type: TransactionType.Compensation,
-          toAccountType: 'cashsettled',
-          toAccountId: userId,
-          fromAccountType: 'cashpending',
-          fromAccountId: userId,
-          amount,
-          description: `Cash settlement for ${monthStr}`,
-          externalTransactionId: `settlement-${monthStr}-${userId}`,
-        }))
-      );
+      try {
+        await createBuzzTransactionMany(
+          pendingCash.map(({ userId, amount }) => ({
+            type: TransactionType.Compensation,
+            toAccountType: 'cashsettled',
+            toAccountId: userId,
+            fromAccountType: 'cashpending',
+            fromAccountId: userId,
+            amount,
+            description: `Cash settlement for ${monthStr}`,
+            externalTransactionId: `settlement-${monthStr}-${userId}`,
+          }))
+        );
+
+        await logToAxiom({
+          name: 'creator-program-settle-cash',
+          type: 'creator-program-settle-cash',
+          pendingCash,
+          status: 'success',
+          message: 'Settled cash transactions successfully',
+        });
+      } catch (e) {
+        await logToAxiom({
+          name: 'creator-program-settle-cash',
+          type: 'creator-program-settle-cash',
+          error: e,
+          pendingCash,
+        });
+
+        throw e;
+      }
     });
 
     // Bust user caches
     const affectedUsers = pendingCash.map((p) => p.userId);
-    userCashCache.bust(affectedUsers);
-    signalClient.topicSend({
+    await userCashCache.bust(affectedUsers);
+    await signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CashInvalidator,
       data: {},
     });
+
+    return pendingCash;
   }
 );
 

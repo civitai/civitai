@@ -64,5 +64,5 @@ export function WanInput({
     : wanAspectRatioMap[args.aspectRatio];
   const { width, height } = ar.getSize(resolution);
 
-  return { ...args, width, height, sourceImage };
+  return { ...args, width, height, sourceImage, duration: 5 };
 }
