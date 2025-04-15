@@ -48,14 +48,15 @@ type WinnerType = PrepareBidsReturn[number] & {
 
 const schema = z.object({
   steps: commaDelimitedStringArray().optional().default([]),
-  now: z.coerce.date().optional().default(dayjs.utc().toDate()),
+  now: z.coerce.date().optional(),
 });
 
 export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) => {
   const { steps, now: n } = schema.parse(req?.query ?? {});
-  const now = dayjs.utc(n);
-  log('now:', now.format());
+  const now = !!n ? dayjs.utc(n) : dayjs.utc();
 
+  log('query now:', n?.toISOString());
+  log('now:', now.format());
   log('start', dayjs().format());
 
   // steps implies a manual run
