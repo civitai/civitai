@@ -118,6 +118,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
           } else {
             await processBuzzWithdrawalRequest(event);
           }
+          break;
         }
         default:
           throw new Error('Unhandled relevant event!');
