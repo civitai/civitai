@@ -23,6 +23,8 @@ import { showErrorNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { CivitaiResource } from '~/server/schema/image.schema';
+import { parseAIR } from '~/utils/string-helpers';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -100,8 +102,15 @@ export function GeneratedImageActions({
         if (workflow) {
           const step = workflow.steps.find((x) => x.name === image.stepName);
           // TODO - handle resources
-          // const resources = step?.resources?.map(({ id, strength }) => ({ id, strength }));
-          return { url: image.url, meta: step?.params };
+          const civitaiResources = step?.resources?.map((args): CivitaiResource => {
+            if ('air' in args) {
+              const { version, type } = parseAIR(args.air);
+              return { modelVersionId: version, type, weight: args.strength };
+            } else {
+              return { modelVersionId: args.id, type: args.model.type, weight: args.strength };
+            }
+          });
+          return { url: image.url, meta: removeEmpty({ ...step?.params, civitaiResources }) };
         }
       })
       .filter(isDefined);
