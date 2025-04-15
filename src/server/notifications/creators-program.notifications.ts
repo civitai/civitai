@@ -106,4 +106,14 @@ export const creatorsProgramNotifications = createNotificationProcessor({
       url: `/user/buzz-dashboard#get-paid`,
     }),
   },
+  'creator-program-funds-settled': {
+    displayName: 'Funds settled',
+    category: NotificationCategory.Creator,
+    toggleable: false,
+    showCategory: true,
+    prepareMessage: ({ details }) => ({
+      message: `Your funds earned from the Creator Compensation Pool have been settled. You can now withdraw your earnings.`,
+      url: `/user/buzz-dashboard#get-paid`,
+    }),
+  },
 });

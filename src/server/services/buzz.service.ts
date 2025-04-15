@@ -337,13 +337,17 @@ export async function createBuzzTransactionMany(
   transactions: (CreateBuzzTransactionInput & {
     fromAccountId: number;
     externalTransactionId: string;
+    fromAccountType?: BuzzAccountType;
   })[]
 ) {
   if (!env.BUZZ_ENDPOINT) throw new Error('Missing BUZZ_ENDPOINT env var');
   // Protect against transactions that are not valid. A transaction with from === to
   // breaks the entire request.
   const validTransactions = transactions.filter(
-    (t) => t.toAccountId !== undefined && t.fromAccountId !== t.toAccountId && t.amount > 0
+    (t) =>
+      t.toAccountId !== undefined &&
+      (t.fromAccountId !== t.toAccountId || t.fromAccountType === 'cashpending') &&
+      t.amount > 0
   );
   const body = JSON.stringify(validTransactions);
   const response = await fetch(`${env.BUZZ_ENDPOINT}/transactions`, {
