@@ -319,6 +319,8 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         metadata,
       });
 
+      await userCashCache.bust(cashWithdrawal.userId);
+
       break;
     }
     case 'paymentCompleted':
