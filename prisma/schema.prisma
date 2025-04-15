@@ -2857,6 +2857,11 @@ model EntityCollaborator {
   @@index([userId, entityType, entityId]) // Include status in the migration.
 }
 
+model EcosystemCheckpoints {
+  id   Int    @id
+  name String
+}
+
 model Club {
   id            Int     @id @default(autoincrement())
   userId        Int
