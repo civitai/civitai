@@ -5,7 +5,7 @@ import { z } from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
@@ -123,10 +123,10 @@ export const useQueryModels = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const _filters = filters ?? {};
-  const domainSettings = useDomainSettings();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(_filters.excludedTagIds ?? []),
-    ...(domainSettings.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
   ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -135,7 +135,7 @@ export const useQueryModels = (
       ..._filters,
       browsingLevel,
       excludedTagIds,
-      disablePoi: domainSettings.disablePoi
+      disablePoi: browsingSettingsAddons.settings.disablePoi
         ? // Ensures we pass true explicitly
           true
         : undefined,

@@ -27,7 +27,7 @@ import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
 import { containerQuery } from '~/utils/mantine-css-helpers';
-import { DomainSettingsProvider } from '~/providers/DomainSettingsProvider';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 
@@ -49,11 +49,11 @@ const useStyles = createStyles((theme) => ({
 
 export function ModelCarousel(props: Props) {
   return (
-    <DomainSettingsProvider>
-      <BrowsingLevelProvider>
+    <BrowsingLevelProvider>
+      <BrowsingSettingsAddonsProvider>
         <ModelCarouselContent {...props} />
-      </BrowsingLevelProvider>
-    </DomainSettingsProvider>
+      </BrowsingSettingsAddonsProvider>
+    </BrowsingLevelProvider>
   );
 }
 

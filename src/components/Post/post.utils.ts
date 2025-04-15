@@ -12,7 +12,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
 
 export const usePostQueryParams = () => useZodRouteParams(postQueryParamSchema);
@@ -45,10 +45,10 @@ export const useQueryPosts = (
 ) => {
   filters ??= {};
   const browsingLevel = useBrowsingLevelDebounced();
-  const domainSettings = useDomainSettings();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(domainSettings.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);
   const { data, isLoading, ...rest } = trpc.post.getInfinite.useInfiniteQuery(
     {
@@ -56,7 +56,7 @@ export const useQueryPosts = (
       include: ['cosmetics'],
       browsingLevel,
       excludedTagIds,
-      disablePoi: domainSettings.disablePoi,
+      disablePoi: browsingSettingsAddons.settings.disablePoi,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),

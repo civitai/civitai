@@ -11,7 +11,7 @@ import { GetInfiniteArticlesSchema } from '~/server/schema/article.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
 
 export const useArticleFilters = () => {
@@ -57,11 +57,10 @@ export const useQueryArticles = (
 ) => {
   filters ??= {};
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
-
-  const domainSettings = useDomainSettings();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
-    ...(domainSettings.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
   ].filter(isDefined);
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.article.getInfinite.useInfiniteQuery(

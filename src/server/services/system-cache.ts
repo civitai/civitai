@@ -7,7 +7,7 @@ import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
-import { ColorDomain, DEFAULT_DOMAIN_SETTINGS, DomainSettings } from '../common/constants';
+import { BrowsingSettingsAddon, DEFAULT_BROWSING_SETTINGS_ADDONS } from '../common/constants';
 
 const log = createLogger('system-cache', 'green');
 
@@ -238,14 +238,12 @@ export async function getLiveNow() {
   return cachedLiveNow === 'true';
 }
 
-export async function getDomainSettings(domain: ColorDomain) {
-  const cachedSettings = await sysRedis.get(`${REDIS_SYS_KEYS.SYSTEM.DOMAIN_SETTINGS}:${domain}`);
-  if (cachedSettings)
-    return {
-      // Ensures a bad setup doesn't screw us up:
-      ...DEFAULT_DOMAIN_SETTINGS[domain],
-      ...(JSON.parse(cachedSettings) as DomainSettings),
-    };
+export async function getBrowsingSettingAddons() {
+  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+  if (cached) {
+    const data = JSON.parse(cached) as BrowsingSettingsAddon[];
+    return data;
+  }
 
-  return DEFAULT_DOMAIN_SETTINGS[domain];
+  return DEFAULT_BROWSING_SETTINGS_ADDONS;
 }

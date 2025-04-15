@@ -70,7 +70,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
-import { DomainSettingsProvider } from '~/providers/DomainSettingsProvider';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -113,8 +113,8 @@ function MyApp(props: CustomAppProps) {
 
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
-      <DomainSettingsProvider>
-        <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
+      <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
+        <BrowsingSettingsAddonsProvider>
           {Component.getLayout?.(page) ?? (
             <AppLayout
               left={Component.left}
@@ -127,8 +127,8 @@ function MyApp(props: CustomAppProps) {
               {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
             </AppLayout>
           )}
-        </BrowsingLevelProviderOptional>
-      </DomainSettingsProvider>
+        </BrowsingSettingsAddonsProvider>
+      </BrowsingLevelProviderOptional>
     </FeatureLayout>
   );
 
@@ -145,19 +145,19 @@ function MyApp(props: CustomAppProps) {
             <RegisterCatchNavigation />
             <RouterTransition />
             {/* <ChadGPT isAuthed={!!session} /> */}
-            <DomainSettingsProvider>
-              <SessionProvider
-                session={session ? session : !hasAuthCookie ? null : undefined}
-                refetchOnWindowFocus={false}
-                refetchWhenOffline={false}
-              >
-                <FeatureFlagsProvider flags={flags}>
-                  <GoogleAnalytics />
-                  <AccountProvider>
-                    <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
-                      <ErrorBoundary>
-                        <BrowserSettingsProvider>
-                          <BrowsingLevelProvider>
+            <SessionProvider
+              session={session ? session : !hasAuthCookie ? null : undefined}
+              refetchOnWindowFocus={false}
+              refetchWhenOffline={false}
+            >
+              <FeatureFlagsProvider flags={flags}>
+                <GoogleAnalytics />
+                <AccountProvider>
+                  <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
+                    <ErrorBoundary>
+                      <BrowserSettingsProvider>
+                        <BrowsingLevelProvider>
+                          <BrowsingSettingsAddonsProvider>
                             <SignalProvider>
                               <ActivityReportingProvider>
                                 <ReferralsProvider {...cookies.referrals}>
@@ -200,14 +200,14 @@ function MyApp(props: CustomAppProps) {
                                 </ReferralsProvider>
                               </ActivityReportingProvider>
                             </SignalProvider>
-                          </BrowsingLevelProvider>
-                        </BrowserSettingsProvider>
-                      </ErrorBoundary>
-                    </CivitaiSessionProvider>
-                  </AccountProvider>
-                </FeatureFlagsProvider>
-              </SessionProvider>
-            </DomainSettingsProvider>
+                          </BrowsingSettingsAddonsProvider>
+                        </BrowsingLevelProvider>
+                      </BrowserSettingsProvider>
+                    </ErrorBoundary>
+                  </CivitaiSessionProvider>
+                </AccountProvider>
+              </FeatureFlagsProvider>
+            </SessionProvider>
           </IsClientProvider>
         </UpdateRequiredWatcher>
         {/* </ErrorBoundary> */}

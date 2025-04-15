@@ -3,7 +3,6 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 import { useDomainColor } from '~/hooks/useDomainColor';
 
 const onboardingSteps: Record<string, OnboardingSteps[]> = {
@@ -13,13 +12,6 @@ const onboardingSteps: Record<string, OnboardingSteps[]> = {
     OnboardingSteps.BrowsingLevels,
     OnboardingSteps.Buzz,
   ],
-  // TODO: re-enable when we have a new TOS for Red.
-  // red: [
-  //   OnboardingSteps.RedTOS,
-  //   OnboardingSteps.Profile,
-  //   OnboardingSteps.BrowsingLevels,
-  //   OnboardingSteps.Buzz,
-  // ],
 };
 
 export const useGetRequiredOnboardingSteps = () => {

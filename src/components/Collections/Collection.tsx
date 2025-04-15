@@ -95,7 +95,7 @@ import { removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Meta } from '../Meta/Meta';
-import { DomainSettingsProvider } from '~/providers/DomainSettingsProvider';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -553,8 +553,8 @@ export function Collection({
   if (!collection) return null;
 
   return (
-    <DomainSettingsProvider>
-      <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
+    <BrowsingLevelProvider browsingLevel={collection.metadata.forcedBrowsingLevel ?? undefined}>
+      <BrowsingSettingsAddonsProvider>
         {collection && (
           <Meta
             title={`${collection.name} - collection posted by ${collection.user.username}`}
@@ -877,8 +877,8 @@ export function Collection({
             </MasonryContainer>
           </MasonryProvider>
         </SensitiveShield>
-      </BrowsingLevelProvider>
-    </DomainSettingsProvider>
+      </BrowsingSettingsAddonsProvider>
+    </BrowsingLevelProvider>
   );
 }
 

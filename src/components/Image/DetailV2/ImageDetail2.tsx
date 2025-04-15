@@ -75,7 +75,7 @@ import { env } from '~/env/client';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openContext } from '~/providers/CustomModalsProvider';
-import { DomainSettingsProvider } from '~/providers/DomainSettingsProvider';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ReportEntity } from '~/server/schema/report.schema';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { Availability, CollectionType, EntityType } from '~/shared/utils/prisma/enums';
@@ -220,10 +220,10 @@ export function ImageDetail2() {
         links={[{ href: `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`, rel: 'canonical' }]}
         deIndex={nsfw || !!image.needsReview || image.availability === Availability.Unsearchable}
       />
-      <DomainSettingsProvider>
-        <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
-          <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
-          <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
+      <SensitiveShield contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}>
+        <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
+        <BrowsingLevelProvider browsingLevel={image.nsfwLevel}>
+          <BrowsingSettingsAddonsProvider>
             <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
               <div className="relative flex flex-1 overflow-hidden">
                 <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
@@ -509,9 +509,9 @@ export function ImageDetail2() {
               </div>
               {!hideAds && <AdhesiveAd closeable={false} preserveLayout />}
             </div>
-          </BrowsingLevelProvider>
-        </SensitiveShield>
-      </DomainSettingsProvider>
+          </BrowsingSettingsAddonsProvider>
+        </BrowsingLevelProvider>
+      </SensitiveShield>
     </>
   );
 }

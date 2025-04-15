@@ -9,7 +9,7 @@ import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/Po
 import { Alert, Group, Badge } from '@mantine/core';
 import { CollectionSelectDropdown } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 import { isDefined } from '~/utils/type-guards';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 const titleCharLimit = 255;
@@ -18,7 +18,7 @@ const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nu
 export function PostEditForm() {
   const post = usePostEditStore((state) => state.post);
   const images = usePostEditStore((state) => state.images);
-  const domainSettings = useDomainSettings();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const { postTitle, collectionId } = usePostEditParams();
   const form = useForm({
     schema: formSchema,
@@ -63,36 +63,8 @@ export function PostEditForm() {
     'mentions',
   ].filter(isDefined);
 
-  const hasNotAvailableNsfwLevels = images.some((image) => {
-    return (
-      image.type === 'added' &&
-      !domainSettings.allowedNsfwLevels.some(
-        (l) => image.data.nsfwLevel === 0 || l === image.data.nsfwLevel
-      )
-    );
-  });
-
   return (
     <Form form={form} className="flex flex-col gap-3">
-      {hasNotAvailableNsfwLevels && (
-        <Alert color="red">
-          <div className="flex flex-col gap-2">
-            <p>
-              <span className="font-bold">Note</span>: Some image rating levels are not supported on
-              this domain. As a result, those images will not be visible here. To view them, please
-              visit the appropriate Civitai domain
-            </p>
-            <p>The supported rating levels on this domain are:</p>
-            <div className="flex flex-wrap gap-2">
-              {domainSettings.allowedNsfwLevels.map((level) => (
-                <Badge key={level} color="dark" variant="filled">
-                  {browsingLevelLabels[level]}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        </Alert>
-      )}
       <InputTextArea
         data-tour="post:title"
         name="title"

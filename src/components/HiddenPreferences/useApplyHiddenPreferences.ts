@@ -5,7 +5,7 @@ import {
   useHiddenPreferencesContext,
 } from '~/components/HiddenPreferences/HiddenPreferencesProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { parseBitwiseBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -45,7 +45,7 @@ export function useApplyHiddenPreferences<
   const [previous, setPrevious] = useState<any[]>([]);
   const systemBrowsingLevel = useBrowsingLevelDebounced();
   const browsingLevel = browsingLevelOverride ?? systemBrowsingLevel;
-  const domainSettings = useDomainSettings();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const { canViewNsfw } = useFeatureFlags();
 
   const hiddenPreferences = useHiddenPreferencesContext();
@@ -72,10 +72,13 @@ export function useApplyHiddenPreferences<
     }
 
     // Handle domain specific hidden tags
-    if ((domainSettings.excludedTagIds ?? []).length > 0) {
+    if ((browsingSettingsAddons.settings.excludedTagIds ?? []).length > 0) {
       preferences.hiddenTags = new Map([
         ...preferences.hiddenTags,
-        ...(domainSettings.excludedTagIds ?? []).map((id): [number, boolean] => [id, true]),
+        ...(browsingSettingsAddons.settings.excludedTagIds ?? []).map((id): [number, boolean] => [
+          id,
+          true,
+        ]),
       ]);
     }
 
@@ -90,7 +93,7 @@ export function useApplyHiddenPreferences<
       currentUser,
       allowLowerLevels,
       canViewNsfw,
-      poiDisabled: domainSettings.disablePoi,
+      poiDisabled: browsingSettingsAddons.settings.disablePoi,
     });
 
     return {

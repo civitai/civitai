@@ -27,7 +27,6 @@ import { IconGripVertical, IconInfoCircle, IconPlus, IconTrash } from '@tabler/i
 import { CSS } from '@dnd-kit/utilities';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 
 const useStyles = createStyles((theme) => ({
   sectionHeader: {
@@ -53,19 +52,14 @@ export default Modal;
 type Props = { onClose: VoidFunction };
 function ManageHomeBlocks({ onClose }: Props) {
   const { classes } = useStyles();
-  const domainSettings = useDomainSettings();
   const { data: homeBlocks = [], isLoading: isLoadingOwnedHomeBlocks } =
     trpc.homeBlock.getHomeBlocks.useQuery({
       withCoreData: true,
       ownedOnly: true,
-      excludedSystemHomeBlockIds: domainSettings.excludedSystemHomeBlockIds,
-      systemHomeBlockIds: domainSettings.systemHomeBlockIds,
     });
   const { data: systemHomeBlocks = [], isLoading: isLoadingSystemHomeBlocks } =
     trpc.homeBlock.getSystemHomeBlocks.useQuery({
       permanent: false,
-      excludedSystemHomeBlockIds: domainSettings.excludedSystemHomeBlockIds,
-      systemHomeBlockIds: domainSettings.systemHomeBlockIds,
     });
 
   const utils = trpc.useContext();

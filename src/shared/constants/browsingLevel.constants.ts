@@ -1,4 +1,3 @@
-import { DEFAULT_DOMAIN_SETTINGS } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { Flags } from '~/shared/utils';
 
@@ -159,27 +158,7 @@ export const toggleableBrowsingCategories = [
 ];
 
 export const browsingModeDefaults = {
-  green: {
-    showNsfw: false,
-    blurNsfw: true,
-    browsingLevel: flagifyBrowsingLevel(
-      DEFAULT_DOMAIN_SETTINGS.green.publicNsfwLevels ??
-        DEFAULT_DOMAIN_SETTINGS.green.allowedNsfwLevels
-    ),
-  },
-  blue: {
-    showNsfw: true,
-    blurNsfw: true,
-    browsingLevel: flagifyBrowsingLevel(
-      DEFAULT_DOMAIN_SETTINGS.blue.publicNsfwLevels ??
-        DEFAULT_DOMAIN_SETTINGS.blue.allowedNsfwLevels
-    ),
-  },
-  red: {
-    showNsfw: true,
-    blurNsfw: false,
-    browsingLevel: flagifyBrowsingLevel(
-      DEFAULT_DOMAIN_SETTINGS.red.publicNsfwLevels ?? DEFAULT_DOMAIN_SETTINGS.red.allowedNsfwLevels
-    ),
-  },
+  showNsfw: false,
+  blurNsfw: true,
+  browsingLevel: publicBrowsingLevelsFlag,
 };

@@ -16,6 +16,8 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
+import { BrowsingLevel, nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { Flags } from '~/shared/utils';
 
 export const constants = {
   modelFilterDefaults: {
@@ -1131,30 +1133,19 @@ export type DomainSettings = {
   appendedAdminAttentionReasons?: string[];
 };
 
-export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
-  green: {
-    color: 'green',
-    excludedTagIds: [],
-    disablePoi: false,
-    allowedNsfwLevels: [NsfwLevel.PG],
-    disableNsfwLevelControl: true,
-    systemHomeBlockIds: [],
-    excludedSystemHomeBlockIds: [],
-    browsingLevelKey: 'browsingLevel',
-  },
-  blue: {
-    color: 'blue',
-    excludedTagIds: [],
-    disablePoi: false,
-    allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-    disableNsfwLevelControl: false,
-    systemHomeBlockIds: [],
-    excludedSystemHomeBlockIds: [],
-    publicNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13],
-    browsingLevelKey: 'browsingLevel',
-  },
-  red: {
-    color: 'red',
+export type BrowsingSettingsAddon = {
+  shouldApply: (nsfwLevel: number) => boolean;
+  disablePoi: boolean;
+  excludedTagIds: number[];
+  generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
+};
+
+export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
+  {
+    shouldApply: (nsfwLevel) => {
+      return Flags.intersects(nsfwLevel, nsfwBrowsingLevelsFlag);
+    },
+    disablePoi: true,
     excludedTagIds: [
       792, //marijuana
       793, //weed
@@ -1216,19 +1207,11 @@ export const DEFAULT_DOMAIN_SETTINGS: Record<ColorDomain, DomainSettings> = {
       368038, //wincest
       370273, //recreational drugs
     ],
-    disablePoi: true,
-    allowedNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X, NsfwLevel.XXX],
-    disableNsfwLevelControl: false,
-    systemHomeBlockIds: [],
-    excludedSystemHomeBlockIds: [],
-    publicNsfwLevels: [NsfwLevel.PG, NsfwLevel.PG13, NsfwLevel.R, NsfwLevel.X],
-    browsingLevelKey: 'redBrowsingLevel',
     generationDefaultValues: {
       denoise: 0.65,
     },
-    appendedAdminAttentionReasons: ['Not AI Generated'],
   },
-} as const;
+] as const;
 
 export function getRequestDomainColor(req: { headers: { host?: string } }) {
   const { host } = req.headers;

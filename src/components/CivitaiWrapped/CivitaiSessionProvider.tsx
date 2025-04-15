@@ -1,17 +1,10 @@
 import type { Session, SessionUser } from 'next-auth';
 import { signIn, useSession } from 'next-auth/react';
 import { createContext, useContext, useEffect, useMemo } from 'react';
-import { useDomainColor } from '~/hooks/useDomainColor';
-
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
-import { ColorDomain } from '~/server/common/constants';
-import {
-  browsingModeDefaults,
-  flagifyBrowsingLevel,
-} from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
 import { useDomainSync } from '~/hooks/useDomainSync';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { UserMeta } from '~/server/schema/user.schema';
+import { browsingModeDefaults } from '~/shared/constants/browsingLevel.constants';
 // const UserBanned = dynamic(() => import('~/components/User/UserBanned'));
 // const OnboardingModal = dynamic(() => import('~/components/Onboarding/OnboardingWizard'), {
 //   ssr: false,
@@ -26,15 +19,14 @@ export function CivitaiSessionProvider({
 }) {
   const { data, update, status } = useSession();
   const user = data?.user;
+  const { canViewNsfw } = useFeatureFlags();
   useDomainSync(data?.user as SessionUser, status);
-  const domainSettings = useDomainSettings();
-  const domain = useDomainColor();
 
   const sessionUser = useMemo(() => {
     if (!user)
       return {
         type: 'unauthed',
-        settings: publicContentSettings[domain],
+        settings: publicContentSettings,
       } as UnauthedUser;
 
     const isMember = user.tier != null;
@@ -47,8 +39,7 @@ export function CivitaiSessionProvider({
       memberInBadState: user.memberInBadState,
       refresh: update,
       settings: {
-        // Always show NSFW if the domain is red. No way around it.
-        showNsfw: user.showNsfw || domainSettings.color === 'red',
+        showNsfw: user.showNsfw,
         browsingLevel: user.browsingLevel,
         disableHidden: disableHidden ?? true,
         allowAds: user.allowAds ?? !isMember ? true : false,
@@ -56,42 +47,9 @@ export function CivitaiSessionProvider({
         blurNsfw: user.blurNsfw,
       },
     };
-
-    if (domainSettings.browsingLevelKey && domainSettings.browsingLevelKey !== 'browsingLevel') {
-      const key = domainSettings.browsingLevelKey;
-      currentUser.settings.browsingLevel = user[key] ?? user.browsingLevel;
-    }
-
-    const allowedNsfwLevelsFlag = domainSettings.allowedNsfwLevels
-      ? flagifyBrowsingLevel(domainSettings.allowedNsfwLevels)
-      : 0;
-    // The reason we force this is because the user has 0 control here.
-    if (domainSettings.disableNsfwLevelControl)
-      currentUser.settings = { ...currentUser.settings, browsingLevel: allowedNsfwLevelsFlag };
-    else {
-      const intersection = Flags.intersection(
-        currentUser.settings.browsingLevel,
-        allowedNsfwLevelsFlag
-      );
-
-      currentUser.settings = {
-        ...currentUser.settings,
-        browsingLevel:
-          intersection !== 0
-            ? intersection
-            : // In case no intersection is found
-              allowedNsfwLevelsFlag,
-      };
-    }
+    if (!canViewNsfw) currentUser.settings = { ...currentUser.settings, ...browsingModeDefaults };
     return currentUser;
-  }, [
-    domain,
-    data?.expires,
-    disableHidden,
-    domainSettings.disableNsfwLevelControl,
-    domainSettings.allowedNsfwLevels,
-    domainSettings.isLoading,
-  ]);
+  }, [data?.expires, disableHidden, canViewNsfw]);
 
   useEffect(() => {
     if (data?.error === 'RefreshAccessTokenError') signIn();
@@ -133,7 +91,7 @@ export type CurrentUser = Omit<
   | 'settings'
 >;
 
-export type BrowsingSettings = {
+type BrowsingSettings = {
   showNsfw: boolean;
   blurNsfw: boolean;
   browsingLevel: number;
@@ -150,23 +108,9 @@ export const useCivitaiSessionContext = () => {
   return context;
 };
 
-const publicContentSettings: Record<ColorDomain, BrowsingSettings> = {
-  green: {
-    ...browsingModeDefaults['green'],
-    disableHidden: true,
-    allowAds: true,
-    autoplayGifs: true,
-  },
-  blue: {
-    ...browsingModeDefaults['blue'],
-    disableHidden: true,
-    allowAds: true,
-    autoplayGifs: true,
-  },
-  red: {
-    ...browsingModeDefaults['red'],
-    disableHidden: true,
-    allowAds: false,
-    autoplayGifs: true,
-  },
+const publicContentSettings: BrowsingSettings = {
+  ...browsingModeDefaults,
+  disableHidden: true,
+  allowAds: true,
+  autoplayGifs: true,
 };

@@ -59,7 +59,7 @@ import { QS } from '~/utils/qs';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -190,7 +190,7 @@ const targetData = [
 ] as const;
 
 export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ...props }, ref) => {
-  const domainSettings = useDomainSettings();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const [targetIndex, setTargetIndex] = useState<SearchIndexKey>('models');
   const handleTargetChange = (value: SearchIndexKey) => {
     setTargetIndex(value);
@@ -218,7 +218,9 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      {isModels && domainSettings.disablePoi && <ApplyCustomFilter filters={`(poi != true)`} />}
+      {isModels && browsingSettingsAddons.settings.disablePoi && (
+        <ApplyCustomFilter filters={`(poi != true)`} />
+      )}
       {isModels && !currentUser?.isModerator && (
         <ApplyCustomFilter
           filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}

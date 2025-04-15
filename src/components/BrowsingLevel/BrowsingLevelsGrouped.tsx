@@ -1,19 +1,13 @@
 import { Chip, Group, GroupProps, createStyles } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
-import { DomainSettings } from '~/server/common/constants';
 import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsGrouped(props: GroupProps) {
-  const settings = useDomainSettings();
   const currentUser = useCurrentUser();
-  const baseLevels =
-    (settings?.allowedNsfwLevels ?? []).length > 0
-      ? (settings as DomainSettings).allowedNsfwLevels
-      : browsingLevels;
+  const baseLevels = browsingLevels;
   const levels = currentUser?.isModerator ? [...baseLevels, NsfwLevel.Blocked] : baseLevels;
 
   return (
@@ -29,13 +23,10 @@ function BrowsingLevelLabel({ level }: { level: NsfwLevel }) {
   const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const isSelected = Flags.hasFlag(browsingLevel, level);
   const toggleBrowsingLevel = useToggleBrowsingLevel();
-  const domainSettings = useDomainSettings();
   const { classes } = useStyles();
 
   // const browsingLevel = useStore((x) => x.browsingLevel);
-  const isDefaultBrowsingLevel = (domainSettings.allowedNsfwLevels ?? []).length
-    ? browsingLevel === 0 && level === domainSettings.allowedNsfwLevels[0]
-    : browsingLevel === 0 && level === NsfwLevel.PG;
+  const isDefaultBrowsingLevel = browsingLevel === 0 && level === NsfwLevel.PG;
 
   return (
     <Chip

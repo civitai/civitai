@@ -8,7 +8,7 @@ import { useHiddenPreferencesContext } from '~/components/HiddenPreferences/Hidd
 import { useQueryHiddenPreferences } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import {
   BrowsingLevel,
@@ -26,7 +26,7 @@ export function ExplainHiddenImages({
   const { data } = useQueryHiddenPreferences();
   const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
-  const domainSettings = useDomainSettings();
+  const showNsfw = useBrowsingSettings((x) => x.showNsfw);
   const { setBrowsingLevelOverride } = useBrowsingLevelContext();
   if (!hasHidden) return null;
 
@@ -35,18 +35,13 @@ export function ExplainHiddenImages({
   const hiddenByBrowsingLevelFlag = flagifyBrowsingLevel(
     hiddenByBrowsingLevel.map((x) => x.browsingLevel)
   );
-  const showHiddenBrowsingLevels =
-    totalHiddenByBrowsingLevel > 0 &&
-    !domainSettings.disableNsfwLevelControl &&
-    Flags.intersection(domainSettings.allowedNsfwLevelsFlag, hiddenByBrowsingLevelFlag) !== 0;
+  const showHiddenBrowsingLevels = totalHiddenByBrowsingLevel > 0 && showNsfw;
 
   const handleShowAll = () => {
-    setBrowsingLevelOverride?.(
-      Flags.intersection(
-        Flags.addFlag(hiddenByBrowsingLevelFlag, browsingLevel),
-        domainSettings.allowedNsfwLevelsFlag
-      )
+    const browsingLevelOverride = flagifyBrowsingLevel(
+      hiddenByBrowsingLevel.map((x) => x.browsingLevel)
     );
+    setBrowsingLevelOverride?.(Flags.addFlag(browsingLevelOverride, browsingLevel));
   };
 
   return (
@@ -106,7 +101,7 @@ export function useExplainHiddenImages<
   const browsingLevel = useBrowsingLevelDebounced();
   const hiddenPreferences = useHiddenPreferencesContext();
   const { canViewNsfw } = useFeatureFlags();
-  const domainSettings = useDomainSettings();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   return useMemo(() => {
     const browsingLevelBelowDict: Record<number, number> = {};
@@ -141,7 +136,7 @@ export function useExplainHiddenImages<
       tagId: Number(key),
       count,
     }));
-    const hiddenByPoi = images?.filter((x) => x.poi && domainSettings.disablePoi);
+    const hiddenByPoi = images?.filter((x) => x.poi && browsingSettingsAddons.settings.disablePoi);
 
     return {
       hiddenBelowBrowsingLevel: hiddenBelowBrowsingLevel,

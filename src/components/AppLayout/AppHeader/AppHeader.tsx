@@ -18,8 +18,6 @@ import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { UserMenu } from '~/components/AppLayout/AppHeader/UserMenu';
 import { CreateMenu } from '~/components/AppLayout/AppHeader/CreateMenu';
-import { useDomainColor } from '~/hooks/useDomainColor';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
 
 const HEADER_HEIGHT = 60;
 
@@ -48,8 +46,6 @@ export function AppHeader({
   const features = useFeatureFlags();
   const searchRef = useRef<HTMLInputElement>(null);
   const isMuted = currentUser?.muted ?? false;
-  const domain = useDomainColor();
-  const domainSettings = useDomainSettings();
 
   const [showSearch, setShowSearch] = useState(false);
   const onSearchDone = () => setShowSearch(false);
@@ -61,8 +57,8 @@ export function AppHeader({
         fixed={fixed}
         zIndex={199}
         className={clsx({
-          ['border-green-8 border-b-[3px]']: domain === 'green',
-          ['border-red-8 border-b-[3px]']: domain === 'red',
+          ['border-green-8 border-b-[3px]']: features.isGreen,
+          ['border-red-8 border-b-[3px]']: features.isRed,
         })}
       >
         <div className={clsx('h-full', { ['hidden']: !showSearch })}>
@@ -97,7 +93,7 @@ export function AppHeader({
                   <CivitaiLinkPopover />
                 </>
               )}
-              {currentUser && !domainSettings.disableNsfwLevelControl && <BrowsingModeIcon />}
+              {currentUser && features.canViewNsfw && <BrowsingModeIcon />}
               {currentUser && <NotificationBell />}
               {currentUser && features.chat && <ChatButton />}
               {currentUser?.isModerator && <ModerationNav />}
@@ -133,9 +129,6 @@ export function AppHeader({
           </Grid.Col>
         </Grid>
       </Header>
-      {domain === 'red' && (
-        <div className="bg-red-8 text-center text-sm text-white">Adults Only &ndash; 18+</div>
-      )}
     </>
   );
 }

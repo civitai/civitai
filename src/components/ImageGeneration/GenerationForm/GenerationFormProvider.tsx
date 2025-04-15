@@ -39,7 +39,7 @@ import { WorkflowDefinitionType } from '~/server/services/orchestrator/types';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { generationResourceSchema } from '~/server/schema/generation.schema';
-import { useDomainSettings } from '~/providers/DomainSettingsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 
 // #region [schemas]
 
@@ -241,7 +241,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const type = useGenerationFormStore((state) => state.type);
-  const domainSettings = useDomainSettings();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const getValues = useCallback(
     (storageValues: any): any => {
@@ -252,7 +252,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
       return getDefaultValues(storageValues);
     },
-    [currentUser, status, domainSettings] // eslint-disable-line
+    [currentUser, status, browsingSettingsAddons] // eslint-disable-line
   );
 
   const prevBaseModelRef = useRef<BaseModelSetType | null>();
@@ -379,8 +379,8 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   }, []);
 
   useEffect(() => {
-    if (domainSettings.generationDefaultValues) {
-      const { generationDefaultValues } = domainSettings;
+    if (browsingSettingsAddons.settings.generationDefaultValues) {
+      const { generationDefaultValues } = browsingSettingsAddons.settings;
       Object.keys(generationDefaultValues ?? {}).forEach((key) => {
         // @ts-ignore
         const value = generationDefaultValues[key as keyof generationDefaultValues];
@@ -389,7 +389,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
         }
       });
     }
-  }, [domainSettings, form]);
+  }, [browsingSettingsAddons, form]);
   // #endregion
 
   // #region [handlers]
@@ -407,7 +407,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
-        ...(domainSettings.generationDefaultValues ?? {}),
+        ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,
