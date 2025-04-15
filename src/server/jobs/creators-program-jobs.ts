@@ -208,8 +208,17 @@ export const creatorsProgramSettleCash = createJob(
             externalTransactionId: `settlement-${monthStr}-${userId}`,
           }))
         );
+
+        await logToAxiom({
+          name: 'creator-program-settle-cash',
+          type: 'creator-program-settle-cash',
+          pendingCash,
+          status: 'success',
+          message: 'Settled cash transactions successfully',
+        });
       } catch (e) {
         await logToAxiom({
+          name: 'creator-program-settle-cash',
           type: 'creator-program-settle-cash',
           error: e,
           pendingCash,
@@ -221,12 +230,14 @@ export const creatorsProgramSettleCash = createJob(
 
     // Bust user caches
     const affectedUsers = pendingCash.map((p) => p.userId);
-    userCashCache.bust(affectedUsers);
-    signalClient.topicSend({
+    await userCashCache.bust(affectedUsers);
+    await signalClient.topicSend({
       topic: SignalTopic.CreatorProgram,
       target: SignalMessages.CashInvalidator,
       data: {},
     });
+
+    return pendingCash;
   }
 );
 
