@@ -31,6 +31,7 @@ import {
 import { signalClient } from '~/utils/signal-client';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { createNotification } from '~/server/services/notification.service';
+import { logToAxiom } from '~/server/logging/client';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
@@ -194,18 +195,28 @@ export const creatorsProgramSettleCash = createJob(
     // Settle pending cash transactions from bank with retry
     const monthStr = dayjs().format('YYYY-MM');
     await withRetries(async () => {
-      await createBuzzTransactionMany(
-        pendingCash.map(({ userId, amount }) => ({
-          type: TransactionType.Compensation,
-          toAccountType: 'cashsettled',
-          toAccountId: userId,
-          fromAccountType: 'cashpending',
-          fromAccountId: userId,
-          amount,
-          description: `Cash settlement for ${monthStr}`,
-          externalTransactionId: `settlement-${monthStr}-${userId}`,
-        }))
-      );
+      try {
+        await createBuzzTransactionMany(
+          pendingCash.map(({ userId, amount }) => ({
+            type: TransactionType.Compensation,
+            toAccountType: 'cashsettled',
+            toAccountId: userId,
+            fromAccountType: 'cashpending',
+            fromAccountId: userId,
+            amount,
+            description: `Cash settlement for ${monthStr}`,
+            externalTransactionId: `settlement-${monthStr}-${userId}`,
+          }))
+        );
+      } catch (e) {
+        await logToAxiom({
+          type: 'creator-program-settle-cash',
+          error: e,
+          pendingCash,
+        });
+
+        throw e;
+      }
     });
 
     // Bust user caches
