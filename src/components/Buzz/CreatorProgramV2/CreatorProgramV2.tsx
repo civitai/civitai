@@ -647,6 +647,9 @@ const WithdrawCashCard = () => {
   const unsupportedWithdrawalMethod = withdrawalMethodSetup
     ? !WITHDRAWAL_FEES[userPaymentConfiguration.tipaltiWithdrawalMethod as CashWithdrawalMethod]
     : false;
+  const supportedWithdrawalMethods = Object.keys(WITHDRAWAL_FEES).filter(
+    (k) => !!WITHDRAWAL_FEES[k as keyof typeof WITHDRAWAL_FEES]
+  );
 
   useEffect(() => {
     if (userCash && userCash.ready) {
@@ -845,23 +848,24 @@ const WithdrawCashCard = () => {
                   <IconBuildingBank size={24} />
                 </ActionIcon>
               </Tooltip>
-              {!withdrawalMethodSetup && (
-                <Alert color="red" className="mt-auto p-2">
-                  <p>
-                    It does not seem your withdrawal method has been setup. Please go into your
-                    withdrawal method settings to configure.
-                  </p>
-                </Alert>
-              )}
-              {unsupportedWithdrawalMethod && (
-                <Alert color="red" className="mt-auto p-2">
-                  <p>
-                    Your current withdrawal method is not supported. Please update your withdrawal
-                    method in your Tipalti configuration to one of our supported methods.
-                  </p>
-                </Alert>
-              )}
             </div>
+            {!withdrawalMethodSetup && (
+              <Alert color="red" className="mt-auto p-2">
+                <p>
+                  It does not seem your withdrawal method has been setup. Please go into your
+                  withdrawal method settings to configure.
+                </p>
+              </Alert>
+            )}
+            {unsupportedWithdrawalMethod && (
+              <Alert color="red" className="mt-auto p-2">
+                <p>
+                  Your currently selected withdrawal method is not supported. Please{' '}
+                  <Anchor href="/tipalti/setup">update your withdrawal method</Anchor> to one of our
+                  supported methods: {supportedWithdrawalMethods.join(', ')}.
+                </p>
+              </Alert>
+            )}
             {userCash?.withdrawalFee && (
               <div className="flex gap-2">
                 <p>
