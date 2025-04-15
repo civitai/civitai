@@ -58,7 +58,9 @@ export function createJob(
   return {
     name,
     cron,
-    run: ({ req }: { req?: NextApiRequest }) => {
+    run: (props: { req?: NextApiRequest }) => {
+      const { req } = props ?? {};
+
       const onCancel: (() => Promise<void>)[] = [];
       const jobContext = {
         status: 'running' as JobStatus,
