@@ -2697,6 +2697,7 @@ const genAuctionBases = () => {
       'featured-checkpoints', // slug
       7, // runForDays
       7, // validForDays
+      null, // description
     ],
     [
       2, // id
@@ -2709,6 +2710,7 @@ const genAuctionBases = () => {
       'featured-resources-pony', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
     ],
     [
       3, // id
@@ -2721,6 +2723,7 @@ const genAuctionBases = () => {
       'featured-resources-illustrious', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
     ],
     [
       4, // id
@@ -2733,6 +2736,7 @@ const genAuctionBases = () => {
       'featured-resources-flux', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
     ],
     [
       5, // id
@@ -2745,6 +2749,7 @@ const genAuctionBases = () => {
       'featured-resources-sdxl', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
     ],
     [
       6, // id
@@ -2757,6 +2762,20 @@ const genAuctionBases = () => {
       'featured-resources-sd1', // slug
       1, // runForDays
       1, // validForDays
+      null, // description
+    ],
+    [
+      7, // id
+      'Model', // type
+      'Misc', // ecosystem
+      'Featured Resources - Misc', // name
+      40, // quantity
+      500, // minPrice
+      true, // active
+      'featured-resources-misc', // slug
+      1, // runForDays
+      1, // validForDays
+      'For generic model types that do not have a defined ecosystem.', // description
     ],
   ];
 };
