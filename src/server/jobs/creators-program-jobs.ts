@@ -193,7 +193,7 @@ export const creatorsProgramSettleCash = createJob(
 
     // Settle pending cash transactions from bank with retry
     const monthStr = dayjs().format('YYYY-MM');
-    await withRetries(async () => {
+    await withRetries(async () =>
       createBuzzTransactionMany(
         pendingCash.map(({ userId, amount }) => ({
           type: TransactionType.Compensation,
@@ -205,8 +205,8 @@ export const creatorsProgramSettleCash = createJob(
           description: `Cash settlement for ${monthStr}`,
           externalTransactionId: `settlement-${monthStr}-${userId}`,
         }))
-      );
-    });
+      )
+    );
 
     // Bust user caches
     const affectedUsers = pendingCash.map((p) => p.userId);
