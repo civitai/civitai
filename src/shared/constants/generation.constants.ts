@@ -546,6 +546,7 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
   HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
+  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)

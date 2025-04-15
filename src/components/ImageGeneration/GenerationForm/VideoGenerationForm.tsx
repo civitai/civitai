@@ -690,6 +690,12 @@ function HunyuanTxt2VidGenerationForm() {
 function WanTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="wan">
+      <InputResourceSelectMultipleStandalone
+        label="Loras"
+        name="resources"
+        options={{ resources: baseModelResourceTypes.WanVideo }}
+        buttonLabel="Add additional resource"
+      />
       <InputTextArea
         required
         name="prompt"
@@ -778,6 +784,12 @@ function WanTxt2VidGenerationForm() {
 function WanImg2VidGenerationForm() {
   return (
     <FormWrapper engine="wan">
+      <InputResourceSelectMultipleStandalone
+        label="Loras"
+        name="resources"
+        options={{ resources: baseModelResourceTypes.WanVideo }}
+        buttonLabel="Add additional resource"
+      />
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch
         name="draft"
