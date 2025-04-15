@@ -407,6 +407,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { max: 256 } },
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 16 } },
+      flux_dev: { kohya: { default: 2 } },
       sd3_medium: { all: { default: 2 } },
       sd3_large: { all: { default: 2 } },
     },
