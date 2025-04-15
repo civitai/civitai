@@ -180,7 +180,7 @@ export const creatorsProgramSettleCash = createJob(
       FROM buzzTransactions
       WHERE (
         -- Settlements
-        fromAccountType = 'cash-settled'
+        fromAccountType = 'cash-pending'
         AND toAccountType = 'cash-settled'
       ) OR (
         -- Deposits
