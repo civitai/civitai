@@ -176,7 +176,7 @@ export const creatorsProgramSettleCash = createJob(
     const pendingCash = await clickhouse.$query<{ userId: number; amount: number }>`
       SELECT
         toAccountId as userId,
-        SUM(if(toAccountType = 'cash-settled', amount, -amount)) as amount
+        SUM(if(toAccountType = 'cash-settled', -amount, amount)) as amount
       FROM buzzTransactions
       WHERE (
         -- Settlements
@@ -185,10 +185,10 @@ export const creatorsProgramSettleCash = createJob(
       ) OR (
         -- Deposits
         fromAccountId = 0
-        AND toAccountType = 'cash-settled'
+        AND toAccountType = 'cash-pending'
       )
-      GROUP BY userId
-      HAVING amount > 0;
+      GROUP BY userId 
+      HAVING amount > 0
     `;
 
     // Settle pending cash transactions from bank with retry
