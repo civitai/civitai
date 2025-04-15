@@ -176,7 +176,7 @@ export const creatorsProgramSettleCash = createJob(
 
     const pendingCash = await clickhouse.$query<{ userId: number; amount: number }>`
       SELECT
-        toAccountId as userId,
+        toAccountId as "userId",
         SUM(if(toAccountType = 'cash-settled', -amount, amount)) as amount
       FROM buzzTransactions
       WHERE (
@@ -188,7 +188,7 @@ export const creatorsProgramSettleCash = createJob(
         fromAccountId = 0
         AND toAccountType = 'cash-pending'
       )
-      GROUP BY userId 
+      GROUP BY "userId" 
       HAVING amount > 0
     `;
 
