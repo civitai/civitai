@@ -32,6 +32,7 @@ import { signalClient } from '~/utils/signal-client';
 import { getCreatorProgramAvailability } from '~/server/utils/creator-program.utils';
 import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
+import { Prisma } from '@prisma/client';
 
 export const creatorsProgramDistribute = createJob(
   'creators-program-distribute',
@@ -120,7 +121,7 @@ export const creatorsProgramInviteTipalti = createJob(
         AND date > subtractDays(now(), 1)
       )
       SELECT
-        toAccountId as userId,
+        toAccountId as "userId",
         SUM(if(toAccountType = 'cash-pending' OR (toAccountType = 'cash-settled' AND fromAccountType != 'cash-pending'), amount, 0)) as balance
       FROM buzzTransactions
       WHERE toAccountType IN ('cash-pending', 'cash-settled')
@@ -134,7 +135,7 @@ export const creatorsProgramInviteTipalti = createJob(
         "userId"
       FROM "UserPaymentConfiguration" uc
       WHERE "tipaltiAccountId" IS NOT NULL
-      AND "userId" IN (${userIdsOverThreshold});
+      AND "userId" IN (${Prisma.join(userIdsOverThreshold)});
     `;
     const usersWithoutTipalti = userIdsOverThreshold.filter(
       (userId) => !usersWithTipalti.some((u) => u.userId === userId)
