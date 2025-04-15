@@ -533,7 +533,7 @@ function ResourceHitList({
   featured: GetFeaturedModels | undefined;
   selectedTab?: Tabs;
 }) {
-  const { canGenerate, resources, selectSource, excludedIds } = useResourceSelectContext();
+  const { canGenerate, resources, selectSource, excludedIds, filters } = useResourceSelectContext();
   const startedRef = useRef(false);
   // const currentUser = useCurrentUser();
   const { status } = useInstantSearch();
@@ -559,7 +559,10 @@ function ResourceHitList({
       .map((model) => {
         const resourceType = resources.find((x) => x.type === model.type);
         if (!resourceType) return null;
-        const { baseModels } = resourceType;
+
+        const baseModels = !!resourceType.baseModels.length
+          ? resourceType.baseModels
+          : filters.baseModels;
 
         const versions = model.versions.filter((version) => {
           return (

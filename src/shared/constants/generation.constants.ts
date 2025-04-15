@@ -564,9 +564,10 @@ export const miscModelTypes: ModelType[] = [
 
 export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
+export const fluxDraftAir = 'urn:air:flux1:checkpoint:civitai:618692@699279';
 export const fluxUltraAirId = 1088507;
 export const fluxModeOptions = [
-  { label: 'Draft', value: 'urn:air:flux1:checkpoint:civitai:618692@699279' },
+  { label: 'Draft', value: fluxDraftAir },
   { label: 'Standard', value: fluxStandardAir },
   { label: 'Pro', value: 'urn:air:flux1:checkpoint:civitai:618692@699332' },
   { label: 'Pro 1.1', value: 'urn:air:flux1:checkpoint:civitai:618692@922358' },

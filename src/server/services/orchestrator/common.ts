@@ -43,7 +43,7 @@ import { getUserSubscription } from '~/server/services/subscriptions.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   allInjectableResourceIds,
-  fluxModeOptions,
+  fluxDraftAir,
   fluxUltraAir,
   fluxUltraAirId,
   getBaseModelResourceTypes,
@@ -129,15 +129,13 @@ export async function parseGenerateImageInput({
 
   // Handle Flux Mode
   const isFlux = getIsFlux(originalParams.baseModel);
-  if (isFlux && originalParams.fluxMode) {
-    // const { version } = parseAIR(originalParams.fluxMode);
+  if (isFlux) {
     originalParams.sampler = 'undefined';
-    // originalResources = [{ id: version, strength: 1 }];
     originalParams.nsfw = true; // No nsfw helpers in flux mode
     originalParams.draft = false;
     originalParams.negativePrompt = '';
     delete originalParams.clipSkip;
-    if (originalParams.fluxMode === fluxModeOptions[0].value) {
+    if (originalParams.fluxMode === fluxDraftAir) {
       originalParams.steps = 4;
       originalParams.cfgScale = 1;
     }
