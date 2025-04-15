@@ -188,7 +188,7 @@ export const creatorsProgramSettleCash = createJob(
         fromAccountId = 0
         AND toAccountType = 'cash-pending'
       )
-      GROUP BY "userId" 
+      GROUP BY "userId"
       HAVING amount > 0
     `;
 
@@ -197,16 +197,28 @@ export const creatorsProgramSettleCash = createJob(
     await withRetries(async () => {
       try {
         await createBuzzTransactionMany(
-          pendingCash.map(({ userId, amount }) => ({
-            type: TransactionType.Compensation,
-            toAccountType: 'cashsettled',
-            toAccountId: userId,
-            fromAccountType: 'cashpending',
-            fromAccountId: userId,
-            amount,
-            description: `Cash settlement for ${monthStr}`,
-            externalTransactionId: `settlement-${monthStr}-${userId}`,
-          }))
+          pendingCash.flatMap(({ userId, amount }) => [
+            {
+              type: TransactionType.Compensation,
+              fromAccountType: 'cashpending',
+              fromAccountId: userId,
+              toAccountType: 'cashsettled',
+              toAccountId: 0,
+              amount,
+              description: `Move from pending ${monthStr}`,
+              externalTransactionId: `settlement-bank-${monthStr}-${userId}`,
+            },
+            {
+              type: TransactionType.Compensation,
+              fromAccountType: 'cashsettled',
+              fromAccountId: 0,
+              toAccountType: 'cashsettled',
+              toAccountId: userId,
+              amount,
+              description: `Cash settlement for ${monthStr}`,
+              externalTransactionId: `settlement-${monthStr}-${userId}`,
+            },
+          ])
         );
 
         await logToAxiom({
