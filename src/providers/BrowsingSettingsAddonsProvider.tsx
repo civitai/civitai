@@ -9,8 +9,10 @@ const BrowsingSettingsAddonsCtx = createContext<{
   settings: Omit<BrowsingSettingsAddon, 'type' | 'nsfwLevels'>;
 }>({
   settings: {
+    disableMinor: false,
     disablePoi: false,
     excludedTagIds: [],
+    excludedFooterLinks: [],
   },
   isLoading: true,
 });
@@ -50,7 +52,9 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
 
           if (apply) {
             acc.disablePoi = elem.disablePoi || acc.disablePoi;
-            acc.excludedTagIds.push(...elem.excludedTagIds);
+            acc.disableMinor = elem.disableMinor || acc.disableMinor;
+            acc.excludedTagIds.push(...(elem.excludedTagIds ?? []));
+            acc.excludedFooterLinks.push(...(elem.excludedFooterLinks ?? []));
           }
 
           return acc;
@@ -60,13 +64,13 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
         }
       },
       {
+        disableMinor: false,
         disablePoi: false,
         excludedTagIds: [] as number[],
+        excludedFooterLinks: [] as string[],
       }
     );
-  }, [browsingLevel, data, isLoading]);
-
-  console.log({ settings, browsingLevel, data, isLoading });
+  }, [browsingLevel, data]);
 
   return (
     <BrowsingSettingsAddonsCtx.Provider

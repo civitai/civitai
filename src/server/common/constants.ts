@@ -1121,35 +1121,27 @@ export const colorDomains = {
 };
 export type ColorDomain = keyof typeof colorDomains;
 
-export type DomainSettings = {
-  color: ColorDomain;
-  excludedTagIds: number[];
-  disablePoi: boolean;
-  disableNsfwLevelControl: boolean;
-  systemHomeBlockIds: number[];
-  excludedSystemHomeBlockIds: number[];
-  allowedNsfwLevels: NsfwLevel[];
-  // Optionally defines what value to look for in the user for this domain.
-  browsingLevelKey: 'browsingLevel' | 'redBrowsingLevel';
-  publicNsfwLevels?: NsfwLevel[];
-  // Doing any here is a bit dangerous, but we need to do it for the red domain.
-  generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
-  appendedAdminAttentionReasons?: string[];
-};
-
 export type BrowsingSettingsAddon = {
   type: 'all' | 'some' | 'none';
   nsfwLevels: NsfwLevel[];
-  disablePoi: boolean;
-  excludedTagIds: number[];
+  disablePoi?: boolean;
+  disableMinor?: boolean;
+  excludedTagIds?: number[];
   generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
+  excludedFooterLinks?: string[];
 };
 
 export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   {
+    type: 'none',
+    nsfwLevels: nsfwBrowsingLevelsArray,
+    excludedFooterLinks: [],
+  },
+  {
     type: 'some',
     nsfwLevels: nsfwBrowsingLevelsArray,
     disablePoi: true,
+    disableMinor: true,
     excludedTagIds: [
       792, //marijuana
       793, //weed

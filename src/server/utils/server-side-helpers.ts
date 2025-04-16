@@ -3,7 +3,6 @@ import { GetServerSidePropsContext, GetServerSidePropsResult, Redirect } from 'n
 import { Session } from 'next-auth';
 import superjson from 'superjson';
 import { Tracker } from '~/server/clickhouse/client';
-import { DomainSettings, getRequestDomainColor } from '~/server/common/constants';
 
 import { appRouter } from '~/server/routers';
 import { FeatureAccess, getFeatureFlagsLazy } from '~/server/services/feature-flags.service';
