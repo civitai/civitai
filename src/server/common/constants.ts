@@ -89,6 +89,7 @@ export const constants = {
     'CogVideoX',
     'NoobAI',
     'Wan Video',
+    'HiDream',
     'Other',
   ],
   hiddenBaseModels: [
@@ -114,7 +115,8 @@ export const constants = {
     'Config',
     'Archive',
   ],
-  trainingModelTypes: ['Character', 'Style', 'Concept'],
+  trainingMediaTypes: ['image', 'video'],
+  trainingModelTypes: ['Character', 'Style', 'Concept', 'Effect'],
   baseModelTypes: ['Standard', 'Inpainting', 'Refiner', 'Pix2Pix'],
   modelFileFormats: ['SafeTensor', 'PickleTensor', 'GGUF', 'Diffusers', 'Core ML', 'ONNX', 'Other'],
   modelFileSizes: ['full', 'pruned'],
@@ -461,7 +463,6 @@ export const MAX_ANIMATION_DURATION_SECONDS = 30;
 export const MAX_POST_IMAGES_WIDTH = 800;
 
 export type BaseModelType = (typeof constants.baseModelTypes)[number];
-
 export type BaseModel = (typeof constants.baseModels)[number];
 
 class BaseModelSet<TBaseModel> {
@@ -543,6 +544,7 @@ export const baseModelSets = {
   CogVideoX: new BaseModelSet({ name: 'CogVideoX', baseModels: ['CogVideoX'] }),
   NoobAI: new BaseModelSet({ name: 'NoobAI', baseModels: ['NoobAI'] }),
   WanVideo: new BaseModelSet({ name: 'Wan Video', baseModels: ['Wan Video'] }),
+  HiDream: new BaseModelSet({ name: 'HiDream', baseModels: ['HiDream'] }),
 };
 
 type BaseModelSets = typeof baseModelSets;
@@ -645,6 +647,10 @@ export const baseLicenses: Record<string, LicenseDetails> = {
     url: 'https://huggingface.co/Laxhar/noobai-XL-1.0/blob/main/README.md#model-license',
     name: 'NoobAI License',
   },
+  mit: {
+    url: 'https://huggingface.co/datasets/choosealicense/licenses/blob/main/markdown/mit.md',
+    name: 'MIT',
+  },
 };
 
 export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = {
@@ -691,6 +697,7 @@ export const baseModelLicenses: Record<BaseModel, LicenseDetails | undefined> = 
   CogVideoX: baseLicenses['cogvideox license'],
   NoobAI: baseLicenses['noobAi'],
   'Wan Video': baseLicenses['apache 2.0'],
+  HiDream: baseLicenses['mit'],
 };
 
 export type ModelFileType = (typeof constants.modelFileTypes)[number];

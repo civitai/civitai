@@ -165,7 +165,7 @@ function withSubstitute(resources: GenerationResource[]) {
   });
 }
 
-const stripWeightDate = new Date('03-14-2025');
+// const stripWeightDate = new Date('03-14-2025');
 async function transformParams(
   data: Record<string, any>,
   remixOf?: RemixOfProps
@@ -279,26 +279,24 @@ export function useVideoGenerationWorkflows() {
     })
     .filter(isDefined);
 
-  const sourceImage = useGenerationFormStore((state) => state.sourceImage);
   const availableEngines = Object.keys(engineDefinitions)
-    .filter((key) =>
-      workflows
-        ?.filter((x) => {
-          return sourceImage ? x.subType === 'img2vid' : x.subType === 'txt2vid';
-        })
-        .some((x) => x.engine === key)
-    )
+    .filter((key) => workflows?.some((x) => x.engine === key))
     .map((key) => ({ key, ...engineDefinitions[key] }));
 
   return { data: workflows, availableEngines, isLoading };
 }
 
 export function useSelectedVideoWorkflow() {
-  const { data } = useVideoGenerationWorkflows();
+  const { data, availableEngines } = useVideoGenerationWorkflows();
   const selectedEngine = useGenerationFormStore((state) => state.engine);
   const sourceImage = useGenerationFormStore((state) => state.sourceImage);
-  const workflows = data.filter(({ subType, type }) =>
-    type === 'video' && sourceImage ? subType.startsWith('img') : subType.startsWith('txt')
+  let workflowsByEngine = data.filter((x) => x.engine === selectedEngine);
+  if (!workflowsByEngine.length)
+    workflowsByEngine = data.filter((x) => x.engine === availableEngines[0].key);
+
+  return (
+    workflowsByEngine.find(({ subType, type }) =>
+      type === 'video' && sourceImage ? subType.startsWith('img') : subType.startsWith('txt')
+    ) ?? workflowsByEngine[0]
   );
-  return workflows.find((x) => x.engine === selectedEngine) ?? workflows[0];
 }

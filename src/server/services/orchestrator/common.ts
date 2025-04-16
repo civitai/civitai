@@ -433,6 +433,13 @@ export async function formatGenerationResponse(workflows: Workflow[], user?: Ses
         }, 0) ?? 0,
       cost: workflow.cost,
       tags: workflow.tags ?? [],
+      duration:
+        workflow.startedAt && workflow.completedAt
+          ? Math.round(
+              new Date(workflow.completedAt).getTime() / 1000 -
+                new Date(workflow.startedAt).getTime() / 1000
+            )
+          : undefined,
       steps: (workflow.steps ?? [])?.map((step) =>
         formatWorkflowStep({
           workflowId: workflow.id as string,

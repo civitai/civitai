@@ -2858,6 +2858,11 @@ model EntityCollaborator {
   @@index([userId, entityType, entityId]) // Include status in the migration.
 }
 
+model EcosystemCheckpoints {
+  id   Int    @id
+  name String
+}
+
 model Club {
   id            Int     @id @default(autoincrement())
   userId        Int
@@ -3400,6 +3405,7 @@ model AuctionBase {
   active       Boolean     @default(true)
   runForDays   Int         @default(1)
   validForDays Int         @default(1)
+  description  String?
 
   auctions      Auction[]
   recurringBids BidRecurring[]

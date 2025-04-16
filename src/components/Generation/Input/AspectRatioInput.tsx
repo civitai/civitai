@@ -6,8 +6,9 @@ import {
   SegmentedControl,
   Slider,
   Text,
+  TextInput,
 } from '@mantine/core';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { InputNumber } from '~/libs/form';
 import { getRoundedWidthHeight } from '~/shared/constants/generation.constants';

@@ -45,22 +45,24 @@ import { AdvancedSettings } from '~/components/Training/Form/TrainingSubmitAdvan
 import { ModelSelect } from '~/components/Training/Form/TrainingSubmitModelSelect';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { BaseModel } from '~/server/common/constants';
-import { ModelFileCreateInput } from '~/server/schema/model-file.schema';
-import {
+import type { BaseModel } from '~/server/common/constants';
+import type { ModelFileCreateInput } from '~/server/schema/model-file.schema';
+import type {
   ModelVersionUpsertInput,
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
 } from '~/server/schema/model-version.schema';
-import { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
+import type { ImageTrainingRouterWhatIfSchema } from '~/server/schema/orchestrator/training.schema';
 import { Currency, ModelUploadType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
   defaultRun,
+  defaultRunVideo,
   defaultTrainingState,
+  defaultTrainingStateVideo,
   trainingStore,
   useTrainingImageStore,
 } from '~/store/training.store';
-import { TrainingModelData } from '~/types/router';
+import type { TrainingModelData } from '~/types/router';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -68,6 +70,7 @@ import {
   isInvalidRapid,
   isValidRapid,
   rapidEta,
+  type TrainingBaseModelType,
   trainingModelInfo,
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
@@ -78,6 +81,8 @@ const maxRuns = 5;
 const maxSteps =
   (trainingSettings.find((ts) => ts.name === 'targetSteps') as NumberTrainingSettingsType).max ??
   10000;
+
+const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan'];
 
 const useStyles = createStyles((theme) => ({
   sticky: {
@@ -96,12 +101,22 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const thisFile = thisModelVersion.files[0];
   const thisMetadata = thisFile?.metadata as FileMetadata | null;
   const thisNumImages = thisMetadata?.numImages;
+  const thisMediaType = thisTrainingDetails?.mediaType ?? 'image';
 
   const { addRun, removeRun, updateRun } = trainingStore;
-  const { runs } = useTrainingImageStore((state) => state[model.id] ?? { ...defaultTrainingState });
+  const { runs } = useTrainingImageStore(
+    (state) =>
+      state[model.id] ?? {
+        ...(thisMediaType === 'video' ? defaultTrainingStateVideo : defaultTrainingState),
+      }
+  );
 
   const [selectedRunIndex, setSelectedRunIndex] = useState<number>(0);
-  const selectedRun = runs[selectedRunIndex] ?? defaultRun;
+  const selectedRun =
+    runs[selectedRunIndex] ?? (thisMediaType === 'video' ? defaultRunVideo : defaultRun);
+
+  const allLabeled =
+    thisMediaType === 'video' ? (thisMetadata?.numCaptions ?? 0) >= (thisNumImages ?? 0) : true;
 
   const [multiMode, setMultiMode] = useState(runs.length > 1);
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
@@ -176,7 +191,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     const cost = dryRunResult.data?.cost;
     if (!isDefined(cost) || cost < 0) {
       if (!selectedRun.hasIssue) {
-        updateRun(model.id, selectedRun.id, { hasIssue: true, buzzCost: -1 });
+        updateRun(model.id, thisMediaType, selectedRun.id, { hasIssue: true, buzzCost: -1 });
         showErrorNotification({
           title: 'Error computing cost',
           error: new Error(
@@ -186,7 +201,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         });
       }
     } else if (cost !== selectedRun.buzzCost) {
-      updateRun(model.id, selectedRun.id, { hasIssue: false, buzzCost: cost });
+      updateRun(model.id, thisMediaType, selectedRun.id, { hasIssue: false, buzzCost: cost });
     }
   }, [dryRunResult.data?.cost, dryRunResult.isLoading, runs.length]);
 
@@ -547,7 +562,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               leftIcon={<IconPlus size={16} />}
               disabled={runs.length >= maxRuns}
               onClick={() => {
-                addRun(model.id);
+                addRun(model.id, thisMediaType);
                 setSelectedRunIndex(runs.length);
               }}
               styles={{
@@ -565,7 +580,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               leftIcon={<IconCopy size={16} />}
               disabled={runs.length >= maxRuns}
               onClick={() => {
-                addRun(model.id, selectedRun);
+                addRun(model.id, thisMediaType, selectedRun);
                 setSelectedRunIndex(runs.length);
               }}
               styles={{
@@ -583,7 +598,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
               leftIcon={<IconX size={16} />}
               disabled={runs.length <= 1}
               onClick={() => {
-                removeRun(model.id, selectedRun.id);
+                removeRun(model.id, thisMediaType, selectedRun.id);
                 setSelectedRunIndex(0);
               }}
               styles={{
@@ -618,9 +633,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         <Divider />
       </Stack>
 
-      <ModelSelect selectedRun={selectedRun} modelId={model.id} numImages={thisNumImages} />
+      <ModelSelect
+        selectedRun={selectedRun}
+        modelId={model.id}
+        mediaType={thisMediaType}
+        numImages={thisNumImages}
+      />
 
-      {['flux', 'sd35'].includes(selectedRun.baseType) &&
+      {prefersCaptions.includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'caption' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -648,7 +668,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
             </Group>
           </AlertWithIcon>
         )}
-      {!['flux', 'sd35'].includes(selectedRun.baseType) &&
+      {!prefersCaptions.includes(selectedRun.baseType) &&
         thisMetadata?.labelType !== 'tag' &&
         (thisMetadata?.numCaptions ?? 0) > 0 && (
           <AlertWithIcon
@@ -677,10 +697,27 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           </AlertWithIcon>
         )}
 
+      {!allLabeled && (
+        <AlertWithIcon
+          icon={<IconAlertTriangle size={16} />}
+          iconColor="yellow"
+          radius={0}
+          size="md"
+          color="yellow"
+          mt="sm"
+        >
+          <Group spacing="sm" position="apart" noWrap>
+            <Text>Video training requires that all images are labeled.</Text>
+            <Button onClick={() => goBack(model.id, thisStep)}>Go back and fix</Button>
+          </Group>
+        </AlertWithIcon>
+      )}
+
       {formBaseModel && (
         <>
           <AdvancedSettings
             modelId={model.id}
+            mediaType={thisMediaType}
             selectedRun={selectedRun}
             maxSteps={maxSteps}
             numImages={thisNumImages}
@@ -703,7 +740,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   labelPosition="left"
                   checked={selectedRun.highPriority}
                   onChange={(event) =>
-                    updateRun(model.id, selectedRun.id, {
+                    updateRun(model.id, thisMediaType, selectedRun.id, {
                       highPriority: event.currentTarget.checked,
                     })
                   }
@@ -715,7 +752,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
                   labelPosition="left"
                   checked={selectedRun.staging}
                   onChange={(event) =>
-                    updateRun(model.id, selectedRun.id, {
+                    updateRun(model.id, thisMediaType, selectedRun.id, {
                       staging: event.currentTarget.checked,
                     })
                   }
@@ -807,6 +844,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
           disabled={
             blockedModels.includes(formBaseModel ?? '') ||
             !status.available ||
+            !allLabeled ||
             awaitInvalidate ||
             dryRunResult.isLoading
           }

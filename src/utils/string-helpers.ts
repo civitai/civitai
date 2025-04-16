@@ -62,6 +62,8 @@ const nameOverrides: Record<string, string> = {
   NoobAI: 'NoobAI',
   InternalValue: 'Internal Value',
   ACH: 'ACH',
+  HiDream: 'HiDream',
+  'Wan Video': 'WAN Video',
 };
 
 export function getDisplayName(

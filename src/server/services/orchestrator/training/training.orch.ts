@@ -1,13 +1,14 @@
-import {
+import type {
   FluxDevFastImageResourceTrainingInput,
   ImageResourceTrainingStep,
   ImageResourceTrainingStepTemplate,
   KohyaImageResourceTrainingInput,
+  MusubiImageResourceTrainingInput,
 } from '@civitai/client';
 import { env } from '~/env/server';
 import { constants } from '~/server/common/constants';
 import { dbWrite } from '~/server/db/client';
-import {
+import type {
   ImageTrainingStepSchema,
   ImageTrainingWorkflowSchema,
   ImageTraininWhatIfWorkflowSchema,
@@ -106,6 +107,16 @@ const createTrainingStep_Run = (
   } else if (engine === 'flux-dev-fast') {
     const input: FluxDevFastImageResourceTrainingInput = {
       ...inputBase,
+      engine,
+    };
+    return {
+      ...base,
+      input,
+    };
+  } else if (engine === 'musubi') {
+    const input: MusubiImageResourceTrainingInput = {
+      ...inputBase,
+      ...params,
       engine,
     };
     return {

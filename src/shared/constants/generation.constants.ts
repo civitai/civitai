@@ -6,9 +6,9 @@ import {
   generation,
   generationConfig,
   getGenerationConfig,
-  Sampler,
   maxUpscaleSize,
   minDownscaleSize,
+  Sampler,
 } from '~/server/common/constants';
 import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
@@ -542,11 +542,25 @@ export const baseModelResourceTypes = {
     { type: ModelType.Checkpoint, baseModels: baseModelSets.SD3_5M.baseModels },
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
+  HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
     return baseModelResourceTypes[baseModel as SupportedBaseModel];
 }
+
+export const miscModelTypes: ModelType[] = [
+  'AestheticGradient',
+  'Hypernetwork',
+  'Controlnet',
+  'Upscaler',
+  'MotionModule',
+  'Poses',
+  'Wildcards',
+  'Workflows',
+  'Detection',
+  'Other',
+] as const;
 
 export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
@@ -620,6 +634,11 @@ export const engineDefinitions: EnginesDictionary = {
   hunyuan: {
     label: 'Hunyuan',
     description: ``,
+    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft'],
+  },
+  wan: {
+    label: 'Wan',
+    description: '',
     whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft'],
   },
   vidu: {

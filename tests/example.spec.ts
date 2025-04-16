@@ -20,7 +20,7 @@ test.describe('examples', () => {
 
   test('validate mod user', async ({ page }) => {
     await page.goto('/user/account');
-    await expect(page.getByRole('textbox', { name: 'Name' })).toHaveValue('test-mod');
+    await expect(page.getByRole('textbox', { name: 'Name' })).toHaveValue('test_mod');
   });
 
   test('chat button', async ({ page, isMobile }) => {

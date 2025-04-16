@@ -48,5 +48,7 @@ export const viduVideoGenerationConfig = [viduTxt2ImgConfig];
 export function ViduInput({
   ...args
 }: z.infer<(typeof viduVideoGenerationConfig)[number]['schema']>): ViduVideoGenInput {
+  // const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
+  // return { ...args, sourceImage };
   return { ...args };
 }
