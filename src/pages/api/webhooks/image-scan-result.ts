@@ -184,7 +184,7 @@ async function handleSuccess({
   result,
 }: BodyProps) {
   // this is a temporary solution to add all clavata tags to the table `ShadowTagsOnImage`
-  if (source === 'Clavata') {
+  if (source === TagSource.Clavata) {
     const response = await getTagsFromIncomingTags({ id, tags: incomingTags, source });
     if (!response) return;
     const { tags } = response;
