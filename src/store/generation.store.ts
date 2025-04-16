@@ -73,6 +73,7 @@ export const useGenerationStore = create<GenerationState>()(
             const result = await fetchGenerationData(input);
             const { remixOf, ...data } = result;
             const { params } = await transformParams(data.params, remixOf);
+            if (params.engine) useGenerationFormStore.setState({ engine: params.engine });
 
             if (isMedia) {
               useRemixStore.setState({

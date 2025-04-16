@@ -149,7 +149,7 @@ export function QueueItem({
 
   const handleGenerate = () => {
     generationStore.setData({
-      resources: step.resources ?? [],
+      resources: (step.resources as any) ?? [],
       params: { ...(step.params as any), seed: undefined },
       remixOfId: step.metadata?.remixOfId,
       type: images[0].type, // TODO - type based off type of media
@@ -217,7 +217,7 @@ export function QueueItem({
                     variant="badge"
                   />
                 )}
-              {request.duration && currentUser?.isModerator && (
+              {!!request.duration && currentUser?.isModerator && (
                 <Badge color="yellow">Duration: {request.duration}</Badge>
               )}
             </div>

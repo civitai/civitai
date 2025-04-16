@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { uniq } from 'lodash-es';
-import { getModelTypesForAuction } from '~/components/Auction/auction.utils';
+import { getModelTypesForAuction, miscAuctionName } from '~/components/Auction/auction.utils';
 import { NotificationCategory, SignalMessages, SignalTopic } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
@@ -43,6 +43,7 @@ export const auctionBaseSelect = Prisma.validator<Prisma.AuctionBaseSelect>()({
   ecosystem: true,
   name: true,
   slug: true,
+  description: true,
 });
 
 export const auctionSelect = Prisma.validator<Prisma.AuctionSelect>()({
@@ -81,6 +82,21 @@ export async function getAllAuctions() {
     where: { startAt: { lte: now }, endAt: { gt: now } },
     select: auctionSelect,
     orderBy: { auctionBase: { ecosystem: { sort: 'asc', nulls: 'first' } } },
+  });
+
+  aData.sort((a, b) => {
+    if (
+      a.auctionBase.ecosystem === miscAuctionName &&
+      b.auctionBase.ecosystem !== miscAuctionName
+    ) {
+      return 1;
+    } else if (
+      a.auctionBase.ecosystem !== miscAuctionName &&
+      b.auctionBase.ecosystem === miscAuctionName
+    ) {
+      return -1;
+    }
+    return 0;
   });
 
   return aData.map((ad) => {
@@ -396,7 +412,10 @@ export const createBid = async ({
     const matchAllowed = allowedTypeData.find((a) => a.type === mv.model.type);
     if (!matchAllowed) throw throwBadRequestError('Invalid model type for this auction.');
 
-    if (!!auctionData.auctionBase.ecosystem) {
+    if (
+      !!auctionData.auctionBase.ecosystem &&
+      auctionData.auctionBase.ecosystem !== miscAuctionName
+    ) {
       if (!(matchAllowed.baseModels ?? []).includes(mv.baseModel))
         throw throwBadRequestError('Invalid model ecosystem for this auction.');
     }

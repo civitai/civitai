@@ -3405,6 +3405,7 @@ model AuctionBase {
   active       Boolean     @default(true)
   runForDays   Int         @default(1)
   validForDays Int         @default(1)
+  description  String?
 
   auctions      Auction[]
   recurringBids BidRecurring[]
