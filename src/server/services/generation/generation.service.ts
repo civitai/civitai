@@ -7,6 +7,7 @@ import { getGenerationConfig } from '~/server/common/constants';
 
 import { EntityAccessPermission, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead } from '~/server/db/client';
+import { baseModelEngineMap } from '~/server/orchestrator/generation/generation.config';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { GetByIdInput } from '~/server/schema/base.schema';
 import {
@@ -50,7 +51,7 @@ import { fromJson, toJson } from '~/utils/json-helpers';
 import { cleanPrompt } from '~/utils/metadata/audit';
 import { findClosest } from '~/utils/number-helpers';
 import { removeNulls } from '~/utils/object-helpers';
-import { parseAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 type GenerationResourceSimple = {
@@ -260,7 +261,6 @@ export const getGenerationData = async ({
   }
 };
 
-type ResourceType = 'generation' | 'all';
 async function getMediaGenerationData({
   id,
   user,
@@ -300,29 +300,27 @@ async function getMediaGenerationData({
     negativePrompt,
   };
 
+  const imageResources = await dbRead.imageResourceNew.findMany({
+    where: { imageId: id },
+    select: { imageId: true, modelVersionId: true, strength: true },
+  });
+  const versionIds = [...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined))];
+  const fn = generation ? getGenerationResourceData : getResourceData;
+  const resources = await fn({ ids: versionIds, user }).then((data) =>
+    data.map((item) => {
+      const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
+      return {
+        ...item,
+        strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
+      };
+    })
+  );
+  const baseModel = getBaseModelFromResources(
+    resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+  );
+
   switch (media.type) {
     case 'image':
-      const imageResources = await dbRead.imageResourceNew.findMany({
-        where: { imageId: id },
-        select: { imageId: true, modelVersionId: true, strength: true },
-      });
-      const versionIds = [
-        ...new Set(imageResources.map((x) => x.modelVersionId).filter(isDefined)),
-      ];
-      const fn = generation ? getGenerationResourceData : getResourceData;
-      const resources = await fn({ ids: versionIds, user }).then((data) =>
-        data.map((item) => {
-          const imageResource = imageResources.find((x) => x.modelVersionId === item.id);
-          return {
-            ...item,
-            strength: imageResource?.strength ? imageResource.strength / 100 : item.strength,
-          };
-        })
-      );
-      const baseModel = getBaseModelFromResources(
-        resources.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
-      );
-
       let aspectRatio = '0';
       try {
         if (width && height) {
@@ -376,15 +374,17 @@ async function getMediaGenerationData({
         },
       };
     case 'video':
+      const engine = baseModelEngineMap[baseModel];
       return {
         remixOfId: media.id, // TODO - remove,
         remixOf,
-        resources: [] as GenerationResource[],
+        resources,
         params: {
           ...(media.meta as Record<string, any>),
           ...common,
           width,
           height,
+          engine,
         },
       };
     case 'audio':
@@ -413,14 +413,18 @@ const getModelVersionGenerationData = async ({
   }
 
   const deduped = uniqBy(resources, 'id');
+  const baseModel = getBaseModelFromResources(
+    deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
+  );
+
+  const engine = baseModelEngineMap[baseModel];
 
   return {
     resources: deduped,
     params: {
-      baseModel: getBaseModelFromResources(
-        deduped.map((x) => ({ modelType: x.model.type, baseModel: x.baseModel }))
-      ),
+      baseModel,
       clipSkip: checkpoint?.clipSkip ?? undefined,
+      engine,
     },
   };
 };
@@ -562,6 +566,12 @@ export async function getResourceData({
 
     return {
       ...item,
+      air: stringifyAIR({
+        baseModel: item.baseModel,
+        type: item.model.type,
+        modelId: item.model.id,
+        id: item.id,
+      }),
       minStrength: settings?.minStrength ?? -1,
       maxStrength: settings?.maxStrength ?? 2,
       strength: settings?.strength ?? 1,

@@ -257,6 +257,11 @@ export const AuctionInfo = () => {
       ) : (
         <Stack>
           <Title order={3}>{auctionData?.auctionBase?.name ?? 'Loading...'}</Title>
+          {!!auctionData?.auctionBase?.description && (
+            <Text size="md" color="dimmed" fs="italic">
+              {auctionData.auctionBase.description}
+            </Text>
+          )}
 
           <Paper
             shadow="xs"

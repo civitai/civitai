@@ -7,6 +7,7 @@ import {
   textEnhancementSchema,
   imageEnhancementSchema,
   promptSchema,
+  resourceSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
 
@@ -23,6 +24,7 @@ const baseWanSchema = z.object({
   seed: seedSchema,
   draft: z.boolean().optional(),
   steps: z.number().default(20),
+  resources: z.array(resourceSchema.passthrough()).default([]),
 });
 
 const wanTxt2VidSchema = textEnhancementSchema.merge(baseWanSchema).extend({
@@ -51,6 +53,7 @@ export const wanVideoGenerationConfig = [wanTxt2ImgConfig, wanImg2VidConfig];
 
 export function WanInput({
   draft,
+  resources,
   ...args
 }: z.infer<(typeof wanVideoGenerationConfig)[number]['schema']>): WanVdeoGenInput {
   const resolution = draft ? 420 : 640;
@@ -64,5 +67,12 @@ export function WanInput({
     : wanAspectRatioMap[args.aspectRatio];
   const { width, height } = ar.getSize(resolution);
 
-  return { ...args, width, height, sourceImage, duration: 5 };
+  return {
+    ...args,
+    width,
+    height,
+    sourceImage,
+    duration: 5,
+    loras: resources.map(({ air, strength }) => ({ air, strength })),
+  };
 }

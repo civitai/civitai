@@ -57,7 +57,6 @@ class TipaltiCaller extends HttpCaller {
     });
 
     const data = await response.json();
-    console.log(data, response.status);
 
     if (!data.access_token) throw new Error('Failed to get Tipalti access token');
 
@@ -76,7 +75,6 @@ class TipaltiCaller extends HttpCaller {
   }
 
   async getPayeeByRefCode(refCode: string) {
-    console.log('DOING SEARC');
     const response = await this.getRaw(`/payees`, {
       queryParams: { filter: `refCode=="${refCode}"` },
     });
@@ -97,11 +95,9 @@ class TipaltiCaller extends HttpCaller {
 
   async createPayee(payee: Tipalti.CreatePayeeInput) {
     try {
-      console.log(payee);
       // First, check if it exists:
       const existingPayee = await this.getPayeeByRefCode(payee.refCode);
 
-      console.log('May not exist???', existingPayee);
       if (existingPayee) {
         return existingPayee;
       }
@@ -155,7 +151,6 @@ class TipaltiCaller extends HttpCaller {
     };
 
     const qs = QS.stringify(params);
-    console.log(qs);
     const hashkey = createHmac('sha256', env.TIPALTI_IFRAME_KEY).update(qs).digest('hex');
     const url = `${baseUrl}${dashboard}?${qs}&hashkey=${hashkey}`;
     return url;

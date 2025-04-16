@@ -6,9 +6,9 @@ import {
   generation,
   generationConfig,
   getGenerationConfig,
-  Sampler,
   maxUpscaleSize,
   minDownscaleSize,
+  Sampler,
 } from '~/server/common/constants';
 import { videoGenerationConfig } from '~/server/orchestrator/generation/generation.config';
 import { GenerationLimits } from '~/server/schema/generation.schema';
@@ -316,6 +316,9 @@ export function getBaseModelFromResources<T extends { modelType: ModelType; base
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'NoobAI')) return 'NoobAI';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3')) return 'SD3';
   else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'SD3_5M')) return 'SD3_5M';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'HyV1')) return 'HyV1';
+  else if (resources.some((x) => getBaseModelSetType(x.baseModel) === 'WanVideo'))
+    return 'WanVideo';
   else return 'SD1';
 }
 
@@ -543,11 +546,25 @@ export const baseModelResourceTypes = {
     { type: ModelType.LORA, baseModels: baseModelSets.SD3_5M.baseModels },
   ],
   HyV1: [{ type: ModelType.LORA, baseModels: baseModelSets.HyV1.baseModels }],
+  WanVideo: [{ type: ModelType.LORA, baseModels: baseModelSets.WanVideo.baseModels }],
 };
 export function getBaseModelResourceTypes(baseModel: string) {
   if (baseModel in baseModelResourceTypes)
     return baseModelResourceTypes[baseModel as SupportedBaseModel];
 }
+
+export const miscModelTypes: ModelType[] = [
+  'AestheticGradient',
+  'Hypernetwork',
+  'Controlnet',
+  'Upscaler',
+  'MotionModule',
+  'Poses',
+  'Wildcards',
+  'Workflows',
+  'Detection',
+  'Other',
+] as const;
 
 export const fluxStandardAir = 'urn:air:flux1:checkpoint:civitai:618692@691639';
 export const fluxUltraAir = 'urn:air:flux1:checkpoint:civitai:618692@1088507';
@@ -621,7 +638,7 @@ export const engineDefinitions: EnginesDictionary = {
   hunyuan: {
     label: 'Hunyuan',
     description: ``,
-    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft'],
+    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft', 'resources'],
   },
   wan: {
     label: 'Wan',

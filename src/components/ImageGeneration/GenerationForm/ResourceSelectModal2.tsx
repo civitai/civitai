@@ -109,7 +109,7 @@ import {
 // type SelectValue =
 //   | ({ kind: 'generation' } & GenerationResource)
 //   | { kind: 'training' | 'addResource' | 'modelVersion' };
-type GenerationResourceWithImage = GenerationResource & {
+export type GenerationResourceWithImage = GenerationResource & {
   image: SearchIndexDataMap['models'][number]['images'][number];
 };
 export type ResourceSelectModalProps = {
@@ -393,7 +393,7 @@ function ResourceSelectModalContent() {
     if (selectSource === 'generation') {
       if (!!steps) {
         const usedResources = uniq(
-          steps.flatMap(({ resources }) => resources.map((r) => r.model.id))
+          steps.flatMap(({ resources }) => resources.map((r: any) => r.model.id))
         );
         meiliFilters.push(`id IN [${usedResources.join(',')}]`);
       }
