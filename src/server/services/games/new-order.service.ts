@@ -46,6 +46,8 @@ import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
 
+const FERVOR_COEFFICIENT = -0.0025;
+
 export async function joinGame({ userId }: { userId: number }) {
   const user = await dbRead.user.findUnique({
     where: { id: userId },
@@ -436,7 +438,7 @@ export function calculateFervor({
   allJudgements: number;
 }) {
   const correctPercentage = correctJudgements / (allJudgements || 1);
-  return correctJudgements * correctPercentage * Math.E ** (allJudgements * -0.025);
+  return correctJudgements * correctPercentage * Math.E ** (allJudgements * FERVOR_COEFFICIENT);
 }
 
 export async function resetPlayer({ playerId }: { playerId: number }) {
@@ -616,7 +618,7 @@ async function getImageRaters({ imageIds }: { imageIds: number[] }) {
     imageId: number;
     rating: NsfwLevel;
   }>`
-    SELECT "userId", "imageId", "rating"
+    SELECT DISTINCT("userId"), "imageId", "rating"
     FROM knights_new_order_image_rating
     WHERE "imageId" IN (${imageIds})
   `;

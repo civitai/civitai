@@ -13,7 +13,6 @@ import {
   SignalTopic,
 } from '~/server/common/enums';
 import { AddImageRatingInput, GetHistoryInput } from '~/server/schema/games/new-order.schema';
-import { smitePlayer } from '~/server/services/games/new-order.service';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -25,6 +24,8 @@ export const useKnightsNewOrderListener = () => {
 
   const { playerData } = useJoinKnightsNewOrder();
 
+  // TODO.newOrder: rename this topic for global signals
+  useSignalTopic(SignalTopic.NewOrderPlayer);
   useSignalTopic(playerData ? `${SignalTopic.NewOrderPlayer}:${playerData.id}` : undefined);
   useSignalTopic(playerData ? `${SignalTopic.NewOrderQueue}:${playerData.rankType}` : undefined);
 

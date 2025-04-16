@@ -85,9 +85,7 @@ export const gamesRouter = router({
     getPlayer: guardedProcedure.query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
     getImagesQueue: guardedProcedure
       .input(getImageQueueSchema.optional())
-      .query(({ input, ctx }) =>
-        getImagesQueue({ ...input, playerId: ctx.user.id, isModerator: ctx.user.isModerator })
-      ),
+      .query(({ input, ctx }) => getImagesQueue({ ...input, playerId: ctx.user.id })),
     getHistory: guardedProcedure
       .input(getHistorySchema)
       .query(({ input, ctx }) => getPlayerHistory({ ...input, playerId: ctx.user.id })),
