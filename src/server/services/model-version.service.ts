@@ -1488,6 +1488,7 @@ export type GenerationResourceDataModel = {
   earlyAccessEndsAt: Date | null;
   earlyAccessConfig?: ModelVersionEarlyAccessConfig | null;
   covered: boolean | null;
+  air: string;
   model: {
     id: number;
     name: string;

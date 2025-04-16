@@ -1,21 +1,21 @@
-import { Text, Alert, ThemeIcon, Code, Paper } from '@mantine/core';
-import { useRouter } from 'next/router';
-import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
-import { BuiltInProviderType } from 'next-auth/providers';
-import { SocialButton, providers } from '~/components/Social/SocialButton';
-import { signIn } from 'next-auth/react';
+import { Alert, Code, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconExclamationMark, IconMail } from '@tabler/icons-react';
-import { SignInError } from '~/components/SignInError/SignInError';
-import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
-import { trpc } from '~/utils/trpc';
-import { useEffect, useState, useRef } from 'react';
+import dayjs from 'dayjs';
+import { BuiltInProviderType } from 'next-auth/providers';
+import { signIn } from 'next-auth/react';
+import { useRouter } from 'next/router';
+import { useEffect, useRef, useState } from 'react';
 import { CreatorCardV2 } from '~/components/CreatorCard/CreatorCard';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
-import { Currency } from '~/shared/utils/prisma/enums';
-import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
-import { setCookie } from '~/utils/cookies-helpers';
-import dayjs from 'dayjs';
+import { EmailLogin } from '~/components/EmailLogin/EmailLogin';
+import { useReferralsContext } from '~/components/Referrals/ReferralsProvider';
+import { SignInError } from '~/components/SignInError/SignInError';
+import { providers, SocialButton } from '~/components/Social/SocialButton';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
+import { Currency } from '~/shared/utils/prisma/enums';
+import { setCookie } from '~/utils/cookies-helpers';
+import { LoginRedirectReason, loginRedirectReasons, trackedReasons } from '~/utils/login-helpers';
+import { trpc } from '~/utils/trpc';
 
 export function LoginContent(args: {
   returnUrl?: string;
@@ -111,26 +111,29 @@ export function LoginContent(args: {
               }}
             />
           ))}
-          <Text className="text-center text-sm font-semibold">Or continue with Email</Text>
+          <Text className="py-2 text-center text-sm font-semibold">Or continue with Email</Text>
           <EmailLogin returnUrl={returnUrl} size="md" status={status} onStatusChange={setStatus} />
         </div>
       ) : (
         <Alert
           icon={
-            <ThemeIcon size="lg">
-              <IconMail size={20} />
+            <ThemeIcon>
+              <IconMail size={18} />
             </ThemeIcon>
           }
+          classNames={{
+            wrapper: 'items-center',
+          }}
         >
-          <div className="flex flex-col">
+          <Stack spacing={0}>
             <Text
               size="md"
-              sx={{ lineHeight: 1.1 }}
+              // sx={{ lineHeight: 1.1 }}
             >{`Check your email for a special login link`}</Text>
             <Text size="xs" color="dimmed">
               Be sure to check your spam...
             </Text>
-          </div>
+          </Stack>
         </Alert>
       )}
 

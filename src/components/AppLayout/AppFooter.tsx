@@ -27,6 +27,10 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Terms of Service',
   },
   {
+    href: '/content/2257',
+    children: '18 U.S.C. §2257',
+  },
+  {
     href: '/content/privacy',
     children: 'Privacy',
   },
@@ -35,29 +39,30 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     children: 'Safety',
     features: (features) => features.safety,
   },
-  {
+  /*   {
     href: '/newsroom',
     children: 'Newsroom',
     features: (features) => features.newsroom,
-  },
+  }, 
   {
     href: '/github/wiki/REST-API-Reference',
     target: '_blank',
     rel: 'nofollow noreferrer',
     children: 'API',
   },
+  */
   {
     href: 'https://status.civitai.com',
     target: '_blank',
     rel: 'nofollow noreferrer',
     children: 'Status',
   },
-  {
+  /*   {
     href: '/wiki',
     target: '_blank',
     rel: 'nofollow noreferrer',
     children: 'Wiki',
-  },
+  }, */
   {
     href: '/education',
     target: '_blank',

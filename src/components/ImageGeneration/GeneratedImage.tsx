@@ -567,7 +567,7 @@ function GeneratedImageWorkflowMenuItems({
   ) {
     handleCloseImageLightbox();
     generationStore.setData({
-      resources: step.resources,
+      resources: step.resources as any,
       params: { ...(step.params as any), seed, ...rest },
       remixOfId: step.metadata?.remixOfId,
       type,

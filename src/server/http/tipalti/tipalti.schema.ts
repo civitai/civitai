@@ -59,6 +59,11 @@ export namespace Tipalti {
     isAccountClosed: z.boolean().optional(),
     isPayable: z.boolean().optional(),
     lastChangeDateTimeUTC: z.string().optional(),
+    paymentMethod: z
+      .object({
+        paymentMethodType: z.string(),
+      })
+      .optional(),
   });
 
   export const createPayeeInvitationResponseSchema = z.object({

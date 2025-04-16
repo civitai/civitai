@@ -1663,6 +1663,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       // Avoids exposing private resources to the public
       `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
     );
+
+    // Require Metadata for images > R rating.
+    filters.push(`(nsfwLevel < ${NsfwLevel.R} OR "userId" = ${currentUserId} OR hasMeta = true)`);
   }
 
   if (postId) {
