@@ -1661,8 +1661,9 @@ model TagsOnImageNew {
 }
 
 model ShadowTagsOnImage {
-  imageId Int
-  tagId   Int
+  imageId    Int
+  tagId      Int
+  confidence Int
 
   @@id([imageId, tagId])
   @@index([tagId])

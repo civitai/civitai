@@ -4,6 +4,7 @@
 CREATE TABLE "ShadowTagsOnImage" (
     "imageId" INTEGER NOT NULL,
     "tagId" INTEGER NOT NULL,
+    "confidence" INTEGER NOT NULL,
 
     CONSTRAINT "ShadowTagsOnImage_pkey" PRIMARY KEY ("imageId","tagId")
 );

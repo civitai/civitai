@@ -185,10 +185,16 @@ async function handleSuccess({
 }: BodyProps) {
   // this is a temporary solution to add all clavata tags to the table `ShadowTagsOnImage`
   if (source === TagSource.Clavata) {
-    const response = await getTagsFromIncomingTags({ id, tags: incomingTags, source });
+    const response = await getTagsFromIncomingTags({
+      id,
+      tags: incomingTags?.filter((x) => x.confidence >= 35),
+      source,
+    });
     if (!response) return;
     const { tags } = response;
-    const data = tags.map((x) => (!!x.id ? { tagId: x.id, imageId: id } : null)).filter(isDefined);
+    const data = tags
+      .map((x) => (!!x.id ? { tagId: x.id, imageId: id, confidence: x.confidence } : null))
+      .filter(isDefined);
     await dbWrite.shadowTagsOnImage.createMany({ data });
     return;
   }

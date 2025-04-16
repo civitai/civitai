@@ -1286,6 +1286,7 @@ export interface TagsOnImageNew {
 export interface ShadowTagsOnImage {
   imageId: number;
   tagId: number;
+  confidence: number;
 }
 
 export interface TagsOnImageVote {
