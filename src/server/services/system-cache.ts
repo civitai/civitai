@@ -241,6 +241,7 @@ export async function getLiveNow() {
 export async function getBrowsingSettingAddons() {
   const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
   if (cached) {
+    console.log('AHA!');
     const data = JSON.parse(cached) as BrowsingSettingsAddon[];
     return data;
   }

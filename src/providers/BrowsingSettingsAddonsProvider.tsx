@@ -1,11 +1,12 @@
 import { createContext, useContext, useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { BrowsingSettingsAddon, DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/server/common/constants';
+import { Flags } from '~/shared/utils';
 import { trpc } from '~/utils/trpc';
 
 const BrowsingSettingsAddonsCtx = createContext<{
   isLoading: boolean;
-  settings: Omit<BrowsingSettingsAddon, 'shouldApply'>;
+  settings: Omit<BrowsingSettingsAddon, 'type' | 'nsfwLevels'>;
 }>({
   settings: {
     disablePoi: false,
@@ -31,12 +32,32 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
   const settings = useMemo(() => {
     return data.reduce(
       (acc, elem) => {
-        if (elem.shouldApply(browsingLevel)) {
-          acc.disablePoi = elem.disablePoi || acc.disablePoi;
-          acc.excludedTagIds.push(...elem.excludedTagIds);
-        }
+        try {
+          let apply = false;
+          if (elem.type === 'some') {
+            apply = Flags.intersection(browsingLevel, Flags.arrayToInstance(elem.nsfwLevels)) !== 0;
+          }
 
-        return acc;
+          if (elem.type === 'all') {
+            apply =
+              Flags.intersection(browsingLevel, Flags.arrayToInstance(elem.nsfwLevels)) ===
+              browsingLevel;
+          }
+
+          if (elem.type === 'none') {
+            apply = Flags.intersection(browsingLevel, Flags.arrayToInstance(elem.nsfwLevels)) === 0;
+          }
+
+          if (apply) {
+            acc.disablePoi = elem.disablePoi || acc.disablePoi;
+            acc.excludedTagIds.push(...elem.excludedTagIds);
+          }
+
+          return acc;
+        } catch (error) {
+          console.error('Error evaluating shouldApply function:', error);
+          return acc;
+        }
       },
       {
         disablePoi: false,
@@ -44,6 +65,8 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
       }
     );
   }, [browsingLevel, data, isLoading]);
+
+  console.log({ settings, browsingLevel, data, isLoading });
 
   return (
     <BrowsingSettingsAddonsCtx.Provider

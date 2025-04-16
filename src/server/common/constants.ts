@@ -16,7 +16,11 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
-import { BrowsingLevel, nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  BrowsingLevel,
+  nsfwBrowsingLevelsArray,
+  nsfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 
 export const constants = {
@@ -1134,7 +1138,8 @@ export type DomainSettings = {
 };
 
 export type BrowsingSettingsAddon = {
-  shouldApply: (nsfwLevel: number) => boolean;
+  type: 'all' | 'some' | 'none';
+  nsfwLevels: NsfwLevel[];
   disablePoi: boolean;
   excludedTagIds: number[];
   generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
@@ -1142,9 +1147,8 @@ export type BrowsingSettingsAddon = {
 
 export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   {
-    shouldApply: (nsfwLevel) => {
-      return Flags.intersects(nsfwLevel, nsfwBrowsingLevelsFlag);
-    },
+    type: 'some',
+    nsfwLevels: nsfwBrowsingLevelsArray,
     disablePoi: true,
     excludedTagIds: [
       792, //marijuana
