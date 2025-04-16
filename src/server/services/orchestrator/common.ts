@@ -489,6 +489,7 @@ function formatWorkflowStep(args: {
     case 'comfy':
       return formatComfyStep(args);
     case 'videoGen':
+    case 'videoEnhancement':
       return formatVideoGenStep(args);
     default:
       throw new Error('failed to extract generation resources: unsupported workflow type');
