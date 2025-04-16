@@ -35,6 +35,7 @@ import {
   fetchThroughCache,
 } from '~/server/utils/cache-helpers';
 import {
+  handleLogError,
   throwBadRequestError,
   throwInternalServerError,
   throwNotFoundError,
@@ -57,7 +58,8 @@ export async function joinGame({ userId }: { userId: number }) {
   if (user.playerInfo) {
     // User is already in game
     const stats = await getPlayerStats({ playerId: userId });
-    return { ...user.playerInfo, stats };
+    const { user: userInfo, ...playerData } = user.playerInfo;
+    return { ...userInfo, ...playerData, stats };
   }
 
   const player = await dbWrite.newOrderPlayer.create({
@@ -65,7 +67,8 @@ export async function joinGame({ userId }: { userId: number }) {
     select: playerInfoSelect,
   });
 
-  return { ...player, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
+  const { user: userInfo, ...playerData } = player;
+  return { ...playerData, ...userInfo, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
 }
 
 export async function getPlayerById({ playerId }: { playerId: number }) {
@@ -75,9 +78,10 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
   });
   if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
 
+  const { user, ...playerData } = player;
   const stats = await getPlayerStats({ playerId });
 
-  return { ...player, stats };
+  return { ...playerData, ...user, stats };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
@@ -116,7 +120,7 @@ export async function smitePlayer({
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
-    data: { playerId, smites: newSmiteCount },
+    data: { stats: { smites: newSmiteCount } },
   });
 
   // TODO.newOrder: send notification
@@ -134,7 +138,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
-    data: { playerId, smites: smiteCount },
+    data: { stats: { smites: smiteCount } },
   });
 
   // TODO.newOrder: send notification
@@ -272,7 +276,7 @@ export async function addImageRating({
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
-    data: { ...stats, playerId },
+    data: { stats },
   });
 
   // Now, process what to do with the image:
@@ -292,7 +296,7 @@ export async function addImageRating({
       processed = true;
       await addImageToQueue({
         imageIds: imageId,
-        rankType: 'God',
+        rankType: 'Inquisitor',
         priority: 1,
       });
     }
@@ -361,7 +365,7 @@ export async function addImageRating({
       processed = true;
       await addImageToQueue({
         imageIds: imageId,
-        rankType: 'God',
+        rankType: 'Inquisitor',
         priority: 1,
       });
     }
@@ -413,11 +417,13 @@ export async function updatePlayerStats({
 
   const stats = { exp: newExp, fervor: newFervor, blessedBuzz };
 
-  signalClient.topicSend({
-    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
-    target: SignalMessages.NewOrderPlayerUpdate,
-    data: { ...stats, playerId },
-  });
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+      target: SignalMessages.NewOrderPlayerUpdate,
+      data: { stats },
+    })
+    .catch(handleLogError);
 
   return { ...stats };
 }
@@ -430,7 +436,7 @@ export function calculateFervor({
   allJudgements: number;
 }) {
   const correctPercentage = correctJudgements / (allJudgements || 1);
-  return correctJudgements * correctPercentage * Math.E ** (allJudgements * -1);
+  return correctJudgements * correctPercentage * Math.E ** (allJudgements * -0.025);
 }
 
 export async function resetPlayer({ playerId }: { playerId: number }) {
@@ -447,7 +453,7 @@ export async function resetPlayer({ playerId }: { playerId: number }) {
     }),
   ]);
 
-  // Reset all counters
+  // Reset all counters for player
   await Promise.all([
     smitesCounter.reset({ id: playerId }),
     correctJudgementsCounter.reset({ id: playerId }),
@@ -461,12 +467,13 @@ export async function resetPlayer({ playerId }: { playerId: number }) {
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
     data: {
-      playerId,
       rankType: NewOrderRankType.Acolyte,
-      exp: 0,
-      fervor: 0,
-      smites: 0,
-      blessedBuzz: 0,
+      stats: {
+        exp: 0,
+        fervor: 0,
+        smites: 0,
+        blessedBuzz: 0,
+      },
     },
   });
 
@@ -494,7 +501,7 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
-async function getRankedImages(userId: number) {
+async function getRatedImages(userId: number) {
   const images = await fetchThroughCache(
     REDIS_KEYS.NEW_ORDER.RATED,
     async () => {
@@ -519,7 +526,7 @@ export async function addImageToQueue({
   priority = 3,
 }: {
   imageIds: number | number[];
-  rankType: NewOrderRankType | 'God';
+  rankType: NewOrderRankType | 'Inquisitor';
   priority?: 1 | 2 | 3;
 }) {
   imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
@@ -555,26 +562,26 @@ export async function getImagesQueue({
 
   const imageIds: number[] = [];
   const rankPools = isModerator
-    ? poolCounters.God
+    ? poolCounters.Inquisitor
     : player.rankType === NewOrderRankType.Templar
     ? [...poolCounters.Templar, ...poolCounters.Knight]
     : poolCounters[player.rankType];
 
-  const ratedImages = await getRankedImages(playerId);
+  const ratedImages = await getRatedImages(playerId);
 
   for (const pool of rankPools) {
     // We multiply by 10 to ensure we get enough images in case some are already rated.
     const images = (await pool.getAll(imageCount * 10)).map(Number);
     if (images.length === 0) continue;
 
-    if (!isModerator) {
-      // Allow mods to see all images regardless of rating.
-      imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
-    }
+    // Allow mods to see all images regardless of rating.
+    if (!isModerator) imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
+    else imageIds.push(...images);
 
     if (imageIds.length >= imageCount) break;
   }
 
+  const imageRaters = await getImageRaters({ imageIds });
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
@@ -591,7 +598,44 @@ export async function getImagesQueue({
   //   });
   // }
 
-  return shuffle(images.slice(0, imageCount));
+  return shuffle(
+    images.slice(0, imageCount).map(({ metadata, ...i }) => {
+      const ratings = imageRaters[i.id];
+
+      return { ...i, ratings, metadata: metadata as ImageMetadata };
+    })
+  );
+}
+
+async function getImageRaters({ imageIds }: { imageIds: number[] }) {
+  if (!clickhouse) throw throwInternalServerError('Not supported');
+  if (imageIds.length === 0) return {};
+
+  const ratings = await clickhouse.$query<{
+    userId: number;
+    imageId: number;
+    rating: NsfwLevel;
+  }>`
+    SELECT "userId", "imageId", "rating"
+    FROM knights_new_order_image_rating
+    WHERE "imageId" IN (${imageIds})
+  `;
+
+  const raters: Record<
+    number,
+    { player: Awaited<ReturnType<typeof getPlayerById>>; rating: NsfwLevel }[]
+  > = {};
+
+  for (const { userId, imageId, rating } of ratings) {
+    if (!raters[imageId]) raters[imageId] = [];
+
+    const player = await getPlayerById({ playerId: userId });
+    if (!player) continue;
+
+    raters[imageId].push({ player, rating });
+  }
+
+  return raters;
 }
 
 async function isImageInQueue({

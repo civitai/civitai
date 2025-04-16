@@ -1,4 +1,5 @@
 import { Button, Kbd, ActionIcon, Tooltip, Text, Modal } from '@mantine/core';
+import { HotkeyItem, useHotkeys } from '@mantine/hooks';
 import { IconArrowBackUp, IconFlag, IconVolumeOff, IconVolume } from '@tabler/icons-react';
 import { useState } from 'react';
 import { damnedReasonOptions, ratingOptions } from '~/components/Games/KnightsNewOrder.utils';
@@ -12,22 +13,85 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Prop
 
   const [showReasons, setShowReasons] = useState(false);
 
+  const hotKeys: HotkeyItem[] = showReasons
+    ? [
+        [
+          '1',
+          () =>
+            onRatingClick({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.InappropriateMinors,
+            }),
+        ],
+        [
+          '2',
+          () =>
+            onRatingClick({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.RealisticMinors,
+            }),
+        ],
+        [
+          '3',
+          () =>
+            onRatingClick({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.InappropriateRealPerson,
+            }),
+        ],
+        [
+          '4',
+          () =>
+            onRatingClick({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.Bestiality,
+            }),
+        ],
+        [
+          '5',
+          () =>
+            onRatingClick({
+              rating: NsfwLevel.Blocked,
+              damnedReason: NewOrderDamnedReason.GraphicViolence,
+            }),
+        ],
+      ]
+    : [
+        ['1', () => onRatingClick({ rating: NsfwLevel.PG })],
+        ['2', () => onRatingClick({ rating: NsfwLevel.PG13 })],
+        ['3', () => onRatingClick({ rating: NsfwLevel.R })],
+        ['4', () => onRatingClick({ rating: NsfwLevel.X })],
+        ['5', () => onRatingClick({ rating: NsfwLevel.XXX })],
+        ['6', () => setShowReasons(true)],
+      ];
+
+  useHotkeys([['m', () => onVolumeClick()], ['Escape', () => setShowReasons(false)], ...hotKeys]);
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex flex-nowrap gap-2">
-        {showReasons ? mobile ? (
-          <Modal title="Select Block Reason" onClose={() => setShowReasons(false)} opened={showReasons} centered>
+        {showReasons ? (
+          mobile ? (
+            <Modal
+              title="Select Block Reason"
+              onClose={() => setShowReasons(false)}
+              opened={showReasons}
+              centered
+            >
+              <DamnedReasonOptions
+                onClick={(damnedReason) =>
+                  onRatingClick({ rating: NsfwLevel.Blocked, damnedReason })
+                }
+                onClose={() => setShowReasons(false)}
+                mobile
+              />
+            </Modal>
+          ) : (
             <DamnedReasonOptions
               onClick={(damnedReason) => onRatingClick({ rating: NsfwLevel.Blocked, damnedReason })}
               onClose={() => setShowReasons(false)}
-              mobile
             />
-          </Modal>
-        ) : (
-          <DamnedReasonOptions
-            onClick={(damnedReason) => onRatingClick({ rating: NsfwLevel.Blocked, damnedReason })}
-            onClose={() => setShowReasons(false)}
-          />
+          )
         ) : (
           <Button.Group>
             {ratingOptions.map((rating) => {

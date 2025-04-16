@@ -9,7 +9,7 @@ import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
 const insertInQueueSchema = z.object({
   action: z.literal('insert-in-queue'),
   imageIds: commaDelimitedNumberArray(),
-  rankType: z.nativeEnum(NewOrderRankType),
+  rankType: z.nativeEnum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const),
   priority: z.coerce.number().default(1),
 });
 const getQueueSchema = z.object({
@@ -18,7 +18,7 @@ const getQueueSchema = z.object({
 });
 const showAllQueuesSchema = z.object({
   action: z.literal('show-all-queues'),
-  rankType: z.nativeEnum(NewOrderRankType).optional(),
+  rankType: z.nativeEnum({ ...NewOrderRankType, Inquisitor: 'Inquisitor' } as const).optional(),
 });
 
 const schema = z.discriminatedUnion('action', [
@@ -33,7 +33,6 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
   if (action === 'insert-in-queue') {
     const { imageIds, rankType, priority } = payload;
-    console.log({ imageIds });
 
     const added = await addImageToQueue({
       imageIds,

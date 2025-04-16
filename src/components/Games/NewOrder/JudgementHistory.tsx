@@ -31,7 +31,7 @@ export default function JudgementHistoryModal() {
 
   const [activeTab, setActiveTab] = useState<NewOrderImageRatingStatus | undefined>(undefined);
 
-  const { images, isLoading, isRefetching, hasNextPage, fetchNextPage } =
+  const { images, isLoading, isFetching, isRefetching, hasNextPage, fetchNextPage } =
     useQueryInfiniteKnightsNewOrderHistory({ status: activeTab });
 
   return (
@@ -82,7 +82,7 @@ export default function JudgementHistoryModal() {
               {hasNextPage && (
                 <InViewLoader
                   loadFn={fetchNextPage}
-                  loadCondition={!isRefetching && hasNextPage}
+                  loadCondition={!isFetching}
                   style={{ gridColumn: '1/-1' }}
                 >
                   <Center p="xl" mt="md">

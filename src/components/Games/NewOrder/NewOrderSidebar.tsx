@@ -105,7 +105,7 @@ export function NewOrderSidebar() {
           smiteCount={playerData.stats.smites}
           showStats={playerData.rank.type !== NewOrderRankType.Acolyte}
           onClick={() => setOpened((o) => !o)}
-          className="cursor-pointer p-4 dark:bg-dark-6"
+          className="w-full cursor-pointer p-4 dark:bg-dark-6"
           withBorder
         />
       )}

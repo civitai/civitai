@@ -1,5 +1,6 @@
 import { clsx, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconCoin, IconCrown, IconFlame, IconSkull, IconSword } from '@tabler/icons-react';
+import React from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { LevelProgress } from '~/components/Games/LevelProgress/LevelProgress';
@@ -12,6 +13,36 @@ import { Currency, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 const MAX_SMITE_COUNT = 3;
+
+const ranksExplanation: Record<NewOrderRankType, React.ReactElement> = {
+  [NewOrderRankType.Acolyte]: (
+    <>
+      <p className="text-sm font-medium">
+        You are currently an Acolyte and have not yet joined the Knights of New Order.
+      </p>
+      <p>Keep leveling up to reach Knight rank and unlock all game features.</p>
+    </>
+  ),
+  [NewOrderRankType.Knight]: (
+    <>
+      <p className="text-sm font-medium">
+        You are a Knight of New Order and have access to all game features.
+      </p>
+      <p>Keep rating images and leveling up to earn blessed buzz and fervor to become a Templar.</p>
+    </>
+  ),
+  [NewOrderRankType.Templar]: (
+    <>
+      <p className="text-sm font-medium">
+        You are a Templar of New Order and have access to all game features.
+      </p>
+      <p>
+        You&apos;ve reached the highest rank in the game and can now see a special queue of images
+        to rate.
+      </p>
+    </>
+  ),
+};
 
 export function PlayerCard({
   user,
@@ -27,6 +58,7 @@ export function PlayerCard({
 }: Props) {
   // TODO.newOrder: update this to calculate level progression based on the new order game
   const progression = calculateLevelProgression(exp);
+  const rankExplanation = ranksExplanation[rank.type];
 
   return (
     <Paper className={clsx('flex items-center gap-4', className)} {...paperProps}>
@@ -38,24 +70,11 @@ export function PlayerCard({
               <EdgeMedia2 src={rank.iconUrl} className="size-8" type="image" width={32} />
             )}
             <p className="text-lg font-medium">{rank.name}</p>
-            <InfoPopover iconProps={{ size: 20 }} withinPortal>
-              {/* TODO.newOrder: update these properly */}
-              <p className="text-sm font-medium">
-                {rank.type === NewOrderRankType.Acolyte
-                  ? 'You are currently an Acolyte and have not yet joined the Knights of New Order.'
-                  : 'You are a Knight of New Order.'}
-              </p>
-              <p className="text-sm font-medium">
-                {rank.type === NewOrderRankType.Acolyte
-                  ? 'You can join the Knights of New Order by clicking the button below.'
-                  : 'You are a Knight of New Order and have access to all game features.'}
-              </p>
-              <p className="text-sm font-medium">
-                {rank.type === NewOrderRankType.Acolyte
-                  ? 'You can earn rewards by completing tasks and leveling up.'
-                  : 'You can earn rewards by completing tasks and leveling up.'}
-              </p>
-            </InfoPopover>
+            {rankExplanation && !user.isModerator && (
+              <InfoPopover iconProps={{ size: 20 }} withinPortal>
+                {rankExplanation}
+              </InfoPopover>
+            )}
           </div>
 
           {smiteCount ? (
@@ -80,7 +99,7 @@ export function PlayerCard({
           nextLevelExp={progression.ratingsForNextLevel}
           icon={<IconSword size={18} stroke={1.5} />}
         />
-        {showStats && (
+        {!showStats && (
           <div className="flex items-center gap-1">
             <IconBadge
               tooltip={`Total Gold: ${numberWithCommas(gold)}`}
@@ -107,14 +126,16 @@ export function PlayerCard({
             >
               {abbreviateNumber(fervor)}
             </IconBadge>
-            <IconBadge
-              tooltip="Leaderboard Position"
-              size="lg"
-              color="blue"
-              icon={<IconCrown size={18} stroke={1.5} />}
-            >
-              #{leaderboard}
-            </IconBadge>
+            {leaderboard && (
+              <IconBadge
+                tooltip="Leaderboard Position"
+                size="lg"
+                color="blue"
+                icon={<IconCrown size={18} stroke={1.5} />}
+              >
+                #{leaderboard}
+              </IconBadge>
+            )}
           </div>
         )}
       </div>
@@ -123,7 +144,7 @@ export function PlayerCard({
 }
 
 type Props = PaperProps & {
-  user: Omit<Partial<SimpleUser>, 'profilePicture' | 'deletedAt'>;
+  user: Omit<Partial<SimpleUser & { isModerator: boolean }>, 'profilePicture' | 'deletedAt'>;
   rank: { type: NewOrderRankType; name: string; iconUrl?: string };
   exp: number;
   fervor: number;

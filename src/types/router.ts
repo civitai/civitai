@@ -159,3 +159,4 @@ export type AuctionBySlug = AuctionRouter['getBySlug'];
 
 type NewOrderRouter = RouterOutput['games']['newOrder'];
 export type GetJudgementHistoryItem = NewOrderRouter['getHistory']['items'][number];
+export type GetPlayer = NewOrderRouter['getPlayer'];

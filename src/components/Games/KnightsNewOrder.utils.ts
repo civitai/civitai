@@ -1,5 +1,6 @@
 import { useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
+import produce from 'immer';
 import dynamic from 'next/dynamic';
 import { useMemo } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -12,31 +13,36 @@ import {
   SignalTopic,
 } from '~/server/common/enums';
 import { AddImageRatingInput, GetHistoryInput } from '~/server/schema/games/new-order.schema';
+import { smitePlayer } from '~/server/services/games/new-order.service';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const JudgementHistoryModal = dynamic(() => import('./NewOrder/JudgementHistory'));
 
-// TODO.newOrder: complete signal setup
 export const useKnightsNewOrderListener = () => {
   const queryUtils = trpc.useUtils();
 
-  useSignalTopic(SignalTopic.NewOrderPlayer);
-  useSignalTopic(SignalTopic.NewOrderQueue);
+  const { playerData } = useJoinKnightsNewOrder();
+
+  useSignalTopic(playerData ? `${SignalTopic.NewOrderPlayer}:${playerData.id}` : undefined);
+  useSignalTopic(playerData ? `${SignalTopic.NewOrderQueue}:${playerData.rankType}` : undefined);
 
   // Used to update player stats (exp, fervor, blessed buzz, rank, etc.)
   useSignalConnection(SignalMessages.NewOrderPlayerUpdate, (data) => {
     queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
       if (!old) return old;
 
-      return { ...old, ...data };
+      const { stats, ...rest } = data;
+      return { ...old, ...rest, stats: { ...old.stats, ...stats } };
     });
   });
 
   // Used to update the current image queue
   useSignalConnection(SignalMessages.NewOrderQueueUpdate, (data) => {
+    console.log('update queue from signal', data);
     queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
+      // TODO.newOrder: Handle removing from queue
       if (!old) return old;
 
       return [...old, ...data];
@@ -50,6 +56,7 @@ export const useJoinKnightsNewOrder = () => {
     key: 'joined-kono',
     type: 'localStorage',
     defaultValue: false,
+    getInitialValueInEffect: false,
   });
 
   // Required to share loading state between components
@@ -123,19 +130,36 @@ export const useAddImageRating = () => {
   const addRatingMutation = trpc.games.newOrder.addRating.useMutation({
     onMutate: async (payload) => {
       await queryUtils.games.newOrder.getImagesQueue.cancel();
+      await queryUtils.games.newOrder.getPlayer.cancel();
 
-      const prev = queryUtils.games.newOrder.getImagesQueue.getData();
+      const prevQueue = queryUtils.games.newOrder.getImagesQueue.getData();
       queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
         if (!old) return old;
 
         return old.filter((image) => image.id !== payload.imageId);
       });
 
-      return { prev };
+      const prevPlayerData = queryUtils.games.newOrder.getPlayer.getData();
+      queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
+        if (!old) return old;
+
+        return {
+          ...old,
+          stats: {
+            ...old.stats,
+            exp: old.stats.exp + 100,
+          },
+        };
+      });
+
+      return { prevQueue, prevPlayerData };
     },
     onError: (error, _variables, context) => {
       showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
-      if (context?.prev) queryUtils.games.newOrder.getImagesQueue.setData(undefined, context.prev);
+      if (context) {
+        queryUtils.games.newOrder.getImagesQueue.setData(undefined, context.prevQueue);
+        queryUtils.games.newOrder.getPlayer.setData(undefined, context.prevPlayerData);
+      }
     },
   });
 
@@ -166,3 +190,40 @@ export const ratingPlayBackRates: Record<string, number> = {
 
 export const openJudgementHistoryModal = () =>
   dialogStore.trigger({ component: JudgementHistoryModal });
+
+export const useInquisitorTools = () => {
+  const queryUtils = trpc.useUtils();
+
+  const smitePlayerMutation = trpc.games.newOrder.smitePlayer.useMutation({
+    onSuccess: (_, payload) => {
+      queryUtils.games.newOrder.getImagesQueue.setData(
+        undefined,
+        produce((old) => {
+          if (!old) return old;
+
+          const imageIndex = old.findIndex((image) => image.id === payload.imageId);
+          if (imageIndex === -1) return old;
+
+          const image = old[imageIndex];
+          image.ratings = image.ratings.filter((rating) => rating.player.id !== payload.playerId);
+        })
+      );
+    },
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to smite player', error: new Error(error.message) });
+    },
+  });
+
+  const cleanseSmiteMutation = trpc.games.newOrder.cleanseSmite.useMutation({
+    onError: (error) => {
+      showErrorNotification({ title: 'Failed to cleanse smite', error: new Error(error.message) });
+    },
+  });
+
+  return {
+    smitePlayer: smitePlayerMutation.mutate,
+    cleanseSmite: cleanseSmiteMutation.mutate,
+    applyingSmite: smitePlayerMutation.isLoading,
+    cleansingSmite: cleanseSmiteMutation.isLoading,
+  };
+};

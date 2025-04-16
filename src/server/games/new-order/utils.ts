@@ -170,9 +170,9 @@ export const poolCounters = {
       ordered: true,
     })
   ),
-  God: [
+  Inquisitor: [
     createCounter({
-      key: `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:God`,
+      key: `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Inquisitor`,
       fetchCount: async () => 0,
       ttl: CacheTTL.week,
       ordered: true,
@@ -202,7 +202,7 @@ export const getImageRatingsCounter = (imageId: number) => {
         SELECT
           COUNT(*) as count
         FROM knights_new_order_image_rating
-        WHERE "imageId" = ${imageId} AND "rank" = ${rank} AND "nsfwLevel" = ${nsfwLevel}
+        WHERE "imageId" = ${imageId} AND rank = '${rank}' AND rating = ${nsfwLevel}
       `;
 
       const count = data[0]?.count ?? 0;
