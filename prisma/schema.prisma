@@ -1660,6 +1660,14 @@ model TagsOnImageNew {
   @@index([tagId])
 }
 
+model ShadowTagsOnImage {
+  imageId Int
+  tagId   Int
+
+  @@id([imageId, tagId])
+  @@index([tagId])
+}
+
 model TagsOnImageVote {
   imageId   Int
   image     Image    @relation(fields: [imageId], references: [id], onDelete: Cascade)

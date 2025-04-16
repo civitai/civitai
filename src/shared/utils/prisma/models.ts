@@ -1283,6 +1283,11 @@ export interface TagsOnImageNew {
   attributes: number;
 }
 
+export interface ShadowTagsOnImage {
+  imageId: number;
+  tagId: number;
+}
+
 export interface TagsOnImageVote {
   imageId: number;
   image?: Image;

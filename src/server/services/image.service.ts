@@ -460,9 +460,10 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
 };
 
 const scanner = env.EXTERNAL_IMAGE_SCANNER;
+const clavataScan = env.CLAVATA_SCAN;
 const scanTypes: ImageScanType[] = [ImageScanType.WD14, ImageScanType.Hash];
-if (scanner === 'clavata') scanTypes.push(ImageScanType.Clavata);
-else if (scanner === 'hive') scanTypes.push(ImageScanType.Hive);
+if (clavataScan !== 'off' || scanner === 'clavata') scanTypes.push(ImageScanType.Clavata);
+if (scanner === 'hive') scanTypes.push(ImageScanType.Hive);
 
 export const ingestImage = async ({
   image,

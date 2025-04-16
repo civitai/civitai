@@ -131,6 +131,7 @@ export const serverSchema = z.object({
   BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
 
   EXTERNAL_IMAGE_SCANNER: z.string().optional(),
+  CLAVATA_SCAN: z.enum(['off', 'shadow', 'active']).default('off'),
   MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),
   HIVE_VISUAL_TOKEN: z.string().optional(),
 
