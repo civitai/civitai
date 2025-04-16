@@ -1,4 +1,4 @@
-import { Modal, Text, Alert } from '@mantine/core';
+import { Modal, Alert } from '@mantine/core';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InputSourceImageUpload } from '~/components/Generation/Input/SourceImageUpload';
 import { GenerateButton } from '~/components/Orchestrator/components/GenerateButton';
@@ -33,13 +33,13 @@ export function BackgroundRemovalModal({
   const generate = useGenerate();
 
   const whatIf = trpc.orchestrator.whatIf.useQuery({
-    type: 'image',
+    $type: 'image',
     data: { workflow, type: 'img2img', ...defaultValues, ...watched },
   });
 
   async function handleSubmit(data: z.infer<typeof schema>) {
     await generate.mutateAsync({
-      type: 'image',
+      $type: 'image',
       data: { workflow, type: 'img2img', ...data },
     });
     dialog.onClose();

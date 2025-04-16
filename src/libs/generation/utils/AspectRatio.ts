@@ -44,6 +44,7 @@ function getAspectRatioFromSize(
 
 type AspectRatioOptions = { min?: number; max?: number; multiplier?: number };
 
+export type AspectRatio = typeof AspectRatio;
 export function AspectRatio(aspectRatio: string, options?: AspectRatioOptions) {
   const { min = minResolution, max = maxResolution, multiplier = 64 } = getOptions(options);
   const { rw, rh, direction, ratio } = getSizeFromAspectRatioString(aspectRatio);
