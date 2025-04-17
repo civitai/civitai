@@ -206,7 +206,8 @@ export const useInquisitorTools = () => {
           if (imageIndex === -1) return old;
 
           const image = old[imageIndex];
-          image.ratings = image.ratings.filter((rating) => rating.player.id !== payload.playerId);
+          image.ratings =
+            image.ratings?.filter((rating) => rating.player.id !== payload.playerId) ?? [];
         })
       );
     },

@@ -178,6 +178,7 @@ export default Page(
                     />
                     {currentUser?.isModerator && (
                       <NewOrderImageRatings
+                        imageId={currentImage.id}
                         imageNsfwLevel={currentImage.nsfwLevel}
                         ratings={currentImage.ratings}
                       />

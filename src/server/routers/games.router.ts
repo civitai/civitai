@@ -85,7 +85,9 @@ export const gamesRouter = router({
     getPlayer: guardedProcedure.query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
     getImagesQueue: guardedProcedure
       .input(getImageQueueSchema.optional())
-      .query(({ input, ctx }) => getImagesQueue({ ...input, playerId: ctx.user.id })),
+      .query(({ input, ctx }) =>
+        getImagesQueue({ ...input, playerId: ctx.user.id, isModerator: ctx.user.isModerator })
+      ),
     getHistory: guardedProcedure
       .input(getHistorySchema)
       .query(({ input, ctx }) => getPlayerHistory({ ...input, playerId: ctx.user.id })),
@@ -95,11 +97,14 @@ export const gamesRouter = router({
     cleanseSmite: moderatorProcedure
       .input(cleanseSmiteSchema)
       .mutation(({ input }) => cleanseSmite({ ...input })),
-    addRating: guardedProcedure
-      .input(addImageRatingSchema)
-      .mutation(({ input, ctx }) =>
-        addImageRating({ ...input, playerId: ctx.user.id, chTracker: ctx.track })
-      ),
+    addRating: guardedProcedure.input(addImageRatingSchema).mutation(({ input, ctx }) =>
+      addImageRating({
+        ...input,
+        playerId: ctx.user.id,
+        chTracker: ctx.track,
+        isModerator: ctx.user.isModerator,
+      })
+    ),
     resetCareer: guardedProcedure.mutation(({ ctx }) => resetPlayer({ playerId: ctx.user.id })),
   }),
 });

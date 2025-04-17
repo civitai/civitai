@@ -1,7 +1,7 @@
 import { Button, Kbd, ActionIcon, Tooltip, Text, Modal } from '@mantine/core';
 import { HotkeyItem, useHotkeys } from '@mantine/hooks';
 import { IconArrowBackUp, IconFlag, IconVolumeOff, IconVolume } from '@tabler/icons-react';
-import { useState } from 'react';
+import { useState, useMemo, useCallback, useRef } from 'react';
 import { damnedReasonOptions, ratingOptions } from '~/components/Games/KnightsNewOrder.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
@@ -10,62 +10,87 @@ import { getDisplayName } from '~/utils/string-helpers';
 
 export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Props) {
   const mobile = useIsMobile({ breakpoint: 'md' });
-
   const [showReasons, setShowReasons] = useState(false);
+  const timeoutRef = useRef<NodeJS.Timeout>();
 
-  const hotKeys: HotkeyItem[] = showReasons
-    ? [
-        [
-          '1',
-          () =>
-            onRatingClick({
-              rating: NsfwLevel.Blocked,
-              damnedReason: NewOrderDamnedReason.InappropriateMinors,
-            }),
-        ],
-        [
-          '2',
-          () =>
-            onRatingClick({
-              rating: NsfwLevel.Blocked,
-              damnedReason: NewOrderDamnedReason.RealisticMinors,
-            }),
-        ],
-        [
-          '3',
-          () =>
-            onRatingClick({
-              rating: NsfwLevel.Blocked,
-              damnedReason: NewOrderDamnedReason.InappropriateRealPerson,
-            }),
-        ],
-        [
-          '4',
-          () =>
-            onRatingClick({
-              rating: NsfwLevel.Blocked,
-              damnedReason: NewOrderDamnedReason.Bestiality,
-            }),
-        ],
-        [
-          '5',
-          () =>
-            onRatingClick({
-              rating: NsfwLevel.Blocked,
-              damnedReason: NewOrderDamnedReason.GraphicViolence,
-            }),
-        ],
-      ]
-    : [
-        ['1', () => onRatingClick({ rating: NsfwLevel.PG })],
-        ['2', () => onRatingClick({ rating: NsfwLevel.PG13 })],
-        ['3', () => onRatingClick({ rating: NsfwLevel.R })],
-        ['4', () => onRatingClick({ rating: NsfwLevel.X })],
-        ['5', () => onRatingClick({ rating: NsfwLevel.XXX })],
-        ['6', () => setShowReasons(true)],
-      ];
+  const debouncedRatingClick = useCallback(
+    (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+      timeoutRef.current = setTimeout(() => {
+        onRatingClick(data);
+      }, 500);
+    },
+    [onRatingClick]
+  );
+
+  const handleHotkeyPress = useCallback(
+    (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
+      return () => debouncedRatingClick(data);
+    },
+    [debouncedRatingClick]
+  );
+
+  const hotKeys: HotkeyItem[] = useMemo(
+    () =>
+      showReasons
+        ? [
+            [
+              '1',
+              handleHotkeyPress({
+                rating: NsfwLevel.Blocked,
+                damnedReason: NewOrderDamnedReason.InappropriateMinors,
+              }),
+            ],
+            [
+              '2',
+              handleHotkeyPress({
+                rating: NsfwLevel.Blocked,
+                damnedReason: NewOrderDamnedReason.RealisticMinors,
+              }),
+            ],
+            [
+              '3',
+              handleHotkeyPress({
+                rating: NsfwLevel.Blocked,
+                damnedReason: NewOrderDamnedReason.InappropriateRealPerson,
+              }),
+            ],
+            [
+              '4',
+              handleHotkeyPress({
+                rating: NsfwLevel.Blocked,
+                damnedReason: NewOrderDamnedReason.Bestiality,
+              }),
+            ],
+            [
+              '5',
+              handleHotkeyPress({
+                rating: NsfwLevel.Blocked,
+                damnedReason: NewOrderDamnedReason.GraphicViolence,
+              }),
+            ],
+          ]
+        : [
+            ['1', handleHotkeyPress({ rating: NsfwLevel.PG })],
+            ['2', handleHotkeyPress({ rating: NsfwLevel.PG13 })],
+            ['3', handleHotkeyPress({ rating: NsfwLevel.R })],
+            ['4', handleHotkeyPress({ rating: NsfwLevel.X })],
+            ['5', handleHotkeyPress({ rating: NsfwLevel.XXX })],
+            ['6', () => setShowReasons(true)],
+          ],
+    [showReasons, handleHotkeyPress]
+  );
 
   useHotkeys([['m', () => onVolumeClick()], ['Escape', () => setShowReasons(false)], ...hotKeys]);
+
+  const handleRatingClick = useCallback(
+    (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
+      debouncedRatingClick(data);
+    },
+    [debouncedRatingClick]
+  );
 
   return (
     <div className="flex flex-col gap-2">
@@ -80,7 +105,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Prop
             >
               <DamnedReasonOptions
                 onClick={(damnedReason) =>
-                  onRatingClick({ rating: NsfwLevel.Blocked, damnedReason })
+                  handleRatingClick({ rating: NsfwLevel.Blocked, damnedReason })
                 }
                 onClose={() => setShowReasons(false)}
                 mobile
@@ -88,7 +113,9 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Prop
             </Modal>
           ) : (
             <DamnedReasonOptions
-              onClick={(damnedReason) => onRatingClick({ rating: NsfwLevel.Blocked, damnedReason })}
+              onClick={(damnedReason) =>
+                handleRatingClick({ rating: NsfwLevel.Blocked, damnedReason })
+              }
               onClose={() => setShowReasons(false)}
             />
           )
@@ -112,7 +139,9 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Prop
                     key={rating}
                     variant={isBlocked ? 'filled' : 'default'}
                     color={isBlocked ? 'red' : undefined}
-                    onClick={() => (isBlocked ? setShowReasons(true) : onRatingClick({ rating }))}
+                    onClick={() =>
+                      isBlocked ? setShowReasons(true) : handleRatingClick({ rating })
+                    }
                   >
                     {isBlocked ? <IconFlag size={18} /> : level}
                   </Button>

@@ -28,7 +28,7 @@ import {
 } from '~/server/schema/games/new-order.schema';
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect } from '~/server/selectors/user.selector';
-import { getAllImagesIndex } from '~/server/services/image.service';
+import { getAllImagesIndex, updateImageNsfwLevel } from '~/server/services/image.service';
 import {
   bustFetchThroughCache,
   cachedCounter,
@@ -154,7 +154,8 @@ export async function addImageRating({
   rating,
   damnedReason,
   chTracker,
-}: AddImageRatingInput & { playerId: number; chTracker?: Tracker }) {
+  isModerator,
+}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
   const player = await dbRead.newOrderPlayer.findUnique({
@@ -241,11 +242,12 @@ export async function addImageRating({
     }
   }
 
+  // Update image nsfw level if the player is a mod
+  if (isModerator)
+    await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
+
   // Increase rating count
-  await getImageRatingsCounter(imageId).increment({
-    id: `${player.rank.name}-${rating}`,
-    value: 1,
-  });
+  await getImageRatingsCounter(imageId).increment({ id: `${player.rank.name}-${rating}` });
 
   // No need to await mainly cause it makes no difference as the user has a queue in general.
   bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
@@ -589,20 +591,9 @@ export async function getImagesQueue({
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 
-  // TODO.newOrder: Fix this to properly get all ratings for the images
-  // if (player.rankType === NewOrderRankType.Templar) {
-  //   const ratings = await sysRedis.hGetAll(
-  //     `${REDIS_SYS_KEYS.NEW_ORDER.RATINGS}:${imageIds.join(',')}`
-  //   );
-  //   images.forEach((image) => {
-  //     const rating = ratings[`${image.id}-${player.rank.name}`];
-  //     if (rating) image.nsfwLevel = Number(rating);
-  //   });
-  // }
-
   return shuffle(
     images.slice(0, imageCount).map(({ metadata, ...i }) => {
-      const ratings = imageRaters[i.id];
+      const ratings = isModerator ? imageRaters[i.id] : null;
 
       return { ...i, ratings, metadata: metadata as ImageMetadata };
     })

@@ -1,12 +1,15 @@
-import { UnstyledButton } from '@mantine/core';
-import { IconChevronLeft } from '@tabler/icons-react';
+import { ActionIcon, Badge, UnstyledButton } from '@mantine/core';
+import { IconChevronLeft, IconHammer } from '@tabler/icons-react';
 import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { GetPlayer } from '~/types/router';
 import { useState } from 'react';
+import { useInquisitorTools } from '~/components/Games/KnightsNewOrder.utils';
 
-export function NewOrderImageRatings({ imageNsfwLevel, ratings }: Props) {
+export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props) {
   const [opened, setOpened] = useState(false);
+
+  const { smitePlayer, applyingSmite } = useInquisitorTools();
 
   if (!ratings || ratings.length === 0) return null;
 
@@ -34,15 +37,25 @@ export function NewOrderImageRatings({ imageNsfwLevel, ratings }: Props) {
           <h2 className="text-lg font-semibold text-white">Raters</h2>
           <div className="flex flex-col gap-2">
             {ratings?.map(({ player, rating }) => (
-              <div key={player.id} className="flex items-center justify-between">
-                <span className="text-sm text-gray-400">{player.username}</span>
-                <span
-                  className={`text-sm ${
-                    rating === imageNsfwLevel ? 'text-green-500' : 'text-red-500'
-                  }`}
-                >
-                  {browsingLevelLabels[rating] ?? '?'}
-                </span>
+              <div key={player.id} className="flex flex-col gap-1">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-gray-400">{player.username}</span>
+                    <Badge
+                      size="xs"
+                      className={`${rating === imageNsfwLevel ? 'text-green-500' : 'text-red-500'}`}
+                    >
+                      {browsingLevelLabels[rating] ?? '?'}
+                    </Badge>
+                  </div>
+                  <ActionIcon
+                    size="sm"
+                    color="red"
+                    onClick={() => smitePlayer({ playerId: player.id, imageId })}
+                  >
+                    <IconHammer />
+                  </ActionIcon>
+                </div>
               </div>
             ))}
           </div>
@@ -53,6 +66,7 @@ export function NewOrderImageRatings({ imageNsfwLevel, ratings }: Props) {
 }
 
 type Props = {
+  imageId: number;
   imageNsfwLevel: NsfwLevel;
   ratings: Array<{ player: GetPlayer; rating: NsfwLevel }> | null;
 };

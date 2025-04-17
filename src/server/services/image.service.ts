@@ -3946,11 +3946,12 @@ export async function ingestArticleCoverImages(array: { imageId: number; article
 export async function updateImageNsfwLevel({
   id,
   nsfwLevel,
-  user,
+  userId,
   status,
-}: UpdateImageNsfwLevelOutput & { user: SessionUser }) {
+  isModerator,
+}: UpdateImageNsfwLevelOutput & { userId: number; isModerator?: boolean }) {
   if (!nsfwLevel) throw throwBadRequestError();
-  if (user.isModerator) {
+  if (isModerator) {
     await dbWrite.image.update({ where: { id }, data: { nsfwLevel, nsfwLevelLocked: true } });
     // Current meilisearch image index gets locked specially when doing a single image update due to the cheer size of this index.
     // Commenting this out should solve the problem.
@@ -3961,7 +3962,7 @@ export async function updateImageNsfwLevel({
         data: { status },
       });
     }
-    await trackModActivity(user.id, {
+    await trackModActivity(userId, {
       entityType: 'image',
       entityId: id,
       activity: 'setNsfwLevel',
@@ -3977,18 +3978,18 @@ export async function updateImageNsfwLevel({
     if (
       current?.nsfwLevel === NsfwLevel.PG &&
       nsfwLevel >= NsfwLevel.R &&
-      current?.userId !== user.id
+      current?.userId !== userId
     ) {
       leakingContentCounter.inc();
     }
 
     await dbWrite.imageRatingRequest.upsert({
-      where: { imageId_userId: { imageId: id, userId: user.id } },
+      where: { imageId_userId: { imageId: id, userId: userId } },
       create: {
         nsfwLevel,
         imageId: id,
-        userId: user.id,
-        weight: current.userId === user.id ? 3 : 1,
+        userId: userId,
+        weight: current.userId === userId ? 3 : 1,
       },
       update: { nsfwLevel },
     });

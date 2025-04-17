@@ -9,7 +9,7 @@ export default class GameErrorBoundary extends Component<Props, State> {
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
     console.log('Error Boundary:', { error, errorInfo });
-    this.setState({ error, stack: errorInfo.componentStack });
+    this.setState({ error, stack: errorInfo.componentStack, hasError: true });
     fetch('/api/application-error', {
       method: 'POST',
       body: JSON.stringify({ message: error.message, stack: errorInfo.componentStack }),

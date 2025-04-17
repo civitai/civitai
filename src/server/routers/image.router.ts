@@ -142,7 +142,9 @@ export const imageRouter = router({
     .mutation(({ input, ctx }) => reportCsamImages({ ...input, user: ctx.user, ip: ctx.ip })),
   updateImageNsfwLevel: protectedProcedure
     .input(updateImageNsfwLevelSchema)
-    .mutation(({ input, ctx }) => updateImageNsfwLevel({ ...input, user: ctx.user })),
+    .mutation(({ input, ctx }) =>
+      updateImageNsfwLevel({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
   getImageRatingRequests: moderatorProcedure
     .input(imageRatingReviewInput)
     .query(({ input, ctx }) => getImageRatingRequests({ ...input, user: ctx.user })),

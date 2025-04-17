@@ -1,5 +1,5 @@
 import { clsx, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
-import { IconCoin, IconCrown, IconFlame, IconSkull, IconSword } from '@tabler/icons-react';
+import { IconCoin, IconCrown, IconFlame, IconHeart, IconSword } from '@tabler/icons-react';
 import React from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -77,19 +77,18 @@ export function PlayerCard({
             )}
           </div>
 
-          {smiteCount ? (
-            <Tooltip
-              label={`Receive ${MAX_SMITE_COUNT - smiteCount} more smite and it's game over!`}
-            >
-              <div className="flex flex-nowrap items-center gap-1">
-                {Array.from({ length: smiteCount }).map((_, index) => (
-                  <ThemeIcon key={index} size="sm" color="red" variant="light">
-                    <IconSkull size={16} stroke={1.5} />
-                  </ThemeIcon>
-                ))}
-              </div>
-            </Tooltip>
-          ) : null}
+          <Tooltip
+            label={`Receive ${MAX_SMITE_COUNT - smiteCount} more smite and it's game over!`}
+            withinPortal
+          >
+            <div className="flex flex-nowrap items-center gap-1">
+              {Array.from({ length: MAX_SMITE_COUNT }).map((_, index) => (
+                <ThemeIcon key={index} size="sm" color="red" variant="light">
+                  <IconHeart size={16} stroke={1.5} />
+                </ThemeIcon>
+              ))}
+            </div>
+          </Tooltip>
         </div>
         <LevelProgress
           className="w-full"

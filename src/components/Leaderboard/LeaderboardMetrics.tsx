@@ -1,15 +1,4 @@
-import {
-  Anchor,
-  createStyles,
-  Grid,
-  Group,
-  MantineTheme,
-  Paper,
-  Rating,
-  Stack,
-  Text,
-  ThemeIcon,
-} from '@mantine/core';
+import { createStyles, Group, MantineTheme, Rating, Stack, Text, ThemeIcon } from '@mantine/core';
 import {
   IconArrowsHorizontal,
   IconBadges,
@@ -20,13 +9,11 @@ import {
   IconBulb,
   IconCheck,
   IconChecks,
-  IconCrown,
   IconDownload,
   IconEye,
   IconFileStar,
   IconHeart,
   IconHexagonFilled,
-  IconMessageCircle2,
   IconMoodSmile,
   IconPhoto,
   IconReport,
@@ -39,16 +26,9 @@ import {
   IconTrophy,
   IconX,
 } from '@tabler/icons-react';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { useRouter } from 'next/router';
-import { useEffect, useMemo } from 'react';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
 
-import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
-import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
-import { LeaderboardGetModel } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
-import { isDefined } from '~/utils/type-guards';
 
 type MetricDisplayOptions = {
   icon: React.ReactNode;
