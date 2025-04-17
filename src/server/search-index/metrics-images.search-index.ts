@@ -51,6 +51,7 @@ const filterableAttributes = [
   'remixOfId',
   'availability',
   'poi',
+  'minor',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];

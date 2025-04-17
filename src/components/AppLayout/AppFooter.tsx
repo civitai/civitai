@@ -140,11 +140,11 @@ export function AppFooter() {
                   item.features?.(features) ||
                   item.domains?.includes(domain)) &&
                 // !item.defaultExcluded &&
-                !browsingSettingsAddons.settings.excludedFooterLinks.includes(item.key)
+                !(browsingSettingsAddons.settings.excludedFooterLinks ?? []).includes(item.key)
             )
-            .map(({ features, ...props }, i) => (
+            .map(({ features, key, ...props }, i) => (
               <Button
-                key={i}
+                key={key ?? i}
                 component={Link}
                 {...props}
                 className="px-2.5 @max-sm:px-1"

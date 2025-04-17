@@ -6,7 +6,7 @@ import { trpc } from '~/utils/trpc';
 
 const BrowsingSettingsAddonsCtx = createContext<{
   isLoading: boolean;
-  settings: Omit<BrowsingSettingsAddon, 'type' | 'nsfwLevels'>;
+  settings: NonNullable<Omit<BrowsingSettingsAddon, 'type' | 'nsfwLevels'>>;
 }>({
   settings: {
     disableMinor: false,

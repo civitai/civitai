@@ -363,7 +363,7 @@ function ReviewActions({
         <Checkbox
           label="Realistic depiction of a minor"
           checked={acceptableMinor}
-          disabled={updateImageMinorMutation.isLoading}
+          disabled={updateImageAcceptableMinorMutation.isLoading}
           onChange={(e) => handleMinorChange(e.currentTarget.checked)}
         />
         <InfoPopover>
