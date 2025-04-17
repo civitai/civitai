@@ -195,7 +195,12 @@ async function handleSuccess({
     const data = tags
       .map((x) => (!!x.id ? { tagId: x.id, imageId: id, confidence: x.confidence } : null))
       .filter(isDefined);
-    await dbWrite.shadowTagsOnImage.createMany({ data });
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "ShadowTagsOnImage" ("tagId", "imageId", "confidence")
+      VALUES ${data.map((x) => `(${x.tagId}, ${x.imageId}, ${x.confidence})`).join(',')}
+      ON CONFLICT ("tagId", "imageId") DO UPDATE
+        SET "confidence" = EXCLUDED."confidence"
+    `);
     return;
   }
 
