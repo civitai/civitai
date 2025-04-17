@@ -118,7 +118,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const [awaitInvalidate, setAwaitInvalidate] = useState<boolean>(false);
 
   const status = useTrainingServiceStatus();
-  const blockedModels = status.blockedModels ?? [blockedCustomModels];
+  const blockedModels = status.blockedModels ?? blockedCustomModels;
 
   const { classes } = useStyles();
   const theme = useMantineTheme();
@@ -147,7 +147,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   let finishedRuns = 0;
 
   const formBaseModel = selectedRun.base;
-  const formBaseModelType = selectedRun.baseType;
 
   const targetStepsSetting = trainingSettings.find((ts) => ts.name === 'targetSteps') as
     | NumberTrainingSettingsType
@@ -174,7 +173,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     return retData;
   }, [
     formBaseModel,
-    formBaseModelType,
     selectedRun.highPriority,
     selectedRun.params.engine,
     thisNumImages,
@@ -207,7 +205,17 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
     } else if (cost !== selectedRun.buzzCost) {
       updateRun(model.id, thisMediaType, selectedRun.id, { hasIssue: false, buzzCost: cost });
     }
-  }, [dryRunResult.data?.cost, dryRunResult.isLoading, runs.length]);
+  }, [
+    dryRunResult.data?.cost,
+    dryRunResult.isLoading,
+    runs.length,
+    selectedRun.hasIssue,
+    selectedRun.buzzCost,
+    model.id,
+    thisMediaType,
+    selectedRun.id,
+    updateRun,
+  ]);
 
   const upsertVersionMutation = trpc.modelVersion.upsert.useMutation();
   const deleteVersionMutation = trpc.modelVersion.delete.useMutation();
@@ -371,6 +379,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const handleConfirm = () => {
     setAwaitInvalidate(true);
+    finishedRuns = 0;
 
     runs.forEach(async (run, idx) => {
       const { base, baseType, params, customModel, samplePrompts, staging, highPriority } = run;
@@ -465,8 +474,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         if (finishedRuns === runs.length) setAwaitInvalidate(false);
       }
     });
-
-    finishedRuns = 0;
   };
 
   // HARD CODED FOR THIS RUN:
