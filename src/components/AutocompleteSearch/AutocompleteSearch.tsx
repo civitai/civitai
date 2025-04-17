@@ -221,6 +221,9 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       {isModels && browsingSettingsAddons.settings.disablePoi && (
         <ApplyCustomFilter filters={`(poi != true)`} />
       )}
+      {isModels && browsingSettingsAddons.settings.disableMinor && (
+        <ApplyCustomFilter filters={`(minor != true)`} />
+      )}
       {isModels && !currentUser?.isModerator && (
         <ApplyCustomFilter
           filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}

@@ -57,6 +57,7 @@ export const useQueryPosts = (
       browsingLevel,
       excludedTagIds,
       disablePoi: browsingSettingsAddons.settings.disablePoi,
+      disableMinor: browsingSettingsAddons.settings.disableMinor,
     },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),

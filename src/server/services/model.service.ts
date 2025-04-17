@@ -251,6 +251,7 @@ export const getModelsRaw = async ({
     collectionTagId,
     availability,
     disablePoi,
+    disableMinor,
     isFeatured,
   } = input;
 
@@ -315,6 +316,9 @@ export const getModelsRaw = async ({
 
   if (disablePoi) {
     AND.push(Prisma.sql`m."poi" = false`);
+  }
+  if (disableMinor) {
+    AND.push(Prisma.sql`m."minor" = false`);
   }
 
   if (needsReview && sessionUser?.isModerator) {

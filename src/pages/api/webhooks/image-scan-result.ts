@@ -429,16 +429,18 @@ async function handleSuccess({
 
     const data: Prisma.ImageUpdateInput = {};
 
-    // if (hasMinorTag) {
-    //   data.minor = true;
-    // }
+    if (hasMinorTag) {
+      data.minor = true;
+    }
 
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
     if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
-    if (!reviewKey && nsfw) {
-      const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
+
+    // We now will mark images as poi / minor regardless of whether or not they're NSFW. This so that we know we need to hide from from
+    // NSFW feeds.
+    const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
         WITH to_check AS (
           -- Check based on associated resources
           SELECT
@@ -470,21 +472,22 @@ async function handleSuccess({
         )
         SELECT bool_or(poi) "poi", bool_or(minor) "minor" FROM to_check;
       `;
-      if (minor) {
-        reviewKey = 'minor';
-        // TODO: Currently,  the code assumes minor = true as being safe minor.
-        // I'd argue we don't want this.
-        // data.minor = true;
-      }
-      if (poi) {
-        reviewKey = 'poi';
-        // Makes this image tied to POI.
-        data.poi = true;
-      }
+
+    if (minor) {
+      reviewKey = 'minor';
+      // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
+      data.minor = true;
     }
+    if (poi) {
+      reviewKey = 'poi';
+      // Makes this image tied to POI.
+      data.poi = true;
+    }
+
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
       reviewKey = 'minor';
     }
+
     if (!reviewKey && nsfw) {
       // If user is new and image is NSFW send it for review
       const [{ isNewUser }] =

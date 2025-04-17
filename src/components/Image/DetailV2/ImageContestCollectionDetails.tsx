@@ -285,18 +285,18 @@ function ReviewActions({
 }) {
   const queryUtils = trpc.useUtils();
 
-  const [minor, setMinor] = useState(false);
+  const [acceptableMinor, setAcceptableMinor] = useState(false);
 
-  const updateImageMinorMutation = trpc.image.updateMinor.useMutation({
-    onMutate: ({ minor }) => {
-      setMinor(minor);
+  const updateImageAcceptableMinorMutation = trpc.image.updateAccetableMinor.useMutation({
+    onMutate: ({ acceptableMinor }) => {
+      setAcceptableMinor(acceptableMinor);
       const prevData = queryUtils.image.get.getData({ id: imageId });
 
       queryUtils.image.get.setData(
         { id: imageId },
         produce((old) => {
           if (!old) return;
-          old.minor = minor;
+          old.acceptableMinor = acceptableMinor;
           return old;
         })
       );
@@ -305,15 +305,15 @@ function ReviewActions({
     },
     onError: (error, _, context) => {
       showErrorNotification({
-        title: 'Failed to update image minor status',
+        title: 'Failed to update image acceptable minor status',
         error: new Error(error.message),
       });
-      setMinor((curr) => !curr);
+      setAcceptableMinor((curr) => !curr);
       if (context?.prevData) queryUtils.image.get.setData({ id: imageId }, context.prevData);
     },
   });
-  const handleMinorChange = (minor: boolean) => {
-    updateImageMinorMutation.mutate({ minor, id: imageId, collectionId });
+  const handleMinorChange = (acceptableMinor: boolean) => {
+    updateImageAcceptableMinorMutation.mutate({ acceptableMinor, id: imageId, collectionId });
   };
 
   const updateCollectionItemsStatusMutation =
@@ -362,7 +362,7 @@ function ReviewActions({
       <div className="flex items-center gap-2">
         <Checkbox
           label="Realistic depiction of a minor"
-          checked={minor}
+          checked={acceptableMinor}
           disabled={updateImageMinorMutation.isLoading}
           onChange={(e) => handleMinorChange(e.currentTarget.checked)}
         />

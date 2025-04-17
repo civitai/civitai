@@ -147,6 +147,7 @@ export type SearchBaseImage = {
   hasPositivePrompt?: boolean;
   availability?: Availability;
   poi: boolean;
+  acceptableMinor?: boolean;
 };
 
 type Metrics = {
@@ -333,6 +334,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."blockedFor",
         i.minor,
         i.poi,
+        i."acceptableMinor",
         p."publishedAt",
         p."availability",
         (

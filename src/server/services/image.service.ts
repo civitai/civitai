@@ -59,7 +59,7 @@ import {
   ImageUploadProps,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
-  UpdateImageMinorInput,
+  UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
@@ -709,6 +709,7 @@ type GetAllImagesRaw = {
   baseModel?: string;
   availability: Availability;
   minor: boolean;
+  acceptableMinor: boolean;
   poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
@@ -762,6 +763,7 @@ export const getAllImages = async (
     collectionTagId,
     excludedUserIds,
     disablePoi,
+    disableMinor,
   } = input;
   let { browsingLevel, userId: targetUserId } = input;
 
@@ -835,6 +837,9 @@ export const getAllImages = async (
 
   if (disablePoi) {
     AND.push(Prisma.sql`(i."poi" != TRUE)`);
+  }
+  if (disableMinor) {
+    AND.push(Prisma.sql`(i."minor" != TRUE)`);
   }
 
   let from = 'FROM "Image" i';
@@ -1122,7 +1127,7 @@ export const getAllImages = async (
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
     // Acceptable in collections, need to check for contest collection only
-    if (!collectionId) AND.push(Prisma.sql`i.minor = FALSE`);
+    if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     AND.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
@@ -1201,6 +1206,7 @@ export const getAllImages = async (
       p."availability",
       i.minor,
       i.poi,
+      i."acceptableMinor",
       ${Prisma.raw(
         include.includes('metaSelect')
           ? '(CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta",'
@@ -1651,6 +1657,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     nonRemixesOnly,
     excludedTagIds,
     disablePoi,
+    disableMinor,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1674,6 +1681,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
 
   if (disablePoi) {
     filters.push(`(NOT poi = true)`);
+  }
+  if (disableMinor) {
+    filters.push(`(NOT minor = true)`);
   }
 
   // Filter
@@ -2231,6 +2241,7 @@ export const getImage = async ({
       i."nsfwLevel",
       i.minor,
       i.poi,
+      i."acceptableMinor",
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -2452,7 +2463,7 @@ export const getImagesForModelVersion = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -2615,6 +2626,7 @@ export const getImagesForPosts = async ({
   user,
   pending,
   disablePoi,
+  disableMinor,
 }: {
   postIds: number | number[];
   // excludedIds?: number[];
@@ -2623,6 +2635,7 @@ export const getImagesForPosts = async ({
   user?: SessionUser;
   pending?: boolean;
   disablePoi?: boolean;
+  disableMinor?: boolean;
 }) => {
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
@@ -2648,7 +2661,7 @@ export const getImagesForPosts = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -2658,6 +2671,10 @@ export const getImagesForPosts = async ({
 
   if (disablePoi) {
     imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL)`);
+  }
+
+  if (disableMinor) {
+    imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
   }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
@@ -2679,6 +2696,8 @@ export const getImagesForPosts = async ({
       onSite: boolean;
       remixOfId?: number | null;
       hasPositivePrompt?: boolean;
+      poi?: boolean;
+      minor?: boolean;
     }[]
   >`
     SELECT
@@ -2719,6 +2738,7 @@ export const getImagesForPosts = async ({
         END
       ) as "onSite",
       i.metadata->>'remixOfId' as "remixOfId",
+      i.minor,
       i.poi
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
@@ -3527,6 +3547,7 @@ type GetImageModerationReviewQueueRaw = {
   moderatorUsername?: string;
   removedAt?: Date;
   minor: boolean;
+  acceptableMinor: boolean;
   poi?: boolean;
 };
 export const getImageModerationReviewQueue = async ({
@@ -3623,6 +3644,7 @@ export const getImageModerationReviewQueue = async ({
       i."index",
       i.minor,
       i.poi,
+      i."acceptableMinor",
       p."publishedAt",
       p."modelVersionId",
       u.username,
@@ -3747,6 +3769,7 @@ export const getImageModerationReviewQueue = async ({
       removedAt?: Date | null;
       tosReason?: string | null;
       minor: boolean;
+      acceptableMinor: boolean;
     }
   > = rawImages.map(
     ({
@@ -4725,16 +4748,21 @@ export async function setVideoThumbnail({
   return updated;
 }
 
-export async function updateImageMinor({ id, minor }: UpdateImageMinorInput) {
+export async function updateImageAcceptableMinor({
+  id,
+  acceptableMinor,
+}: UpdateImageAcceptableMinorInput) {
   const image = await dbWrite.image.update({
     where: { id },
-    data: { minor },
+    data: { acceptableMinor },
   });
 
   // Remove it from search index if minor is true
   await queueImageSearchIndexUpdate({
     ids: [id],
-    action: minor ? SearchIndexUpdateQueueAction.Delete : SearchIndexUpdateQueueAction.Update,
+    action: acceptableMinor
+      ? SearchIndexUpdateQueueAction.Delete
+      : SearchIndexUpdateQueueAction.Update,
   });
 
   return image;

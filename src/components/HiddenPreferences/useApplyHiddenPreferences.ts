@@ -94,6 +94,7 @@ export function useApplyHiddenPreferences<
       allowLowerLevels,
       canViewNsfw,
       poiDisabled: browsingSettingsAddons.settings.disablePoi,
+      minorDisabled: browsingSettingsAddons.settings.disableMinor,
     });
 
     return {
@@ -128,6 +129,7 @@ type FilterPreferencesProps<TKey, TData> = {
   allowLowerLevels?: boolean;
   canViewNsfw: boolean;
   poiDisabled?: boolean;
+  minorDisabled?: boolean;
 };
 
 function filterPreferences<
@@ -145,6 +147,7 @@ function filterPreferences<
   allowLowerLevels,
   canViewNsfw,
   poiDisabled,
+  minorDisabled,
 }: FilterPreferencesProps<TKey, TData>) {
   const hidden = {
     unprocessed: 0,
@@ -155,6 +158,7 @@ function filterPreferences<
     users: 0,
     noImages: 0,
     poi: 0,
+    minor: 0,
   };
 
   if (!data || hiddenPreferences.hiddenLoading)
@@ -222,6 +226,11 @@ function filterPreferences<
                 return false;
               }
 
+              if (i.minor && minorDisabled) {
+                hidden.minor++;
+                return false;
+              }
+
               return true;
             }) ?? [];
 
@@ -263,6 +272,11 @@ function filterPreferences<
 
         if (image.poi && poiDisabled) {
           hidden.poi++;
+          return false;
+        }
+
+        if (image.minor && minorDisabled) {
+          hidden.minor++;
           return false;
         }
 
@@ -316,6 +330,12 @@ function filterPreferences<
             hidden.poi++;
             return false;
           }
+
+          if (article.coverImage.minor && minorDisabled) {
+            hidden.minor++;
+            return false;
+          }
+
           for (const tag of article.coverImage.tags)
             if (hiddenTags.get(tag)) {
               hidden.tags++;
@@ -368,6 +388,11 @@ function filterPreferences<
               hidden.poi++;
               return false;
             }
+
+            if (collection.image.minor && minorDisabled) {
+              hidden.minor++;
+              return false;
+            }
           }
           return true;
         })
@@ -383,6 +408,10 @@ function filterPreferences<
               for (const tag of i.tagIds ?? []) if (hiddenTags.get(tag)) return false;
               if (i.poi && poiDisabled) {
                 hidden.poi++;
+                return false;
+              }
+              if (i.minor && minorDisabled) {
+                hidden.minor++;
                 return false;
               }
               return true;
@@ -441,6 +470,10 @@ function filterPreferences<
               hidden.poi++;
               return false;
             }
+            if (i.minor && minorDisabled) {
+              hidden.minor++;
+              return false;
+            }
             return true;
           });
 
@@ -487,6 +520,10 @@ function filterPreferences<
             for (const tag of image.tagIds ?? []) if (hiddenTags.get(tag)) return false;
             if (image.poi && poiDisabled) {
               hidden.poi++;
+              return false;
+            }
+            if (image.minor && minorDisabled) {
+              hidden.minor++;
               return false;
             }
             return true;
@@ -544,12 +581,20 @@ type BaseImage = {
   tagIds?: number[];
   nsfwLevel: number;
   poi?: boolean;
+  minor?: boolean;
 };
 
 type BaseModel = {
   id: number;
   user: { id: number };
-  images: { id: number; tags?: number[]; nsfwLevel: number; userId?: number; poi?: boolean }[];
+  images: {
+    id: number;
+    tags?: number[];
+    nsfwLevel: number;
+    userId?: number;
+    poi?: boolean;
+    minor?: boolean;
+  }[];
   tags?: number[];
   nsfwLevel: number;
   nsfw?: boolean;
@@ -570,6 +615,7 @@ type BaseArticle = {
     tags: number[];
     nsfwLevel: number;
     poi?: boolean;
+    minor?: boolean;
   };
 };
 
@@ -588,6 +634,7 @@ type BaseCollection = {
     nsfwLevel: number;
     userId: number;
     poi?: boolean;
+    minor?: boolean;
   } | null;
   images: {
     id: number;
@@ -595,6 +642,7 @@ type BaseCollection = {
     nsfwLevel: number;
     userId: number;
     poi?: boolean;
+    minor?: boolean;
   }[];
 };
 
@@ -611,6 +659,7 @@ type BaseBounty = {
     nsfwLevel: number;
     userId: number;
     poi?: boolean;
+    minor?: boolean;
   }[];
 };
 
@@ -627,6 +676,7 @@ type BasePost = {
     userId?: number;
     user?: { id: number };
     poi?: boolean;
+    minor?: boolean;
   }[];
 };
 

@@ -68,6 +68,7 @@ const modelQueryParamSchema = z
     fromPlatform: booleanString().optional(),
     availability: z.nativeEnum(Availability).optional(),
     disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
     isFeatured: booleanString().optional(),
   })
   .partial();
@@ -136,6 +137,10 @@ export const useQueryModels = (
       browsingLevel,
       excludedTagIds,
       disablePoi: browsingSettingsAddons.settings.disablePoi
+        ? // Ensures we pass true explicitly
+          true
+        : undefined,
+      disableMinor: browsingSettingsAddons.settings.disableMinor
         ? // Ensures we pass true explicitly
           true
         : undefined,
