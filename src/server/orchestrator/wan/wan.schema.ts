@@ -60,14 +60,15 @@ export function WanInput({
   const hasSourceImage = 'sourceImage' in args;
   const sourceImage = hasSourceImage ? args.sourceImage.url : undefined;
 
-  // const ar = hasSourceImage
-  //   ? AspectRatio.fromSize(args.sourceImage, {
-  //       multiplier: 16,
-  //     })
-  //   : wanAspectRatioMap[args.aspectRatio];
-  const { width, height } = hasSourceImage
-    ? args.sourceImage
-    : wanAspectRatioMap[args.aspectRatio].getSize(resolution);
+  const ar = hasSourceImage
+    ? AspectRatio.fromSize(args.sourceImage, {
+        multiplier: 16,
+      })
+    : wanAspectRatioMap[args.aspectRatio];
+  const { width, height } = ar.getSize(resolution);
+  // const { width, height } = hasSourceImage
+  //   ? args.sourceImage
+  //   : wanAspectRatioMap[args.aspectRatio].getSize(resolution);
 
   return {
     ...args,
