@@ -263,11 +263,12 @@ export function GenerationFormContent() {
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
-            disablePoi: browsingSettingsAddons.disablePoi,
+            disablePoi: browsingSettingsAddons.settings.disablePoi,
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
         });
+
         if (hasEarlyAccess) {
           invalidateWhatIf();
         }
@@ -275,6 +276,11 @@ export function GenerationFormContent() {
         const error = e as Error;
         if (error.message.startsWith('Your prompt was flagged')) {
           setPromptWarning(error.message + '. Continued attempts will result in an automated ban.');
+          currentUser?.refresh();
+        }
+
+        if (error.message.includes('POI')) {
+          setPromptWarning(error.message);
           currentUser?.refresh();
         }
       }

@@ -64,7 +64,7 @@ export const EmailLogin = ({
         return;
       }
       onStatusChange('submitted');
-    } catch (error) {
+    } catch (error) { 
       showErrorNotification({
         title: 'Failed to sign in',
         error: new Error('Email sign-in is not available. Please try again later.'),
