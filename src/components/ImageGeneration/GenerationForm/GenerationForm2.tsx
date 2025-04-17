@@ -86,6 +86,7 @@ import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
 import { imageGenerationSchema } from '~/server/schema/image.schema';
 import {
+  fluxDraftAir,
   fluxModelId,
   fluxModeOptions,
   fluxStandardAir,
@@ -229,7 +230,7 @@ export function GenerationFormContent() {
     const modelClone = clone(model);
 
     const isFlux = getIsFlux(params.baseModel);
-    if (isFlux) {
+    if (isFlux && modelClone.id === fluxModelId) {
       if (params.fluxMode) {
         const { version } = parseAIR(params.fluxMode);
         modelClone.id = version;
@@ -370,9 +371,10 @@ export function GenerationFormContent() {
           const isTxt2Img = workflow.startsWith('txt');
           const isSDXL = getIsSdxl(baseModel);
           const isFlux = getIsFlux(baseModel);
+          const isBaseFlux = model?.model?.id === fluxModelId;
           const isSD3 = getIsSD3(baseModel);
           const isDraft = isFlux
-            ? fluxMode === 'urn:air:flux1:checkpoint:civitai:618692@699279'
+            ? fluxMode === fluxDraftAir
             : isSD3
             ? model.id === 983611
             : features.draft && !!draft;
@@ -391,7 +393,7 @@ export function GenerationFormContent() {
             cfgScaleMin = isDraft ? 1 : 2;
             cfgScaleMax = isDraft ? 1 : 20;
           }
-          const isFluxUltra = getIsFluxUltra({ modelId: model?.model.id, fluxMode });
+          const isFluxUltra = getIsFluxUltra({ modelId: model?.model?.id, fluxMode });
 
           const resourceTypes = getBaseModelResourceTypes(baseModel);
           if (!resourceTypes) return <></>;
@@ -449,8 +451,8 @@ export function GenerationFormContent() {
                   </InfoPopover>
                 </div>
 
-                <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
-                  {({ model, resources = [], vae, fluxMode }) => {
+                <Watch {...form} fields={['model', 'resources', 'vae']}>
+                  {({ model, resources = [], vae }) => {
                     const selectedResources = [...resources, vae, model].filter(isDefined);
                     const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
                     const unstableResources = selectedResources.filter((x) =>
@@ -481,7 +483,7 @@ export function GenerationFormContent() {
                                 baseModels: !!resources?.length || !!vae ? baseModels : undefined,
                               })), // TODO - needs to be able to work when no resources selected (baseModels should be empty array)
                           }}
-                          hideVersion={isFlux}
+                          hideVersion={isBaseFlux}
                           pb={
                             unstableResources.length || minorFlaggedResources.length
                               ? 'sm'
@@ -635,7 +637,7 @@ export function GenerationFormContent() {
                   </Alert>
                 )}
 
-                {isFlux && (
+                {isBaseFlux && (
                   <Watch {...form} fields={['resources']}>
                     {({ resources }) => (
                       <div className="flex flex-col gap-0.5">
