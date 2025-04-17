@@ -22,7 +22,7 @@ const baseWanSchema = z.object({
   frameRate: z.literal(16).default(16).catch(16),
   duration: numberEnum(wanDuration).default(5).catch(5),
   seed: seedSchema,
-  draft: z.boolean().optional(),
+  // draft: z.boolean().optional(),
   steps: z.number().default(20),
   resources: z.array(resourceSchema.passthrough()).default([]),
 });
@@ -52,11 +52,11 @@ const wanImg2VidConfig = new VideoGenerationConfig({
 export const wanVideoGenerationConfig = [wanTxt2ImgConfig, wanImg2VidConfig];
 
 export function WanInput({
-  draft,
   resources,
   ...args
 }: z.infer<(typeof wanVideoGenerationConfig)[number]['schema']>): WanVdeoGenInput {
-  const resolution = draft ? 420 : 640;
+  // const resolution = draft ? 420 : 640;
+  const resolution = 420;
   const hasSourceImage = 'sourceImage' in args;
   const sourceImage = hasSourceImage ? args.sourceImage.url : undefined;
 
@@ -66,6 +66,9 @@ export function WanInput({
       })
     : wanAspectRatioMap[args.aspectRatio];
   const { width, height } = ar.getSize(resolution);
+  // const { width, height } = hasSourceImage
+  //   ? args.sourceImage
+  //   : wanAspectRatioMap[args.aspectRatio].getSize(resolution);
 
   return {
     ...args,
