@@ -192,7 +192,7 @@ export const trainingSettings: TrainingSettingsType[] = [
         The total number of steps for training. Computed automatically with (epochs * # of images *
         repeats / batch size).
         <br />
-        The maximum allowed is 10,000 steps.
+        The maximum allowed is 10,000 steps (5,000 for video).
       </>
     ),
     type: 'int',
@@ -201,6 +201,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 10000,
     step: 1,
     disabled: true,
+    overrides: {
+      hy_720_fp8: { all: { max: 5000 } },
+      wan_2_1_720p: { all: { max: 5000 } },
+    },
   },
   {
     name: 'resolution',

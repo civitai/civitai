@@ -77,10 +77,6 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
 const maxRuns = 5;
-// TODO check override
-const maxSteps =
-  (trainingSettings.find((ts) => ts.name === 'targetSteps') as NumberTrainingSettingsType).max ??
-  10000;
 
 const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan'];
 
@@ -152,6 +148,14 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
 
   const formBaseModel = selectedRun.base;
   const formBaseModelType = selectedRun.baseType;
+
+  const targetStepsSetting = trainingSettings.find((ts) => ts.name === 'targetSteps') as
+    | NumberTrainingSettingsType
+    | undefined;
+  const override =
+    targetStepsSetting?.overrides?.[formBaseModel]?.all ??
+    targetStepsSetting?.overrides?.[formBaseModel]?.[selectedRun.params.engine];
+  const maxSteps = override?.max ?? targetStepsSetting?.max ?? 10000;
 
   const hasIssue = runs.some((r) => r.hasIssue);
   const totalBuzzCost = hasIssue ? -1 : runs.map((r) => r.buzzCost).reduce((s, a) => s + a, 0);
