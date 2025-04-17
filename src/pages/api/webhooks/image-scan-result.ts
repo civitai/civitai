@@ -488,7 +488,11 @@ const tagPreprocessors: Partial<Record<TagSource, (tags: IncomingTag[]) => Incom
 };
 
 function processClavataTags(tags: IncomingTag[]) {
-  return tags.map((tag) => ({ ...tag, confidence: 70, tag: tag.tag.toLowerCase() }));
+  return tags.map((tag) => ({
+    ...tag,
+    confidence: tag.confidence ?? 70,
+    tag: tag.tag.toLowerCase(),
+  }));
 }
 
 function processWDTags(tags: IncomingTag[]) {
