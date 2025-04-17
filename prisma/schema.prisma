@@ -1647,6 +1647,7 @@ enum TagSource {
   Hive
   MinorDetection
   HiveDemographics
+  Clavata
 }
 
 model TagsOnImageNew {
@@ -1654,6 +1655,15 @@ model TagsOnImageNew {
   image      Image @relation(fields: [imageId], references: [id])
   tagId      Int
   attributes Int   @db.SmallInt()
+
+  @@id([imageId, tagId])
+  @@index([tagId])
+}
+
+model ShadowTagsOnImage {
+  imageId    Int
+  tagId      Int
+  confidence Int
 
   @@id([imageId, tagId])
   @@index([tagId])

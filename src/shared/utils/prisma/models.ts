@@ -82,7 +82,7 @@ export type TagType = "UserGenerated" | "Label" | "Moderation" | "System";
 
 export type TagsOnTagsType = "Parent" | "Replace" | "Append";
 
-export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics";
+export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHash" | "Hive" | "MinorDetection" | "HiveDemographics" | "Clavata";
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
@@ -1281,6 +1281,12 @@ export interface TagsOnImageNew {
   image?: Image;
   tagId: number;
   attributes: number;
+}
+
+export interface ShadowTagsOnImage {
+  imageId: number;
+  tagId: number;
+  confidence: number;
 }
 
 export interface TagsOnImageVote {
