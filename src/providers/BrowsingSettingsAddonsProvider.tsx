@@ -13,6 +13,8 @@ const BrowsingSettingsAddonsCtx = createContext<{
     disablePoi: false,
     excludedTagIds: [],
     excludedFooterLinks: [],
+    generationDefaultValues: {},
+    generationMinValues: {},
   },
   isLoading: true,
 });
@@ -55,6 +57,14 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
             acc.disableMinor = elem.disableMinor || acc.disableMinor;
             acc.excludedTagIds.push(...(elem.excludedTagIds ?? []));
             acc.excludedFooterLinks.push(...(elem.excludedFooterLinks ?? []));
+            acc.generationDefaultValues = {
+              ...acc.generationDefaultValues,
+              ...(elem.generationDefaultValues ?? {}),
+            };
+            acc.generationMinValues = {
+              ...acc.generationMinValues,
+              ...(elem.generationMinValues ?? {}),
+            };
           }
 
           return acc;
@@ -68,6 +78,8 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
         disablePoi: false,
         excludedTagIds: [] as number[],
         excludedFooterLinks: [] as string[],
+        generationDefaultValues: {} as Record<string, number>,
+        generationMinValues: {} as Record<string, number>,
       }
     );
   }, [browsingLevel, data]);

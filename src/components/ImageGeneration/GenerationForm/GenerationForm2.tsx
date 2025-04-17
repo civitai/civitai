@@ -81,6 +81,7 @@ import {
   InputSwitch,
 } from '~/libs/form';
 import { Watch } from '~/libs/form/components/Watch';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { generation, getGenerationConfig, samplerOffsets } from '~/server/common/constants';
@@ -121,6 +122,7 @@ export function GenerationFormContent() {
   const featureFlags = useFeatureFlags();
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const messageHash = useMemo(
     () => (status.message ? hashify(status.message).toString() : null),
     [status.message]
@@ -261,6 +263,7 @@ export function GenerationFormContent() {
           params: {
             ...params,
             nsfw: hasMinorResources || !featureFlags.canViewNsfw ? false : params.nsfw,
+            disablePoi: browsingSettingsAddons.disablePoi,
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
@@ -1143,7 +1146,9 @@ export function GenerationFormContent() {
                             <InputNumberSlider
                               name="denoise"
                               label="Denoise"
-                              min={0}
+                              min={
+                                browsingSettingsAddons.settings.generationMinValues?.denoise ?? 0
+                              }
                               max={isTxt2Img ? 0.75 : 1}
                               step={0.05}
                             />

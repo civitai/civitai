@@ -1127,7 +1127,8 @@ export type BrowsingSettingsAddon = {
   disablePoi?: boolean;
   disableMinor?: boolean;
   excludedTagIds?: number[];
-  generationDefaultValues?: Partial<Record<keyof typeof generation.defaultValues, any>>;
+  generationDefaultValues?: { denoise?: number };
+  generationMinValues?: { denoise?: number };
   excludedFooterLinks?: string[];
 };
 
@@ -1205,6 +1206,9 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
       370273, //recreational drugs
     ],
     generationDefaultValues: {
+      denoise: 0.65,
+    },
+    generationMinValues: {
       denoise: 0.65,
     },
   },

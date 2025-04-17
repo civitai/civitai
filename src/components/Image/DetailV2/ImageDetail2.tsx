@@ -431,10 +431,10 @@ export function ImageDetail2() {
                           radius={0}
                           px="md"
                         >
-                          This image has been blocked because it is has received s NSFW rating and
-                          we could not verify that it was generated using AI To restore the image,
+                          This image has been blocked because it is has received a NSFW rating and
+                          we could not verify that it was generated using AI. To restore the image,
                           please update your post with metadata detailing the generation process
-                          &ndash; such as the prompt, tools, and resources used
+                          &ndash; such as the prompt, tools, and resources used.
                         </AlertWithIcon>
                       )}
                       {['Moderated', 'moderated'].includes(image.blockedFor ?? '') &&
