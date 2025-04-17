@@ -46,6 +46,7 @@ import {
 } from '~/utils/metadata/audit';
 import { normalizeText } from '~/utils/normalize-text';
 import { signalClient } from '~/utils/signal-client';
+import { isDefined } from '~/utils/type-guards';
 
 const REQUIRED_SCANS = 2;
 
@@ -183,6 +184,27 @@ async function handleSuccess({
   hash,
   result,
 }: BodyProps) {
+  // this is a temporary solution to add all clavata tags to the table `ShadowTagsOnImage`
+  if (source === TagSource.Clavata) {
+    const response = await getTagsFromIncomingTags({
+      id,
+      tags: incomingTags?.filter((x) => x.confidence >= 35),
+      source,
+    });
+    if (!response) return;
+    const { tags } = response;
+    const data = tags
+      .map((x) => (!!x.id ? { tagId: x.id, imageId: id, confidence: x.confidence } : null))
+      .filter(isDefined);
+    await dbWrite.$executeRawUnsafe(`
+      INSERT INTO "ShadowTagsOnImage" ("tagId", "imageId", "confidence")
+      VALUES ${data.map((x) => `(${x.tagId}, ${x.imageId}, ${x.confidence})`).join(',')}
+      ON CONFLICT ("tagId", "imageId") DO UPDATE
+        SET "confidence" = EXCLUDED."confidence"
+    `);
+    return;
+  }
+
   if (hash && (await isBlocked(hash))) {
     await dbWrite.image.update({
       where: { id },
@@ -251,131 +273,9 @@ async function handleSuccess({
     return;
   }
 
-  if (!incomingTags) return;
-
-  const image = await dbWrite.image.findUnique({
-    where: { id },
-    select: {
-      id: true,
-      userId: true,
-      meta: true,
-      metadata: true,
-      postId: true,
-      nsfwLevel: true,
-      tools: {
-        select: {
-          toolId: true,
-        },
-      },
-    },
-  });
-  if (!image) {
-    await logScanResultError({ id, message: 'Image not found' });
-    throw new Error('Image not found');
-  }
-
-  // Preprocess tags
-  const preprocessor = tagPreprocessors[source];
-  if (preprocessor) incomingTags = preprocessor(incomingTags);
-
-  // Add prompt based tags
-  const imageMeta = image.meta as Prisma.JsonObject | undefined;
-  const prompt = imageMeta?.prompt as string | undefined;
-  if (prompt) {
-    // Detect real person in prompt
-    const realPersonName = includesPoi(prompt);
-    if (realPersonName) incomingTags.push({ tag: realPersonName.toLowerCase(), confidence: 100 });
-
-    // Detect tags from prompt
-    const promptTags = getTagsFromPrompt(prompt);
-    if (promptTags) incomingTags.push(...promptTags.map((tag) => ({ tag, confidence: 70 })));
-  }
-
-  // De-dupe incoming tags and keep tag with highest confidence
-  const tagMap: Record<string, IncomingTag> = {};
-  for (const tag of incomingTags) {
-    if (!tagMap[tag.tag] || tagMap[tag.tag].confidence < tag.confidence) tagMap[tag.tag] = tag;
-  }
-  const tags: Tag[] = Object.values(tagMap);
-
-  // Add computed tags
-  const computedTags = getComputedTags(
-    tags.map((x) => x.tag),
-    source
-  );
-  tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70, source: TagSource.Computed })));
-
-  // Apply Tag Rules
-  const tagRules = await getTagRules();
-  for (const rule of tagRules) {
-    const match = tags.find((x) => x.tag === rule.toTag);
-    if (!match) continue;
-
-    if (rule.type === 'Replace') {
-      match.id = rule.fromId;
-      match.tag = rule.fromTag;
-    } else if (rule.type === 'Append') {
-      tags.push({ id: rule.fromId, tag: rule.fromTag, confidence: 70, source: TagSource.Computed });
-    }
-  }
-
-  // Get Ids for tags
-  const tagsToFind: string[] = [];
-  let hasBlockedTag = false;
-  for (const tag of tags) {
-    const cachedTag = localTagCache[tag.tag];
-    if (!cachedTag) tagsToFind.push(tag.tag);
-    else {
-      tag.id = cachedTag.id;
-      if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
-    }
-  }
-
-  // Get tags that we don't have cached
-  if (tagsToFind.length > 0) {
-    const foundTags = await dbWrite.tag.findMany({
-      where: { name: { in: tagsToFind } },
-      select: { id: true, name: true, nsfwLevel: true },
-    });
-
-    // Cache found tags and add ids to tags
-    for (const tag of foundTags) {
-      localTagCache[tag.name] = { id: tag.id };
-      if (tag.nsfwLevel === NsfwLevel.Blocked) localTagCache[tag.name].blocked = true;
-      if (shouldIgnore(tag.name, source)) localTagCache[tag.name].ignored = true;
-    }
-
-    for (const tag of tags) {
-      const cachedTag = localTagCache[tag.tag];
-      if (!cachedTag) continue;
-      tag.id = cachedTag.id;
-      if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
-    }
-  }
-
-  // Add missing tags
-  const newTags = tags.filter((x) => !x.id);
-  if (newTags.length > 0) {
-    await dbWrite.tag.createMany({
-      data: newTags.map((x) => ({
-        name: x.tag,
-        type: TagType.Label,
-        target:
-          source === TagSource.WD14
-            ? [TagTarget.Image]
-            : [TagTarget.Image, TagTarget.Post, TagTarget.Model],
-      })),
-    });
-    const newFoundTags = await dbWrite.tag.findMany({
-      where: { name: { in: newTags.map((x) => x.tag) } },
-      select: { id: true, name: true, nsfwLevel: true },
-    });
-    for (const tag of newFoundTags) {
-      localTagCache[tag.name] = { id: tag.id };
-      const match = tags.find((x) => x.tag === tag.name);
-      if (match) match.id = tag.id;
-    }
-  }
+  const response = await getTagsFromIncomingTags({ id, source, tags: incomingTags });
+  if (!response) return;
+  const { image, tags, hasBlockedTag } = response;
 
   try {
     if (tags.length > 0) {
@@ -621,7 +521,16 @@ async function logScanResultError({
 const tagPreprocessors: Partial<Record<TagSource, (tags: IncomingTag[]) => IncomingTag[]>> = {
   [TagSource.WD14]: processWDTags,
   [TagSource.Hive]: processHiveTags,
+  [TagSource.Clavata]: processClavataTags,
 };
+
+function processClavataTags(tags: IncomingTag[]) {
+  return tags.map((tag) => ({
+    ...tag,
+    confidence: tag.confidence ?? 70,
+    tag: tag.tag.toLowerCase(),
+  }));
+}
 
 function processWDTags(tags: IncomingTag[]) {
   return tags.map((tag) => {
@@ -721,4 +630,141 @@ async function applyModerationRules(image: IngestedImage) {
       return appliedRule;
     }
   }
+}
+
+async function getTagsFromIncomingTags({
+  id,
+  tags: incomingTags = [],
+  source,
+}: {
+  id: number;
+  tags: BodyProps['tags'];
+  source: BodyProps['source'];
+}) {
+  if (!incomingTags) return;
+
+  const image = await dbWrite.image.findUnique({
+    where: { id },
+    select: {
+      id: true,
+      userId: true,
+      meta: true,
+      metadata: true,
+      postId: true,
+      nsfwLevel: true,
+      tools: {
+        select: {
+          toolId: true,
+        },
+      },
+    },
+  });
+  if (!image) {
+    await logScanResultError({ id, message: 'Image not found' });
+    throw new Error('Image not found');
+  }
+  // Preprocess tags
+  const preprocessor = tagPreprocessors[source];
+  if (preprocessor) incomingTags = preprocessor(incomingTags);
+
+  // Add prompt based tags
+  const imageMeta = image.meta as Prisma.JsonObject | undefined;
+  const prompt = imageMeta?.prompt as string | undefined;
+  if (prompt) {
+    // Detect real person in prompt
+    const realPersonName = includesPoi(prompt);
+    if (realPersonName) incomingTags.push({ tag: realPersonName.toLowerCase(), confidence: 100 });
+
+    // Detect tags from prompt
+    const promptTags = getTagsFromPrompt(prompt);
+    if (promptTags) incomingTags.push(...promptTags.map((tag) => ({ tag, confidence: 70 })));
+  }
+
+  // De-dupe incoming tags and keep tag with highest confidence
+  const tagMap: Record<string, IncomingTag> = {};
+  for (const tag of incomingTags) {
+    if (!tagMap[tag.tag] || tagMap[tag.tag].confidence < tag.confidence) tagMap[tag.tag] = tag;
+  }
+  const tags: Tag[] = Object.values(tagMap);
+
+  // Add computed tags
+  const computedTags = getComputedTags(
+    tags.map((x) => x.tag),
+    source
+  );
+  tags.push(...computedTags.map((x) => ({ tag: x, confidence: 70, source: TagSource.Computed })));
+
+  // Apply Tag Rules
+  const tagRules = await getTagRules();
+  for (const rule of tagRules) {
+    const match = tags.find((x) => x.tag === rule.toTag);
+    if (!match) continue;
+
+    if (rule.type === 'Replace') {
+      match.id = rule.fromId;
+      match.tag = rule.fromTag;
+    } else if (rule.type === 'Append') {
+      tags.push({ id: rule.fromId, tag: rule.fromTag, confidence: 70, source: TagSource.Computed });
+    }
+  }
+
+  // Get Ids for tags
+  const tagsToFind: string[] = [];
+  let hasBlockedTag = false;
+  for (const tag of tags) {
+    const cachedTag = localTagCache[tag.tag];
+    if (!cachedTag) tagsToFind.push(tag.tag);
+    else {
+      tag.id = cachedTag.id;
+      if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
+    }
+  }
+
+  // Get tags that we don't have cached
+  if (tagsToFind.length > 0) {
+    const foundTags = await dbWrite.tag.findMany({
+      where: { name: { in: tagsToFind } },
+      select: { id: true, name: true, nsfwLevel: true },
+    });
+
+    // Cache found tags and add ids to tags
+    for (const tag of foundTags) {
+      localTagCache[tag.name] = { id: tag.id };
+      if (tag.nsfwLevel === NsfwLevel.Blocked) localTagCache[tag.name].blocked = true;
+      if (shouldIgnore(tag.name, source)) localTagCache[tag.name].ignored = true;
+    }
+
+    for (const tag of tags) {
+      const cachedTag = localTagCache[tag.tag];
+      if (!cachedTag) continue;
+      tag.id = cachedTag.id;
+      if (!cachedTag.ignored && cachedTag.blocked) hasBlockedTag = true;
+    }
+  }
+
+  // Add missing tags
+  const newTags = tags.filter((x) => !x.id);
+  if (newTags.length > 0) {
+    await dbWrite.tag.createMany({
+      data: newTags.map((x) => ({
+        name: x.tag,
+        type: TagType.Label,
+        target:
+          source === TagSource.WD14
+            ? [TagTarget.Image]
+            : [TagTarget.Image, TagTarget.Post, TagTarget.Model],
+      })),
+    });
+    const newFoundTags = await dbWrite.tag.findMany({
+      where: { name: { in: newTags.map((x) => x.tag) } },
+      select: { id: true, name: true, nsfwLevel: true },
+    });
+    for (const tag of newFoundTags) {
+      localTagCache[tag.name] = { id: tag.id };
+      const match = tags.find((x) => x.tag === tag.name);
+      if (match) match.id = tag.id;
+    }
+  }
+
+  return { image, tags, hasBlockedTag };
 }

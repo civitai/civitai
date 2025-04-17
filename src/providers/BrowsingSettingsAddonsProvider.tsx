@@ -84,8 +84,6 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
     );
   }, [browsingLevel, data]);
 
-  console.log({ browsingLevel, settings });
-
   return (
     <BrowsingSettingsAddonsCtx.Provider
       value={{

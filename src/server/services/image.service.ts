@@ -459,18 +459,11 @@ export const ingestImageById = async ({ id }: GetByIdInput) => {
   return await ingestImage({ image: images[0] });
 };
 
-const defaultScanTypes = [
-  ...(env.EXTERNAL_IMAGE_SCANNER === 'hive'
-    ? [ImageScanType.Hive]
-    : [ImageScanType.Moderation, ImageScanType.Label]),
-  ImageScanType.WD14,
-  ImageScanType.Hash,
-  ...(env.MINOR_SCANNER === 'custom'
-    ? [ImageScanType.MinorDetection]
-    : env.MINOR_SCANNER === 'hive'
-    ? [ImageScanType.HiveDemographics]
-    : []),
-];
+const scanner = env.EXTERNAL_IMAGE_SCANNER;
+const clavataScan = env.CLAVATA_SCAN;
+const scanTypes: ImageScanType[] = [ImageScanType.WD14, ImageScanType.Hash];
+if (clavataScan !== 'off' || scanner === 'clavata') scanTypes.push(ImageScanType.Clavata);
+if (scanner === 'hive') scanTypes.push(ImageScanType.Hive);
 
 export const ingestImage = async ({
   image,
@@ -528,7 +521,7 @@ export const ingestImage = async ({
       height,
       prompt: image.prompt,
       // wait: true,
-      scans: defaultScanTypes,
+      scans: scanTypes,
       callbackUrl,
       movieRatingModel: env.IMAGE_SCANNING_MODEL,
     }),
@@ -610,7 +603,7 @@ export const ingestImageBulk = async ({
           width: image.width,
           height: image.height,
           prompt: image.prompt,
-          scans: scans ?? defaultScanTypes,
+          scans: scans ?? scanTypes,
           callbackUrl,
         }))
       ),
@@ -3665,8 +3658,6 @@ export const getImageModerationReviewQueue = async ({
   `;
 
   let nextCursor: bigint | undefined;
-
-  console.log({ limit, raw: rawImages.length });
 
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();

@@ -34,13 +34,13 @@ export function UpscaleEnhancementModal({
   const generate = useGenerate();
 
   const whatIf = trpc.orchestrator.whatIf.useQuery({
-    type: 'image',
+    $type: 'image',
     data: { workflow, type: 'img2img', ...defaultValues, ...watched },
   });
 
   async function handleSubmit(data: z.infer<typeof schema>) {
     await generate.mutate({
-      type: 'image',
+      $type: 'image',
       data: { workflow, type: 'img2img', ...data },
     });
     dialog.onClose();

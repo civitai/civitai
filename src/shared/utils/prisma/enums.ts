@@ -400,6 +400,7 @@ export const TagSource = {
   Hive: 'Hive',
   MinorDetection: 'MinorDetection',
   HiveDemographics: 'HiveDemographics',
+  Clavata: 'Clavata',
 } as const;
 
 export type TagSource = (typeof TagSource)[keyof typeof TagSource];

@@ -157,6 +157,7 @@ export function ArticleUpsertForm({ article }: Props) {
     const selectedCategory = data?.items.find((cat) => cat.id === categoryId);
     const tags =
       selectedTags && selectedCategory ? selectedTags.concat([selectedCategory]) : selectedTags;
+
     upsertArticleMutation.mutate(
       {
         ...rest,
@@ -382,7 +383,11 @@ function ActionButtons({
   return (
     <Stack spacing={8} {...stackProps}>
       {article?.publishedAt ? (
-        <Button {...publishButtonProps} type="submit" fullWidth>
+        <Button
+          {...(article.status !== ArticleStatus.Published ? publishButtonProps : saveButtonProps)}
+          type="submit"
+          fullWidth
+        >
           {article.status !== ArticleStatus.Published ? 'Publish' : 'Save'}
         </Button>
       ) : (

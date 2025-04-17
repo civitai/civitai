@@ -5,7 +5,11 @@ import { constants, maxRandomSeed } from '~/server/common/constants';
 import { SignalMessages } from '~/server/common/enums';
 import { extModeration } from '~/server/integrations/moderation';
 import { logToAxiom } from '~/server/logging/client';
-import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
+import {
+  GenerationSchema,
+  getGenerationTags,
+  getGenerationTagsForType,
+} from '~/server/orchestrator/generation/generation.schema';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
 import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.service';
@@ -84,17 +88,7 @@ export async function generate({
   const workflow = await submitWorkflow({
     token: token,
     body: {
-      tags: [
-        ...new Set(
-          [
-            WORKFLOW_TAGS.GENERATION,
-            args.type === 'video' ? WORKFLOW_TAGS.VIDEO : WORKFLOW_TAGS.IMAGE,
-            args.data.workflow,
-            args.data.type,
-            ...tags,
-          ].filter(isDefined)
-        ),
-      ],
+      tags: [...new Set([...getGenerationTags(args), ...tags].filter(isDefined))],
       steps: [step],
       tips: {
         civitai: civitaiTip,

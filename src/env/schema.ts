@@ -130,7 +130,8 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
   BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
 
-  EXTERNAL_IMAGE_SCANNER: z.enum(['hive', 'rekognition']).optional().default('hive').catch('hive'),
+  EXTERNAL_IMAGE_SCANNER: z.string().optional(),
+  CLAVATA_SCAN: z.enum(['off', 'shadow', 'active']).default('shadow'),
   MINOR_SCANNER: z.enum(['custom', 'hive']).optional().catch(undefined),
   HIVE_VISUAL_TOKEN: z.string().optional(),
 

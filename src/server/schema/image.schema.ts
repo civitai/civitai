@@ -99,7 +99,7 @@ export const imageGenerationSchema = z.object({
 
 export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;
 export const civitaiResourceSchema = z.object({
-  type: z.string(),
+  type: z.string().optional(),
   weight: z.number().optional(),
   modelVersionId: z.number(),
 });

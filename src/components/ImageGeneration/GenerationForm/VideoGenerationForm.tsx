@@ -997,7 +997,7 @@ function FormWrapper({
     // TODO - tips?
     conditionalPerformTransaction(totalCost, () => {
       mutate({
-        type: 'video',
+        $type: 'videoGen',
         data: validated,
         tags: [WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
       });
@@ -1085,7 +1085,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   });
   const isUploadingImage = isUploadingImageValue === 1;
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
-    { type: 'video', data: query as Record<string, any> },
+    { $type: 'videoGen', data: query as Record<string, any> },
     { keepPreviousData: false, enabled: !!query && !isUploadingImage }
   );
 

@@ -53,11 +53,12 @@ export const hunyuanVideoGenerationConfig = [hunyuanTxt2ImgConfig];
 
 export function HunyuanInput({
   aspectRatio,
-  draft,
   resources,
+  draft,
   ...args
 }: z.infer<(typeof hunyuanVideoGenerationConfig)[number]['schema']>): HunyuanVdeoGenInput {
   const resolution = draft ? 420 : 640;
+  // const resolution = 420;
   const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize(resolution);
   return {
     ...args,

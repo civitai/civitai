@@ -67,6 +67,7 @@ import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { BackgroundRemovalModal } from '~/components/Orchestrator/components/BackgroundRemovalModal';
 import { UpscaleEnhancementModal } from '~/components/Orchestrator/components/UpscaleEnhancementModal';
+import { EnhanceVideoModal } from '~/components/Orchestrator/components/EnhanceVideoModal';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { WorkflowDefinitionKey } from '~/server/services/orchestrator/comfy/comfy.types';
@@ -601,6 +602,16 @@ function GeneratedImageWorkflowMenuItems({
     });
   }
 
+  async function handleEnhanceVideo() {
+    dialogStore.trigger({
+      component: EnhanceVideoModal,
+      props: {
+        sourceUrl: image.url,
+        params: step.params,
+      },
+    });
+  }
+
   async function handleUpscale() {
     if (step.$type !== 'videoGen') {
       dialogStore.trigger({
@@ -701,6 +712,11 @@ function GeneratedImageWorkflowMenuItems({
           </Menu.Item>
         </>
       )}
+      {/* {image.type === 'video' && (
+        <>
+          <Menu.Item onClick={handleEnhanceVideo}>Upscale Video</Menu.Item>
+        </>
+      )} */}
       {!workflowsOnly && (
         <>
           <Menu.Divider />
