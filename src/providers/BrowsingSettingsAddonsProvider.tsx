@@ -43,7 +43,7 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
           if (elem.type === 'all') {
             apply =
               Flags.intersection(browsingLevel, Flags.arrayToInstance(elem.nsfwLevels)) ===
-              browsingLevel;
+              Flags.arrayToInstance(elem.nsfwLevels);
           }
 
           if (elem.type === 'none') {
@@ -71,6 +71,8 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
       }
     );
   }, [browsingLevel, data]);
+
+  console.log({ browsingLevel, settings });
 
   return (
     <BrowsingSettingsAddonsCtx.Provider

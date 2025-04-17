@@ -12,58 +12,70 @@ import { ChatPortal } from '~/components/Chat/ChatProvider';
 import { FeatureAccess } from '~/server/services/feature-flags.service';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { ColorDomain } from '~/server/common/constants';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 
 const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   domains?: ColorDomain[];
   features?: (features: FeatureAccess) => boolean;
+  key: string;
+  defaultExcluded?: boolean;
 })[] = [
   {
+    key: 'creator-program',
     href: '/creator-program',
     color: 'blue',
     children: 'Creators',
   },
   {
+    key: 'tos',
     href: '/content/tos',
     children: 'Terms of Service',
   },
   {
+    key: '2257',
     href: '/content/2257',
     children: '18 U.S.C. §2257',
   },
   {
+    key: 'privacy',
     href: '/content/privacy',
     children: 'Privacy',
   },
   {
+    key: 'safety',
     href: '/safety',
     children: 'Safety',
     features: (features) => features.safety,
   },
-  /*   {
+  {
+    key: 'newsroom',
     href: '/newsroom',
     children: 'Newsroom',
     features: (features) => features.newsroom,
-  }, 
+  },
   {
+    key: 'api',
     href: '/github/wiki/REST-API-Reference',
     target: '_blank',
     rel: 'nofollow noreferrer',
     children: 'API',
   },
-  */
   {
+    key: 'status',
     href: 'https://status.civitai.com',
     target: '_blank',
     rel: 'nofollow noreferrer',
     children: 'Status',
   },
-  /*   {
+  {
+    key: 'wiki',
     href: '/wiki',
     target: '_blank',
     rel: 'nofollow noreferrer',
     children: 'Wiki',
-  }, */
+  },
   {
+    key: 'education',
     href: '/education',
     target: '_blank',
     rel: 'nofollow noreferrer',
@@ -74,6 +86,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
 export function AppFooter() {
   const features = useFeatureFlags();
   const domain = useDomainColor();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const footerRef = useRef<HTMLElement | null>(null);
 
   const [showFooter, setShowFooter] = useState(true);
@@ -82,6 +95,8 @@ export function AppFooter() {
       setShowFooter(node.scrollTop <= 100);
     },
   });
+
+  console.log(browsingSettingsAddons.settings);
 
   return (
     <footer
@@ -121,9 +136,11 @@ export function AppFooter() {
           {footerLinks
             .filter(
               (item) =>
-                (!item.features && !item.domains) ||
-                item.features?.(features) ||
-                item.domains?.includes(domain)
+                ((!item.features && !item.domains) ||
+                  item.features?.(features) ||
+                  item.domains?.includes(domain)) &&
+                // !item.defaultExcluded &&
+                !browsingSettingsAddons.settings.excludedFooterLinks.includes(item.key)
             )
             .map(({ features, ...props }, i) => (
               <Button

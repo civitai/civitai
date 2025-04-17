@@ -429,6 +429,10 @@ async function handleSuccess({
 
     const data: Prisma.ImageUpdateInput = {};
 
+    // if (hasMinorTag) {
+    //   data.minor = true;
+    // }
+
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
