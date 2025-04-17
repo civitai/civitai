@@ -11,9 +11,7 @@ import { getVideoData } from '~/utils/media-preprocessors';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { TwCard } from '~/components/TwCard/TwCard';
-import { AspectRatio } from '~/libs/generation/utils/AspectRatio';
 
-const multiplier = 2;
 export function EnhanceVideoModal({
   sourceUrl,
   params,
@@ -33,7 +31,13 @@ export function EnhanceVideoModal({
   }, [sourceUrl]);
 
   const upscaleDimensions = useMemo(() => {
-    if (!video) return;
+    if (!video) {
+      return {
+        width: 0,
+        height: 0,
+        canUpscale: false,
+      };
+    }
     const width = video.width * 2;
     const height = video.height * 2;
     return {
@@ -46,7 +50,12 @@ export function EnhanceVideoModal({
   const whatIf = trpc.orchestrator.whatIf.useQuery(
     {
       $type: 'videoEnhancement',
-      data: { sourceUrl, multiplier, params },
+      data: {
+        sourceUrl,
+        width: upscaleDimensions.width,
+        height: upscaleDimensions.height,
+        params,
+      },
     },
     { enabled: !!upscaleDimensions?.canUpscale }
   );
@@ -54,7 +63,12 @@ export function EnhanceVideoModal({
   async function handleSubmit() {
     await generate.mutateAsync({
       $type: 'videoEnhancement',
-      data: { sourceUrl, multiplier, params },
+      data: {
+        sourceUrl,
+        width: upscaleDimensions.width,
+        height: upscaleDimensions.height,
+        params,
+      },
     });
     dialog.onClose();
   }
@@ -71,7 +85,7 @@ export function EnhanceVideoModal({
               </div>
             )}
           </TwCard>
-          {upscaleDimensions &&
+          {video &&
             (upscaleDimensions.canUpscale ? (
               <div className="rounded-md bg-gray-2 px-6 py-4 dark:bg-dark-6">
                 <span className="font-bold">Upscale Dimensions:</span> {upscaleDimensions.width} x{' '}

@@ -3,6 +3,8 @@ import { VideoEnhancementSchema } from '~/server/orchestrator/video-enhancement/
 
 export async function createVideoEnhancementStep({
   sourceUrl,
+  width,
+  height,
   multiplier,
   params,
 }: VideoEnhancementSchema): Promise<VideoEnhancementStepTemplate> {
@@ -10,7 +12,12 @@ export async function createVideoEnhancementStep({
     $type: 'videoEnhancement',
     input: {
       sourceUrl,
-      interpolation: { multiplier },
+      upscaler: {
+        model: 'urn:air:other:upscaler:civitai:147759@164821',
+        width,
+        height,
+      },
+      interpolation: multiplier ? { multiplier } : undefined,
     },
     metadata: { params },
   };
