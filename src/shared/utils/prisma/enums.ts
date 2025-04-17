@@ -759,6 +759,14 @@ export const ModerationRuleAction = {
 
 export type ModerationRuleAction = (typeof ModerationRuleAction)[keyof typeof ModerationRuleAction];
 
+export const NewOrderRankType = {
+  Acolyte: 'Acolyte',
+  Knight: 'Knight',
+  Templar: 'Templar',
+} as const;
+
+export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];
+
 export const EntityMetric_EntityType_Type = {
   Image: 'Image',
 } as const;

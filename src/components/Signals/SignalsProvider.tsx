@@ -60,7 +60,7 @@ export const useSignalConnection = (message: SignalMessages, cb: SignalCallback)
 };
 
 export const useSignalTopic = (
-  topic: `${SignalTopic}${'' | `:${number}`}` | undefined,
+  topic: `${SignalTopic}${'' | `:${number | string}`}` | undefined,
   notify?: boolean
 ) => {
   const { worker, registeredTopics, setRegisteredTopics } = useSignalContext();

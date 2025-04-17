@@ -1,0 +1,720 @@
+import { clickhouse, Tracker } from '~/server/clickhouse/client';
+import { CacheTTL } from '~/server/common/constants';
+import {
+  NewOrderImageRatingStatus,
+  ImageSort,
+  NsfwLevel,
+  SignalTopic,
+  SignalMessages,
+} from '~/server/common/enums';
+import { dbRead, dbWrite } from '~/server/db/client';
+import {
+  allJudmentsCounter,
+  blessedBuzzCounter,
+  correctJudgementsCounter,
+  expCounter,
+  fervorCounter,
+  getImageRatingsCounter,
+  poolCounters,
+  smitesCounter,
+} from '~/server/games/new-order/utils';
+import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import {
+  AddImageRatingInput,
+  CleanseSmiteInput,
+  GetHistorySchema,
+  SmitePlayerInput,
+} from '~/server/schema/games/new-order.schema';
+import { ImageMetadata } from '~/server/schema/media.schema';
+import { playerInfoSelect } from '~/server/selectors/user.selector';
+import { getAllImagesIndex, updateImageNsfwLevel } from '~/server/services/image.service';
+import {
+  bustFetchThroughCache,
+  cachedCounter,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwInternalServerError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { Flags } from '~/shared/utils';
+import { MetricTimeframe, NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { shuffle } from '~/utils/array-helpers';
+import { signalClient } from '~/utils/signal-client';
+import { isDefined } from '~/utils/type-guards';
+
+const FERVOR_COEFFICIENT = -0.0025;
+
+export async function joinGame({ userId }: { userId: number }) {
+  const user = await dbRead.user.findUnique({
+    where: { id: userId },
+    select: {
+      playerInfo: { select: playerInfoSelect },
+    },
+  });
+
+  if (!user) throw throwNotFoundError(`No user with id ${userId}`);
+  if (user.playerInfo) {
+    // User is already in game
+    const stats = await getPlayerStats({ playerId: userId });
+    const { user: userInfo, ...playerData } = user.playerInfo;
+    return { ...userInfo, ...playerData, stats };
+  }
+
+  const player = await dbWrite.newOrderPlayer.create({
+    data: { userId, rankType: NewOrderRankType.Acolyte, startAt: new Date() },
+    select: playerInfoSelect,
+  });
+
+  const { user: userInfo, ...playerData } = player;
+  return { ...playerData, ...userInfo, stats: { exp: 0, fervor: 0, smites: 0, blessedBuzz: 0 } };
+}
+
+export async function getPlayerById({ playerId }: { playerId: number }) {
+  const player = await dbRead.newOrderPlayer.findUnique({
+    where: { userId: playerId },
+    select: playerInfoSelect,
+  });
+  if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
+
+  const { user, ...playerData } = player;
+  const stats = await getPlayerStats({ playerId });
+
+  return { ...playerData, ...user, stats };
+}
+
+async function getPlayerStats({ playerId }: { playerId: number }) {
+  const [exp, fervor, smites, blessedBuzz] = await Promise.all([
+    expCounter.getCount(playerId),
+    fervorCounter.getCount(playerId),
+    smitesCounter.getCount(playerId),
+    blessedBuzzCounter.getCount(playerId),
+  ]);
+
+  return { exp, fervor, smites, blessedBuzz };
+}
+
+export async function smitePlayer({
+  playerId,
+  modId,
+  reason,
+  size,
+}: SmitePlayerInput & { modId: number }) {
+  const smite = await dbWrite.newOrderSmite.create({
+    data: {
+      targetPlayerId: playerId,
+      givenById: modId,
+      reason,
+      size,
+      remaining: size,
+    },
+  });
+
+  const activeSmiteCount = await dbWrite.newOrderSmite.count({
+    where: { targetPlayerId: playerId, cleansedAt: null },
+  });
+  if (activeSmiteCount >= 3) return resetPlayer({ playerId });
+
+  const newSmiteCount = await smitesCounter.increment({ id: playerId, value: size });
+  signalClient.topicSend({
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: { stats: { smites: newSmiteCount } },
+  });
+
+  // TODO.newOrder: send notification
+
+  return smite;
+}
+
+export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmiteInput) {
+  const smite = await dbWrite.newOrderSmite.update({
+    where: { id },
+    data: { cleansedAt: new Date(), cleansedReason },
+  });
+
+  const smiteCount = await smitesCounter.decrement({ id: playerId, value: smite.size });
+  signalClient.topicSend({
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: { stats: { smites: smiteCount } },
+  });
+
+  // TODO.newOrder: send notification
+
+  return smite;
+}
+
+export async function addImageRating({
+  playerId,
+  imageId,
+  rating,
+  damnedReason,
+  chTracker,
+  isModerator,
+}: AddImageRatingInput & { playerId: number; chTracker?: Tracker; isModerator?: boolean }) {
+  if (!clickhouse) throw throwInternalServerError('Not supported');
+
+  const player = await dbRead.newOrderPlayer.findUnique({
+    where: { userId: playerId },
+    select: playerInfoSelect,
+  });
+  if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
+
+  const image = await dbRead.image.findUnique({
+    where: { id: imageId },
+    select: { id: true, nsfwLevel: true },
+  });
+
+  if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
+
+  const valueInQueue = await isImageInQueue({
+    imageId,
+    rankType:
+      player.rankType === NewOrderRankType.Templar
+        ? [NewOrderRankType.Templar, NewOrderRankType.Knight]
+        : player.rankType,
+  });
+
+  if (!valueInQueue) {
+    //  We won't error out cause technically it might've already be cleared as an image.
+    return false;
+  }
+
+  if (valueInQueue.value >= 5 && valueInQueue.rank === NewOrderRankType.Knight) {
+    // Ignore this vote, was rated by enough players.
+    return false;
+  }
+
+  if (valueInQueue.value >= 2 && valueInQueue.rank === NewOrderRankType.Templar) {
+    // Ignore this vote, was rated by enough players.
+    return false;
+  }
+
+  // TODO.newOrder: adjust status based on rating distance
+  const status =
+    player.rankType === NewOrderRankType.Acolyte
+      ? image.nsfwLevel === rating
+        ? NewOrderImageRatingStatus.Correct
+        : NewOrderImageRatingStatus.Failed
+      : // Knights / Templars leave the image in the pending status until their vote is confirmed.
+        NewOrderImageRatingStatus.Pending;
+
+  // TODO.newOrder: grantedExp and multiplier
+  const grantedExp = 100;
+  const multiplier = status === NewOrderImageRatingStatus.Failed ? -1 : 1;
+
+  if (chTracker) {
+    try {
+      await chTracker.newOrderImageRating({
+        userId: playerId,
+        imageId,
+        rating,
+        status:
+          player.rank.name === 'Acolyte'
+            ? status === NewOrderImageRatingStatus.Correct
+              ? NewOrderImageRatingStatus.AcolyteCorrect
+              : NewOrderImageRatingStatus.AcolyteFailed
+            : status,
+        damnedReason,
+        grantedExp,
+        multiplier,
+      });
+    } catch (e) {
+      const error = e as Error;
+      console.log(error);
+      logToAxiom(
+        {
+          type: 'error',
+          name: 'Failed to track new order image rating',
+          details: {
+            data: { playerId, imageId, rating, status, damnedReason, grantedExp, multiplier },
+          },
+          message: error.message,
+          stack: error.stack,
+          cause: error.cause,
+        },
+        'clickhouse'
+      ).catch();
+    }
+  }
+
+  // Update image nsfw level if the player is a mod
+  if (isModerator)
+    await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
+
+  // Increase rating count
+  await getImageRatingsCounter(imageId).increment({ id: `${player.rank.name}-${rating}` });
+
+  // No need to await mainly cause it makes no difference as the user has a queue in general.
+  bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
+
+  // Increase rating count for the image in the queue.
+  await valueInQueue.pool.increment({ id: imageId, value: 1 });
+
+  if (status === NewOrderImageRatingStatus.Correct) {
+    // Reduce gainedExp from oldest smite remaining score
+    const smite = await dbWrite.newOrderSmite.findFirst({
+      where: { targetPlayerId: playerId, remaining: { gt: 0 } },
+      orderBy: { createdAt: 'asc' },
+      select: { id: true, remaining: true },
+    });
+
+    if (smite) {
+      const updatedSmite = await dbWrite.newOrderSmite.update({
+        where: { id: smite.id },
+        data: { remaining: smite.remaining - grantedExp * multiplier },
+      });
+
+      if (updatedSmite.remaining <= 0)
+        await cleanseSmite({ id: updatedSmite.id, cleansedReason: 'Smite expired', playerId });
+    }
+  }
+
+  // Increase all counters
+  const stats = await updatePlayerStats({ playerId, status, exp: grantedExp * multiplier });
+
+  signalClient.topicSend({
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: { stats },
+  });
+
+  // Now, process what to do with the image:
+  if (valueInQueue.rank === NewOrderRankType.Knight && ++valueInQueue.value >= 5) {
+    // Image is now rated by enough players, we can process it.
+    const ratings = await getImageRatingsCounter(imageId).getAll();
+    const keys = Object.keys(ratings);
+    let processed = false;
+
+    if (keys.length === 0) {
+      throw throwBadRequestError('No ratings found for image');
+    }
+
+    // Check if they all voted damned:
+    if (keys.length === 1 && keys[0].endsWith(`${NsfwLevel.Blocked}`)) {
+      // TODO.newOrder: Handle damned image. Send to mods.
+      processed = true;
+      await addImageToQueue({
+        imageIds: imageId,
+        rankType: 'Inquisitor',
+        priority: 1,
+      });
+    }
+
+    if (keys.length > 1 && !processed) {
+      // Means there are multiple entries for this image. We must raise this to the Templars:
+      // Add to templars queue:
+      await addImageToQueue({
+        imageIds: imageId,
+        rankType: NewOrderRankType.Templar,
+        priority: 1,
+      });
+    }
+
+    const rating = Number(keys[0].split('-')[1]);
+    const currentNsfwLevel = image.nsfwLevel;
+
+    if (rating !== currentNsfwLevel && !processed) {
+      // Check if lower:
+      if (rating < currentNsfwLevel) {
+        // Raise to templars because they lowered the rating.
+        await addImageToQueue({
+          imageIds: imageId,
+          rankType: NewOrderRankType.Templar,
+          priority: 1,
+        });
+      } else if (rating > currentNsfwLevel && Flags.increaseByBits(rating) !== currentNsfwLevel) {
+        // Raise to templars because the diff. is more than 1 level up:
+        await addImageToQueue({
+          imageIds: imageId,
+          rankType: NewOrderRankType.Templar,
+          priority: 1,
+        });
+      } else {
+        // Else, we're good :)
+        await dbWrite.image.update({
+          where: { id: imageId },
+          data: { nsfwLevel: rating },
+        });
+      }
+
+      // Clear image from the pool:
+      valueInQueue.pool.reset({ id: imageId });
+      // TODO.newOrder: Send signal.
+    }
+  }
+
+  // Process Templar rating:
+  if (valueInQueue.rank === NewOrderRankType.Templar && ++valueInQueue.value >= 2) {
+    // Image is now rated by enough players, we can process it.
+    const ratings = await getImageRatingsCounter(imageId).getAll();
+    const keys = Object.keys(ratings);
+    let processed = false;
+
+    if (keys.length === 0) {
+      throw throwBadRequestError('No ratings found for image');
+    }
+
+    const templarKeys = keys.filter((k) => k.startsWith(NewOrderRankType.Templar));
+
+    // Check if they all voted damned or have a disparity in ratings:
+    if (
+      (templarKeys.length === 1 && keys[0].endsWith(`${NsfwLevel.Blocked}`)) ||
+      templarKeys.length > 1
+    ) {
+      processed = true;
+      await addImageToQueue({
+        imageIds: imageId,
+        rankType: 'Inquisitor',
+        priority: 1,
+      });
+    }
+
+    const rating = Number(keys[0].split('-')[1]);
+    const currentNsfwLevel = image.nsfwLevel;
+
+    if (rating !== currentNsfwLevel && !processed) {
+      // Else, we're good :)
+      await dbWrite.image.update({
+        where: { id: imageId },
+        data: { nsfwLevel: rating },
+      });
+      // TODO.newOrder: Update knights ratings as failure/success.
+    }
+
+    // Clear image from the pool:
+    valueInQueue.pool.reset({ id: imageId });
+    // TODO.newOrder: Send signal.
+  }
+
+  // TODO.newOrder: what else can we return here?
+  return { stats };
+}
+
+export async function updatePlayerStats({
+  playerId,
+  status,
+  exp,
+}: {
+  playerId: number;
+  status: NewOrderImageRatingStatus;
+  exp: number;
+}) {
+  // TODO.newOrder: check math for fervor
+  const allJudgements = await allJudmentsCounter.increment({ id: playerId });
+  const correctJudgements =
+    status === NewOrderImageRatingStatus.Correct
+      ? await correctJudgementsCounter.increment({ id: playerId })
+      : await correctJudgementsCounter.getCount(playerId);
+
+  const correctPercentage = correctJudgements / (allJudgements || 1);
+  const fervor = correctJudgements * correctPercentage * Math.E ** (allJudgements * -1);
+
+  const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
+  const newExp = await expCounter.increment({ id: playerId, value: exp });
+  // TODO.newOrder: adjust buzz based on conversion rate
+  const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
+
+  const stats = { exp: newExp, fervor: newFervor, blessedBuzz };
+
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+      target: SignalMessages.NewOrderPlayerUpdate,
+      data: { stats },
+    })
+    .catch(handleLogError);
+
+  return { ...stats };
+}
+
+export function calculateFervor({
+  correctJudgements,
+  allJudgements,
+}: {
+  correctJudgements: number;
+  allJudgements: number;
+}) {
+  const correctPercentage = correctJudgements / (allJudgements || 1);
+  return correctJudgements * correctPercentage * Math.E ** (allJudgements * FERVOR_COEFFICIENT);
+}
+
+export async function resetPlayer({ playerId }: { playerId: number }) {
+  await dbWrite.$transaction([
+    // Reset player back to level 1
+    dbWrite.newOrderPlayer.update({
+      where: { userId: playerId },
+      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0, startAt: new Date() },
+    }),
+    // Cleanse all smites
+    dbWrite.newOrderSmite.updateMany({
+      where: { targetPlayerId: playerId, cleansedAt: null },
+      data: { cleansedAt: new Date(), cleansedReason: 'Exceeded smite limit' },
+    }),
+  ]);
+
+  // Reset all counters for player
+  await Promise.all([
+    smitesCounter.reset({ id: playerId }),
+    correctJudgementsCounter.reset({ id: playerId }),
+    allJudmentsCounter.reset({ id: playerId }),
+    expCounter.reset({ id: playerId }),
+    fervorCounter.reset({ id: playerId }),
+    blessedBuzzCounter.reset({ id: playerId }),
+  ]);
+
+  signalClient.topicSend({
+    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+    target: SignalMessages.NewOrderPlayerUpdate,
+    data: {
+      rankType: NewOrderRankType.Acolyte,
+      stats: {
+        exp: 0,
+        fervor: 0,
+        smites: 0,
+        blessedBuzz: 0,
+      },
+    },
+  });
+
+  // TODO.newOrder: Cleanup clickhouse data?
+  // TODO.newOrder: send notification to player
+}
+
+export async function getNewOrderRanks({ name }: { name: string }) {
+  const ranks = await fetchThroughCache(
+    REDIS_KEYS.CACHES.NEW_ORDER.RANKS,
+    async () => {
+      const ranks = await dbRead.newOrderRank.findMany({
+        orderBy: { type: 'asc' },
+        select: { type: true, name: true, minExp: true },
+      });
+
+      return ranks;
+    },
+    { ttl: 0 } // TODO.newOrder: set a proper TTL
+  );
+
+  const rank = ranks.find((r) => r.name === name);
+  if (!rank) throw throwNotFoundError(`No rank found with name ${name}`);
+
+  return rank;
+}
+
+async function getRatedImages(userId: number) {
+  const images = await fetchThroughCache(
+    REDIS_KEYS.NEW_ORDER.RATED,
+    async () => {
+      const results = await clickhouse!.$query<{ imageId: number }>`
+        SELECT 
+          DISTINCT "imageId"
+        FROM knights_new_order_image_rating
+        WHERE "userId" = ${userId}
+    `;
+      return results.map((r) => r.imageId);
+    },
+    { ttl: CacheTTL.xs }
+  );
+
+  return images;
+}
+
+export async function addImageToQueue({
+  imageIds,
+  rankType,
+  // Top is always 1. 3 is default priority
+  priority = 3,
+}: {
+  imageIds: number | number[];
+  rankType: NewOrderRankType | 'Inquisitor';
+  priority?: 1 | 2 | 3;
+}) {
+  imageIds = Array.isArray(imageIds) ? imageIds : [imageIds];
+  if (imageIds.length === 0) return false;
+
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true },
+  });
+  if (images.length === 0) return false;
+
+  const pools = poolCounters[rankType];
+  await Promise.all(
+    images.map((image) => {
+      const pool = pools[priority - 1] ?? pools[0];
+      return pool.getCount(image.id);
+    })
+  );
+
+  return true;
+}
+
+export async function getImagesQueue({
+  playerId,
+  imageCount = 100,
+  isModerator,
+}: {
+  playerId: number;
+  imageCount?: number;
+  isModerator?: boolean;
+}) {
+  const player = await getPlayerById({ playerId });
+
+  const imageIds: number[] = [];
+  const rankPools = isModerator
+    ? poolCounters.Inquisitor
+    : player.rankType === NewOrderRankType.Templar
+    ? [...poolCounters.Templar, ...poolCounters.Knight]
+    : poolCounters[player.rankType];
+
+  const ratedImages = await getRatedImages(playerId);
+
+  for (const pool of rankPools) {
+    // We multiply by 10 to ensure we get enough images in case some are already rated.
+    const images = (await pool.getAll(imageCount * 10)).map(Number);
+    if (images.length === 0) continue;
+
+    // Allow mods to see all images regardless of rating.
+    if (!isModerator) imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
+    else imageIds.push(...images);
+
+    if (imageIds.length >= imageCount) break;
+  }
+
+  const imageRaters = await getImageRaters({ imageIds });
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+  });
+
+  return shuffle(
+    images.slice(0, imageCount).map(({ metadata, ...i }) => {
+      const ratings = isModerator ? imageRaters[i.id] : null;
+
+      return { ...i, ratings, metadata: metadata as ImageMetadata };
+    })
+  );
+}
+
+async function getImageRaters({ imageIds }: { imageIds: number[] }) {
+  if (!clickhouse) throw throwInternalServerError('Not supported');
+  if (imageIds.length === 0) return {};
+
+  const ratings = await clickhouse.$query<{
+    userId: number;
+    imageId: number;
+    rating: NsfwLevel;
+  }>`
+    SELECT DISTINCT("userId"), "imageId", "rating"
+    FROM knights_new_order_image_rating
+    WHERE "imageId" IN (${imageIds})
+  `;
+
+  const raters: Record<
+    number,
+    { player: Awaited<ReturnType<typeof getPlayerById>>; rating: NsfwLevel }[]
+  > = {};
+
+  for (const { userId, imageId, rating } of ratings) {
+    if (!raters[imageId]) raters[imageId] = [];
+
+    const player = await getPlayerById({ playerId: userId });
+    if (!player) continue;
+
+    raters[imageId].push({ player, rating });
+  }
+
+  return raters;
+}
+
+async function isImageInQueue({
+  imageId,
+  rankType,
+}: {
+  imageId: number;
+  rankType: NewOrderRankType | NewOrderRankType[];
+}) {
+  if (!Array.isArray(rankType)) rankType = [rankType];
+  const pools = rankType
+    .map((rank) =>
+      poolCounters[rank].map((pool) => ({
+        pool,
+        rank,
+      }))
+    )
+    .flat();
+
+  const exists = await Promise.all(
+    pools.map(async ({ pool, rank }) => {
+      const exists = await pool.exists(imageId);
+      if (exists) {
+        const value = await pool.getCount(imageId);
+        return {
+          pool,
+          value,
+          rank,
+        };
+      }
+      return null;
+    })
+  );
+
+  return exists.find((x) => isDefined(x)) || null;
+}
+
+export async function getPlayerHistory({
+  limit,
+  playerId,
+  status,
+  cursor,
+}: GetHistorySchema & { playerId: number }) {
+  if (!clickhouse) throw throwInternalServerError('Not supported');
+
+  const AND = [`userId = ${playerId}`];
+  if (cursor) AND.push(`createdAt < '${cursor}'`);
+  if (status?.length) AND.push(`status IN ('${status.join("','")}')`);
+
+  const judgements = await clickhouse.$query<{
+    imageId: number;
+    rating: NsfwLevel;
+    status: NewOrderImageRatingStatus;
+    grantedExp: number;
+    multiplier: number;
+    createdAt: Date;
+  }>`
+    SELECT imageId, rating, status, grantedExp, multiplier, createdAt
+    FROM knights_new_order_image_rating
+    WHERE ${AND.join(' AND ')}
+    ORDER BY createdAt DESC
+    LIMIT ${limit + 1}
+  `;
+  if (judgements.length === 0) return { items: [], nextCursor: null };
+
+  let nextCursor: Date | null = null;
+  if (judgements.length > limit) nextCursor = judgements.pop()?.createdAt ?? null;
+
+  const imageIds = judgements.map((j) => j.imageId).sort();
+  const images = await dbRead.image.findMany({
+    where: { id: { in: imageIds } },
+    select: { id: true, url: true, nsfwLevel: true, metadata: true },
+  });
+
+  return {
+    items: judgements
+      .map(({ imageId, ...data }) => {
+        const image = images.find((i) => i.id === imageId);
+        if (!image) return null;
+
+        return {
+          ...data,
+          image: { ...image, metadata: image.metadata as ImageMetadata },
+        };
+      })
+      .filter(isDefined),
+    nextCursor,
+  };
+}
