@@ -21,7 +21,7 @@ const baseHunyuanSchema = z.object({
   frameRate: z.literal(24).default(24).catch(24),
   duration: numberEnum(hunyuanDuration).default(5).catch(5),
   seed: seedSchema,
-  // draft: z.boolean().optional(),
+  draft: z.boolean().optional(),
   steps: z.number().default(20),
   model: z.string().optional(),
   resources: z.array(resourceSchema.passthrough()).default([]),
@@ -54,10 +54,11 @@ export const hunyuanVideoGenerationConfig = [hunyuanTxt2ImgConfig];
 export function HunyuanInput({
   aspectRatio,
   resources,
+  draft,
   ...args
 }: z.infer<(typeof hunyuanVideoGenerationConfig)[number]['schema']>): HunyuanVdeoGenInput {
-  // const resolution = draft ? 420 : 640;
-  const resolution = 420;
+  const resolution = draft ? 420 : 640;
+  // const resolution = 420;
   const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize(resolution);
   return {
     ...args,

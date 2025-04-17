@@ -712,11 +712,11 @@ function GeneratedImageWorkflowMenuItems({
           </Menu.Item>
         </>
       )}
-      {image.type === 'video' && (
+      {/* {image.type === 'video' && (
         <>
           <Menu.Item onClick={handleEnhanceVideo}>Upscale Video</Menu.Item>
         </>
-      )}
+      )} */}
       {!workflowsOnly && (
         <>
           <Menu.Divider />
