@@ -1,7 +1,7 @@
 import dayjs, { Dayjs } from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import { z } from 'zod';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { createJob, getJobDate } from '~/server/jobs/job';
@@ -13,6 +13,7 @@ import type {
 } from '~/server/notifications/auction.notifications';
 import { modelVersionResourceCache } from '~/server/redis/caches';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { modelsSearchIndex } from '~/server/search-index';
 import {
   auctionBaseSelect,
   auctionSelect,
@@ -355,6 +356,15 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
     await modelVersionResourceCache.bust(winnerIds);
     await bustOrchestratorModelCache(winnerIds);
+
+    for (const w of winners) {
+      const winMatch = modelData.find((m) => m.id === w.entityId);
+      if (winMatch) {
+        await modelsSearchIndex.queueUpdate([
+          { id: winMatch.modelId, action: SearchIndexUpdateQueueAction.Update },
+        ]);
+      }
+    }
 
     log('busted cache', winnerIds.length);
   }
