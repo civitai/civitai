@@ -19,6 +19,11 @@ export const FeatureFlagsProvider = ({
   flags: FeatureAccess;
 }) => {
   const session = useSession();
+  // Ensures FE and BE feature flags are in sync for staging.
+  const host =
+    typeof location !== 'undefined'
+      ? (location?.host ?? '').replace('stage.', '').replace('dev.', '')
+      : '';
   const [flags, setFlags] = useState(initialFlags);
 
   const { data: userFeatures = {} as FeatureAccess } = trpc.user.getFeatureFlags.useQuery(

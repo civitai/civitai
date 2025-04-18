@@ -61,6 +61,13 @@
   }
 }
 
+:global(.red) {
+  .ai,
+  .accent {
+    fill: theme('colors.red.8');
+  }
+}
+
 // CHRISTMAS
 @keyframes prance {
   0% {

@@ -8,7 +8,7 @@ export const getServerSideProps = createServerSideProps({
   useSession: true,
   useSSG: true,
   resolver: async ({ ssg }) => {
-    if (ssg) await ssg.homeBlock.getHomeBlocks.prefetch();
+    if (ssg) await ssg.homeBlock.getHomeBlocks.prefetch({});
 
     return { props: {} };
   },

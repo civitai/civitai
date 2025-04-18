@@ -774,6 +774,10 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         : tier != null
         ? false
         : true,
+    redBrowsingLevel:
+      userSettings.success && userSettings.data.redBrowsingLevel != null
+        ? userSettings.data.redBrowsingLevel
+        : undefined,
     // feedbackToken,
   };
   await redis.packed.set(cacheKey, sessionUser, { EX: CacheTTL.hour * 4 });
@@ -1663,12 +1667,14 @@ export async function updateContentSettings({
   showNsfw,
   browsingLevel,
   autoplayGifs,
+  domain,
   ...data
 }: UpdateContentSettingsInput & { userId: number }) {
   if (
     blurNsfw !== undefined ||
     showNsfw !== undefined ||
-    browsingLevel !== undefined ||
+    // Red domain we'll store in the settings.
+    (browsingLevel !== undefined && domain !== 'red') ||
     autoplayGifs !== undefined
   ) {
     await dbWrite.user.update({
@@ -1676,8 +1682,12 @@ export async function updateContentSettings({
       data: { blurNsfw, showNsfw, browsingLevel, autoplayGifs },
     });
   }
-  if (Object.keys(data).length > 0) {
+  if (Object.keys(data).length > 0 || (domain === 'red' && browsingLevel !== undefined)) {
     const settings = await getUserSettings(userId);
+    if (domain === 'red' && browsingLevel !== undefined) {
+      settings.redBrowsingLevel = browsingLevel;
+    }
+
     await setUserSetting(userId, { ...settings, ...removeEmpty(data) });
   }
   await invalidateSession(userId);

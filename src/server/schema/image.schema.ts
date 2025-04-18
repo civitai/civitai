@@ -328,6 +328,8 @@ export const getInfiniteImagesSchema = baseQuerySchema
     remixOfId: z.number().optional(),
     remixesOnly: z.boolean().optional(),
     nonRemixesOnly: z.boolean().optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
   })
   .transform((value) => {
     if (value.withTags) {
@@ -444,9 +446,9 @@ export const setVideoThumbnailSchema = z.object({
   postId: z.number().optional(),
 });
 
-export type UpdateImageMinorInput = z.infer<typeof updateImageMinorSchema>;
-export const updateImageMinorSchema = z.object({
+export type UpdateImageAcceptableMinorInput = z.infer<typeof updateImageAcceptableMinorSchema>;
+export const updateImageAcceptableMinorSchema = z.object({
   id: z.number(),
   collectionId: z.number(),
-  minor: z.boolean(),
+  acceptableMinor: z.boolean(),
 });

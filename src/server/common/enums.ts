@@ -184,6 +184,7 @@ export enum BlockedReason {
   TOS = 'tos',
   Moderated = 'moderated',
   CSAM = 'CSAM',
+  AiNotVerified = 'AiNotVerified',
 }
 
 export enum ThreadSort {
@@ -219,6 +220,7 @@ export enum OnboardingSteps {
   Buzz = 8,
   CreatorProgram = 16,
   BannedCreatorProgram = 32,
+  RedTOS = 64,
 }
 
 export const OnboardingComplete =

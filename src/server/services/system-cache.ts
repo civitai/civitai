@@ -7,6 +7,7 @@ import { TagsOnTagsType, TagType } from '~/shared/utils/prisma/enums';
 import { indexOfOr } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 import { isDefined } from '~/utils/type-guards';
+import { BrowsingSettingsAddon, DEFAULT_BROWSING_SETTINGS_ADDONS } from '../common/constants';
 
 const log = createLogger('system-cache', 'green');
 
@@ -231,7 +232,19 @@ export async function getHomeExcludedTags() {
 export async function setLiveNow(isLive: boolean) {
   await redis.set(REDIS_KEYS.LIVE_NOW, isLive ? 'true' : 'false');
 }
+
 export async function getLiveNow() {
   const cachedLiveNow = await redis.get(REDIS_KEYS.LIVE_NOW);
   return cachedLiveNow === 'true';
+}
+
+export async function getBrowsingSettingAddons() {
+  const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
+  if (cached) {
+    console.log('AHA!');
+    const data = JSON.parse(cached) as BrowsingSettingsAddon[];
+    return data;
+  }
+
+  return DEFAULT_BROWSING_SETTINGS_ADDONS;
 }

@@ -6,15 +6,19 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { Group } from '@mantine/core';
+import { Alert, Group, Badge } from '@mantine/core';
 import { CollectionSelectDropdown } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 import { isDefined } from '~/utils/type-guards';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 
 const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
 
 export function PostEditForm() {
   const post = usePostEditStore((state) => state.post);
+  const images = usePostEditStore((state) => state.images);
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const { postTitle, collectionId } = usePostEditParams();
   const form = useForm({
     schema: formSchema,

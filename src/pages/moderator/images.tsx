@@ -403,7 +403,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
                 <Badge size="sm">{splitUppercase(image.report?.reason ?? '')}</Badge>
               </Stack>
             </Group>
-            {image.minor && (
+            {image.acceptableMinor && (
               <Badge variant="light" color="pink">
                 Acceptable Minor
               </Badge>
@@ -424,7 +424,7 @@ function ImageGridItem({ data: image, height }: ImageGridItemProps) {
         )}
         {image.needsReview === 'minor' && (
           <Stack>
-            {image.minor && (
+            {image.acceptableMinor && (
               <Badge variant="light" color="pink">
                 Acceptable Minor
               </Badge>

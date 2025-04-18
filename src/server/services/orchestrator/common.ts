@@ -264,6 +264,11 @@ export async function parseGenerateImageInput({
 
   // Disable nsfw if the prompt contains poi/minor words
   const hasPoi = includesPoi(params.prompt) || availableResources.some((x) => x.model.poi);
+  if (hasPoi && originalParams.disablePoi) {
+    throw throwBadRequestError(
+      'Your request contains or uses person of interest (POI) resources or words. Generating POI content while viewing X-XXX ratings is not allowed.'
+    );
+  }
   if (hasPoi || includesMinor(params.prompt)) params.nsfw = false;
 
   // Set nsfw to true if the prompt contains nsfw words

@@ -25,6 +25,8 @@ export const getServerProxySSGHelpers = async (
       cache: null as any,
       req: null as any,
       fingerprint: null as any,
+      // Can't properly get this because we don't have a request,
+      // we have no clue about the request here.
     },
     transformer: superjson,
   });

@@ -1,4 +1,4 @@
-import { Text, Stack } from '@mantine/core';
+import { Text, Stack, Center, Loader } from '@mantine/core';
 import { BrowsingLevelsStacked } from '~/components/BrowsingLevel/BrowsingLevelsStacked';
 import { ToggleList } from '~/components/ToggleList/ToggleList';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';

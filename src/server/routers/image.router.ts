@@ -5,7 +5,7 @@ import {
   moderateImageHandler,
   setTosViolationHandler,
   setVideoThumbnailController,
-  updateImageMinorHandler,
+  updateImageAcceptableMinorHandler,
 } from '~/server/controllers/image.controller';
 import { dbRead } from '~/server/db/client';
 import { getByIdSchema, infiniteQuerySchema } from '~/server/schema/base.schema';
@@ -61,7 +61,7 @@ import {
   imageReviewQueueInputSchema,
   reportCsamImagesSchema,
   setVideoThumbnailSchema,
-  updateImageMinorSchema,
+  updateImageAcceptableMinorSchema,
   updateImageNsfwLevelSchema,
   updateImageTechniqueSchema,
   updateImageToolsSchema,
@@ -201,7 +201,9 @@ export const imageRouter = router({
     .mutation(setVideoThumbnailController),
   // #endregion
 
-  updateMinor: protectedProcedure.input(updateImageMinorSchema).mutation(updateImageMinorHandler),
+  updateAccetableMinor: protectedProcedure
+    .input(updateImageAcceptableMinorSchema)
+    .mutation(updateImageAcceptableMinorHandler),
   getMyImages: protectedProcedure
     .input(infiniteQuerySchema)
     .query(({ input, ctx }) => getMyImages({ ...input, userId: ctx.user.id })),

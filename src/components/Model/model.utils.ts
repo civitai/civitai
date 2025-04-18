@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ModelSort } from '~/server/common/enums';
@@ -66,6 +67,8 @@ const modelQueryParamSchema = z
       .optional(),
     fromPlatform: booleanString().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
     isFeatured: booleanString().optional(),
   })
   .partial();
@@ -121,10 +124,27 @@ export const useQueryModels = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   const _filters = filters ?? {};
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const excludedTagIds = [
+    ...(_filters.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ];
   const queryUtils = trpc.useUtils();
   const browsingLevel = useBrowsingLevelDebounced();
   const { data, isLoading, ...rest } = trpc.model.getAll.useInfiniteQuery(
-    { ..._filters, browsingLevel },
+    {
+      ..._filters,
+      browsingLevel,
+      excludedTagIds,
+      disablePoi: browsingSettingsAddons.settings.disablePoi
+        ? // Ensures we pass true explicitly
+          true
+        : undefined,
+      disableMinor: browsingSettingsAddons.settings.disableMinor
+        ? // Ensures we pass true explicitly
+          true
+        : undefined,
+    },
     {
       getNextPageParam: (lastPage) => (!!lastPage ? lastPage.nextCursor : 0),
       getPreviousPageParam: (firstPage) => (!!firstPage ? firstPage.nextCursor : 0),
@@ -151,7 +171,7 @@ export const useQueryModels = (
     showHidden: !!_filters.hidden,
     showImageless: (_filters.status ?? []).includes(ModelStatus.Draft) || _filters.pending,
     isRefetching: rest.isRefetching,
-    hiddenTags: _filters.excludedTagIds,
+    hiddenTags: excludedTagIds,
   });
 
   return { data, models: items, isLoading: isLoading || loadingPreferences, ...rest };

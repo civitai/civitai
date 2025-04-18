@@ -106,6 +106,8 @@ export const getAllModelsSchema = baseQuerySchema
     pending: z.boolean().optional(),
     collectionTagId: z.number().optional(),
     availability: z.nativeEnum(Availability).optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
     isFeatured: z.boolean().optional(),
   });
 
