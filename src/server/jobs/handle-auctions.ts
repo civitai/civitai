@@ -570,7 +570,7 @@ const createRecurringBids = async (now: Dayjs) => {
             },
             externalTransactionId: `recurring-bid-${recurringBid.userId}-${
               recurringBid.entityId
-            }-${now.startOf('day').toDate()}`,
+            }-${now.startOf('day').format()}`,
           })
         );
         if (!transactionId) {
