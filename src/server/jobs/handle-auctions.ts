@@ -1,7 +1,7 @@
 import dayjs, { Dayjs } from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import { z } from 'zod';
-import { NotificationCategory } from '~/server/common/enums';
+import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { createJob, getJobDate } from '~/server/jobs/job';
@@ -13,6 +13,7 @@ import type {
 } from '~/server/notifications/auction.notifications';
 import { modelVersionResourceCache } from '~/server/redis/caches';
 import { TransactionType } from '~/server/schema/buzz.schema';
+import { modelsSearchIndex } from '~/server/search-index';
 import {
   auctionBaseSelect,
   auctionSelect,
@@ -32,6 +33,7 @@ import {
   ModelType,
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 dayjs.extend(utc);
@@ -125,8 +127,8 @@ export const handleAuctions = createJob(jobName, '1 0 * * *', async ({ req }) =>
     } catch (e) {
       const error = e as Error;
       logToAxiom({
+        name: 'handle-auctions',
         type: 'error',
-        name: 'Failed to handle auctions',
         message: error.message,
         stack: error.stack,
         cause: error.cause,
@@ -165,6 +167,8 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
 
   for (const auctionRow of allAuctionsWithBids) {
     log('====== processing auction', auctionRow.id);
+
+    let winnerSuccess = true;
     if (auctionRow.bids.length > 0) {
       const sortedBids = prepareBids(auctionRow, true);
 
@@ -193,7 +197,7 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
       if (winners.length > 0) {
         if (runWinners) {
           log('Running winners');
-          await _handleWinnersForAuction(auctionRow, winners);
+          winnerSuccess = await _handleWinnersForAuction(auctionRow, winners);
         }
       } else {
         log('No winners.');
@@ -212,12 +216,21 @@ const handlePreviousAuctions = async (now: Dayjs, runWinners = true, runLosers =
       log('No bids, skipping.');
     }
 
-    // Mark the auction as finalized
-    await dbWrite.auction.update({
-      where: { id: auctionRow.id },
-      data: { finalized: true },
-    });
-    log('finalized auction', auctionRow.id);
+    if (winnerSuccess) {
+      // Mark the auction as finalized
+      await dbWrite.auction.update({
+        where: { id: auctionRow.id },
+        data: { finalized: true },
+      });
+      log('finalized auction', auctionRow.id);
+    } else {
+      logToAxiom({
+        name: 'handle-auctions',
+        type: 'error',
+        message: `Error running winners`,
+        data: { auctionId: auctionRow.id },
+      }).catch();
+    }
   }
 };
 
@@ -254,18 +267,32 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
   const entityNames = Object.fromEntries(winnerIds.map((w) => [w, null as string | null]));
 
   if (auctionRow.auctionBase.type === AuctionType.Model) {
-    const createdFeatured = await dbWrite.featuredModelVersion.createMany({
-      data: winners.map((w) => ({
-        modelVersionId: w.entityId,
-        position: w.position,
-        validFrom: auctionRow.validFrom,
-        validTo: auctionRow.validTo,
-      })),
-      skipDuplicates: true,
-    });
-    log(createdFeatured.count, 'featured models');
+    try {
+      const createdFeatured = await dbWrite.featuredModelVersion.createMany({
+        data: winners.map((w) => ({
+          modelVersionId: w.entityId,
+          position: w.position,
+          validFrom: auctionRow.validFrom,
+          validTo: auctionRow.validTo,
+        })),
+        skipDuplicates: true,
+      });
 
-    const modelData = await dbWrite.modelVersion.findMany({
+      log(createdFeatured.count, 'featured models');
+    } catch (e) {
+      const err = e as Error;
+      logToAxiom({
+        name: 'handle-auctions',
+        type: 'error',
+        message: `Failed to create featured models`,
+        error: err.message,
+        cause: err.cause,
+        stack: err.stack,
+      }).catch();
+      return false;
+    }
+
+    const modelVersionData = await dbWrite.modelVersion.findMany({
       where: { id: { in: winnerIds } },
       select: {
         id: true,
@@ -284,7 +311,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     });
 
     // update entity names for notifications later
-    modelData.forEach((md) => {
+    modelVersionData.forEach((md) => {
       entityNames[md.id] = md.model.name;
     });
 
@@ -292,7 +319,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
       // update checkpoint coverage
       const checkpoints = winners
         .map((w) => {
-          const mv = modelData.find((m) => m.id === w.entityId);
+          const mv = modelVersionData.find((m) => m.id === w.entityId);
           return {
             model_id: mv?.modelId,
             version_id: mv?.id,
@@ -347,6 +374,8 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
           cause: err.cause,
           stack: err.stack,
         }).catch();
+
+        return false;
       }
     }
 
@@ -355,6 +384,17 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
     await modelVersionResourceCache.bust(winnerIds);
     await bustOrchestratorModelCache(winnerIds);
+
+    await modelsSearchIndex.updateSync(
+      winners
+        .map((w) => {
+          const winMatch = modelVersionData.find((mv) => mv.id === w.entityId);
+          return winMatch
+            ? { id: winMatch.modelId, action: SearchIndexUpdateQueueAction.Update }
+            : undefined;
+        })
+        .filter(isDefined)
+    );
 
     log('busted cache', winnerIds.length);
   }
@@ -375,6 +415,8 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     });
   }
   log('Sent notifications to', winners.length, 'winners');
+
+  return true;
 };
 
 const _refundLosersForAuction = async (auctionRow: AuctionRow, losers: WinnerType[]) => {
@@ -528,7 +570,7 @@ const createRecurringBids = async (now: Dayjs) => {
             },
             externalTransactionId: `recurring-bid-${recurringBid.userId}-${
               recurringBid.entityId
-            }-${now.startOf('day').toDate()}`,
+            }-${now.startOf('day').format()}`,
           })
         );
         if (!transactionId) {

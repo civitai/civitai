@@ -61,7 +61,7 @@ export const trainingDetailsBaseModelsXL = ['sdxl', 'pony', 'illustrious'] as co
 export const trainingDetailsBaseModels35 = ['sd3_medium', 'sd3_large'] as const;
 export const trainingDetailsBaseModelsFlux = ['flux_dev'] as const;
 export const trainingDetailsBaseModelsHunyuan = ['hy_720_fp8'] as const;
-export const trainingDetailsBaseModelsWan = [] as const;
+export const trainingDetailsBaseModelsWan = ['wan_2_1_720p'] as const;
 
 const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModels15,
