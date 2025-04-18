@@ -33,6 +33,7 @@ import {
   ModelType,
 } from '~/shared/utils/prisma/enums';
 import { createLogger } from '~/utils/logging';
+import { isDefined } from '~/utils/type-guards';
 import { commaDelimitedStringArray } from '~/utils/zod-helpers';
 
 dayjs.extend(utc);
@@ -291,7 +292,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
       return false;
     }
 
-    const modelData = await dbWrite.modelVersion.findMany({
+    const modelVersionData = await dbWrite.modelVersion.findMany({
       where: { id: { in: winnerIds } },
       select: {
         id: true,
@@ -310,7 +311,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     });
 
     // update entity names for notifications later
-    modelData.forEach((md) => {
+    modelVersionData.forEach((md) => {
       entityNames[md.id] = md.model.name;
     });
 
@@ -318,7 +319,7 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
       // update checkpoint coverage
       const checkpoints = winners
         .map((w) => {
-          const mv = modelData.find((m) => m.id === w.entityId);
+          const mv = modelVersionData.find((m) => m.id === w.entityId);
           return {
             model_id: mv?.modelId,
             version_id: mv?.id,
@@ -384,14 +385,16 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
     await modelVersionResourceCache.bust(winnerIds);
     await bustOrchestratorModelCache(winnerIds);
 
-    for (const w of winners) {
-      const winMatch = modelData.find((m) => m.id === w.entityId);
-      if (winMatch) {
-        await modelsSearchIndex.queueUpdate([
-          { id: winMatch.modelId, action: SearchIndexUpdateQueueAction.Update },
-        ]);
-      }
-    }
+    await modelsSearchIndex.updateSync(
+      winners
+        .map((w) => {
+          const winMatch = modelVersionData.find((mv) => mv.id === w.entityId);
+          return winMatch
+            ? { id: winMatch.modelId, action: SearchIndexUpdateQueueAction.Update }
+            : undefined;
+        })
+        .filter(isDefined)
+    );
 
     log('busted cache', winnerIds.length);
   }
