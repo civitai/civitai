@@ -201,10 +201,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 10000,
     step: 1,
     disabled: true,
-    overrides: {
-      hy_720_fp8: { all: { max: 5000 } },
-      wan_2_1_720p: { all: { max: 5000 } },
-    },
+    // overrides: {
+    //   hy_720_fp8: { all: { max: 5000 } },
+    //   wan_2_1_720p: { all: { max: 5000 } },
+    // },
   },
   {
     name: 'resolution',
