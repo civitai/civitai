@@ -1209,7 +1209,7 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
       denoise: 0.65,
     },
     generationMinValues: {
-      denoise: 0.65,
+      denoise: 0.5,
     },
   },
 ] as const;
