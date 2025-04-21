@@ -402,7 +402,11 @@ function CollectionListForm({
         </Stack>
 
         <Group position="right">
-          <Button disabled={!features.canWrite} loading={addCollectionItemMutation.isLoading} onClick={handleSubmit}>
+          <Button
+            disabled={!features.canWrite}
+            loading={addCollectionItemMutation.isLoading}
+            onClick={handleSubmit}
+          >
             Save
           </Button>
         </Group>
