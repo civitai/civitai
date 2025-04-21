@@ -8,7 +8,7 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { ResourceSelectOptions, ResourceSelectSource } from './resource-select.types';
 import { GenerationResource } from '~/server/services/generation/generation.service';
 
-type ResourceSelectMultipleProps = {
+export type ResourceSelectMultipleProps = {
   limit?: number;
   value?: GenerationResource[];
   onChange?: (value?: GenerationResource[]) => void;

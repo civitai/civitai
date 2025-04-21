@@ -97,6 +97,13 @@ export const imageGenerationSchema = z.object({
     .optional(),
 });
 
+export type CivitaiResource = z.infer<typeof civitaiResourceSchema>;
+export const civitaiResourceSchema = z.object({
+  type: z.string().optional(),
+  weight: z.number().optional(),
+  modelVersionId: z.number(),
+});
+
 export const imageMetaSchema = imageGenerationSchema.partial().passthrough();
 export const imageMetaOutput = imageGenerationSchema
   .extend({
@@ -112,7 +119,7 @@ export const imageMetaOutput = imageGenerationSchema
     }, comfyMetaSchema.optional()),
     controlNets: z.string().array().optional(),
     software: z.coerce.string().optional(),
-    civitaiResources: z.any().optional(),
+    civitaiResources: civitaiResourceSchema.array().optional(),
   })
   .passthrough();
 

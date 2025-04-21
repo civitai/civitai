@@ -43,6 +43,7 @@ import {
 } from '~/server/orchestrator/lightricks/lightricks.schema';
 import { viduDuration } from '~/server/orchestrator/vidu/vidu.schema';
 import {
+  baseModelResourceTypes,
   engineDefinitions,
   generationFormWorkflowConfigurations,
   WORKFLOW_TAGS,
@@ -62,6 +63,7 @@ import { trpc } from '~/utils/trpc';
 import { hunyuanAspectRatios, hunyuanDuration } from '~/server/orchestrator/hunyuan/hunyuan.schema';
 import { wanAspectRatios, wanDuration } from '~/server/orchestrator/wan/wan.schema';
 import { isDev } from '~/env/other';
+import { InputResourceSelectMultipleStandalone } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultipleStandalone';
 
 const WorkflowContext = createContext<{
   workflow: VideoGenerationConfig;
@@ -594,6 +596,12 @@ function LightricksImg2VidGenerationForm() {
 function HunyuanTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="hunyuan">
+      <InputResourceSelectMultipleStandalone
+        label="Loras"
+        name="resources"
+        options={{ resources: baseModelResourceTypes.HyV1 }}
+        buttonLabel="Add additional resource"
+      />
       <InputTextArea
         required
         name="prompt"
@@ -682,6 +690,12 @@ function HunyuanTxt2VidGenerationForm() {
 function WanTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="wan">
+      <InputResourceSelectMultipleStandalone
+        label="Loras"
+        name="resources"
+        options={{ resources: baseModelResourceTypes.WanVideo }}
+        buttonLabel="Add additional resource"
+      />
       <InputTextArea
         required
         name="prompt"
@@ -770,6 +784,12 @@ function WanTxt2VidGenerationForm() {
 function WanImg2VidGenerationForm() {
   return (
     <FormWrapper engine="wan">
+      <InputResourceSelectMultipleStandalone
+        label="Loras"
+        name="resources"
+        options={{ resources: baseModelResourceTypes.WanVideo }}
+        buttonLabel="Add additional resource"
+      />
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
       <InputSwitch
         name="draft"
@@ -977,7 +997,7 @@ function FormWrapper({
     // TODO - tips?
     conditionalPerformTransaction(totalCost, () => {
       mutate({
-        type: 'video',
+        $type: 'videoGen',
         data: validated,
         tags: [WORKFLOW_TAGS.VIDEO, workflow.subType, workflow.key],
       });
@@ -992,8 +1012,8 @@ function FormWrapper({
   useEffect(() => {
     if (type === 'video' && storeData && workflow) {
       const registered = Object.keys(form.getValues());
-      const { params } = storeData;
-      const validated = validateInput(workflow, params);
+      const { params, resources } = storeData;
+      const validated = validateInput(workflow, { ...params, resources });
       for (const [key, value] of Object.entries(validated)) {
         if (registered.includes(key) && key !== 'engine') form.setValue(key as any, value);
       }
@@ -1065,7 +1085,7 @@ function SubmitButton2({ loading, engine }: { loading: boolean; engine: Orchestr
   });
   const isUploadingImage = isUploadingImageValue === 1;
   const { data, isFetching } = trpc.orchestrator.whatIf.useQuery(
-    { type: 'video', data: query as Record<string, any> },
+    { $type: 'videoGen', data: query as Record<string, any> },
     { keepPreviousData: false, enabled: !!query && !isUploadingImage }
   );
 

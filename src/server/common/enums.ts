@@ -85,14 +85,15 @@ export enum TagSort {
 }
 
 export enum ImageScanType {
-  Moderation,
-  Label,
-  FaceDetection,
-  WD14,
-  Hash,
-  Hive,
-  MinorDetection,
-  HiveDemographics,
+  Moderation = 0,
+  Label = 1,
+  FaceDetection = 2,
+  WD14 = 3,
+  Hash = 4,
+  Hive = 5,
+  MinorDetection = 6,
+  HiveDemographics = 7,
+  Clavata = 8,
 }
 
 // export enum CommentV2Sort {

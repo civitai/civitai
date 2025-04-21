@@ -24,7 +24,7 @@ const baseHunyuanSchema = z.object({
   draft: z.boolean().optional(),
   steps: z.number().default(20),
   model: z.string().optional(),
-  loras: z.array(resourceSchema).default([]),
+  resources: z.array(resourceSchema.passthrough()).default([]),
 });
 
 const hunyuanTxt2VidSchema = textEnhancementSchema.merge(baseHunyuanSchema).extend({
@@ -53,10 +53,18 @@ export const hunyuanVideoGenerationConfig = [hunyuanTxt2ImgConfig];
 
 export function HunyuanInput({
   aspectRatio,
+  resources,
   draft,
   ...args
 }: z.infer<(typeof hunyuanVideoGenerationConfig)[number]['schema']>): HunyuanVdeoGenInput {
   const resolution = draft ? 420 : 640;
+  // const resolution = 420;
   const { width, height } = hunyuanAspectRatioMap[aspectRatio].getSize(resolution);
-  return { ...args, width, height, model: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512' };
+  return {
+    ...args,
+    width,
+    height,
+    model: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
+    loras: resources.map(({ air, strength }) => ({ air, strength })),
+  };
 }

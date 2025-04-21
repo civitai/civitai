@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { BaseModelSetType } from '~/server/common/constants';
 import {
   HaiperInput,
   haiperVideoGenerationConfig,
@@ -21,6 +22,7 @@ import { ViduInput, viduVideoGenerationConfig } from '~/server/orchestrator/vidu
 import { WanInput, wanVideoGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
 
 export type VideoGenerationSchema = z.infer<(typeof videoGenerationConfig)[number]['schema']>;
+export type VideoGenerationEngine = (typeof videoGenerationConfig)[number]['engine'];
 export const videoGenerationConfig = [
   ...klingVideoGenerationConfig,
   ...minimaxVideoGenerationConfig,
@@ -42,3 +44,8 @@ export const videoGenerationInput = {
   vidu: ViduInput,
   wan: WanInput,
 } as const;
+
+export const baseModelEngineMap: Partial<Record<BaseModelSetType, VideoGenerationEngine>> = {
+  WanVideo: 'wan',
+  HyV1: 'hunyuan',
+};

@@ -60,7 +60,7 @@ import {
 import { Availability, ModelType } from '~/shared/utils/prisma/enums';
 import { includesMinor, includesNsfw, includesPoi } from '~/utils/metadata/audit';
 import { removeEmpty } from '~/utils/object-helpers';
-import { parseAIR } from '~/utils/string-helpers';
+import { parseAIR, stringifyAIR } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
 
 export function createOrchestratorClient(token: string) {
@@ -489,6 +489,7 @@ function formatWorkflowStep(args: {
     case 'comfy':
       return formatComfyStep(args);
     case 'videoGen':
+    case 'videoEnhancement':
       return formatVideoGenStep(args);
     default:
       throw new Error('failed to extract generation resources: unsupported workflow type');
@@ -580,6 +581,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
   );
   const videos = Object.values(grouped).flat();
   const metadata = (step.metadata ?? {}) as GeneratedImageStepMetadata;
+  const resources = params && 'resources' in params ? params.resources : [];
 
   return {
     $type: 'videoGen' as const,
@@ -595,7 +597,15 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
     images: videos,
     status: step.status,
     metadata,
-    resources: [],
+    resources: resources.map((item: any) => ({
+      ...item,
+      air: stringifyAIR({
+        baseModel: item.baseModel,
+        type: item.model.type,
+        modelId: item.model.id,
+        id: item.id,
+      }),
+    })),
   };
 }
 

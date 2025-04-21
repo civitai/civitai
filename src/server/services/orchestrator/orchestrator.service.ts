@@ -4,16 +4,22 @@ import {
   videoGenerationInput,
 } from '~/server/orchestrator/generation/generation.config';
 import { GenerationSchema } from '~/server/orchestrator/generation/generation.schema';
+import { createVideoEnhancementStep } from '~/server/orchestrator/video-enhancement/video-enhancement';
 import { populateWorkflowDefinition } from '~/server/services/orchestrator/comfy/comfy.utils';
 import { getUpscaleFactor } from '~/shared/constants/generation.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 
 export async function createWorkflowStep(args: GenerationSchema) {
-  switch (args.type) {
+  const type = args.$type;
+  switch (args.$type) {
     case 'image':
       return await createImageStep(args.data);
-    case 'video':
+    case 'videoGen':
       return await createVideoGenStep(args.data);
+    case 'videoEnhancement':
+      return await createVideoEnhancementStep(args.data);
+    default:
+      throw new Error(`create workflow step not implemented for $type: ${type}`);
   }
 }
 
