@@ -24,7 +24,7 @@ export function CreateComment({
   borderless,
 }: CreateCommentProps) {
   const currentUser = useCurrentUser();
-  const { isLocked, isMuted, forceLocked } = useCommentsContext();
+  const { isLocked, isMuted, isReadonly, forceLocked } = useCommentsContext();
 
   if (!currentUser)
     return (
@@ -55,13 +55,14 @@ export function CreateComment({
     );
   }
 
-  if (isLocked || isMuted)
+  if (isLocked || isMuted || isReadonly)
     return (
       <Alert color="yellow" icon={<IconLock />}>
         <Center>
           {isMuted
-            ? 'You cannot add comments because you have been muted'
-            : 'This thread has been locked'}
+            ? 'You cannot add comments because you have been muted' :
+            isLocked ? 'This thread has been locked' :
+          'Civitai is currently in read-only mode'}
         </Center>
       </Alert>
     );

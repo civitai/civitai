@@ -20,6 +20,7 @@ import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
 import { TemplateSelect } from './TemplateSelect';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
 export type ModelWithTags = Omit<ModelById, 'tagsOnModels'> & {
   tagsOnModels: Array<{ isCategory: boolean; id: number; name: string }>;
@@ -387,6 +388,7 @@ export function ModelWizard() {
   return (
     <FilesProvider model={modelFlatTags} version={modelVersion}>
       <div className="container flex max-w-sm flex-col gap-3">
+        <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to edit your model. Please try again later."} />
         {modelLoading ? (
           <PageLoader text="Loading model..." />
         ) : modelError ? (

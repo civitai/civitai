@@ -11,7 +11,7 @@ import { ApiError } from '@paddle/paddle-node-sdk';
 import dayjs from 'dayjs';
 import { env } from '~/env/server';
 import { HOLIDAY_PROMO_VALUE } from '~/server/common/constants';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
   cancelPaddleSubscription,
@@ -106,7 +106,7 @@ export const createBuzzPurchaseTransaction = async ({
     throw throwBadRequestError('We were unable to get or create a paddle customer');
   }
 
-  const subscription = await dbRead.customerSubscription.findUnique({
+  const subscription = await dbWrite.customerSubscription.findUnique({
     where: {
       userId: user.id,
       status: {
@@ -115,7 +115,7 @@ export const createBuzzPurchaseTransaction = async ({
     },
     select: { id: true },
   });
-  const products = await dbRead.product.findMany({
+  const products = await dbWrite.product.findMany({
     where: {
       provider: PaymentProvider.Paddle,
     },
@@ -208,7 +208,7 @@ export const purchaseBuzzWithSubscription = async ({
 }: TransactionWithSubscriptionCreateInput & {
   userId: number;
 }) => {
-  const subscription = await dbRead.customerSubscription.findUnique({
+  const subscription = await dbWrite.customerSubscription.findUnique({
     where: {
       userId,
       status: {
@@ -271,7 +271,7 @@ export const upsertProductRecord = async (product: ProductNotification) => {
 export const upsertPriceRecord = async (price: PriceNotification) => {
   const priceMeta = (price.customData ?? {}) as { default?: boolean };
 
-  const product = await dbRead.product.findFirst({
+  const product = await dbWrite.product.findFirst({
     where: { id: price.productId },
   });
 
@@ -363,7 +363,7 @@ export const upsertSubscription = async (
       `User with customerId: ${subscriptionNotification.customerId} not found`
     );
 
-  const userSubscription = await dbRead.customerSubscription.findFirst({
+  const userSubscription = await dbWrite.customerSubscription.findFirst({
     // I rather we trust this than the subscriptionId on the user.
     where: { userId: user.id },
     select: { id: true, status: true, metadata: true, product: { select: { provider: true } } },
@@ -485,12 +485,12 @@ export const upsertSubscription = async (
     // });
   }
 
-  const userVault = await dbRead.vault.findFirst({
+  const userVault = await dbWrite.vault.findFirst({
     where: { userId: user.id },
   });
 
   // Get Stripe details on the vault:
-  const product = await dbRead.product.findFirst({
+  const product = await dbWrite.product.findFirst({
     where: { id: data.productId },
   });
 
@@ -593,7 +593,7 @@ export const manageSubscriptionTransactionComplete = async (
 };
 
 export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => {
-  const subscription = await dbRead.customerSubscription.findFirst({
+  const subscription = await dbWrite.customerSubscription.findFirst({
     select: {
       id: true,
       product: {
@@ -616,7 +616,7 @@ export const cancelSubscriptionPlan = async ({ userId }: { userId: number }) => 
 
   if (!subscription) {
     // Attempt to cancel the subscription on Paddle
-    const user = await dbRead.user.findUnique({ where: { id: userId } });
+    const user = await dbWrite.user.findUnique({ where: { id: userId } });
 
     if (!user?.paddleCustomerId) {
       return;
@@ -671,7 +671,7 @@ export const updateSubscriptionPlan = async ({
 }: {
   userId: number;
 } & UpdateSubscriptionInputSchema) => {
-  const subscription = await dbRead.customerSubscription.findFirst({
+  const subscription = await dbWrite.customerSubscription.findFirst({
     where: {
       userId,
       status: {
@@ -757,12 +757,12 @@ export const updateSubscriptionPlan = async ({
 
 export const refreshSubscription = async ({ userId }: { userId: number }) => {
   let customerId = '';
-  const user = await dbRead.user.findUnique({
+  const user = await dbWrite.user.findUnique({
     where: { id: userId },
     select: { paddleCustomerId: true, email: true, id: true },
   });
 
-  const customerSubscription = await dbRead.customerSubscription.findFirst({
+  const customerSubscription = await dbWrite.customerSubscription.findFirst({
     where: {
       userId,
       status: {
@@ -871,7 +871,7 @@ export const createOneTimePurchaseTransaction = async ({
   productId: string;
   userId: number;
 }) => {
-  const product = await dbRead.product.findUnique({
+  const product = await dbWrite.product.findUnique({
     where: { id: productId, provider: PaymentProvider.Paddle },
     select: {
       id: true,
@@ -894,7 +894,7 @@ export const createOneTimePurchaseTransaction = async ({
     throw throwNotFoundError('Price not found');
   }
 
-  const user = await dbRead.user.findFirst({
+  const user = await dbWrite.user.findFirst({
     where: { id: userId },
     select: { paddleCustomerId: true, email: true },
   });

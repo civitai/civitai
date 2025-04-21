@@ -56,7 +56,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
     ]);
   const todayRef = useRef(new Date());
 
-  const canPublish = hasImages && !isReordering;
+  const canPublish = hasImages && !isReordering && features.canWrite;
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
   const { returnUrl, afterPublish } = params;
 
@@ -310,6 +310,7 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             loading={isLoading}
             variant="outline"
             leftIcon={<IconTrash size={20} />}
+            disabled={!features.canWrite}
           >
             Delete Post
           </Button>

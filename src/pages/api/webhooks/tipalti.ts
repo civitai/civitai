@@ -1,7 +1,7 @@
 import { NextApiRequest, NextApiResponse } from 'next';
 import { Readable } from 'node:stream';
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import tipaltiCaller from '~/server/http/tipalti/tipalti.caller';
 import { Tipalti } from '~/server/http/tipalti/tipalti.schema';
 import { updateBuzzWithdrawalRequest } from '~/server/services/buzz-withdrawal-request.service';
@@ -143,7 +143,7 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
     case 'paymentGroupDeclined': {
       const payment = event.eventData.payments[0] as { refCode: string; paymentStatus: string };
 
-      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+      const request = await dbWrite.buzzWithdrawalRequest.findFirst({
         where: {
           transferId: payment.refCode,
         },
@@ -183,7 +183,7 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
     case 'paymentDeferred':
     case 'paymentCanceled': {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
-      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+      const request = await dbWrite.buzzWithdrawalRequest.findFirst({
         where: {
           transferId: payment.refCode,
         },
@@ -233,7 +233,7 @@ const processBuzzWithdrawalRequest = async (event: TipaltiWebhookEventData) => {
     }
     case 'paymentError': {
       const payment = event.eventData as { refCode: string; paymentStatus: string };
-      const request = await dbRead.buzzWithdrawalRequest.findFirst({
+      const request = await dbWrite.buzzWithdrawalRequest.findFirst({
         where: {
           transferId: payment.refCode,
         },
@@ -288,7 +288,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
         where: {
           userId,
           id: {
@@ -336,7 +336,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
         where: {
           userId,
           id: {
@@ -400,7 +400,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         throw new Error(`Withdrawal request not found for transferId: ${payment.refCode}`);
       }
 
-      const cashWithdrawal = await dbRead.cashWithdrawal.findFirst({
+      const cashWithdrawal = await dbWrite.cashWithdrawal.findFirst({
         where: {
           userId,
           id: {
