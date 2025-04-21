@@ -1,12 +1,18 @@
 import dayjs from 'dayjs';
 import { z } from 'zod';
 import { NewOrderDamnedReason, NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
+import { infiniteQuerySchema } from '~/server/schema/base.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
 export type GetImageQueueSchema = z.infer<typeof getImageQueueSchema>;
 export const getImageQueueSchema = z.object({
   // TODO: add playerId to the schema
   imageCount: z.number().optional().default(20),
+});
+
+export type GetPlayersInfiniteSchema = z.infer<typeof getPlayersInfiniteSchema>;
+export const getPlayersInfiniteSchema = infiniteQuerySchema.extend({
+  query: z.string().trim().min(1).optional(),
 });
 
 export type SmitePlayerInput = z.infer<typeof smitePlayerSchema>;

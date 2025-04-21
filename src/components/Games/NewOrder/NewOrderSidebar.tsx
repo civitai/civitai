@@ -1,11 +1,12 @@
-import { ActionIcon, Drawer, Group, Navbar, ThemeIcon, UnstyledButton } from '@mantine/core';
-import { IconCrown, IconHistory, IconMenu2, IconSkull } from '@tabler/icons-react';
+import { Drawer, Group, Navbar, ThemeIcon, UnstyledButton } from '@mantine/core';
+import { IconCrown, IconHistory, IconSkull, IconUsers } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
   openJudgementHistoryModal,
+  openPlayersDirectoryModal,
   useJoinKnightsNewOrder,
 } from '~/components/Games/KnightsNewOrder.utils';
 import { PlayerCard } from '~/components/Games/PlayerCard';
@@ -21,13 +22,7 @@ export function NewOrderSidebar() {
   const [opened, setOpened] = useState(false);
 
   const content = (
-    <Navbar
-      // className={clsx('transition-all', opened ? 'translate-x-0' : 'translate-x-[-360px]')}
-      p="md"
-      width={{ xs: 300, sm: 360 }}
-      zIndex={1}
-      withBorder
-    >
+    <Navbar p="md" width={{ xs: 300, sm: 360 }} zIndex={1} withBorder>
       <Navbar.Section className="border-b border-gray-200 pb-4 dark:border-b-dark-4">
         {playerData && currentUser && (
           <PlayerCard
@@ -54,6 +49,19 @@ export function NewOrderSidebar() {
               Judgement History
             </Group>
           </UnstyledButton>
+          {currentUser?.isModerator && (
+            <UnstyledButton
+              className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
+              onClick={() => openPlayersDirectoryModal()}
+            >
+              <Group>
+                <ThemeIcon size="xl" variant="light" color="lime">
+                  <IconUsers />
+                </ThemeIcon>
+                Players Directory
+              </Group>
+            </UnstyledButton>
+          )}
           <UnstyledButton
             component={Link}
             className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"

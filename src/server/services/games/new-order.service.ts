@@ -20,6 +20,7 @@ import {
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { InfiniteQueryInput } from '~/server/schema/base.schema';
 import {
   AddImageRatingInput,
   CleanseSmiteInput,
@@ -27,7 +28,7 @@ import {
   SmitePlayerInput,
 } from '~/server/schema/games/new-order.schema';
 import { ImageMetadata } from '~/server/schema/media.schema';
-import { playerInfoSelect } from '~/server/selectors/user.selector';
+import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
 import { getAllImagesIndex, updateImageNsfwLevel } from '~/server/services/image.service';
 import {
   bustFetchThroughCache,
@@ -717,4 +718,69 @@ export async function getPlayerHistory({
       .filter(isDefined),
     nextCursor,
   };
+}
+
+export async function getPlayersInfinite({
+  limit,
+  cursor,
+  query,
+}: InfiniteQueryInput & { query?: string }) {
+  const take = limit + 1;
+  const players = await dbRead.user.findMany({
+    select: userWithPlayerInfoSelect,
+    where: {
+      username: query ? { contains: query, mode: 'insensitive' } : undefined,
+      deletedAt: null,
+      bannedAt: null,
+      playerInfo: { isNot: null },
+    },
+    cursor: cursor ? { id: cursor } : undefined,
+    take,
+    orderBy: { id: 'asc' },
+  });
+  if (players.length === 0) return { items: [], nextCursor: null };
+
+  let nextCursor: number | null = null;
+  if (players.length > limit) nextCursor = players.pop()?.id ?? null;
+
+  const playerSmites = await getActiveSmites({ playerIds: players.map((p) => p.id) });
+
+  const playersWithStats = await Promise.all(
+    players.map(async (player) => {
+      const { playerInfo, ...user } = player;
+      if (!playerInfo) return null;
+
+      const stats = await getPlayerStats({ playerId: user.id });
+      const activeSmites = playerSmites[player.id] ?? [];
+      return {
+        ...user,
+        ...playerInfo,
+        stats,
+        activeSmites,
+      };
+    })
+  );
+
+  return { items: playersWithStats.filter(isDefined), nextCursor };
+}
+
+async function getActiveSmites({ playerIds }: { playerIds: number[] }) {
+  const smites = await dbRead.newOrderSmite.findMany({
+    where: { targetPlayerId: { in: playerIds }, cleansedAt: null },
+    select: { targetPlayerId: true, size: true, remaining: true, createdAt: true },
+  });
+
+  const smiteMap = smites.reduce((acc, smite) => {
+    if (!acc[smite.targetPlayerId]) {
+      acc[smite.targetPlayerId] = [];
+    }
+    acc[smite.targetPlayerId].push({
+      size: smite.size,
+      remaining: smite.remaining,
+      createdAt: smite.createdAt,
+    });
+    return acc;
+  }, {} as Record<number, { size: number; remaining: number; createdAt: Date }[]>);
+
+  return smiteMap;
 }

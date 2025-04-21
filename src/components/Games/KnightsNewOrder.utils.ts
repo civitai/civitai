@@ -12,12 +12,17 @@ import {
   SignalMessages,
   SignalTopic,
 } from '~/server/common/enums';
-import { AddImageRatingInput, GetHistoryInput } from '~/server/schema/games/new-order.schema';
+import {
+  AddImageRatingInput,
+  GetHistoryInput,
+  GetPlayersInfiniteSchema,
+} from '~/server/schema/games/new-order.schema';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const JudgementHistoryModal = dynamic(() => import('./NewOrder/JudgementHistory'));
+const PlayersDirectoryModal = dynamic(() => import('./NewOrder/PlayersDirectoryModal'));
 
 export const useKnightsNewOrderListener = () => {
   const queryUtils = trpc.useUtils();
@@ -192,6 +197,9 @@ export const ratingPlayBackRates: Record<string, number> = {
 export const openJudgementHistoryModal = () =>
   dialogStore.trigger({ component: JudgementHistoryModal });
 
+export const openPlayersDirectoryModal = () =>
+  dialogStore.trigger({ component: PlayersDirectoryModal });
+
 export const useInquisitorTools = () => {
   const queryUtils = trpc.useUtils();
 
@@ -228,4 +236,21 @@ export const useInquisitorTools = () => {
     applyingSmite: smitePlayerMutation.isLoading,
     cleansingSmite: cleanseSmiteMutation.isLoading,
   };
+};
+
+export const useQueryPlayersInfinite = (
+  filters?: Partial<GetPlayersInfiniteSchema>,
+  opts?: { enabled?: boolean }
+) => {
+  const { data, ...rest } = trpc.games.newOrder.getPlayers.useInfiniteQuery(
+    { ...filters },
+    {
+      ...opts,
+      enabled: opts?.enabled !== false,
+      getNextPageParam: (lastPage) => lastPage.nextCursor,
+    }
+  );
+  const flatData = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
+
+  return { players: flatData, ...rest };
 };

@@ -81,10 +81,17 @@ export function PlayerCard({
             label={`Receive ${MAX_SMITE_COUNT - smiteCount} more smite and it's game over!`}
             withinPortal
           >
-            <div className="flex flex-nowrap items-center gap-1">
-              {Array.from({ length: MAX_SMITE_COUNT }).map((_, index) => (
-                <ThemeIcon key={index} size="sm" color="red" variant="light">
-                  <IconHeart size={16} stroke={1.5} />
+            <div className="flex flex-nowrap items-center">
+              {Array.from({ length: MAX_SMITE_COUNT - smiteCount }).map((_, index) => (
+                <ThemeIcon
+                  key={index}
+                  size="sm"
+                  color="red"
+                  className="text-red-500"
+                  // @ts-ignore: this works
+                  variant="transparent"
+                >
+                  <IconHeart size={16} stroke={1.5} fill="currentColor" />
                 </ThemeIcon>
               ))}
             </div>
@@ -98,45 +105,7 @@ export function PlayerCard({
           nextLevelExp={progression.ratingsForNextLevel}
           icon={<IconSword size={18} stroke={1.5} />}
         />
-        {!showStats && (
-          <div className="flex items-center gap-1">
-            <IconBadge
-              tooltip={`Total Gold: ${numberWithCommas(gold)}`}
-              size="lg"
-              color="yellow"
-              icon={<IconCoin size={18} stroke={1.5} />}
-            >
-              {abbreviateNumber(gold)}
-            </IconBadge>
-            {/* TODO.newOrder: get actual conversion rate */}
-            <IconBadge
-              tooltip={`Total Buzz: ${numberWithCommas(gold / 1000)}`}
-              size="lg"
-              color="yellow.7"
-              icon={<CurrencyIcon type={Currency.BUZZ} size={18} stroke={1.5} />}
-            >
-              {abbreviateNumber(gold / 1000)}
-            </IconBadge>
-            <IconBadge
-              tooltip={`Total Fervor: ${numberWithCommas(fervor)}`}
-              size="lg"
-              color="orange"
-              icon={<IconFlame size={18} stroke={1.5} />}
-            >
-              {abbreviateNumber(fervor)}
-            </IconBadge>
-            {leaderboard && (
-              <IconBadge
-                tooltip="Leaderboard Position"
-                size="lg"
-                color="blue"
-                icon={<IconCrown size={18} stroke={1.5} />}
-              >
-                #{leaderboard}
-              </IconBadge>
-            )}
-          </div>
-        )}
+        {!showStats && <PlayerStats stats={{ exp, fervor, gold }} />}
       </div>
     </Paper>
   );
@@ -153,3 +122,34 @@ type Props = PaperProps & {
   leaderboard?: number;
   onClick?: VoidFunction;
 };
+
+export function PlayerStats({ stats }: { stats: { exp: number; fervor: number; gold: number } }) {
+  return (
+    <div className="flex items-center gap-1">
+      <IconBadge
+        tooltip={`Total Gold: ${numberWithCommas(stats.gold)}`}
+        size="lg"
+        color="yellow"
+        icon={<IconCoin size={18} stroke={1.5} />}
+      >
+        {abbreviateNumber(stats.gold)}
+      </IconBadge>
+      <IconBadge
+        tooltip={`Total Buzz: ${numberWithCommas(stats.gold / 1000)}`}
+        size="lg"
+        color="yellow.7"
+        icon={<CurrencyIcon type={Currency.BUZZ} size={18} stroke={1.5} />}
+      >
+        {abbreviateNumber(stats.gold / 1000)}
+      </IconBadge>
+      <IconBadge
+        tooltip={`Total Fervor: ${numberWithCommas(stats.fervor)}`}
+        size="lg"
+        color="orange"
+        icon={<IconFlame size={18} stroke={1.5} />}
+      >
+        {abbreviateNumber(stats.fervor)}
+      </IconBadge>
+    </div>
+  );
+}

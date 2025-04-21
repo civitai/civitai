@@ -2,8 +2,10 @@ import {
   ActionIcon,
   Badge,
   Center,
+  CloseButton,
   Loader,
   LoadingOverlay,
+  Modal,
   SegmentedControl,
   useMantineTheme,
 } from '@mantine/core';
@@ -12,7 +14,6 @@ import clsx from 'clsx';
 import Link from 'next/link';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { PageModal } from '~/components/Dialog/Templates/PageModal';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { useQueryInfiniteKnightsNewOrderHistory } from '~/components/Games/KnightsNewOrder.utils';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -35,15 +36,20 @@ export default function JudgementHistoryModal() {
     useQueryInfiniteKnightsNewOrderHistory({ status: activeTab });
 
   return (
-    <PageModal
+    <Modal
       {...dialog}
       transition="scale"
       size="80%"
       transitionDuration={300}
-      classNames={{ header: 'items-start' }}
-      title={
-        <div className="flex flex-col gap-1">
-          <h1 className="text-xl">Your Judgement History</h1>
+      withCloseButton={false}
+      padding={0}
+    >
+      <div className="flex size-full max-h-full max-w-full flex-col">
+        <div className="sticky top-[-48px] z-30 flex flex-col gap-1 bg-gray-0 p-5 dark:bg-dark-7">
+          <div className="flex items-center justify-between">
+            <h1 className="text-xl">Your Judgement History</h1>
+            <CloseButton title="Close judgement history" onClick={dialog.onClose} />
+          </div>
           <p className="text-sm text-gray-500">
             This is where you can view the history of your judgements. You can see the details of
             each judgement, including your rating, the final decision, and the image that was
@@ -63,40 +69,39 @@ export default function JudgementHistoryModal() {
             ]}
           />
         </div>
-      }
-    >
-      <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
-        <MasonryContainer py="xl">
-          {isLoading ? (
-            <Center>
-              <Loader />
-            </Center>
-          ) : images.length ? (
-            <div className="relative">
-              <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
-              <MasonryGrid
-                data={images}
-                render={JudgementHistoryItem}
-                itemId={(data) => data.image.id}
-              />
-              {hasNextPage && (
-                <InViewLoader
-                  loadFn={fetchNextPage}
-                  loadCondition={!isFetching}
-                  style={{ gridColumn: '1/-1' }}
-                >
-                  <Center p="xl" mt="md">
-                    <Loader />
-                  </Center>
-                </InViewLoader>
-              )}
-            </div>
-          ) : (
-            <NoContent mt="lg" message="" />
-          )}
-        </MasonryContainer>
-      </MasonryProvider>
-    </PageModal>
+        <MasonryProvider columnWidth={310} maxColumnCount={7} maxSingleColumnWidth={450}>
+          <MasonryContainer py="xl">
+            {isLoading ? (
+              <Center>
+                <Loader />
+              </Center>
+            ) : images.length ? (
+              <div className="relative">
+                <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
+                <MasonryGrid
+                  data={images}
+                  render={JudgementHistoryItem}
+                  itemId={(data) => data.image.id}
+                />
+                {hasNextPage && (
+                  <InViewLoader
+                    loadFn={fetchNextPage}
+                    loadCondition={!isFetching}
+                    style={{ gridColumn: '1/-1' }}
+                  >
+                    <Center p="xl" mt="md">
+                      <Loader />
+                    </Center>
+                  </InViewLoader>
+                )}
+              </div>
+            ) : (
+              <NoContent mt="lg" message="There are judgement entries" />
+            )}
+          </MasonryContainer>
+        </MasonryProvider>
+      </div>
+    </Modal>
   );
 }
 
