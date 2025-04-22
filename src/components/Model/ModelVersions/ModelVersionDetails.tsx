@@ -404,7 +404,9 @@ export function ModelVersionDetails({
           )}
           {version.rank?.earnedAmountAllTime && (
             <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
-              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>{abbreviateNumber(version.rank?.earnedAmountAllTime)}</Text>
+              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>
+                {abbreviateNumber(version.rank?.earnedAmountAllTime)}
+              </Text>
             </IconBadge>
           )}
         </Group>
@@ -1428,7 +1430,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          {!model.nsfw && <AdUnitSide_2 />}
+          {!model.nsfw && !model.poi && <AdUnitSide_2 />}
         </Stack>
       </ContainerGrid.Col>
 

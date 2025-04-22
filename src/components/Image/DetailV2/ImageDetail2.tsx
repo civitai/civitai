@@ -140,7 +140,7 @@ export function ImageDetail2() {
   const actualCollection = collection || collectionItems[0]?.collection;
   const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;
   const nsfw = !getIsSafeBrowsingLevel(image.nsfwLevel);
-  const hideAds = actualCollection?.metadata?.hideAds ?? false;
+  const hideAds = (image.poi || image.minor || actualCollection?.metadata?.hideAds) ?? false;
 
   const handleSaveClick = () =>
     openContext('addToCollection', { imageId: image.id, type: CollectionType.Image });

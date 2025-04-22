@@ -52,6 +52,7 @@ const filterableAttributes = [
   'availability',
   'poi',
   'minor',
+  'blockedFor',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
