@@ -1563,7 +1563,7 @@ export const createModelVersionPostFromTraining = async ({
   await Promise.all(
     uploadedImages.map((image) =>
       addPostImage({
-        type: 'image',
+        type: image.type,
         postId: post.id,
         modelVersionId,
         width: image.metadata?.width,

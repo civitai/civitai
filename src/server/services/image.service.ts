@@ -4793,13 +4793,24 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
 
   const data = await upload.done();
   const meta = await getMetadata(imageUrl);
+  // Attempt to guess if this is a video or image based off of the sample image url.
+  // This is no accurate science for all scenarios, but should give out a decent result at least.
+  const isVideo = imageUrl.includes('.mp4') || imageUrl.includes('.mov');
 
   const response = {
+    type: (isVideo ? 'video' : 'image') as MediaType,
     meta: meta,
     metadata: {
       size: blob.size,
-      width: 512, //  This is mostly a safeguard to default.
-      height: 512, //  This is mostly a safeguard to default.
+      // We need a better way to determine the size of the content here. However, due to the fact that we can't
+      // present these images in the server size, we have no exact measurements. We can only assume the size.
+      // The front-end has an easier time determining the size of the content because they can render it.
+      ...(isVideo
+        ? {
+            width: 640,
+            height: 480,
+          }
+        : { width: 512, height: 512 }),
     },
     url: data.Key,
   };
