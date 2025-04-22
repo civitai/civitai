@@ -1,49 +1,77 @@
-import { Box, BoxProps } from '@mantine/core';
-
-export function LogoBadge({ ...props }: LogoProps) {
+export function LogoBadge({ ...props }: React.HTMLAttributes<SVGElement>) {
   return (
-    <Box w={45} {...props}>
-      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 22.7 22.7">
+    <svg viewBox="0 0 20 23" xmlns="http://www.w3.org/2000/svg" {...props}>
+      <path
+        d="M0,5.747L0,17.241L10,22.989L20,17.241L20,5.747L10,0L0,5.747Z"
+        style={{
+          fill: 'url(#_Linear1)',
+          fillRule: 'nonzero',
+        }}
+      />
+      <path
+        d="M10,3.563L16.782,7.471L16.782,15.402L10,19.31L3.103,15.402L3.103,7.471L10,3.563M10,0L0,5.747L0,17.241L10,22.989L20,17.241L20,5.747C19.885,5.747 10,0 10,0Z"
+        style={{
+          fill: 'url(#_Linear2)',
+          fillRule: 'nonzero',
+        }}
+      />
+      <path
+        d="M11.839,12.586L9.885,13.736L7.931,12.586L7.931,10.402L9.885,9.253L11.839,10.402L14.253,10.402L14.253,9.023L9.885,6.494L5.632,9.023L5.632,13.966L10,16.494L14.368,13.966L14.368,12.586L11.839,12.586Z"
+        style={{
+          fill: '#fff',
+          fillRule: 'nonzero',
+        }}
+      />
+      <defs>
         <linearGradient
-          id="innerGradient"
+          id="_Linear1"
+          x1={0}
+          y1={0}
+          x2={1}
+          y2={0}
           gradientUnits="userSpaceOnUse"
-          x1="10.156"
-          y1="22.45"
-          x2="10.156"
-          y2="2.4614"
-          gradientTransform="matrix(1 0 0 -1 0 24)"
+          gradientTransform="matrix(1.40684e-15,22.9754,-22.9754,1.40684e-15,9.94943,-0.0574713)"
         >
-          <stop offset="0" style={{ stopColor: '#081692' }} />
-          <stop offset="1" style={{ stopColor: '#1E043C' }} />
+          <stop
+            offset={0}
+            style={{
+              stopColor: '#081692',
+              stopOpacity: 1,
+            }}
+          />
+          <stop
+            offset={1}
+            style={{
+              stopColor: '#1e043c',
+              stopOpacity: 1,
+            }}
+          />
         </linearGradient>
         <linearGradient
-          id="outerGradient"
+          id="_Linear2"
+          x1={0}
+          y1={0}
+          x2={1}
+          y2={0}
           gradientUnits="userSpaceOnUse"
-          x1="10.156"
-          y1="22.45"
-          x2="10.156"
-          y2="2.45"
-          gradientTransform="matrix(1 0 0 -1 0 24)"
+          gradientTransform="matrix(1.40764e-15,22.9885,-22.9885,1.40764e-15,9.94943,-0.0574713)"
         >
-          <stop offset="0" style={{ stopColor: '#1284F7' }} />
-          <stop offset="1" style={{ stopColor: '#0A20C9' }} />
+          <stop
+            offset={0}
+            style={{
+              stopColor: '#1284f7',
+              stopOpacity: 1,
+            }}
+          />
+          <stop
+            offset={1}
+            style={{
+              stopColor: '#0a20c9',
+              stopOpacity: 1,
+            }}
+          />
         </linearGradient>
-        <path
-          style={{ fill: 'url(#innerGradient)' }}
-          d="M1.5,6.6v10l8.7,5l8.7-5v-10l-8.7-5L1.5,6.6z"
-        />
-        <path
-          style={{ fill: 'url(#outerGradient)' }}
-          d="M10.2,4.7l5.9,3.4V15l-5.9,3.4L4.2,15V8.1
-		L10.2,4.7 M10.2,1.6l-8.7,5v10l8.7,5l8.7-5v-10C18.8,6.6,10.2,1.6,10.2,1.6z"
-        />
-        <path
-          style={{ fill: '#fff' }}
-          d="M11.8,12.4l-1.7,1l-1.7-1v-1.9l1.7-1l1.7,1h2.1V9.3l-3.8-2.2L6.4,9.3v4.3l3.8,2.2l3.8-2.2v-1.2H11.8z"
-        />
-      </svg>
-    </Box>
+      </defs>
+    </svg>
   );
 }
-
-type LogoProps = BoxProps;
