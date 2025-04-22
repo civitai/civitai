@@ -18,7 +18,6 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   domains?: ColorDomain[];
   features?: (features: FeatureAccess) => boolean;
   key: string;
-  defaultExcluded?: boolean;
 })[] = [
   {
     key: 'creator-program',
@@ -81,6 +80,13 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
     rel: 'nofollow noreferrer',
     children: '💡Education',
   },
+  {
+    key: 'content-removal',
+    href: 'https://forms.clickup.com/8459928/f/825mr-12991/XBL6ZA0U3G740F86VW',
+    target: '_blank',
+    rel: 'nofollow noreferrer',
+    children: 'Content Removal',
+  },
 ];
 
 export function AppFooter() {
@@ -96,7 +102,6 @@ export function AppFooter() {
     },
   });
 
- 
   return (
     <footer
       ref={footerRef}

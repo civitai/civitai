@@ -1136,7 +1136,7 @@ export const DEFAULT_BROWSING_SETTINGS_ADDONS: BrowsingSettingsAddon[] = [
   {
     type: 'none',
     nsfwLevels: [NsfwLevel.X, NsfwLevel.XXX],
-    excludedFooterLinks: ['2257'],
+    excludedFooterLinks: ['2257', 'content-removal'],
   },
   {
     type: 'some',
