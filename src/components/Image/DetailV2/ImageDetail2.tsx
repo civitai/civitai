@@ -350,6 +350,7 @@ export function ImageDetail2() {
                                   tippedAmountCount: image.stats?.tippedAmountCountAllTime,
                                 }}
                                 targetUserId={image.user.id}
+                                disableBuzzTip={image.poi}
                               />
                             </ReactionSettingsProvider>
                           </div>

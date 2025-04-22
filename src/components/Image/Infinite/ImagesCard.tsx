@@ -278,6 +278,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     readonly={!safe || (isScanned && isBlocked)}
                     className={cx('justify-between p-2')}
                     invisibleEmpty
+                    disableBuzzTip={image.poi}
                   />
                 </div>
               </>

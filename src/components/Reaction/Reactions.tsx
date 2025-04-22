@@ -86,11 +86,13 @@ export function Reactions({
   className,
   showAll: initialShowAll,
   invisibleEmpty,
+  disableBuzzTip,
 }: ReactionsProps & {
   className?: string;
   targetUserId?: number;
   showAll?: boolean;
   invisibleEmpty?: boolean;
+  disableBuzzTip?: boolean;
 }) {
   const storedReactions = useReactionsStore({ entityType, entityId });
   const [showAll, setShowAll] = useSessionStorage<boolean>({
@@ -128,7 +130,7 @@ export function Reactions({
     }
   } else hasAllReactions = false;
 
-  const supportsBuzzTipping = ['image'].includes(entityType);
+  const supportsBuzzTipping = !disableBuzzTip && ['image'].includes(entityType);
 
   if (readonly && !hasReactions) return null;
   if (hideReactions) return null;

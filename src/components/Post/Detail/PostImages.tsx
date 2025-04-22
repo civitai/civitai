@@ -189,6 +189,7 @@ export function PostImages({
                       }}
                       targetUserId={image.user.id}
                       readonly={!safe}
+                      disableBuzzTip={image.poi}
                     />
                     {image.hasMeta && (
                       <div className="absolute bottom-2 right-2">
