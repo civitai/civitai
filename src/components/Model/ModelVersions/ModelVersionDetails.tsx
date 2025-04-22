@@ -1009,7 +1009,8 @@ export function ModelVersionDetails({
                     variant="link"
                     td="underline"
                     href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
-                  >
+                    className={!features.canWrite ? 'pointer-events-none' : undefined}
+                   >
                     here
                   </Text>{' '}
                   to change this behavior.
@@ -1186,14 +1187,16 @@ export function ModelVersionDetails({
                           component={Link}
                           onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/edit`}
-                        >
+                          className={!features.canWrite ? 'pointer-events-none' : undefined}
+                         >
                           Edit Model Details
                         </Menu.Item>
                         <Menu.Item
                           component={Link}
                           onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
-                        >
+                          className={!features.canWrite ? 'pointer-events-none' : undefined}
+                         >
                           Edit Version Details
                         </Menu.Item>
                       </Menu.Dropdown>

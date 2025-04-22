@@ -8,7 +8,7 @@ import {
   SignalMessages,
   SignalTopic,
 } from '~/server/common/enums';
-import { dbRead, dbWrite } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import {
@@ -687,7 +687,7 @@ export const updateCashWithdrawal = async ({
   fees,
 }: UpdateCashWithdrawalSchema) => {
   // Check if the user has  a pending withdrawal request:
-  const withdrawal = await dbRead.cashWithdrawal.findUniqueOrThrow({
+  const withdrawal = await dbWrite.cashWithdrawal.findUniqueOrThrow({
     where: { id: withdrawalId },
   });
 

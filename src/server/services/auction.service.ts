@@ -148,7 +148,8 @@ export const prepareBids = (
 const getAuctionMVData = async <T extends { entityId: number }>(data: T[]) => {
   const entityIds = data.map((x) => x.entityId);
 
-  const mvData = await dbRead.modelVersion.findMany({
+  // TODO switch back to dbRead
+  const mvData = await dbWrite.modelVersion.findMany({
     where: { id: { in: entityIds } },
     select: {
       id: true,
@@ -380,7 +381,8 @@ export const createBid = async ({
   // - Check if entityId is valid for this auction type
 
   if (auctionData.auctionBase.type === AuctionType.Model) {
-    const mv = await dbRead.modelVersion.findFirst({
+    // TODO switch back to dbRead
+    const mv = await dbWrite.modelVersion.findFirst({
       where: { id: entityId },
       select: {
         baseModel: true,

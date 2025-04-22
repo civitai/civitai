@@ -193,7 +193,8 @@ export function ModelVersionMenu({
           component={Link}
           href={`/models/${modelId}/model-versions/${modelVersionId}/edit`}
           icon={<IconEdit size={14} stroke={1.5} />}
-        >
+          className={!features.canWrite ? 'pointer-events-none' : undefined}
+         >
           Edit details
         </Menu.Item>
         <Menu.Item
@@ -216,6 +217,7 @@ export function ModelVersionMenu({
             icon={<IconPhotoEdit size={14} stroke={1.5} />}
             onClick={(e) => e.stopPropagation()}
             href={`/posts/${postId}/edit`}
+            className={!features.canWrite ? 'pointer-events-none' : undefined}
           >
             Manage images
           </Menu.Item>

@@ -184,7 +184,7 @@ export const getRecentTrainingData = async ({
   }
 
   try {
-    const data = await dbRead.modelFile.findMany({
+    const data = await dbWrite.modelFile.findMany({
       where: { AND: where },
       select: {
         id: true,

@@ -23,7 +23,7 @@ export type EngineTypes = (typeof engineTypes)[number];
 export const optimizerTypes = ['AdamW8Bit', 'Adafactor', 'Prodigy'] as const;
 export type OptimizerTypes = (typeof optimizerTypes)[number];
 
-export const loraTypes = ['lora'] as const; // LoCon Lycoris", "LoHa Lycoris
+export const loraTypes = ['lora'] as const; // LoCon Lycoris, LoHa Lycoris
 export const lrSchedulerTypes = ['constant', 'cosine', 'cosine_with_restarts', 'linear'] as const;
 
 export const trainingModelInfo: {
@@ -141,14 +141,16 @@ export const trainingModelInfo: {
     baseModel: 'Hunyuan Video',
     isNew: false,
   },
-  // wan_2_1_720p: {
-  //   label: 'Wan',
-  //   pretty: 'Wan 2.1 720p',
-  //   type: 'wan',
-  //   description: '',
-  //   air: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
-  //   baseModel: 'Wan Video'
-  // },
+  wan_2_1_720p: {
+    label: '2.1 720p',
+    pretty: 'Wan 2.1 720p',
+    type: 'wan',
+    description: 'Performant and high quality video generation.',
+    // air: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501344',
+    air: 'urn:air:wanvideo:vae:huggingface:Wan-AI/Wan2.1-I2V-14B-720P@main/Wan2.1_VAE.pth',
+    baseModel: 'Wan Video',
+    isNew: false,
+  },
 };
 
 export const rapidEta = 5;

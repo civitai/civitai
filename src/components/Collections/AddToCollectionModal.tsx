@@ -43,6 +43,8 @@ import { getDisplayName } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { isDefined } from '~/utils/type-guards';
 import { closeAllModals, openModal } from '@mantine/modals';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -115,6 +117,7 @@ function CollectionListForm({
   const isLoading = loadingStatus || loadingCollections;
   const ownedCollections = collections.filter((collection) => collection.isOwner);
   const contributingCollections = collections.filter((collection) => !collection.isOwner);
+  const features = useFeatureFlags();
 
   const addCollectionItemMutation = trpc.collection.saveItem.useMutation();
   const handleSubmit = () => {
@@ -199,6 +202,7 @@ function CollectionListForm({
 
   return (
     <Stack>
+      <ReadOnlyAlert />
       <Stack spacing="xl">
         <Stack spacing={4}>
           <Group spacing="xs" position="apart" noWrap>
@@ -398,7 +402,11 @@ function CollectionListForm({
         </Stack>
 
         <Group position="right">
-          <Button loading={addCollectionItemMutation.isLoading} onClick={handleSubmit}>
+          <Button
+            disabled={!features.canWrite}
+            loading={addCollectionItemMutation.isLoading}
+            onClick={handleSubmit}
+          >
             Save
           </Button>
         </Group>

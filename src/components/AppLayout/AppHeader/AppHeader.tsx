@@ -3,6 +3,7 @@ import { IconSearch } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { ReactElement, RefObject, useRef, useState } from 'react';
 import { BrowsingModeIcon } from '~/components/BrowsingMode/BrowsingMode';
+import { ReadOnlyNotice } from '~/components/ReadOnlyNotice/ReadOnlyNotice';
 import { ChatButton } from '~/components/Chat/ChatButton';
 import { CivitaiLinkPopover } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { Logo } from '~/components/Logo/Logo';
@@ -76,7 +77,7 @@ export function AppHeader({
           <Grid.Col span="auto" pl={0}>
             <div className="flex items-center gap-2.5">
               <Logo />
-              <SupportButton />
+              {!features.canWrite ? <ReadOnlyNotice /> : <SupportButton />}
               {/* Disabled until next event */}
               {/* <EventButton /> */}
             </div>

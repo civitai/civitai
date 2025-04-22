@@ -124,6 +124,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       flux_dev: { all: { disabled: false } },
       hy_720_fp8: { all: { default: 'musubi' } },
+      wan_2_1_720p: { all: { default: 'musubi' } },
     },
   },
   {
@@ -146,6 +147,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sd3_medium: { all: { default: 5 } },
       sd3_large: { all: { default: 5 } },
       hy_720_fp8: { all: { min: 1, max: 20 } },
+      wan_2_1_720p: { all: { min: 1, max: 20 } },
     },
   },
   {
@@ -179,6 +181,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sd3_medium: { all: { default: 4, max: 4 } },
       sd3_large: { all: { default: 4, max: 4 } },
       hy_720_fp8: { all: { default: 2, min: 1, max: 4 } },
+      wan_2_1_720p: { all: { default: 2, min: 1, max: 4 } },
     },
   },
   {
@@ -189,7 +192,7 @@ export const trainingSettings: TrainingSettingsType[] = [
         The total number of steps for training. Computed automatically with (epochs * # of images *
         repeats / batch size).
         <br />
-        The maximum allowed is 10,000 steps.
+        The maximum allowed is 10,000 steps (5,000 for video).
       </>
     ),
     type: 'int',
@@ -198,6 +201,10 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 10000,
     step: 1,
     disabled: true,
+    // overrides: {
+    //   hy_720_fp8: { all: { max: 5000 } },
+    //   wan_2_1_720p: { all: { max: 5000 } },
+    // },
   },
   {
     name: 'resolution',
@@ -213,6 +220,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       pony: { all: { min: 1024, max: 2048, default: 1024 } },
       illustrious: { all: { min: 1024, max: 2048, default: 1024 } },
       hy_720_fp8: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
+      wan_2_1_720p: { all: { disabled: true, default: 960, min: 960, max: 960 } }, // TODO 960x544
     },
   },
   {
@@ -238,18 +246,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'bool',
     default: false,
     overrides: {
-      flux_dev: {
-        all: { disabled: true },
-      },
-      sd3_medium: {
-        all: { disabled: true },
-      },
-      sd3_large: {
-        all: { disabled: true },
-      },
-      hy_720_fp8: {
-        all: { disabled: true },
-      },
+      flux_dev: { all: { disabled: true } },
+      sd3_medium: { all: { disabled: true } },
+      sd3_large: { all: { disabled: true } },
+      hy_720_fp8: { all: { disabled: true } },
+      wan_2_1_720p: { all: { disabled: true } },
     },
   },
   {
@@ -270,18 +271,11 @@ export const trainingSettings: TrainingSettingsType[] = [
     max: 3,
     step: 1,
     overrides: {
-      flux_dev: {
-        all: { disabled: true },
-      },
-      sd3_medium: {
-        all: { disabled: true },
-      },
-      sd3_large: {
-        all: { disabled: true },
-      },
-      hy_720_fp8: {
-        all: { disabled: true },
-      },
+      flux_dev: { all: { disabled: true } },
+      sd3_medium: { all: { disabled: true } },
+      sd3_large: { all: { disabled: true } },
+      hy_720_fp8: { all: { disabled: true } },
+      wan_2_1_720p: { all: { disabled: true } },
     },
   },
   {
@@ -295,9 +289,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       anime: { all: { default: 2 } },
-      hy_720_fp8: {
-        all: { disabled: true, default: 0, min: 0, max: 0 },
-      },
+      hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      wan_2_1_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
   {
@@ -307,9 +300,8 @@ export const trainingSettings: TrainingSettingsType[] = [
     type: 'bool',
     default: false,
     overrides: {
-      hy_720_fp8: {
-        all: { disabled: true },
-      },
+      hy_720_fp8: { all: { disabled: true } },
+      wan_2_1_720p: { all: { disabled: true } },
     },
   },
   {
@@ -325,6 +317,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sd3_medium: { all: { default: 1e-5 } },
       sd3_large: { all: { default: 1e-5 } },
       hy_720_fp8: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
+      wan_2_1_720p: { all: { default: 2e-4, min: 1e-4, max: 6e-4 } },
     },
   },
   {
@@ -342,6 +335,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       sd3_medium: { all: { disabled: true, default: 0, max: 0 } },
       sd3_large: { all: { disabled: true, default: 0, max: 0 } },
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
+      wan_2_1_720p: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -354,6 +348,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       pony: { all: { default: 'cosine' } },
       hy_720_fp8: { all: { default: 'constant' } },
+      wan_2_1_720p: { all: { default: 'constant' } },
     },
   },
   {
@@ -368,6 +363,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     step: 1,
     overrides: {
       hy_720_fp8: { all: { default: 1 } },
+      wan_2_1_720p: { all: { default: 1 } },
     },
   },
   {
@@ -391,6 +387,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       pony: { all: { default: 0 } },
       hy_720_fp8: { all: { disabled: true, default: 0, max: 0 } },
+      wan_2_1_720p: { all: { disabled: true, default: 0, max: 0 } },
     },
   },
   {
@@ -436,6 +433,7 @@ export const trainingSettings: TrainingSettingsType[] = [
       illustrious: { all: { max: 256 } },
       anime: { all: { default: 8 } },
       hy_720_fp8: { all: { default: 1 } },
+      wan_2_1_720p: { all: { default: 1 } },
     },
   },
   {
@@ -450,6 +448,7 @@ export const trainingSettings: TrainingSettingsType[] = [
     overrides: {
       pony: { all: { default: 0.03 } },
       hy_720_fp8: { all: { disabled: true, default: 0, min: 0, max: 0 } },
+      wan_2_1_720p: { all: { disabled: true, default: 0, min: 0, max: 0 } },
     },
   },
   {
@@ -489,6 +488,7 @@ export const trainingSettings: TrainingSettingsType[] = [
         kohya: { default: optimizerArgMapFlux.AdamW8Bit.kohya },
       },
       hy_720_fp8: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
+      wan_2_1_720p: { all: { default: optimizerArgMapVideo.AdamW8Bit } },
     },
   },
 ];
