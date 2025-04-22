@@ -305,7 +305,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
       // Update the status of the withdrawal request:
       const status =
         event.type === 'paymentGroupApproved'
-          ? CashWithdrawalStatus.Scheduled
+          ? CashWithdrawalStatus.Cleared
           : CashWithdrawalStatus.Rejected;
 
       const metadata = {
@@ -314,10 +314,16 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
         approvalDate: event.eventData.approvalDate,
       };
 
+      const note =
+        event.type === 'paymentGroupApproved'
+          ? "Payment approved by Moderators. Tipalti's processing should start shortly."
+          : `Payment has been declined. Please contact support.`;
+
       await updateCashWithdrawal({
         withdrawalId: cashWithdrawal.id,
         status,
         metadata,
+        note,
       });
 
       await userCashCache.bust(cashWithdrawal.userId);
@@ -377,7 +383,7 @@ const processCashWithdrawalEvent = async (event: TipaltiWebhookEventData) => {
               .map((r: { reasonDescription: string }) => r.reasonDescription)
               .join(', ')}`
           : event.type === 'paymentSubmitted'
-          ? 'Payment submitted'
+          ? 'Your withdrawal has been scheduled! Tipalti will process it shortly, and you should receive your funds within 1–5 business days, depending on your payout method'
           : 'Payment canceled';
 
       await updateCashWithdrawal({

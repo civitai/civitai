@@ -21,6 +21,7 @@ import {
   createBuzzTransaction,
   getCounterPartyBuzzTransactions,
   getUserBuzzAccount,
+  refundTransaction,
 } from '~/server/services/buzz.service';
 import { createNotification } from '~/server/services/notification.service';
 import { payToTipaltiAccount } from '~/server/services/user-payment-configuration.service';
@@ -52,6 +53,7 @@ import { CashWithdrawalMethod, CashWithdrawalStatus } from '~/shared/utils/prism
 import { withRetries } from '~/utils/errorHandling';
 import { signalClient } from '~/utils/signal-client';
 import { Prisma } from '@prisma/client';
+import { logToAxiom } from '~/server/logging/client';
 
 type UserCapCacheItem = {
   id: number;
@@ -577,69 +579,146 @@ export async function withdrawCash(userId: number, amount: number) {
   const fee = getWithdrawalFee(amount, cash.paymentMethod);
   const toWithdraw = amount - fee;
 
-  // Create withdrawal record
-  const { id } = await dbWrite.cashWithdrawal.create({
-    data: {
-      userId,
-      amount: toWithdraw,
-      fee,
-      status: CashWithdrawalStatus.Scheduled,
-      method: userPaymentConfiguration.tipaltiWithdrawalMethod,
-    },
-    select: {
-      id: true,
-    },
-  });
+  // We will use this to keep track of our progress in the code below:
+  const data = {
+    withdrawalId: '',
+    transactionId: '',
+    paymentBatchId: '',
+    paymentRefCode: '',
+    updated: false,
+  };
 
-  // Burn full amount
-  const { transactionId } = await createBuzzTransaction({
-    amount,
-    fromAccountId: userId,
-    fromAccountType: 'cashsettled',
-    toAccountId: 0,
-    toAccountType: 'user',
-    type: TransactionType.Withdrawal,
-    description: 'Withdrawal request',
-  });
+  try {
+    // Create withdrawal record
+    const { id } = await dbWrite.cashWithdrawal.create({
+      data: {
+        userId,
+        amount: toWithdraw,
+        fee,
+        status: CashWithdrawalStatus.InternalValue,
+        method: userPaymentConfiguration.tipaltiWithdrawalMethod,
+      },
+      select: {
+        id: true,
+      },
+    });
 
-  // Update withdrawal record
-  await dbWrite.$executeRaw`
-    UPDATE "CashWithdrawal"
-    SET "transactionId" = ${transactionId}, status = 'Scheduled'
-    WHERE id = ${id};
-  `;
+    data.withdrawalId = id;
 
-  // Create tipalti payment
-  const refCode = getWithdrawalRefCode(id, userId);
+    // Burn full amount
+    const { transactionId } = await createBuzzTransaction({
+      amount,
+      fromAccountId: userId,
+      fromAccountType: 'cashsettled',
+      toAccountId: 0,
+      toAccountType: 'user',
+      type: TransactionType.Withdrawal,
+      description: 'Withdrawal request',
+    });
 
-  const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
-    requestId: refCode,
-    toUserId: userId as number, // Ofcs, user should exist for one.
-    amount: toWithdraw / 100, // Tipalti doesn't use cents like 99% of other payment processors :shrug:
-    description: `Payment for withdrawal request ${refCode}`,
-    byUserId: -1, // The bank
-  });
+    if (!transactionId) {
+      throw new Error('Failed to create transaction');
+    }
 
-  // Update withdrawal record
-  await dbWrite.$executeRaw`
-    UPDATE "CashWithdrawal"
-    SET status = 'Submitted',
-      metadata = jsonb_build_object(
-        'paymentBatchId', ${paymentBatchId},
-        'paymentRefCode', ${paymentRefCode},
-        'paidAmount', ${toWithdraw}
-      )
-    WHERE id = ${id};
-  `;
+    data.transactionId = transactionId as string;
 
-  // Bust affected caches
-  await userCashCache.bust(userId);
+    // Update withdrawal record
+    await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET "transactionId" = ${transactionId}, status = 'InternalValue'
+      WHERE id = ${id};
+    `;
 
-  signalClient.topicSend({
-    topic: SignalTopic.CreatorProgram,
-    target: SignalMessages.CashInvalidator,
-    data: {},
-  });
+    // Create tipalti payment
+    const refCode = getWithdrawalRefCode(id, userId);
+
+    const { paymentBatchId, paymentRefCode } = await payToTipaltiAccount({
+      requestId: refCode,
+      toUserId: userId as number, // Ofcs, user should exist for one.
+      amount: toWithdraw / 100, // Tipalti doesn't use cents like 99% of other payment processors :shrug:
+      description: `Payment for withdrawal request ${refCode}`,
+      byUserId: -1, // The bank
+    });
+
+    data.paymentBatchId = paymentBatchId;
+    data.paymentRefCode = paymentRefCode;
+    // Update withdrawal record
+    await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET status = 'InternalValue',
+        metadata = jsonb_build_object(
+          'paymentBatchId', ${paymentBatchId},
+          'paymentRefCode', ${paymentRefCode},
+          'paidAmount', ${toWithdraw}
+        ),
+        "note" = 'Payment waiting for Moderator approval',
+      WHERE id = ${id};
+    `;
+
+    data.updated = true;
+
+    // Bust affected caches
+    await userCashCache.bust(userId);
+
+    signalClient.topicSend({
+      topic: SignalTopic.CreatorProgram,
+      target: SignalMessages.CashInvalidator,
+      data: {},
+    });
+  } catch (e) {
+    // In case of error, we need to revert the transaction
+    if (data.updated) {
+      // We cache bust or something of the sort. We should be OK to move forward.
+      return;
+    }
+
+    if (data.paymentBatchId) {
+      // We failed at updating. We should retry that:
+      await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET status = 'InternalValue',
+        metadata = jsonb_build_object(
+          'paymentBatchId', ${data.paymentBatchId},
+          'paymentRefCode', ${data.paymentRefCode},
+          'paidAmount', ${toWithdraw}
+        ),
+        "note" = 'Payment waiting for Moderator approval',
+      WHERE id = ${data.withdrawalId};
+    `;
+
+      return;
+    }
+
+    if (data.transactionId) {
+      // We failed at creating the Tipalti payment. We should refund the user their buzz:
+      await withRetries(async () => {
+        await refundTransaction(
+          data.transactionId,
+          'Failed to create Tipalti payment. Please contact support.'
+        );
+      });
+
+      await logToAxiom({ name: 'withdraw-cash', type: 'error', error: e, ...data });
+    }
+
+    await dbWrite.$executeRaw`
+      UPDATE "CashWithdrawal"
+      SET status = 'Failed',
+        note = ${(e as Error).message}
+      WHERE id = ${data.withdrawalId};
+    `;
+
+    // Bust affected caches
+    await userCashCache.bust(userId);
+
+    signalClient.topicSend({
+      topic: SignalTopic.CreatorProgram,
+      target: SignalMessages.CashInvalidator,
+      data: {},
+    });
+
+    throw e;
+  }
 }
 
 export async function getPoolParticipants(month?: Date) {
@@ -747,6 +826,7 @@ export const updateCashWithdrawal = async ({
 
     switch (status) {
       case CashWithdrawalStatus.Scheduled:
+      case CashWithdrawalStatus.Submitted:
         await createNotification({
           userId: userId as number,
           type: 'creators-program-withdrawal-approved',
@@ -764,7 +844,7 @@ export const updateCashWithdrawal = async ({
           details: {},
         }).catch();
         break;
-      case CashWithdrawalStatus.Submitted:
+      case CashWithdrawalStatus.Paid:
         await createNotification({
           userId: userId as number,
           type: 'creators-program-withdrawal-transferred',
