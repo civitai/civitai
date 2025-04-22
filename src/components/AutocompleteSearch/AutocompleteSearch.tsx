@@ -408,8 +408,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
     : true;
 
-  console.log(debouncedSearch, canPerformQuery);
-
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />

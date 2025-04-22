@@ -96,8 +96,7 @@ export function AppFooter() {
     },
   });
 
-  console.log(browsingSettingsAddons.settings);
-
+ 
   return (
     <footer
       ref={footerRef}
