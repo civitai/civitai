@@ -1,4 +1,4 @@
-import { Stack, StepProps, Stepper, Text, Title, createStyles } from '@mantine/core';
+import { Box, Stack, StepProps, Stepper, Text, Title, createStyles } from '@mantine/core';
 import { useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
 import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
@@ -64,7 +64,9 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
       <div className="container my-3 flex max-w-md flex-col">
         {!isReturningUser && (
           <div className="mx-auto flex items-center gap-1">
-            <LogoBadge w={86} />
+            <Box w={86}>
+              <LogoBadge />
+            </Box>
             <Stack spacing={0} mt={-5}>
               <Title sx={{ lineHeight: 1 }}>Welcome!</Title>
               <Text>{`Let's setup your account`}</Text>
