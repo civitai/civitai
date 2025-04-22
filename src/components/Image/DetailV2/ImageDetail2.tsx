@@ -200,16 +200,18 @@ export function ImageDetail2() {
           </Button>
         </NextLink>
       )}
-      <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
-        <Badge
-          {...sharedBadgeProps}
-          pr={12}
-          sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
-        >
-          <IconBolt size={14} fill="currentColor" />
-          Tip
-        </Badge>
-      </InteractiveTipBuzzButton>
+      {!image.poi && (
+        <InteractiveTipBuzzButton toUserId={image.user.id} entityId={image.id} entityType="Image">
+          <Badge
+            {...sharedBadgeProps}
+            pr={12}
+            sx={{ fontSize: 12, fontWeight: 600, lineHeight: 1.5, color: theme.colors.accent[5] }}
+          >
+            <IconBolt size={14} fill="currentColor" />
+            Tip
+          </Badge>
+        </InteractiveTipBuzzButton>
+      )}
     </>
   );
 
