@@ -395,6 +395,7 @@ export function ImageDetail2() {
                         tipBuzzEntityId={image.id}
                         tipBuzzEntityType="Image"
                         className="rounded-xl"
+                        tipsEnabled={!image.poi}
                       />
                       {image.postId && (
                         <EntityCollaboratorList
@@ -403,6 +404,7 @@ export function ImageDetail2() {
                           creatorCardProps={{
                             className: 'rounded-xl',
                             withActions: true,
+                            tipsEnabled: !image.poi,
                           }}
                         />
                       )}

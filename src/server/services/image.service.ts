@@ -1341,6 +1341,8 @@ export const getAllImages = async (
       thumbnailUrl?: string;
       remixOfId?: number | null;
       hasPositivePrompt?: boolean;
+      poi?: boolean;
+      minor?: boolean;
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -2397,6 +2399,8 @@ export type ImagesForModelVersions = {
   hasMeta: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const getImagesForModelVersion = async ({
@@ -2503,6 +2507,8 @@ export const getImagesForModelVersion = async ({
       i.hash,
       i.type,
       i.metadata,
+      i.minor,
+      i.poi,
       t."modelVersionId",
       ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
       p."availability",
@@ -2909,6 +2915,8 @@ type GetImageConnectionRaw = {
   entityId: number;
   hasMeta: boolean;
   hasPositivePrompt?: boolean;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const getImagesByEntity = async ({
@@ -2988,6 +2996,8 @@ export const getImagesByEntity = async ({
       i."needsReview",
       i."userId",
       i."index",
+      i.poi,
+      i.minor,
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE

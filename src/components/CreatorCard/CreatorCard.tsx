@@ -67,6 +67,7 @@ export function CreatorCard({
   tipBuzzEntityType,
   tipBuzzEntityId,
   withActions = true,
+  tipsEnabled = true,
   subText,
   ...cardProps
 }: Props) {
@@ -111,14 +112,16 @@ export function CreatorCard({
             />
             {withActions && (
               <Group spacing={8} noWrap>
-                <TipBuzzButton
-                  toUserId={creator.id}
-                  size="xs"
-                  entityId={tipBuzzEntityId}
-                  label=""
-                  entityType={tipBuzzEntityType}
-                  compact
-                />
+                {tipsEnabled && (
+                  <TipBuzzButton
+                    toUserId={creator.id}
+                    size="xs"
+                    entityId={tipBuzzEntityId}
+                    label=""
+                    entityType={tipBuzzEntityType}
+                    compact
+                  />
+                )}
                 <ChatUserButton user={creator} size="xs" label="" compact />
                 <FollowUserButton userId={creator.id} size="xs" compact />
               </Group>
@@ -171,6 +174,7 @@ export const CreatorCardV2 = ({
   tipBuzzEntityType,
   tipBuzzEntityId,
   withActions = true,
+  tipsEnabled = true,
   cosmeticOverwrites,
   useEquippedCosmetics = true,
   statDisplayOverwrite,
@@ -362,18 +366,20 @@ export const CreatorCardV2 = ({
                 </UserProfileLink>
                 {withActions && (
                   <Group spacing={8} noWrap>
-                    <TipBuzzButton
-                      toUserId={creator.id}
-                      size="xs"
-                      entityId={tipBuzzEntityId}
-                      label=""
-                      entityType={tipBuzzEntityType}
-                      radius="xl"
-                      color="gray"
-                      variant="filled"
-                      w={32}
-                      h={32}
-                    />
+                    {tipsEnabled && (
+                      <TipBuzzButton
+                        toUserId={creator.id}
+                        size="xs"
+                        entityId={tipBuzzEntityId}
+                        label=""
+                        entityType={tipBuzzEntityType}
+                        radius="xl"
+                        color="gray"
+                        variant="filled"
+                        w={32}
+                        h={32}
+                      />
+                    )}
                     <ChatUserButton
                       user={creator}
                       size="xs"
@@ -432,6 +438,7 @@ type Props = {
   tipBuzzEntityId?: number;
   tipBuzzEntityType?: string;
   withActions?: boolean;
+  tipsEnabled?: boolean;
   subText?: React.ReactNode;
 } & Omit<CardProps, 'children'>;
 

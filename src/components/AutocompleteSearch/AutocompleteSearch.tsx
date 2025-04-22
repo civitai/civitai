@@ -60,6 +60,7 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { includesPoi } from '~/utils/metadata/audit';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -262,6 +263,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
   ref: React.ForwardedRef<{ focus: () => void }>
 ) {
   // const currentUser = useCurrentUser();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
   const { classes } = useStyles();
   const router = useRouter();
   const isMobile = useIsMobile();
@@ -402,6 +404,12 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     }
   };
 
+  const canPerformQuery = debouncedSearch
+    ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
+    : true;
+
+  console.log(debouncedSearch, canPerformQuery);
+
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
@@ -436,7 +444,17 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           placeholder="Search Civitai"
           type="search"
           nothingFound={
-            searchErrorState ? (
+            !canPerformQuery ? (
+              <Stack spacing={0} align="center">
+                <Text>
+                  Due to your current browsing settings, searching for people of interest has been
+                  disabled.
+                </Text>
+                <Text size="xs">
+                  You may remove X and XXX browsing settings to search for these.
+                </Text>
+              </Stack>
+            ) : searchErrorState ? (
               <Stack spacing={0} align="center">
                 <Text>There was an error while performing your request&hellip;</Text>
                 <Text size="xs">Please try again later</Text>
@@ -454,7 +472,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           }
           defaultValue={query}
           value={search}
-          data={items}
+          data={canPerformQuery ? items : []}
           onChange={setSearch}
           onBlur={handleClear}
           onClear={handleClear}
