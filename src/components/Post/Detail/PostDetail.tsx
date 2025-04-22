@@ -99,7 +99,7 @@ export function PostDetailContent({ postId }: Props) {
   } = usePostContestCollectionDetails({ id: postId }, { enabled: !!post?.collectionId });
 
   const collectionMetadata = (collection?.metadata ?? {}) as CollectionMetadataSchema;
-  const requiresCollectionJudgement =
+  const requiresCollectionJudgment =
     collectionMetadata?.judgesApplyBrowsingLevel && permissions?.manage;
   const forcedBrowsingLevel = collection?.metadata?.forcedBrowsingLevel ?? undefined;
 
@@ -117,7 +117,7 @@ export function PostDetailContent({ postId }: Props) {
   } = useQueryImages(
     { postId, pending: !!currentUser, browsingLevel: forcedBrowsingLevel },
     {
-      applyHiddenPreferences: !requiresCollectionJudgement && !forcedBrowsingLevel,
+      applyHiddenPreferences: !requiresCollectionJudgment && !forcedBrowsingLevel,
       enabled: !!post && (!post.collectionId || !isLoadingPostCollection),
     }
   );

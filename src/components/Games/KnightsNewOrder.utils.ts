@@ -1,4 +1,4 @@
-import { useIsMutating } from '@tanstack/react-query';
+import { InfiniteData, useIsMutating } from '@tanstack/react-query';
 import { getQueryKey } from '@trpc/react-query';
 import produce from 'immer';
 import dynamic from 'next/dynamic';
@@ -18,10 +18,11 @@ import {
   GetPlayersInfiniteSchema,
 } from '~/server/schema/games/new-order.schema';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { GetPlayersItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { queryClient, trpc } from '~/utils/trpc';
 
-const JudgementHistoryModal = dynamic(() => import('./NewOrder/JudgementHistory'));
+const JudgmentHistoryModal = dynamic(() => import('./NewOrder/JudgmentHistory'));
 const PlayersDirectoryModal = dynamic(() => import('./NewOrder/PlayersDirectoryModal'));
 
 export const useKnightsNewOrderListener = () => {
@@ -36,6 +37,7 @@ export const useKnightsNewOrderListener = () => {
 
   // Used to update player stats (exp, fervor, blessed buzz, rank, etc.)
   useSignalConnection(SignalMessages.NewOrderPlayerUpdate, (data) => {
+    console.log('update player from signal', data);
     queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
       if (!old) return old;
 
@@ -194,8 +196,8 @@ export const ratingPlayBackRates: Record<string, number> = {
   [NsfwLevel.XXX]: 0.7,
 };
 
-export const openJudgementHistoryModal = () =>
-  dialogStore.trigger({ component: JudgementHistoryModal });
+export const openJudgmentHistoryModal = () =>
+  dialogStore.trigger({ component: JudgmentHistoryModal });
 
 export const openPlayersDirectoryModal = () =>
   dialogStore.trigger({ component: PlayersDirectoryModal });
@@ -225,6 +227,27 @@ export const useInquisitorTools = () => {
   });
 
   const cleanseSmiteMutation = trpc.games.newOrder.cleanseSmite.useMutation({
+    onSuccess: (_, payload) => {
+      const queryKey = getQueryKey(trpc.games.newOrder.getPlayers);
+      queryClient.setQueriesData({ queryKey, exact: false }, (state) =>
+        produce(
+          state,
+          (old?: InfiniteData<{ items: GetPlayersItem[]; nextCursor: number | null }>) => {
+            if (!old?.pages.length) return old;
+
+            for (const page of old.pages) {
+              for (const player of page.items) {
+                if (player.id === payload.playerId) {
+                  player.stats.smites = player.stats.smites - 1;
+                  player.activeSmites =
+                    player.activeSmites?.filter((smite) => smite.id !== payload.id) ?? [];
+                }
+              }
+            }
+          }
+        )
+      );
+    },
     onError: (error) => {
       showErrorNotification({ title: 'Failed to cleanse smite', error: new Error(error.message) });
     },
@@ -232,7 +255,9 @@ export const useInquisitorTools = () => {
 
   return {
     smitePlayer: smitePlayerMutation.mutate,
+    smitePayload: smitePlayerMutation.variables,
     cleanseSmite: cleanseSmiteMutation.mutate,
+    cleansePayload: cleanseSmiteMutation.variables,
     applyingSmite: smitePlayerMutation.isLoading,
     cleansingSmite: cleanseSmiteMutation.isLoading,
   };

@@ -95,7 +95,7 @@ function createCounter({ key, fetchCount, ttl = CacheTTL.day, ordered }: Counter
   return { increment, decrement, reset, getCount, getAll, exists, key };
 }
 
-export const correctJudgementsCounter = createCounter({
+export const correctJudgmentsCounter = createCounter({
   key: REDIS_SYS_KEYS.NEW_ORDER.JUDGEMENTS.CORRECT,
   fetchCount: async () => 0,
 });

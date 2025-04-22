@@ -6,7 +6,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   allJudmentsCounter,
   blessedBuzzCounter,
-  correctJudgementsCounter,
+  correctJudgmentsCounter,
   expCounter,
   fervorCounter,
 } from '~/server/games/new-order/utils';
@@ -23,8 +23,6 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
-
-// TODO.newOrder: signals after each job?
 
 const log = createLogger('new-order-jobs');
 
@@ -43,11 +41,11 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
   const startDate = dayjs().subtract(3, 'day').startOf('day').toDate();
   const endDate = dayjs().subtract(3, 'day').endOf('day').toDate();
 
-  // Get all correct judgements for the last 3 days
+  // Get all correct judgments for the last 3 days
   log(
-    `BlessedBuzz :: Getting correct judgements from ${startDate.toISOString()} to ${endDate.toISOString()}`
+    `BlessedBuzz :: Getting correct judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`
   );
-  const judgements = await clickhouse.$query<{ userId: number; balance: number }>`
+  const judgments = await clickhouse.$query<{ userId: number; balance: number }>`
         SELECT
           userId,
           SUM(exp * multiplier) as balance
@@ -56,24 +54,24 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
           AND (status = 'Correct' OR status = 'Failed')
       `;
 
-  const positiveBalanceJudgements = judgements.filter((j) => j.balance > 0);
+  const positiveBalanceJudgments = judgments.filter((j) => j.balance > 0);
 
-  if (!positiveBalanceJudgements.length) {
-    log('BlessedBuzz :: No correct judgements found');
+  if (!positiveBalanceJudgments.length) {
+    log('BlessedBuzz :: No correct judgments found');
     return;
   }
-  log(`BlessedBuzz :: Found ${positiveBalanceJudgements.length} correct judgements`);
+  log(`BlessedBuzz :: Found ${positiveBalanceJudgments.length} correct judgments`);
 
   // Get current player data for knights and templars only
   const players = await dbRead.newOrderPlayer.findMany({
     where: {
-      userId: { in: positiveBalanceJudgements.map((j) => j.userId) },
+      userId: { in: positiveBalanceJudgments.map((j) => j.userId) },
       rankType: { not: NewOrderRankType.Acolyte },
     },
     select: { userId: true },
   });
 
-  const validPlayers = positiveBalanceJudgements.filter((j) =>
+  const validPlayers = positiveBalanceJudgments.filter((j) =>
     players.some((p) => p.userId === j.userId)
   );
 
@@ -92,7 +90,7 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
       toAccountId: validPlayer.userId,
       amount: validPlayer.balance,
       type: TransactionType.Reward,
-      description: 'Content Moderation Correct Judgement',
+      description: 'Content Moderation Correct Judgment',
       externalTransactionId: `new-order-${validPlayer.userId}-${startDate.toISOString()}`,
     }));
 
@@ -109,9 +107,9 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
 type DailyResetQueryResult = {
   userId: number;
   exp: number;
-  correctJudgements: number;
-  failedJudgements: number;
-  totalJudgements: number;
+  correctJudgments: number;
+  failedJudgments: number;
+  totalJudgments: number;
 };
 
 const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async () => {
@@ -123,9 +121,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
   // Apr. 10, 2025 as Start Date
   const startDate = dayjs().day(10).month(4).year(2025).startOf('day').toDate();
 
-  log(
-    `DailyReset:: Getting judgements from ${startDate.toISOString()} to ${endDate.toISOString()}`
-  );
+  log(`DailyReset:: Getting judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`);
 
   const users = await dbRead.newOrderPlayer.findMany({
     where: { rankType: { not: NewOrderRankType.Acolyte } },
@@ -158,15 +154,15 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
           SUM(
               -- Make it so we ignore elements before a reset.
               if (knoir."createdAt" > u."startAt" AND knoir."status" = 'Correct', 1, 0)
-          ) as correctJudgements,
+          ) as correctJudgments,
           SUM(
               -- Make it so we ignore elements before a reset.
               if (knoir."createdAt" > u."startAt" AND knoir."status" = 'Failed', 1, 0)
-          ) as failedJudgements,
+          ) as failedJudgments,
           SUM(
               -- Make it so we ignore elements before a reset.
               if (knoir."createdAt" > u."startAt", 1, 0)
-          ) as totalJudgements
+          ) as totalJudgments
         FROM knights_new_order_image_rating  knoir
         JOIN u ON knoir."userId" = users."userId"
         WHERE knoir."createdAt" BETWEEN '${startDate.toISOString()}' AND '${endDate.toISOString()}'
@@ -177,19 +173,19 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     .then((result) => result.json<DailyResetQueryResult[]>());
 
   if (!userData.length) {
-    log('DailyReset:: No judgements found');
+    log('DailyReset:: No judgments found');
     return;
   }
 
   const batches = chunk(userData, 500);
   let loopCount = 1;
   for (const batch of batches) {
-    log(`DailyReset:: Processing judgements :: ${loopCount} of ${batches.length}`);
+    log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length}`);
     const batchWithFervor = batch.map((b) => ({
       ...b,
       fervor: calculateFervor({
-        correctJudgements: b.correctJudgements,
-        allJudgements: b.totalJudgements,
+        correctJudgments: b.correctJudgments,
+        allJudgments: b.totalJudgments,
       }),
     }));
 
@@ -208,15 +204,15 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       WHERE "NewOrderPlayer"."userId" = affected."userId"
     `;
 
-    log(`DailyReset:: Processing judgements :: ${loopCount} of ${batches.length} :: done`);
+    log(`DailyReset:: Processing judgments :: ${loopCount} of ${batches.length} :: done`);
     loopCount++;
   }
-  log('DailyReset:: Processing judgements :: done');
+  log('DailyReset:: Processing judgments :: done');
 
   // Clean up counters
   const userIds = userData.map((j) => j.userId);
   await Promise.all([
-    ...userIds.map((id) => correctJudgementsCounter.reset({ id })),
+    ...userIds.map((id) => correctJudgmentsCounter.reset({ id })),
     ...userIds.map((id) => allJudmentsCounter.reset({ id })),
     ...userIds.map((id) => fervorCounter.reset({ id })),
     ...userIds.map((id) => expCounter.reset({ id })),
@@ -230,7 +226,7 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
 
   const startDate = dayjs().subtract(7, 'day').startOf('day').toDate();
   const endDate = new Date();
-  const judgements = await clickhouse
+  const judgments = await clickhouse
     .query({
       query: `
         SELECT userId, status
@@ -242,12 +238,12 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
     })
     .then((result) => result.json<{ userId: number; status: NewOrderImageRatingStatus }[]>());
 
-  if (!judgements.length) {
-    log('PickTemplars :: No judgements found');
+  if (!judgments.length) {
+    log('PickTemplars :: No judgments found');
     return;
   }
 
-  const userIds = judgements.map((j) => j.userId);
+  const userIds = judgments.map((j) => j.userId);
   const players = await dbRead.newOrderPlayer.findMany({
     where: {
       userId: { in: userIds },
@@ -263,15 +259,15 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
     return;
   }
 
-  // Get correct judgements and total judgements count for each player
+  // Get correct judgments and total judgments count for each player
   const playersFervor = players.reduce((acc, player) => {
-    const allJudgements = judgements.filter((j) => j.userId === player.userId);
-    const correctJudgements = allJudgements.filter(
+    const allJudgments = judgments.filter((j) => j.userId === player.userId);
+    const correctJudgments = allJudgments.filter(
       (j) => j.status === NewOrderImageRatingStatus.Correct
     );
-    const totalCount = allJudgements.length;
-    const correctCount = correctJudgements.length;
-    const fervor = calculateFervor({ correctJudgements: correctCount, allJudgements: totalCount });
+    const totalCount = allJudgments.length;
+    const correctCount = correctJudgments.length;
+    const fervor = calculateFervor({ correctJudgments: correctCount, allJudgments: totalCount });
 
     acc[player.userId] = fervor;
 

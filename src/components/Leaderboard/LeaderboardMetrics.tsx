@@ -189,12 +189,12 @@ const metricTypes: Record<
       </ThemeIcon>
     ),
   }),
-  correctJudgements: () => ({
-    tooltip: 'Correct Judgements',
+  correctJudgments: () => ({
+    tooltip: 'Correct Judgments',
     icon: <IconChecks {...iconProps} />,
   }),
-  allJudgements: () => ({
-    tooltip: 'All Judgements',
+  allJudgments: () => ({
+    tooltip: 'All Judgments',
     icon: <IconBadges {...iconProps} />,
   }),
 };

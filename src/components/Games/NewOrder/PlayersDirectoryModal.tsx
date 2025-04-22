@@ -1,19 +1,33 @@
-import { ActionIcon, CloseButton, Loader, LoadingOverlay, Modal, TextInput } from '@mantine/core';
+import {
+  ActionIcon,
+  Card,
+  CloseButton,
+  Loader,
+  LoadingOverlay,
+  Modal,
+  ThemeIcon,
+  Tooltip,
+} from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
-import { IconChevronRight, IconHammerOff, IconSearch } from '@tabler/icons-react';
+import {
+  IconArrowLeft,
+  IconChevronRight,
+  IconHammer,
+  IconHealthRecognition,
+  IconSearch,
+} from '@tabler/icons-react';
 import { useState } from 'react';
 import { ClearableTextInput } from '~/components/ClearableTextInput/ClearableTextInput';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import {
   useInquisitorTools,
   useQueryPlayersInfinite,
 } from '~/components/Games/KnightsNewOrder.utils';
 import { PlayerStats } from '~/components/Games/PlayerCard';
 import { InViewLoader } from '~/components/InView/InViewLoader';
-import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
-import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { GetPlayersItem } from '~/types/router';
 
 export default function PlayersDirectoryModal() {
   const dialog = useDialogContext();
@@ -21,14 +35,12 @@ export default function PlayersDirectoryModal() {
     undefined,
     200
   );
-  const [selectedPlayer, setSelectedPlayer] = useState<(typeof players)[number] | undefined>(
-    undefined
-  );
+  const [playerId, setPlayerId] = useState<number | undefined>(undefined);
 
   const { players, isLoading, isFetching, isRefetching, hasNextPage, fetchNextPage } =
     useQueryPlayersInfinite({ query: debouncedSearch });
 
-  const { cleanseSmite, cleansingSmite } = useInquisitorTools();
+  const selectedPlayer = playerId ? players.find((player) => player.id === playerId) : undefined;
 
   return (
     <Modal {...dialog} withCloseButton={false} padding={0}>
@@ -37,19 +49,33 @@ export default function PlayersDirectoryModal() {
           <h1 className="text-xl">Players Directory</h1>
           <CloseButton title="Close player directory" onClick={dialog.onClose} />
         </div>
-        <ClearableTextInput
-          className="w-full"
-          placeholder="Search for players..."
-          type="search"
-          icon={<IconSearch size={16} />}
-          onChange={(e) => setDebouncedSearch(e.currentTarget.value || undefined)}
-        />
+        {playerId ? (
+          <button
+            className="rounded-sm p-2 hover:bg-gray-1 dark:hover:bg-dark-5"
+            onClick={() => setPlayerId(undefined)}
+          >
+            <div className="flex items-center gap-2">
+              <IconArrowLeft />
+              <span className="text-sm">Back to players</span>
+            </div>
+          </button>
+        ) : (
+          <ClearableTextInput
+            className="w-full"
+            placeholder="Search for players..."
+            type="search"
+            icon={<IconSearch size={16} />}
+            onChange={(e) => setDebouncedSearch(e.currentTarget.value || undefined)}
+          />
+        )}
       </div>
       <div className="px-5 pb-5">
         {isLoading ? (
           <div className="flex h-full items-center justify-center">
             <Loader />
           </div>
+        ) : selectedPlayer ? (
+          <PlayerDetails player={selectedPlayer} />
         ) : players?.length ? (
           <div className="flex flex-col gap-2">
             <LoadingOverlay visible={isFetching || isRefetching} />
@@ -57,14 +83,14 @@ export default function PlayersDirectoryModal() {
               <button
                 key={player.id}
                 className="flex flex-nowrap items-center justify-between rounded-md p-2 hover:bg-gray-1 dark:hover:bg-dark-5"
-                onClick={() => setSelectedPlayer(player)}
+                onClick={() => setPlayerId(player.id)}
               >
-                <div className="flex flex-1 flex-col gap-1">
-                  <span className="flex-1 truncate text-start text-sm font-semibold text-gray-900 dark:text-gray-200">
-                    {player.username}
-                  </span>
-                  <PlayerStats stats={{ ...player.stats, gold: player.stats.blessedBuzz }} />
-                </div>
+                <UserAvatar
+                  user={player}
+                  avatarSize="md"
+                  subText={<PlayerStats stats={{ ...player.stats }} showSmiteCount />}
+                  withUsername
+                />
                 <IconChevronRight />
               </button>
             ))}
@@ -86,5 +112,66 @@ export default function PlayersDirectoryModal() {
         )}
       </div>
     </Modal>
+  );
+}
+
+function PlayerDetails({ player }: { player: GetPlayersItem }) {
+  const { cleanseSmite, cleansingSmite, cleansePayload } = useInquisitorTools();
+
+  return (
+    <div className="flex flex-col gap-4">
+      <UserAvatar
+        user={player}
+        avatarSize="md"
+        subText={<PlayerStats stats={{ ...player.stats }} showSmiteCount />}
+        withUsername
+      />
+      <p className="text-lg font-semibold">Active Smites</p>
+      {player.activeSmites.length ? (
+        player.activeSmites.map((smite) => {
+          const loading = cleansePayload?.id === smite.id && cleansingSmite;
+
+          return (
+            <Card key={smite.id}>
+              <div className="flex flex-nowrap items-center justify-between gap-2">
+                <div className="flex flex-nowrap gap-2">
+                  {/* @ts-ignore: transparent variant works */}
+                  <ThemeIcon size="lg" variant="transparent">
+                    <IconHammer />
+                  </ThemeIcon>
+                  <div className="flex flex-col items-center justify-center gap-1">
+                    {smite.reason && <p>Reason: {smite.reason}</p>}
+                    <div className="flex gap-1">
+                      <span>Size: {smite.size}</span> | <span>Remaining: {smite.remaining}</span>
+                    </div>
+                  </div>
+                </div>
+                <Tooltip label="Cleanse smite" withinPortal>
+                  <ActionIcon
+                    size="lg"
+                    color="pink"
+                    variant="filled"
+                    onClick={() =>
+                      cleanseSmite({
+                        id: smite.id,
+                        playerId: player.id,
+                        cleansedReason: 'Cleared by inquisitor',
+                      })
+                    }
+                    loading={loading}
+                  >
+                    <IconHealthRecognition />
+                  </ActionIcon>
+                </Tooltip>
+              </div>
+            </Card>
+          );
+        })
+      ) : (
+        <p className="text-sm text-gray-5 dark:text-dark-3">
+          No active smites found for this player.
+        </p>
+      )}
+    </div>
   );
 }

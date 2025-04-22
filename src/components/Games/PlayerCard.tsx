@@ -1,4 +1,4 @@
-import { clsx, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
+import { clsx, MantineSize, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
 import { IconCoin, IconCrown, IconFlame, IconHeart, IconSword } from '@tabler/icons-react';
 import React from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
@@ -10,6 +10,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { SimpleUser } from '~/server/selectors/user.selector';
 import { calculateLevelProgression } from '~/server/utils/research-utils';
 import { Currency, NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { GetPlayer } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 
 const MAX_SMITE_COUNT = 3;
@@ -49,8 +50,8 @@ export function PlayerCard({
   rank,
   exp,
   fervor,
-  gold,
-  smiteCount = 0,
+  blessedBuzz,
+  smites = 0,
   leaderboard,
   showStats,
   className,
@@ -77,25 +78,27 @@ export function PlayerCard({
             )}
           </div>
 
-          <Tooltip
-            label={`Receive ${MAX_SMITE_COUNT - smiteCount} more smite and it's game over!`}
-            withinPortal
-          >
-            <div className="flex flex-nowrap items-center">
-              {Array.from({ length: MAX_SMITE_COUNT - smiteCount }).map((_, index) => (
-                <ThemeIcon
-                  key={index}
-                  size="sm"
-                  color="red"
-                  className="text-red-500"
-                  // @ts-ignore: this works
-                  variant="transparent"
-                >
-                  <IconHeart size={16} stroke={1.5} fill="currentColor" />
-                </ThemeIcon>
-              ))}
-            </div>
-          </Tooltip>
+          {smites < MAX_SMITE_COUNT && (
+            <Tooltip
+              label={`Receive ${MAX_SMITE_COUNT - smites} more smite and it's game over!`}
+              withinPortal
+            >
+              <div className="flex flex-nowrap items-center">
+                {Array.from({ length: MAX_SMITE_COUNT - smites }).map((_, index) => (
+                  <ThemeIcon
+                    key={index}
+                    size="sm"
+                    color="red"
+                    className="text-red-500"
+                    // @ts-ignore: this works
+                    variant="transparent"
+                  >
+                    <IconHeart size={16} stroke={1.5} fill="currentColor" />
+                  </ThemeIcon>
+                ))}
+              </div>
+            </Tooltip>
+          )}
         </div>
         <LevelProgress
           className="w-full"
@@ -105,51 +108,76 @@ export function PlayerCard({
           nextLevelExp={progression.ratingsForNextLevel}
           icon={<IconSword size={18} stroke={1.5} />}
         />
-        {!showStats && <PlayerStats stats={{ exp, fervor, gold }} />}
+        {showStats && <PlayerStats stats={{ exp, fervor, blessedBuzz, smites }} />}
       </div>
     </Paper>
   );
 }
 
-type Props = PaperProps & {
-  user: Omit<Partial<SimpleUser & { isModerator: boolean }>, 'profilePicture' | 'deletedAt'>;
-  rank: { type: NewOrderRankType; name: string; iconUrl?: string };
-  exp: number;
-  fervor: number;
-  gold: number;
-  smiteCount?: number;
-  showStats?: boolean;
-  leaderboard?: number;
-  onClick?: VoidFunction;
+type Props = PaperProps &
+  GetPlayer['stats'] & {
+    user: Omit<Partial<SimpleUser & { isModerator: boolean }>, 'profilePicture' | 'deletedAt'>;
+    rank: { type: NewOrderRankType; name: string; iconUrl?: string };
+    showStats?: boolean;
+    leaderboard?: number;
+    onClick?: VoidFunction;
+  };
+
+const iconSizes = {
+  xs: 16,
+  sm: 16,
+  md: 16,
+  lg: 18,
+  xl: 20,
 };
 
-export function PlayerStats({ stats }: { stats: { exp: number; fervor: number; gold: number } }) {
+export function PlayerStats({
+  stats,
+  size = 'lg',
+  showSmiteCount,
+}: {
+  stats: GetPlayer['stats'];
+  size?: MantineSize;
+  showSmiteCount?: boolean;
+}) {
+  const iconSize = iconSizes[size] || iconSizes.lg;
+
   return (
     <div className="flex items-center gap-1">
       <IconBadge
-        tooltip={`Total Gold: ${numberWithCommas(stats.gold)}`}
-        size="lg"
+        tooltip={`Total Gold: ${numberWithCommas(stats.blessedBuzz)}`}
+        size={size}
         color="yellow"
-        icon={<IconCoin size={18} stroke={1.5} />}
+        icon={<IconCoin size={iconSize} stroke={1.5} />}
       >
-        {abbreviateNumber(stats.gold)}
+        {abbreviateNumber(stats.blessedBuzz)}
       </IconBadge>
       <IconBadge
-        tooltip={`Total Buzz: ${numberWithCommas(stats.gold / 1000)}`}
-        size="lg"
+        tooltip={`Total Buzz: ${numberWithCommas(stats.blessedBuzz / 1000)}`}
+        size={size}
         color="yellow.7"
-        icon={<CurrencyIcon type={Currency.BUZZ} size={18} stroke={1.5} />}
+        icon={<CurrencyIcon type={Currency.BUZZ} size={iconSize} stroke={1.5} />}
       >
-        {abbreviateNumber(stats.gold / 1000)}
+        {abbreviateNumber(stats.blessedBuzz / 1000)}
       </IconBadge>
       <IconBadge
-        tooltip={`Total Fervor: ${numberWithCommas(stats.fervor)}`}
-        size="lg"
+        tooltip={`Total Fervor: ${numberWithCommas(stats.fervor, { decimals: 2 })}`}
+        size={size}
         color="orange"
-        icon={<IconFlame size={18} stroke={1.5} />}
+        icon={<IconFlame size={iconSize} fill="currentColor" />}
       >
         {abbreviateNumber(stats.fervor)}
       </IconBadge>
+      {showSmiteCount && (
+        <IconBadge
+          tooltip="Health"
+          size={size}
+          color="red"
+          icon={<IconHeart size={iconSize} fill="currentColor" />}
+        >
+          {MAX_SMITE_COUNT - stats.smites}
+        </IconBadge>
+      )}
     </div>
   );
 }

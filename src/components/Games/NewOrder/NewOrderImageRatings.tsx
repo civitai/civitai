@@ -1,15 +1,16 @@
-import { ActionIcon, Badge, UnstyledButton } from '@mantine/core';
+import { ActionIcon, Badge, Card, Tooltip, UnstyledButton } from '@mantine/core';
 import { IconChevronLeft, IconHammer } from '@tabler/icons-react';
+import { useState } from 'react';
 import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { GetPlayer } from '~/types/router';
-import { useState } from 'react';
 import { useInquisitorTools } from '~/components/Games/KnightsNewOrder.utils';
+import { PlayerStats } from '~/components/Games/PlayerCard';
 
 export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props) {
   const [opened, setOpened] = useState(false);
 
-  const { smitePlayer, applyingSmite } = useInquisitorTools();
+  const { smitePlayer, applyingSmite, smitePayload } = useInquisitorTools();
 
   if (!ratings || ratings.length === 0) return null;
 
@@ -30,34 +31,45 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props
           />
         </UnstyledButton>
         <div
-          className={`flex w-[300px] flex-col gap-4 overflow-hidden rounded-l-lg bg-dark-7 p-4 transition-all duration-300 ${
+          className={`flex w-[300px] flex-col gap-2 overflow-hidden rounded-l-lg bg-dark-7 p-4 transition-all duration-300 ${
             opened ? 'opacity-100' : 'opacity-0'
           }`}
         >
           <h2 className="text-lg font-semibold text-white">Raters</h2>
           <div className="flex flex-col gap-2">
-            {ratings?.map(({ player, rating }) => (
-              <div key={player.id} className="flex flex-col gap-1">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-gray-400">{player.username}</span>
-                    <Badge
-                      size="xs"
-                      className={`${rating === imageNsfwLevel ? 'text-green-500' : 'text-red-500'}`}
-                    >
-                      {browsingLevelLabels[rating] ?? '?'}
-                    </Badge>
+            {ratings?.map(({ player, rating }) => {
+              const loading = smitePayload?.playerId === player.id && applyingSmite;
+
+              return (
+                <Card key={player.id} className="flex flex-col gap-1">
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col gap-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm">{player.username}</span>
+                        <Badge
+                          className={`${
+                            rating === imageNsfwLevel ? 'text-green-500' : 'text-red-500'
+                          }`}
+                        >
+                          {browsingLevelLabels[rating] ?? '?'}
+                        </Badge>
+                      </div>
+                      <PlayerStats stats={{ ...player.stats }} size="sm" showSmiteCount />
+                    </div>
+                    <Tooltip label="Smite player" withinPortal>
+                      <ActionIcon
+                        color="red"
+                        variant="filled"
+                        onClick={() => smitePlayer({ playerId: player.id, imageId })}
+                        loading={loading}
+                      >
+                        <IconHammer size={18} />
+                      </ActionIcon>
+                    </Tooltip>
                   </div>
-                  <ActionIcon
-                    size="sm"
-                    color="red"
-                    onClick={() => smitePlayer({ playerId: player.id, imageId })}
-                  >
-                    <IconHammer />
-                  </ActionIcon>
-                </div>
-              </div>
-            ))}
+                </Card>
+              );
+            })}
           </div>
         </div>
       </div>

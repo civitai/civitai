@@ -25,9 +25,9 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { useInView } from '~/hooks/useInView';
 import { NewOrderImageRatingStatus, NsfwLevel } from '~/server/common/enums';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { GetJudgementHistoryItem } from '~/types/router';
+import { GetJudgmentHistoryItem } from '~/types/router';
 
-export default function JudgementHistoryModal() {
+export default function JudgmentHistoryModal() {
   const dialog = useDialogContext();
 
   const [activeTab, setActiveTab] = useState<NewOrderImageRatingStatus | undefined>(undefined);
@@ -47,13 +47,12 @@ export default function JudgementHistoryModal() {
       <div className="flex size-full max-h-full max-w-full flex-col">
         <div className="sticky top-[-48px] z-30 flex flex-col gap-1 bg-gray-0 p-5 dark:bg-dark-7">
           <div className="flex items-center justify-between">
-            <h1 className="text-xl">Your Judgement History</h1>
-            <CloseButton title="Close judgement history" onClick={dialog.onClose} />
+            <h1 className="text-xl">Your Judgment History</h1>
+            <CloseButton title="Close judgment history" onClick={dialog.onClose} />
           </div>
           <p className="text-sm text-gray-500">
-            This is where you can view the history of your judgements. You can see the details of
-            each judgement, including your rating, the final decision, and the image that was
-            judged.
+            This is where you can view the history of your judgments. You can see the details of
+            each judgment, including your rating, the final decision, and the image that was judged.
           </p>
           <SegmentedControl
             className="mt-2"
@@ -80,7 +79,7 @@ export default function JudgementHistoryModal() {
                 <LoadingOverlay visible={isRefetching ?? false} zIndex={9} />
                 <MasonryGrid
                   data={images}
-                  render={JudgementHistoryItem}
+                  render={JudgmentHistoryItem}
                   itemId={(data) => data.image.id}
                 />
                 {hasNextPage && (
@@ -96,7 +95,7 @@ export default function JudgementHistoryModal() {
                 )}
               </div>
             ) : (
-              <NoContent mt="lg" message="There are judgement entries" />
+              <NoContent mt="lg" message="There are judgment entries" />
             )}
           </MasonryContainer>
         </MasonryProvider>
@@ -105,14 +104,14 @@ export default function JudgementHistoryModal() {
   );
 }
 
-type JudgementHistoryProps = {
-  data: GetJudgementHistoryItem;
+type JudgmentHistoryProps = {
+  data: GetJudgmentHistoryItem;
   height: number;
   width: number;
   index: number;
 };
 
-function JudgementHistoryItem({ data, height }: JudgementHistoryProps) {
+function JudgmentHistoryItem({ data, height }: JudgmentHistoryProps) {
   const { ref: inViewRef, inView } = useInView();
   const theme = useMantineTheme();
 

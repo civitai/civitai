@@ -410,8 +410,8 @@ export const REDIS_SYS_KEYS = {
     RATINGS: 'new-order:ratings',
     MATCHES: 'new-order:matches',
     JUDGEMENTS: {
-      ALL: 'new-order:judgements:all',
-      CORRECT: 'new-order:judgements:correct',
+      ALL: 'new-order:judgments:all',
+      CORRECT: 'new-order:judgments:correct',
     },
   },
 } as const;

@@ -5,7 +5,7 @@ import { useState } from 'react';
 import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import {
-  openJudgementHistoryModal,
+  openJudgmentHistoryModal,
   openPlayersDirectoryModal,
   useJoinKnightsNewOrder,
 } from '~/components/Games/KnightsNewOrder.utils';
@@ -26,12 +26,9 @@ export function NewOrderSidebar() {
       <Navbar.Section className="border-b border-gray-200 pb-4 dark:border-b-dark-4">
         {playerData && currentUser && (
           <PlayerCard
+            {...playerData.stats}
             user={currentUser}
             rank={playerData.rank}
-            exp={playerData.stats.exp}
-            fervor={playerData.stats.fervor}
-            gold={playerData.stats.blessedBuzz}
-            smiteCount={playerData.stats.smites}
             showStats={playerData.rank.type !== NewOrderRankType.Acolyte}
           />
         )}
@@ -40,13 +37,13 @@ export function NewOrderSidebar() {
         <div className="flex flex-col">
           <UnstyledButton
             className="w-full rounded-[4px] p-3 hover:bg-gray-0 dark:hover:bg-dark-6"
-            onClick={() => openJudgementHistoryModal()}
+            onClick={() => openJudgmentHistoryModal()}
           >
             <Group>
               <ThemeIcon size="xl" variant="light">
                 <IconHistory />
               </ThemeIcon>
-              Judgement History
+              Judgment History
             </Group>
           </UnstyledButton>
           {currentUser?.isModerator && (
@@ -105,12 +102,9 @@ export function NewOrderSidebar() {
     <>
       {playerData && currentUser && (
         <PlayerCard
+          {...playerData.stats}
           user={currentUser}
           rank={playerData.rank}
-          exp={playerData.stats.exp}
-          fervor={playerData.stats.fervor}
-          gold={playerData.stats.blessedBuzz}
-          smiteCount={playerData.stats.smites}
           showStats={playerData.rank.type !== NewOrderRankType.Acolyte}
           onClick={() => setOpened((o) => !o)}
           className="w-full cursor-pointer p-4 dark:bg-dark-6"

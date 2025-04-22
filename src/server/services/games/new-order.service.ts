@@ -11,7 +11,7 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import {
   allJudmentsCounter,
   blessedBuzzCounter,
-  correctJudgementsCounter,
+  correctJudgmentsCounter,
   expCounter,
   fervorCounter,
   getImageRatingsCounter,
@@ -119,7 +119,7 @@ export async function smitePlayer({
   });
   if (activeSmiteCount >= 3) return resetPlayer({ playerId });
 
-  const newSmiteCount = await smitesCounter.increment({ id: playerId, value: size });
+  const newSmiteCount = await smitesCounter.increment({ id: playerId });
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
@@ -133,11 +133,11 @@ export async function smitePlayer({
 
 export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmiteInput) {
   const smite = await dbWrite.newOrderSmite.update({
-    where: { id },
+    where: { id, cleansedAt: null },
     data: { cleansedAt: new Date(), cleansedReason },
   });
 
-  const smiteCount = await smitesCounter.decrement({ id: playerId, value: smite.size });
+  const smiteCount = await smitesCounter.decrement({ id: playerId });
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
@@ -406,14 +406,14 @@ export async function updatePlayerStats({
   exp: number;
 }) {
   // TODO.newOrder: check math for fervor
-  const allJudgements = await allJudmentsCounter.increment({ id: playerId });
-  const correctJudgements =
+  const allJudgments = await allJudmentsCounter.increment({ id: playerId });
+  const correctJudgments =
     status === NewOrderImageRatingStatus.Correct
-      ? await correctJudgementsCounter.increment({ id: playerId })
-      : await correctJudgementsCounter.getCount(playerId);
+      ? await correctJudgmentsCounter.increment({ id: playerId })
+      : await correctJudgmentsCounter.getCount(playerId);
 
-  const correctPercentage = correctJudgements / (allJudgements || 1);
-  const fervor = correctJudgements * correctPercentage * Math.E ** (allJudgements * -1);
+  const correctPercentage = correctJudgments / (allJudgments || 1);
+  const fervor = correctJudgments * correctPercentage * Math.E ** (allJudgments * -1);
 
   const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
   const newExp = await expCounter.increment({ id: playerId, value: exp });
@@ -434,14 +434,14 @@ export async function updatePlayerStats({
 }
 
 export function calculateFervor({
-  correctJudgements,
-  allJudgements,
+  correctJudgments,
+  allJudgments,
 }: {
-  correctJudgements: number;
-  allJudgements: number;
+  correctJudgments: number;
+  allJudgments: number;
 }) {
-  const correctPercentage = correctJudgements / (allJudgements || 1);
-  return correctJudgements * correctPercentage * Math.E ** (allJudgements * FERVOR_COEFFICIENT);
+  const correctPercentage = correctJudgments / (allJudgments || 1);
+  return correctJudgments * correctPercentage * Math.E ** (allJudgments * FERVOR_COEFFICIENT);
 }
 
 export async function resetPlayer({ playerId }: { playerId: number }) {
@@ -461,7 +461,7 @@ export async function resetPlayer({ playerId }: { playerId: number }) {
   // Reset all counters for player
   await Promise.all([
     smitesCounter.reset({ id: playerId }),
-    correctJudgementsCounter.reset({ id: playerId }),
+    correctJudgmentsCounter.reset({ id: playerId }),
     allJudmentsCounter.reset({ id: playerId }),
     expCounter.reset({ id: playerId }),
     fervorCounter.reset({ id: playerId }),
@@ -679,7 +679,7 @@ export async function getPlayerHistory({
   if (cursor) AND.push(`createdAt < '${cursor}'`);
   if (status?.length) AND.push(`status IN ('${status.join("','")}')`);
 
-  const judgements = await clickhouse.$query<{
+  const judgments = await clickhouse.$query<{
     imageId: number;
     rating: NsfwLevel;
     status: NewOrderImageRatingStatus;
@@ -693,19 +693,19 @@ export async function getPlayerHistory({
     ORDER BY createdAt DESC
     LIMIT ${limit + 1}
   `;
-  if (judgements.length === 0) return { items: [], nextCursor: null };
+  if (judgments.length === 0) return { items: [], nextCursor: null };
 
   let nextCursor: Date | null = null;
-  if (judgements.length > limit) nextCursor = judgements.pop()?.createdAt ?? null;
+  if (judgments.length > limit) nextCursor = judgments.pop()?.createdAt ?? null;
 
-  const imageIds = judgements.map((j) => j.imageId).sort();
+  const imageIds = judgments.map((j) => j.imageId).sort();
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
 
   return {
-    items: judgements
+    items: judgments
       .map(({ imageId, ...data }) => {
         const image = images.find((i) => i.id === imageId);
         if (!image) return null;
@@ -767,7 +767,14 @@ export async function getPlayersInfinite({
 async function getActiveSmites({ playerIds }: { playerIds: number[] }) {
   const smites = await dbRead.newOrderSmite.findMany({
     where: { targetPlayerId: { in: playerIds }, cleansedAt: null },
-    select: { targetPlayerId: true, size: true, remaining: true, createdAt: true },
+    select: {
+      id: true,
+      targetPlayerId: true,
+      size: true,
+      remaining: true,
+      createdAt: true,
+      reason: true,
+    },
   });
 
   const smiteMap = smites.reduce((acc, smite) => {
@@ -775,12 +782,14 @@ async function getActiveSmites({ playerIds }: { playerIds: number[] }) {
       acc[smite.targetPlayerId] = [];
     }
     acc[smite.targetPlayerId].push({
+      id: smite.id,
       size: smite.size,
       remaining: smite.remaining,
       createdAt: smite.createdAt,
+      reason: smite.reason,
     });
     return acc;
-  }, {} as Record<number, { size: number; remaining: number; createdAt: Date }[]>);
+  }, {} as Record<number, { id: number; size: number; remaining: number; createdAt: Date; reason?: string | null }[]>);
 
   return smiteMap;
 }
