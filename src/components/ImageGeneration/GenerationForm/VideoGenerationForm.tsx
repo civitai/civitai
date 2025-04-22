@@ -721,13 +721,13 @@ function WanTxt2VidGenerationForm() {
           </div>
         }
       />
-      {/* <div className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
           data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
-      </div> */}
+      </div>
       {/* <InputNumberSlider
         name="steps"
         label={
@@ -804,13 +804,13 @@ function WanImg2VidGenerationForm() {
           </div>
         }
       />
-      {/* <div className="flex flex-col gap-0.5">
+      <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
           data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
-      </div> */}
+      </div>
       {/* <InputNumberSlider
         name="steps"
         label={

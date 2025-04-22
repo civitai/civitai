@@ -76,7 +76,7 @@ export function WanInput({
     width,
     height,
     sourceImage,
-    duration: 5,
+    // duration: 5,
     loras: resources.map(({ air, strength }) => ({ air, strength })),
   };
 }

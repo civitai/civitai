@@ -124,10 +124,23 @@ export function AspectRatio(aspectRatio: string, options?: AspectRatioOptions) {
     return newSize;
   }
 
+  function getSize2(resolution: number) {
+    const res = resolution - (resolution % multiplier);
+    const computed = direction === 'landscape' ? res * (rw / rh) : res * (rh / rw);
+    const computedOffset = computed % multiplier;
+    const width = direction === 'landscape' ? computed - computedOffset : res;
+    const height = direction === 'landscape' ? res : computed - computedOffset;
+    return {
+      width,
+      height,
+    };
+  }
+
   return {
     direction,
     ratio,
     getSize,
+    getSize2,
   };
 }
 
