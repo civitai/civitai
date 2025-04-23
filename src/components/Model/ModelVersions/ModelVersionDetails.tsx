@@ -404,7 +404,9 @@ export function ModelVersionDetails({
           )}
           {version.rank?.earnedAmountAllTime && (
             <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
-              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>{abbreviateNumber(version.rank?.earnedAmountAllTime)}</Text>
+              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>
+                {abbreviateNumber(version.rank?.earnedAmountAllTime)}
+              </Text>
             </IconBadge>
           )}
         </Group>

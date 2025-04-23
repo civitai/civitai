@@ -37,7 +37,7 @@ import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 
 const overwrites: { [key in (typeof overwriteList)[number]]: string } = {
-  ignore: 'Skip images with existing labels',
+  ignore: 'Skip files with existing labels',
   append: 'Add to the end of existing labels',
   overwrite: 'Overwrite existing labels',
 };
@@ -79,7 +79,7 @@ const useSubmitImages = ({
 
     if (!filteredImages.length) {
       showErrorNotification({
-        title: 'No images to process',
+        title: 'No files to process',
         error: new Error(`If you're using "ignore", make sure there are some blank ${type}s.`),
       });
       setLoading(false);
@@ -193,7 +193,7 @@ const AutoTagSection = ({
           <Group spacing={4} noWrap>
             <Input.Label>Max Tags</Input.Label>
             <InfoPopover size="xs" iconProps={{ size: 16 }}>
-              Maximum number of tags to add for each image
+              Maximum number of tags to add for each file
             </InfoPopover>
           </Group>
         }
@@ -322,7 +322,7 @@ const AutoCaptionSection = ({
         </AlertWithIcon>
       ) : (
         <AlertWithIcon
-          title="Too many images"
+          title="Too many files"
           icon={<IconExclamationMark />}
           py={5}
           my="xs"
@@ -332,7 +332,7 @@ const AutoCaptionSection = ({
           iconColor="red"
         >
           <Text>
-            {`A maximum of ${maxImagesCaption} images at a time may be sent for captioning (you have ${numImages}).`}
+            {`A maximum of ${maxImagesCaption} files at a time may be sent for captioning (you have ${numImages}).`}
           </Text>
         </AlertWithIcon>
       )}
@@ -438,7 +438,7 @@ export const AutoLabelModal = ({
   );
 
   return (
-    <Modal {...dialog} centered size="md" radius="md" title="Automatically label your images">
+    <Modal {...dialog} centered size="md" radius="md" title="Automatically label your files">
       <Stack>
         <Text>Label Type</Text>
         <TrainingImagesLabelTypeSelect modelId={modelId} mediaType={mediaType} />

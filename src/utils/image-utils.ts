@@ -1,8 +1,4 @@
 // import sharp from 'sharp';
-import { encode } from 'blurhash';
-import arrayBufferToBuffer from 'arraybuffer-to-buffer';
-
-import { getClampedSize } from '~/utils/blurhash';
 import { fetchBlob } from '~/utils/file-utils';
 
 // deprecated?

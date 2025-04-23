@@ -1,0 +1,134 @@
+services:
+  prisma-pit:
+    image: postgres:17
+    ports:
+      - "15433:5432"
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_USER=modelshare
+      - POSTGRES_DB=postgres
+    volumes:
+      - prisma-pit:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  db:
+    build:
+      context: containers/db
+      dockerfile: Dockerfile
+    ports:
+      - "15432:5432"
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=civitai
+    volumes:
+      - db:/var/lib/postgresql/data
+
+  notification-db:
+    build:
+      context: containers/notification-db
+      dockerfile: Dockerfile
+    ports:
+      - "15434:5432"
+    environment:
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=postgres
+    volumes:
+      - notification-db:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-bookworm
+    command: redis-server --requirepass "redis"
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis:/data/redis
+
+  redis-sys:
+    image: redis:7-bookworm
+    command: redis-server --requirepass "redis"
+    restart: unless-stopped
+    ports:
+      - "6378:6379"
+    volumes:
+      - redis-sys:/data/redis
+
+  minio:
+    image: minio/minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
+    volumes:
+      - minio:/data/minio
+    command: minio server /data/minio --console-address ":9001"
+    restart: unless-stopped
+
+  meilisearch:
+    image: getmeili/meilisearch:v1.11
+    ports:
+      - "7700:7700"
+    environment:
+      - MEILI_MASTER_KEY=meilisearch
+    volumes:
+      - meilisearch:/meili_data/meilisearch
+
+  createbuckets:
+    image: minio/mc
+    depends_on:
+      - minio
+    entrypoint: >
+      /bin/sh -c "/usr/bin/mc config host add minio http://minio:9000 minioadmin minioadmin && /usr/bin/mc mb minio/modelshare && /usr/bin/mc policy set public minio/modelshare && /usr/bin/mc mb minio/images && /usr/bin/mc policy set public minio/images && exit 0"
+
+  maildev:
+    image: maildev/maildev
+    environment:
+      - MAILDEV_SMTP_PORT=1025
+      - MAILDEV_WEB_PORT=1080
+    ports:
+      - "1025:1025"
+      - "1080:1080"
+    restart: unless-stopped
+
+  clickhouse:
+    build:
+      context: containers/clickhouse
+      dockerfile: Dockerfile
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    ports:
+      - "18123:8123"
+      - "19000:9000"
+    volumes:
+      - clickhouse:/var/lib/clickhouse
+      - clickhouse:/var/log/clickhouse-server
+
+#  ngrok:
+#    image: ngrok/ngrok:latest
+#    restart: unless-stopped
+#    command:
+#      - "start"
+#      - "--all"
+#      - "--config"
+#      - "/etc/ngrok.yml"
+#    volumes:
+#      - ./docker-init/ngrok/config.yaml:/etc/ngrok.yml
+#    ports:
+#      - "8080:8080"
+#      - "4040:4040"
+#    environment:
+#      NGROK_AUTHTOKEN: ${NGROK_AUTHTOKEN}
+
+volumes:
+  prisma-pit:
+  db:
+  notification-db:
+  redis:
+  redis-sys:
+  minio:
+  meilisearch:
+  clickhouse:

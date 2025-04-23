@@ -246,10 +246,11 @@ export const AdvancedSettings = ({
         <Accordion.Item value="custom-prompts">
           <Accordion.Control>
             <Stack spacing={4}>
-              <Text>Sample Image Prompts</Text>
+              <Text>Sample Media Prompts</Text>
               {openedSections.includes('custom-prompts') && (
                 <Text size="xs" color="dimmed">
-                  Set your own prompts for any of the 3 sample images we generate for each epoch.
+                  Set your own prompts for any of the 3 sample {isVideo ? 'videos' : 'images'} we
+                  generate for each epoch.
                 </Text>
               )}
             </Stack>
@@ -257,7 +258,7 @@ export const AdvancedSettings = ({
           <Accordion.Panel>
             <Stack p="sm">
               <TextInputWrapper
-                label="Image #1"
+                label={`${isVideo ? 'Video' : 'Image'} #1`}
                 placeholder="Automatically set"
                 value={selectedRun.samplePrompts[0]}
                 onChange={(event) => {
@@ -271,7 +272,7 @@ export const AdvancedSettings = ({
                 }}
               />
               <TextInputWrapper
-                label="Image #2"
+                label={`${isVideo ? 'Video' : 'Image'} #2`}
                 placeholder="Automatically set"
                 value={selectedRun.samplePrompts[1]}
                 onChange={(event) => {
@@ -285,7 +286,7 @@ export const AdvancedSettings = ({
                 }}
               />
               <TextInputWrapper
-                label="Image #3"
+                label={`${isVideo ? 'Video' : 'Image'} #3`}
                 placeholder="Automatically set"
                 value={selectedRun.samplePrompts[2]}
                 onChange={(event) => {

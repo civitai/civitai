@@ -4,7 +4,7 @@ import { ForwardRefExoticComponent, RefAttributes } from 'react';
 import { env } from '~/env/client';
 import { BanReasonCode, ModelSort } from '~/server/common/enums';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
-import { GenerationResource } from '~/server/services/generation/generation.service';
+import type { GenerationResource } from '~/server/services/generation/generation.service';
 import {
   BountyType,
   Currency,

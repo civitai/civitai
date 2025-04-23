@@ -3,8 +3,8 @@
 {
 	"name": "Civitai",
 	"dockerComposeFile": [
-		"../docker-compose.yml",
-		"docker-compose.extend.yml"
+		"../../docker-compose.base.yml",
+		"docker-compose.yml"
 	],
 	"service": "civitai",
 	"workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",

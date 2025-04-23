@@ -3,7 +3,7 @@
 {
 	"name": "Civitai Internal",
 	"dockerComposeFile": [
-		"../../docker-compose.yml",
+		"../../docker-compose.base.yml",
 		"../public/docker-compose.yml",
 		"docker-compose.yml"
 	],

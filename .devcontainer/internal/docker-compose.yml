@@ -4,7 +4,7 @@ services:
     command: redis-server --requirepass "redis"
     restart: unless-stopped
     volumes:
-      - redis-sys:/data/redis
+      - redis-signals:/data/redis
 
   signals-silo:
     image: ghcr.io/civitai/civitai-signals-silo:latest
@@ -29,6 +29,8 @@ services:
       - "8082:8080"
     environment:
       ConnectionStrings__BuzzDbContext: Host=db;Port=5432;Database=buzz;Username=postgres;Password=postgres
+      SignalApiClient__Endpoint: http://signals-api:8080
+      ClickhouseTrackerApiClient__Endpoint: http://localhost:9911
 
   civitai:
     depends_on:
@@ -38,3 +40,6 @@ services:
       SIGNALS_ENDPOINT: http://signals-api:8080
       NEXT_PUBLIC_SIGNALS_ENDPOINT: http://localhost:8081
       BUZZ_ENDPOINT: http://buzz:8080
+
+volumes:
+  redis-signals:
