@@ -11,6 +11,7 @@ import { getVideoData } from '~/utils/media-preprocessors';
 import { VideoMetadata } from '~/server/schema/media.schema';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 import { TwCard } from '~/components/TwCard/TwCard';
+import { AspectRatio } from '~/libs/generation/utils/AspectRatio';
 
 export function EnhanceVideoModal({
   sourceUrl,
@@ -38,12 +39,12 @@ export function EnhanceVideoModal({
         canUpscale: false,
       };
     }
-    const width = video.width * 2;
-    const height = video.height * 2;
+    const ar = AspectRatio.fromSize(video, { multiplier: 16 });
+    const { width, height } = ar.getSize2(720);
     return {
       width,
       height,
-      canUpscale: width * height <= 1000000, // 1 million dollars!
+      canUpscale: width >= video.width && height >= video.height,
     };
   }, [video]);
 
@@ -72,6 +73,8 @@ export function EnhanceVideoModal({
     });
     dialog.onClose();
   }
+
+  console.log(upscaleDimensions);
 
   return (
     <Modal {...dialog} title="Upscale">
