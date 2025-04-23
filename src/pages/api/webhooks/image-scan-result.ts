@@ -538,7 +538,8 @@ const clavataTagConfidenceRequirements: Record<string, number> = {
   'graphic language': 70,
   'light violence': 70,
   hypnosis: 70,
-  minimum: 35,
+  minimum: 51,
+  minimumNsfw: 51,
 };
 const clavataNsfwTags = ['pg', 'pg-13', 'r', 'x', 'xxx'];
 function processClavataTags(tags: IncomingTag[]) {
@@ -552,17 +553,23 @@ function processClavataTags(tags: IncomingTag[]) {
   // Filter out tags
   let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
   tags = tags.filter((tag) => {
-    // Remove nsfw tags
     const nsfwLevelIndex = clavataNsfwTags.indexOf(tag.tag);
-    if (nsfwLevelIndex !== -1) {
+    const isNsfwLevel = nsfwLevelIndex !== -1;
+
+    // Remove tags below confidence threshold
+    const minimumConfidence = isNsfwLevel
+      ? clavataTagConfidenceRequirements.minimumNsfw
+      : clavataTagConfidenceRequirements.minimum;
+    const requiredConfidence = clavataTagConfidenceRequirements[tag.tag] ?? minimumConfidence;
+    if (tag.confidence < requiredConfidence) return false;
+
+    // Remove nsfw tags
+    if (isNsfwLevel) {
       if (nsfwLevelIndex > clavataNsfwTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
       return false;
     }
 
-    // Remove tags below confidence threshold
-    const requiredConfidence =
-      clavataTagConfidenceRequirements[tag.tag] ?? clavataTagConfidenceRequirements.minimum;
-    return tag.confidence >= requiredConfidence;
+    return true;
   });
 
   // Add back nsfw tag
@@ -847,7 +854,7 @@ const reviewConditions: ReviewCondition[] = [
     reviewer: 'knights',
   },
   {
-    condition: (tag) => tag.tag === 'celebrity',
+    condition: (tag) => env.MODERATION_KNIGHT_TAGS.includes(tag.tag),
     reviewer: 'knights',
   },
 ];
