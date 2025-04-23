@@ -684,7 +684,7 @@ export async function withdrawCash(userId: number, amount: number) {
           'paymentRefCode', ${data.paymentRefCode},
           'paidAmount', ${toWithdraw}
         ),
-        "note" = 'Payment waiting for Moderator approval',
+        "note" = 'Payment waiting for Moderator approval'
       WHERE id = ${data.withdrawalId};
     `;
 
