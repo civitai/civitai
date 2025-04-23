@@ -666,6 +666,8 @@ export async function withdrawCash(userId: number, amount: number) {
       data: {},
     });
   } catch (e) {
+    await logToAxiom({ name: 'withdraw-cash', type: 'error', error: e, ...data, userId });
+
     // In case of error, we need to revert the transaction
     if (data.updated) {
       // We cache bust or something of the sort. We should be OK to move forward.
@@ -697,13 +699,11 @@ export async function withdrawCash(userId: number, amount: number) {
           'Failed to create Tipalti payment. Please contact support.'
         );
       });
-
-      await logToAxiom({ name: 'withdraw-cash', type: 'error', error: e, ...data });
     }
 
     await dbWrite.$executeRaw`
       UPDATE "CashWithdrawal"
-      SET status = 'Failed',
+      SET status = 'Canceled',
         note = ${(e as Error).message}
       WHERE id = ${data.withdrawalId};
     `;
