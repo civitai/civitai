@@ -538,7 +538,7 @@ const clavataTagConfidenceRequirements: Record<string, number> = {
   'graphic language': 70,
   'light violence': 70,
   hypnosis: 70,
-  minimum: 50,
+  minimum: 51,
   minimumNsfw: 51,
 };
 const clavataNsfwTags = ['pg', 'pg-13', 'r', 'x', 'xxx'];
