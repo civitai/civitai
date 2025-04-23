@@ -340,12 +340,15 @@ async function handleSuccess({
 
     // We now will mark images as poi / minor regardless of whether or not they're NSFW. This so that we know we need to hide from from
     // NSFW feeds.
-    const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
+    const [{ poi, minor, hasResource }] = await dbWrite.$queryRaw<
+      { poi: boolean; minor: boolean; hasResource: boolean }[]
+    >`
         WITH to_check AS (
           -- Check based on associated resources
           SELECT
             SUM(IIF(m.poi, 1, 0)) > 0 "poi",
-            SUM(IIF(m.minor, 1, 0)) > 0 "minor"
+            SUM(IIF(m.minor, 1, 0)) > 0 "minor",
+            true "hasResource"
           FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
           JOIN "Model" m ON m.id = mv."modelId"
@@ -354,7 +357,8 @@ async function handleSuccess({
           -- Check based on associated bounties
           SELECT
             SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false "minor"
+            false "minor",
+            false "hasResource"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "Bounty" b ON ic."entityType" = 'Bounty' AND b.id = ic."entityId"
@@ -364,6 +368,7 @@ async function handleSuccess({
           SELECT
             SUM(IIF(b.poi, 1, 0)) > 0 "poi",
             false "minor"
+            false "hasResource"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "BountyEntry" be ON ic."entityType" = 'BountyEntry' AND be.id = ic."entityId"
@@ -414,6 +419,8 @@ async function handleSuccess({
         nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.R : NsfwLevel.PG),
         meta: image.meta as ImageMetadata | VideoMetadata,
         tools: image.tools,
+        // Avoids blocking images that we know are AI generated with some resources.
+        resources: hasResource ? [1] : [],
       })
     ) {
       data.ingestion = ImageIngestionStatus.Blocked;
