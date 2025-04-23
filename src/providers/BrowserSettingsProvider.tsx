@@ -46,7 +46,7 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
     if (!store || type === 'unauthed') return;
     const unsubscribe = store.subscribe(({ setState, ...curr }, prev) => {
       debouncer(() => {
-        const changed = getChanged(curr, snapshotRef.current);
+        const changed = getChanged({ ...curr, domain }, { ...snapshotRef.current, domain });
         if (Object.keys(changed).length > 0) {
           // The reason why we pass domain it's cause that way we can store the content values on different places depending
           // on how it makes sense. For instance, for RED - Browssing level is stored under the name `redBrowsingLevel` inside the user settings.

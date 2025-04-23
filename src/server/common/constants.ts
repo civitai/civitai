@@ -16,12 +16,6 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { increaseDate } from '~/utils/date-helpers';
 import { ArticleSort, CollectionSort, ImageSort, PostSort, QuestionSort } from './enums';
-import {
-  BrowsingLevel,
-  nsfwBrowsingLevelsArray,
-  nsfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils';
 
 export const constants = {
   modelFilterDefaults: {

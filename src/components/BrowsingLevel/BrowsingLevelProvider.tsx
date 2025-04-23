@@ -7,6 +7,7 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { Flags } from '~/shared/utils';
+import { NsfwLevel } from '~/server/common/enums';
 
 type BrowsingModeProviderState = {
   forcedBrowsingLevel?: number;
@@ -73,7 +74,7 @@ export function useBrowsingLevelDebounced() {
     useBrowsingLevelContext();
   const browsingLevel = forcedBrowsingLevel ?? browsingLevelOverride ?? userBrowsingLevel;
   const [debounced] = useDebouncedValue(browsingLevel, 500);
-  return debounced;
+  return debounced ? debounced : NsfwLevel.PG;
 }
 
 export function BrowsingLevelProviderOptional({
