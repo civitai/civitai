@@ -4,6 +4,7 @@ import { useMemo } from 'react';
 import { z } from 'zod';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { CollectionSort } from '~/server/common/enums';
 import {
@@ -25,6 +26,7 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 
 const collectionQueryParamSchema = z
   .object({
@@ -131,9 +133,14 @@ export const useQueryCollections = (
   options?: { keepPreviousData?: boolean; enabled?: boolean }
 ) => {
   filters ??= {};
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const excludedTagIds = [
+    ...(filters.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ].filter(isDefined);
 
   const { data, isLoading, ...rest } = trpc.collection.getInfinite.useInfiniteQuery(
-    { ...filters },
+    { ...filters, excludedTagIds },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

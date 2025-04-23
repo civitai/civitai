@@ -1080,6 +1080,8 @@ export interface Image {
   assignedUser?: User | null;
   sortAt: Date;
   minor: boolean;
+  poi: boolean;
+  acceptableMinor: boolean;
   reports?: ImageReport[];
   reactions?: ImageReaction[];
   thread?: Thread | null;

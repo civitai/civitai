@@ -614,7 +614,7 @@ function HunyuanTxt2VidGenerationForm() {
         label="Aspect Ratio"
         options={hunyuanAspectRatios}
       />
-      <InputSwitch
+      {/* <InputSwitch
         name="draft"
         labelPosition="left"
         label={
@@ -626,7 +626,7 @@ function HunyuanTxt2VidGenerationForm() {
             </InfoPopover>
           </div>
         }
-      />
+      /> */}
       <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
@@ -708,7 +708,7 @@ function WanTxt2VidGenerationForm() {
         label="Aspect Ratio"
         options={wanAspectRatios}
       />
-      <InputSwitch
+      {/* <InputSwitch
         name="draft"
         labelPosition="left"
         label={
@@ -720,14 +720,14 @@ function WanTxt2VidGenerationForm() {
             </InfoPopover>
           </div>
         }
-      />
-      {/* <div className="flex flex-col gap-0.5">
+      /> */}
+      <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
           data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
-      </div> */}
+      </div>
       {/* <InputNumberSlider
         name="steps"
         label={
@@ -791,7 +791,7 @@ function WanImg2VidGenerationForm() {
         buttonLabel="Add additional resource"
       />
       <InputTextArea name="prompt" label="Prompt" placeholder="Your prompt goes here..." autosize />
-      <InputSwitch
+      {/* <InputSwitch
         name="draft"
         labelPosition="left"
         label={
@@ -803,14 +803,14 @@ function WanImg2VidGenerationForm() {
             </InfoPopover>
           </div>
         }
-      />
-      {/* <div className="flex flex-col gap-0.5">
+      /> */}
+      <div className="flex flex-col gap-0.5">
         <Input.Label>Duration</Input.Label>
         <InputSegmentedControl
           name="duration"
           data={wanDuration.map((value) => ({ label: `${value}s`, value }))}
         />
-      </div> */}
+      </div>
       {/* <InputNumberSlider
         name="steps"
         label={

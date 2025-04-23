@@ -52,6 +52,7 @@ export const nsfwBrowsingLevelsArray: NsfwLevel[] = [
   NsfwLevel.XXX,
   NsfwLevel.Blocked,
 ];
+
 export function getBrowsingLevelLabel(value: number) {
   return browsingLevelLabels[value as keyof typeof browsingLevelLabels] ?? '?';
 }

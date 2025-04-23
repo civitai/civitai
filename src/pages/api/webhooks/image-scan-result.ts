@@ -39,6 +39,7 @@ import {
   TagTarget,
   TagType,
 } from '~/shared/utils/prisma/enums';
+import { isValidAIGeneration } from '~/utils/image-utils';
 import {
   auditMetaData,
   getTagsFromPrompt,
@@ -186,10 +187,10 @@ async function handleSuccess({
   result,
 }: BodyProps) {
   // this is a temporary solution to add all clavata tags to the table `ShadowTagsOnImage`
-  if (source === TagSource.Clavata) {
+  if (source === TagSource.Clavata && env.CLAVATA_SCAN === 'shadow') {
     const response = await getTagsFromIncomingTags({
       id,
-      tags: incomingTags?.filter((x) => x.confidence >= 35),
+      tags: incomingTags,
       source,
     });
     if (!response) return;
@@ -328,17 +329,28 @@ async function handleSuccess({
       (image.meta as Prisma.JsonObject)?.['negativePrompt'] as string | undefined
     );
 
+    const data: Prisma.ImageUpdateInput = {};
+
+    if (hasMinorTag) {
+      data.minor = true;
+    }
+
     let reviewKey: string | null = null;
     const inappropriate = includesInappropriate({ prompt, negativePrompt }, nsfw);
     if (inappropriate !== false) reviewKey = inappropriate;
     if (!reviewKey && hasBlockedTag) reviewKey = 'tag';
-    if (!reviewKey && nsfw) {
-      const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
+
+    // We now will mark images as poi / minor regardless of whether or not they're NSFW. This so that we know we need to hide from from
+    // NSFW feeds.
+    const [{ poi, minor, hasResource }] = await dbWrite.$queryRaw<
+      { poi: boolean; minor: boolean; hasResource: boolean }[]
+    >`
         WITH to_check AS (
           -- Check based on associated resources
           SELECT
             SUM(IIF(m.poi, 1, 0)) > 0 "poi",
-            SUM(IIF(m.minor, 1, 0)) > 0 "minor"
+            SUM(IIF(m.minor, 1, 0)) > 0 "minor",
+            true "hasResource"
           FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
           JOIN "Model" m ON m.id = mv."modelId"
@@ -347,7 +359,8 @@ async function handleSuccess({
           -- Check based on associated bounties
           SELECT
             SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false "minor"
+            false "minor",
+            false "hasResource"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "Bounty" b ON ic."entityType" = 'Bounty' AND b.id = ic."entityId"
@@ -356,21 +369,32 @@ async function handleSuccess({
           -- Check based on associated bounty entries
           SELECT
             SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false "minor"
+            false "minor",
+            false "hasResource"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "BountyEntry" be ON ic."entityType" = 'BountyEntry' AND be.id = ic."entityId"
           JOIN "Bounty" b ON b.id = be."bountyId"
           WHERE ic."imageId" = ${image.id}
         )
-        SELECT bool_or(poi) "poi", bool_or(minor) "minor" FROM to_check;
+        SELECT bool_or(poi) "poi", bool_or(minor) "minor", bool_or("hasResource") "hasResource" FROM to_check;
       `;
-      if (minor) reviewKey = 'minor';
-      if (poi) reviewKey = 'poi';
+
+    if (minor) {
+      reviewKey = 'minor';
+      // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
+      data.minor = true;
     }
+    if (poi) {
+      reviewKey = 'poi';
+      // Makes this image tied to POI.
+      data.poi = true;
+    }
+
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
       reviewKey = 'minor';
     }
+
     if (!reviewKey && nsfw) {
       // If user is new and image is NSFW send it for review
       const [{ isNewUser }] =
@@ -379,12 +403,33 @@ async function handleSuccess({
       `) ?? [];
       if (isNewUser) reviewKey = 'newUser';
     }
-
-    const data: Prisma.ImageUpdateInput = {};
+    if (!reviewKey) {
+      const reviewer = determineReviewer({ tags, source });
+      if (reviewer === 'moderators') reviewKey = 'tag';
+      else if (reviewer === 'knights') {
+        // TODO @manuelurenah - Add knight review logic
+      }
+    }
 
     if (reviewKey) data.needsReview = reviewKey;
+    // Block NSFW images without meta:
+    if (
+      nsfw &&
+      !isValidAIGeneration({
+        ...image,
+        // Make it so that if we have NSFW tags we treat it as R+
+        nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.R : NsfwLevel.PG),
+        meta: image.meta as ImageMetadata | VideoMetadata,
+        tools: image.tools,
+        // Avoids blocking images that we know are AI generated with some resources.
+        resources: hasResource ? [1] : [],
+      })
+    ) {
+      data.ingestion = ImageIngestionStatus.Blocked;
+      data.blockedFor = BlockedReason.AiNotVerified;
+    }
 
-    if (nsfw && prompt) {
+    if (nsfw && prompt && data.ingestion !== ImageIngestionStatus.Blocked) {
       // Determine if we need to block the image
       const { success, blockedFor } = auditMetaData({ prompt }, nsfw);
       if (!success) {
@@ -519,12 +564,51 @@ const tagPreprocessors: Partial<Record<TagSource, (tags: IncomingTag[]) => Incom
   [TagSource.Clavata]: processClavataTags,
 };
 
+const clavataTagConfidenceRequirements: Record<string, number> = {
+  daipers: 70,
+  urine: 60,
+  unconscious: 60,
+  'graphic language': 70,
+  'light violence': 70,
+  hypnosis: 70,
+  minimum: 51,
+  minimumNsfw: 51,
+};
+const clavataNsfwTags = ['pg', 'pg-13', 'r', 'x', 'xxx'];
 function processClavataTags(tags: IncomingTag[]) {
-  return tags.map((tag) => ({
+  // Map tags to lowercase
+  tags = tags.map((tag) => ({
     ...tag,
     confidence: tag.confidence ?? 70,
     tag: tag.tag.toLowerCase(),
   }));
+
+  // Filter out tags
+  let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
+  tags = tags.filter((tag) => {
+    const nsfwLevelIndex = clavataNsfwTags.indexOf(tag.tag);
+    const isNsfwLevel = nsfwLevelIndex !== -1;
+
+    // Remove tags below confidence threshold
+    const minimumConfidence = isNsfwLevel
+      ? clavataTagConfidenceRequirements.minimumNsfw
+      : clavataTagConfidenceRequirements.minimum;
+    const requiredConfidence = clavataTagConfidenceRequirements[tag.tag] ?? minimumConfidence;
+    if (tag.confidence < requiredConfidence) return false;
+
+    // Remove nsfw tags
+    if (isNsfwLevel) {
+      if (nsfwLevelIndex > clavataNsfwTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
+      return false;
+    }
+
+    return true;
+  });
+
+  // Add back nsfw tag
+  tags.push(highestNsfwTag);
+
+  return tags;
 }
 
 function processWDTags(tags: IncomingTag[]) {
@@ -559,6 +643,8 @@ function processHiveTags(tags: IncomingTag[]) {
   return results;
 }
 
+// Moderation Rules
+// --------------------------------------------------
 type IngestedImage = {
   id: number;
   userId: number;
@@ -627,6 +713,8 @@ async function applyModerationRules(image: IngestedImage) {
   }
 }
 
+// Tag Fetching
+// --------------------------------------------------
 async function getTagsFromIncomingTags({
   id,
   tags: incomingTags = [],
@@ -647,6 +735,11 @@ async function getTagsFromIncomingTags({
       metadata: true,
       postId: true,
       nsfwLevel: true,
+      tools: {
+        select: {
+          toolId: true,
+        },
+      },
     },
   });
   if (!image) {
@@ -757,4 +850,60 @@ async function getTagsFromIncomingTags({
   }
 
   return { image, tags, hasBlockedTag };
+}
+
+// Review Condition Processing
+// --------------------------------------------------
+type Reviewer = 'moderators' | 'knights';
+type ReviewConditionStored = {
+  reviewer: Reviewer;
+  condition: string;
+};
+type ReviewConditionContext = {
+  tags: IncomingTag[];
+  source: TagSource;
+};
+type ReviewConditionFn = {
+  reviewer: Reviewer;
+  condition: (tag: IncomingTag, ctx: ReviewConditionContext) => boolean;
+};
+type ReviewCondition = ReviewConditionStored | ReviewConditionFn;
+
+const reviewConditions: ReviewCondition[] = [
+  {
+    condition: (tag, ctx) =>
+      tag.tag === 'unconscious' && ctx.tags.some((t) => ['r', 'x', 'xxx'].includes(t.tag)),
+    reviewer: 'moderators',
+  },
+  {
+    condition: (tag, ctx) =>
+      tag.tag === 'bestiality' &&
+      ctx.tags.some((t) => t.tag === 'animal') &&
+      !ctx.tags.some((t) => t.tag === 'furry'),
+    reviewer: 'moderators',
+  },
+  {
+    condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
+    reviewer: 'knights',
+  },
+  {
+    condition: (tag) => env.MODERATION_KNIGHT_TAGS.includes(tag.tag),
+    reviewer: 'knights',
+  },
+];
+
+export function determineReviewer(ctx: ReviewConditionContext) {
+  for (const tag of ctx.tags) {
+    for (const { condition, reviewer } of reviewConditions) {
+      const conditionFn =
+        typeof condition === 'function'
+          ? condition
+          : (new Function('tag', 'ctx', `return ${condition}`) as (
+              tag: Tag,
+              ctx: ReviewConditionContext
+            ) => boolean);
+      // Return the first action that matches
+      if (conditionFn(tag, ctx)) return reviewer;
+    }
+  }
 }

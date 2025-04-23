@@ -25,6 +25,7 @@ const EditResourceReviewModal = dynamic(
 );
 const ReportModal = dynamic(() => import('~/components/Modals/ReportModal'));
 const ImageSelectModal = dynamic(() => import('~/components/Training/Form/ImageSelectModal'));
+const ReadOnlyModal = dynamic(() => import('~/components/Modals/ReadOnlyModal'));
 
 export const openBrowsingLevelGuide = () => dialogStore.trigger({ component: BrowsingLevelGuide });
 // TODO.Justin - allow image owners to request image rating change
@@ -58,4 +59,8 @@ export function openReportModal(props: ReportModalProps) {
 
 export function openImageSelectModal(props: ImageSelectModalProps) {
   dialogStore.trigger({ component: ImageSelectModal, props });
+}
+
+export function openReadOnlyModal() {
+  dialogStore.trigger({ component: ReadOnlyModal });
 }

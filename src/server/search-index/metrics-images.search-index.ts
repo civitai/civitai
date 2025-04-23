@@ -9,6 +9,7 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { isValidAIGeneration } from '~/utils/image-utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -50,6 +51,9 @@ const filterableAttributes = [
   'flags.promptNsfw',
   'remixOfId',
   'availability',
+  'poi',
+  'minor',
+  'blockedFor',
 ] as const;
 
 export type MetricsImageSearchableAttribute = (typeof searchableAttributes)[number];
@@ -145,6 +149,8 @@ export type SearchBaseImage = {
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
   availability?: Availability;
+  poi: boolean;
+  acceptableMinor?: boolean;
 };
 
 type Metrics = {
@@ -159,6 +165,7 @@ type ModelVersions = {
   baseModel: string;
   modelVersionIdsAuto: number[];
   modelVersionIdsManual: number[];
+  poi: boolean;
 };
 
 type ImageTool = {
@@ -193,12 +200,16 @@ const transformData = async ({
       const imageTools = tools.filter((t) => t.imageId === imageRecord.id);
       const imageTechniques = techniques.filter((t) => t.imageId === imageRecord.id);
 
-      const { modelVersionIdsAuto, modelVersionIdsManual, baseModel } = modelVersions.find(
-        (mv) => mv.id === imageRecord.id
-      ) || {
+      const {
+        modelVersionIdsAuto,
+        modelVersionIdsManual,
+        baseModel,
+        poi: resourcePoi,
+      } = modelVersions.find((mv) => mv.id === imageRecord.id) || {
         modelVersionIdsAuto: [] as number[],
         modelVersionIdsManual: [] as number[],
         baseModel: '',
+        poi: false,
       };
 
       const imageMetrics = metrics.find((m) => m.id === imageRecord.id) ?? {
@@ -215,6 +226,8 @@ const transformData = async ({
       return {
         ...imageRecord,
         ...imageMetrics,
+        // Best way we currently have to detect current POI of processed images.
+        poi: imageRecord.poi ?? resourcePoi,
         combinedNsfwLevel: nsfwLevelLocked
           ? imageRecord.nsfwLevel
           : Math.max(imageRecord.nsfwLevel, imageRecord.aiNsfwLevel),
@@ -323,6 +336,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
         i."needsReview",
         i."blockedFor",
         i.minor,
+        i.poi,
+        i."acceptableMinor",
         p."publishedAt",
         p."availability",
         (
@@ -339,7 +354,7 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             THEN TRUE
             ELSE FALSE
           END
-        ) AS "hasPositivePrompt",
+        ) AS "hasPositivePrompt", 
         (
           CASE
             WHEN i.meta->>'civitaiResources' IS NOT NULL
@@ -445,7 +460,8 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ir."imageId" as id,
             string_agg(CASE WHEN m.type = 'Checkpoint' THEN mv."baseModel" ELSE NULL END, '') as "baseModel",
             coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is true), '{}') as "modelVersionIdsAuto",
-            coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is not true), '{}') as "modelVersionIdsManual"
+            coalesce(array_agg(mv."id") FILTER (WHERE ir.detected is not true), '{}') as "modelVersionIdsManual",
+            SUM(IIF(m.poi, 1, 0)) > 0 "poi"
           FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv."id"
           JOIN "Model" m ON mv."modelId" = m."id"

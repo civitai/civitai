@@ -59,7 +59,7 @@ import {
   ImageUploadProps,
   ReportCsamImagesInput,
   SetVideoThumbnailInput,
-  UpdateImageMinorInput,
+  UpdateImageAcceptableMinorInput,
   UpdateImageNsfwLevelOutput,
   UpdateImageTechniqueOutput,
   UpdateImageToolsOutput,
@@ -702,6 +702,8 @@ type GetAllImagesRaw = {
   baseModel?: string;
   availability: Availability;
   minor: boolean;
+  acceptableMinor: boolean;
+  poi?: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
 };
@@ -753,6 +755,8 @@ export const getAllImages = async (
     baseModels,
     collectionTagId,
     excludedUserIds,
+    disablePoi,
+    disableMinor,
   } = input;
   let { browsingLevel, userId: targetUserId } = input;
 
@@ -822,6 +826,13 @@ export const getAllImages = async (
 
   if (!isModerator) {
     AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+  }
+
+  if (disablePoi) {
+    AND.push(Prisma.sql`(i."poi" != TRUE)`);
+  }
+  if (disableMinor) {
+    AND.push(Prisma.sql`(i."minor" != TRUE)`);
   }
 
   let from = 'FROM "Image" i';
@@ -1109,7 +1120,7 @@ export const getAllImages = async (
   } else {
     AND.push(Prisma.sql`i."needsReview" IS NULL`);
     // Acceptable in collections, need to check for contest collection only
-    if (!collectionId) AND.push(Prisma.sql`i.minor = FALSE`);
+    if (!collectionId) AND.push(Prisma.sql`i."acceptableMinor" = FALSE`);
     AND.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0 AND i."nsfwLevel" != 0`
@@ -1187,6 +1198,8 @@ export const getAllImages = async (
       u."deletedAt",
       p."availability",
       i.minor,
+      i.poi,
+      i."acceptableMinor",
       ${Prisma.raw(
         include.includes('metaSelect')
           ? '(CASE WHEN i."hideMeta" = TRUE THEN NULL ELSE i.meta END) as "meta",'
@@ -1328,6 +1341,8 @@ export const getAllImages = async (
       thumbnailUrl?: string;
       remixOfId?: number | null;
       hasPositivePrompt?: boolean;
+      poi?: boolean;
+      minor?: boolean;
     }
   > = filtered.map(
     ({ userId: creatorId, username, userImage, deletedAt, cursorId, unpublishedAt, ...i }) => {
@@ -1635,6 +1650,10 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     remixOfId,
     remixesOnly,
     nonRemixesOnly,
+    excludedTagIds,
+    disablePoi,
+    disableMinor,
+    requiringMeta,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1647,10 +1666,22 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       // Avoids exposing private resources to the public
       `((NOT availability = ${Availability.Private}) OR "userId" = ${currentUserId})`
     );
+
+    filters.push(
+      // Avoids blocked resources to the public
+      `((blockedFor IS NULL) OR "userId" = ${currentUserId})`
+    );
   }
 
   if (postId) {
     postIds = [...(postIds ?? []), postId];
+  }
+
+  if (disablePoi) {
+    filters.push(`(NOT poi = true)`);
+  }
+  if (disableMinor) {
+    filters.push(`(NOT minor = true)`);
   }
 
   // Filter
@@ -1747,6 +1778,11 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
   }
 
+  if (excludedTagIds?.length) {
+    // Needed support for this in order to properly support multiple domains.
+    filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
+  }
+
   /*
   // TODO this won't work, can't do custom sort
   if (prioritizedUserIds?.length) {
@@ -1768,6 +1804,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   */
 
   if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
+  if (requiringMeta) {
+    filters.push(`(blockedFor = ${BlockedReason.AiNotVerified})`);
+  }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
   if (isModerator) {
@@ -2202,6 +2241,8 @@ export const getImage = async ({
       i.metadata,
       i."nsfwLevel",
       i.minor,
+      i.poi,
+      i."acceptableMinor",
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -2359,6 +2400,8 @@ export type ImagesForModelVersions = {
   hasMeta: boolean;
   remixOfId?: number | null;
   hasPositivePrompt?: boolean;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const getImagesForModelVersion = async ({
@@ -2423,7 +2466,7 @@ export const getImagesForModelVersion = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
@@ -2465,6 +2508,8 @@ export const getImagesForModelVersion = async ({
       i.hash,
       i.type,
       i.metadata,
+      i.minor,
+      i.poi,
       t."modelVersionId",
       ${Prisma.raw(include.includes('meta') ? 'i.meta,' : '')}
       p."availability",
@@ -2585,6 +2630,8 @@ export const getImagesForPosts = async ({
   browsingLevel,
   user,
   pending,
+  disablePoi,
+  disableMinor,
 }: {
   postIds: number | number[];
   // excludedIds?: number[];
@@ -2592,6 +2639,8 @@ export const getImagesForPosts = async ({
   browsingLevel?: number;
   user?: SessionUser;
   pending?: boolean;
+  disablePoi?: boolean;
+  disableMinor?: boolean;
 }) => {
   const userId = user?.id;
   const isModerator = user?.isModerator ?? false;
@@ -2617,12 +2666,20 @@ export const getImagesForPosts = async ({
       );
     }
   } else {
-    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i.minor = FALSE`);
+    imageWhere.push(Prisma.sql`i."needsReview" IS NULL AND i."acceptableMinor" = FALSE`);
     imageWhere.push(
       browsingLevel
         ? Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`
         : Prisma.sql`i.ingestion = ${ImageIngestionStatus.Scanned}::"ImageIngestionStatus"`
     );
+  }
+
+  if (disablePoi) {
+    imageWhere.push(Prisma.sql`(i."poi" = false OR i."poi" IS NULL)`);
+  }
+
+  if (disableMinor) {
+    imageWhere.push(Prisma.sql`(i."minor" = false OR i."minor" IS NULL)`);
   }
 
   const workflows = generationFormWorkflowConfigurations.map((x) => x.key);
@@ -2644,6 +2701,8 @@ export const getImagesForPosts = async ({
       onSite: boolean;
       remixOfId?: number | null;
       hasPositivePrompt?: boolean;
+      poi?: boolean;
+      minor?: boolean;
     }[]
   >`
     SELECT
@@ -2683,7 +2742,9 @@ export const getImagesForPosts = async ({
           ELSE FALSE
         END
       ) as "onSite",
-      i.metadata->>'remixOfId' as "remixOfId"
+      i.metadata->>'remixOfId' as "remixOfId",
+      i.minor,
+      i.poi
     FROM "Image" i
     WHERE ${Prisma.join(imageWhere, ' AND ')}
     ORDER BY i.index ASC
@@ -2855,6 +2916,8 @@ type GetImageConnectionRaw = {
   entityId: number;
   hasMeta: boolean;
   hasPositivePrompt?: boolean;
+  poi?: boolean;
+  minor?: boolean;
 };
 
 export const getImagesByEntity = async ({
@@ -2934,6 +2997,8 @@ export const getImagesByEntity = async ({
       i."needsReview",
       i."userId",
       i."index",
+      i.poi,
+      i.minor,
       (
         CASE
           WHEN i.meta IS NULL OR jsonb_typeof(i.meta) = 'null' OR i."hideMeta" THEN FALSE
@@ -3491,6 +3556,8 @@ type GetImageModerationReviewQueueRaw = {
   moderatorUsername?: string;
   removedAt?: Date;
   minor: boolean;
+  acceptableMinor: boolean;
+  poi?: boolean;
 };
 export const getImageModerationReviewQueue = async ({
   limit,
@@ -3585,6 +3652,8 @@ export const getImageModerationReviewQueue = async ({
       p."title" "postTitle",
       i."index",
       i.minor,
+      i.poi,
+      i."acceptableMinor",
       p."publishedAt",
       p."modelVersionId",
       u.username,
@@ -3605,8 +3674,6 @@ export const getImageModerationReviewQueue = async ({
   `;
 
   let nextCursor: bigint | undefined;
-
-  console.log({ limit, raw: rawImages.length });
 
   if (rawImages.length > limit) {
     const nextItem = rawImages.pop();
@@ -3709,6 +3776,7 @@ export const getImageModerationReviewQueue = async ({
       removedAt?: Date | null;
       tosReason?: string | null;
       minor: boolean;
+      acceptableMinor: boolean;
     }
   > = rawImages.map(
     ({
@@ -4191,6 +4259,27 @@ export async function addImageTools({
 }) {
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
+  // Update these images if blocked:
+  const updated = await dbRead.image.updateManyAndReturn({
+    where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
+    data: {
+      blockedFor: null,
+      // Ensures we do another run:
+      ingestion: 'Pending',
+    },
+    select: {
+      id: true,
+      url: true,
+    },
+  });
+
+  if (updated.length > 0) {
+    await ingestImageBulk({
+      images: updated,
+      lowPriority: true,
+    });
+  }
+
   for (const { imageId } of data) {
     purgeImageGenerationDataCache(imageId);
   }
@@ -4667,16 +4756,21 @@ export async function setVideoThumbnail({
   return updated;
 }
 
-export async function updateImageMinor({ id, minor }: UpdateImageMinorInput) {
+export async function updateImageAcceptableMinor({
+  id,
+  acceptableMinor,
+}: UpdateImageAcceptableMinorInput) {
   const image = await dbWrite.image.update({
     where: { id },
-    data: { minor },
+    data: { acceptableMinor },
   });
 
   // Remove it from search index if minor is true
   await queueImageSearchIndexUpdate({
     ids: [id],
-    action: minor ? SearchIndexUpdateQueueAction.Delete : SearchIndexUpdateQueueAction.Update,
+    action: acceptableMinor
+      ? SearchIndexUpdateQueueAction.Delete
+      : SearchIndexUpdateQueueAction.Update,
   });
 
   return image;
@@ -4794,13 +4888,24 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
 
   const data = await upload.done();
   const meta = await getMetadata(imageUrl);
+  // Attempt to guess if this is a video or image based off of the sample image url.
+  // This is no accurate science for all scenarios, but should give out a decent result at least.
+  const isVideo = imageUrl.includes('.mp4') || imageUrl.includes('.mov');
 
   const response = {
+    type: (isVideo ? 'video' : 'image') as MediaType,
     meta: meta,
     metadata: {
       size: blob.size,
-      width: 512, //  This is mostly a safeguard to default.
-      height: 512, //  This is mostly a safeguard to default.
+      // We need a better way to determine the size of the content here. However, due to the fact that we can't
+      // present these images in the server size, we have no exact measurements. We can only assume the size.
+      // The front-end has an easier time determining the size of the content because they can render it.
+      ...(isVideo
+        ? {
+            width: 640,
+            height: 480,
+          }
+        : { width: 512, height: 512 }),
     },
     url: data.Key,
   };

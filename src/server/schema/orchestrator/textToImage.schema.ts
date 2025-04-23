@@ -46,6 +46,7 @@ export const textToImageParamsSchema = z.object({
   engine: z.string().optional(),
   priority: z.nativeEnum(Priority).default('low'),
   sourceImage: sourceImageSchema.nullable().default(null).catch(null),
+  disablePoi: z.boolean().default(false),
 });
 
 // #endregion

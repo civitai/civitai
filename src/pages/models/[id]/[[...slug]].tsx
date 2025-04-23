@@ -311,7 +311,13 @@ export default function ModelDetailsV2({
   const [selectedVersion, setSelectedVersion] = useState<ModelVersionDetail | null>(latestVersion);
   const selectedEcosystemName = getBaseModelEcosystemName(selectedVersion?.baseModel);
   const tippedAmount = useBuzzTippingStore({ entityType: 'Model', entityId: model?.id ?? -1 });
-  const buzzEarned = tippedAmount + (model?.rank?.tippedAmountCountAllTime ?? 0) + (model?.modelVersions?.reduce((acc, version) => acc + (version.rank?.earnedAmountAllTime ?? 0), 0) ?? 0);
+  const buzzEarned =
+    tippedAmount +
+    (model?.rank?.tippedAmountCountAllTime ?? 0) +
+    (model?.modelVersions?.reduce(
+      (acc, version) => acc + (version.rank?.earnedAmountAllTime ?? 0),
+      0
+    ) ?? 0);
 
   const { canDownload: hasDownloadPermissions, canGenerate: hasGeneratePermissions } =
     useModelVersionPermission({ modelVersionId: selectedVersion?.id });
@@ -568,6 +574,7 @@ export default function ModelDetailsV2({
   const isMuted = currentUser?.muted ?? false;
   const onlyEarlyAccess = model.modelVersions.every((version) => version.earlyAccessDeadline);
   const canDiscuss =
+    features.canWrite &&
     !isMuted &&
     (!onlyEarlyAccess ||
       hasDownloadPermissions ||
@@ -689,27 +696,32 @@ export default function ModelDetailsV2({
                         </IconBadge>
                       </LoginRedirect>
                     )}
-                    <InteractiveTipBuzzButton
-                      toUserId={model.user.id}
-                      entityId={model.id}
-                      entityType="Model"
-                    >
-                      <IconBadge
-                        radius="sm"
-                        size="lg"
-                        icon={
-                          <IconBolt
-                            size={18}
-                            color="yellow.7"
-                            style={{ fill: theme.colors.yellow[7] }}
-                          />
-                        }
+                    {!model.poi && (
+                      <InteractiveTipBuzzButton
+                        toUserId={model.user.id}
+                        entityId={model.id}
+                        entityType="Model"
                       >
-                        <Text className={classes.modelBadgeText} title={buzzEarned.toLocaleString()}>
-                          {abbreviateNumber(buzzEarned)}
-                        </Text>
-                      </IconBadge>
-                    </InteractiveTipBuzzButton>
+                        <IconBadge
+                          radius="sm"
+                          size="lg"
+                          icon={
+                            <IconBolt
+                              size={18}
+                              color="yellow.7"
+                              style={{ fill: theme.colors.yellow[7] }}
+                            />
+                          }
+                        >
+                          <Text
+                            className={classes.modelBadgeText}
+                            title={buzzEarned.toLocaleString()}
+                          >
+                            {abbreviateNumber(buzzEarned)}
+                          </Text>
+                        </IconBadge>
+                      </InteractiveTipBuzzButton>
+                    )}
                     {inEarlyAccess && (
                       <Tooltip
                         label={

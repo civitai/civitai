@@ -5,7 +5,7 @@ import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
-import { constants, POST_IMAGE_LIMIT } from '~/server/common/constants';
+import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { addPostImageSchema } from '~/server/schema/post.schema';
 import { PostDetailEditable } from '~/server/services/post.service';
@@ -121,8 +121,8 @@ export function PostImageDropzone({
     }
   }
 
-  const handleDrop = (files: File[]) => {
-    handleUpload(files.map((file) => ({ file })));
+  const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {
+    handleUpload(args);
   };
   // #endregion
 

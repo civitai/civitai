@@ -36,6 +36,7 @@ import { ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { generationPanel } from '~/store/generation.store';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
+import { BlockedReason } from '~/server/common/enums';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
@@ -62,6 +63,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const isRemix = !!image.remixOfId;
   const notPublished = !image.publishedAt;
   const scheduled = image.publishedAt && new Date(image.publishedAt) > new Date();
+  const isBlockedForAiVerification = image.blockedFor === BlockedReason.AiNotVerified;
 
   const handleRemixClick = useCallback(
     (e: React.MouseEvent) => {
@@ -221,6 +223,28 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         )}
                       </div>
                     )
+                  ) : isBlockedForAiVerification ? (
+                    <Alert
+                      color="yellow"
+                      variant="filled"
+                      radius={0}
+                      className="absolute bottom-0 left-0 w-full p-1"
+                      title={
+                        <Group spacing={4}>
+                          <IconInfoCircle />
+                          <Text inline>Unable to verify AI generation</Text>
+                        </Group>
+                      }
+                    >
+                      <div className="flex flex-col items-end">
+                        <Text size="sm" inline>
+                          This image has been blocked because it is has received a NSFW rating and
+                          we could not verify that it was generated using AI. To restore the image,
+                          please update your post with metadata detailing the generation process
+                          &ndash; such as the prompt, tools, and resources used.
+                        </Text>
+                      </div>
+                    </Alert>
                   ) : (
                     <Alert
                       color="red"
@@ -254,6 +278,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                     readonly={!safe || (isScanned && isBlocked)}
                     className={cx('justify-between p-2')}
                     invisibleEmpty
+                    disableBuzzTip={image.poi}
                   />
                 </div>
               </>

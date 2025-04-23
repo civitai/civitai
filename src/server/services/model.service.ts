@@ -250,6 +250,8 @@ export const getModelsRaw = async ({
     excludedUserIds,
     collectionTagId,
     availability,
+    disablePoi,
+    disableMinor,
     isFeatured,
   } = input;
 
@@ -310,6 +312,13 @@ export const getModelsRaw = async ({
     AND.push(
       Prisma.sql`(m."mode" IS NULL OR m."mode" != ${ModelModifier.Archived}::"ModelModifier")`
     );
+  }
+
+  if (disablePoi) {
+    AND.push(Prisma.sql`m."poi" = false`);
+  }
+  if (disableMinor) {
+    AND.push(Prisma.sql`m."minor" = false`);
   }
 
   if (needsReview && sessionUser?.isModerator) {
@@ -722,6 +731,14 @@ export const getModelsRaw = async ({
         // If not getting full details, only return the latest version
         if (!includeDetails) modelVersions = modelVersions.slice(0, 1);
 
+        if (!!input.excludedTagIds && input.excludedTagIds.length) {
+          // Support for excluded tags
+          const hasExcludedTag = data.tags.some((tag) =>
+            (input.excludedTagIds ?? []).includes(tag.tagId)
+          );
+          if (hasExcludedTag) return null;
+        }
+
         return {
           ...model,
           rank: {
@@ -803,7 +820,6 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
     clubId,
   } = input;
 
-  const canViewNsfw = sessionUser?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
   const AND: Prisma.Enumerable<Prisma.ModelWhereInput> = [];
   const lowerQuery = query?.toLowerCase();
   let isPrivate = false;
@@ -1065,6 +1081,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     number,
     { modelVersionId: number; images: ImagesForModelVersions[] }
   > = {};
+  const { excludedTagIds, status } = input;
   if (!!modelVersionIds.length) {
     if (input.pending) {
       const images = await getImagesForModelVersion({
@@ -1073,6 +1090,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         pending: input.pending,
         browsingLevel: input.browsingLevel,
         user,
+        include: excludedTagIds ? ['tags'] : undefined,
       });
       for (const image of images) {
         if (!modelVersionImages[image.modelVersionId])
@@ -1087,7 +1105,6 @@ export const getModelsWithImagesAndModelVersions = async ({
     }
   }
 
-  const { excludedTagIds, status } = input;
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
   const unavailableGenResources = await getUnavailableResources();
@@ -1868,14 +1885,14 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
     },
   };
 
-  const items = await dbRead.modelVersion.findMany({
+  const items = await dbWrite.modelVersion.findMany({
     select,
     skip,
     take,
     where,
     orderBy: { updatedAt: 'desc' },
   });
-  const count = await dbRead.modelVersion.count({ where });
+  const count = await dbWrite.modelVersion.count({ where });
 
   return getPagingData({ items, count }, take, page);
 };

@@ -5,6 +5,7 @@ import { useMemo, useState } from 'react';
 import { z } from 'zod';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useZodRouteParams } from '~/hooks/useZodRouteParams';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { FilterKeys, useFiltersContext } from '~/providers/FiltersProvider';
 import { constants } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
@@ -15,6 +16,7 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import { isDefined } from '~/utils/type-guards';
 import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
 
 const imageSections = ['images', 'reactions'] as const;
@@ -93,8 +95,19 @@ export const useQueryImages = (
 ) => {
   const { applyHiddenPreferences = true, ...queryOptions } = options ?? {};
   filters ??= {};
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const excludedTagIds = [
+    ...(filters.excludedTagIds ?? []),
+    ...(browsingSettingsAddons.settings.excludedTagIds ?? []),
+  ].filter(isDefined);
+
   const { data, isLoading, ...rest } = trpc.image.getInfinite.useInfiniteQuery(
-    { ...filters },
+    {
+      ...filters,
+      excludedTagIds,
+      disablePoi: browsingSettingsAddons.settings.disablePoi,
+      disableMinor: browsingSettingsAddons.settings.disableMinor,
+    },
     {
       getNextPageParam: (lastPage) => lastPage.nextCursor,
       trpc: { context: { skipBatch: true } },

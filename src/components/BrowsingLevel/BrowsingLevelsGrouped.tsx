@@ -2,16 +2,13 @@ import { Chip, Group, GroupProps, createStyles } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
 import { NsfwLevel } from '~/server/common/enums';
-import {
-  browsingLevels,
-  browsingLevelLabels,
-  BrowsingLevel,
-} from '~/shared/constants/browsingLevel.constants';
+import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsGrouped(props: GroupProps) {
   const currentUser = useCurrentUser();
-  const levels = currentUser?.isModerator ? [...browsingLevels, NsfwLevel.Blocked] : browsingLevels;
+  const baseLevels = browsingLevels;
+  const levels = currentUser?.isModerator ? [...baseLevels, NsfwLevel.Blocked] : baseLevels;
 
   return (
     <Group spacing="xs" noWrap {...props}>

@@ -1,10 +1,27 @@
-import { Group, Text, Stack, Popover, ActionIcon, Checkbox, Button, Tooltip } from '@mantine/core';
+import {
+  Group,
+  Text,
+  Stack,
+  Popover,
+  ActionIcon,
+  Checkbox,
+  Button,
+  Tooltip,
+  Anchor,
+} from '@mantine/core';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import { IconCaretRightFilled, IconEyeExclamation, IconProps } from '@tabler/icons-react';
+import {
+  IconAlertTriangle,
+  IconCaretRightFilled,
+  IconEyeExclamation,
+  IconProps,
+  IconTriangleFilled,
+} from '@tabler/icons-react';
 import { BrowsingLevelsGrouped } from '~/components/BrowsingLevel/BrowsingLevelsGrouped';
 import { openHiddenTagsModal } from '~/components/Dialog/dialog-registry';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { constants } from '~/server/common/constants';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 
 export function BrowsingModeIcon({ iconProps = {} }: BrowsingModeIconProps) {
   return (
@@ -30,6 +47,7 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
   const blurNsfw = useBrowsingSettings((x) => x.blurNsfw);
   const disableHidden = useBrowsingSettings((x) => x.disableHidden);
   const setState = useBrowsingSettings((x) => x.setState);
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const toggleBlurNsfw = () => setState((state) => ({ blurNsfw: !state.blurNsfw }));
   const toggleDisableHidden = () => setState((state) => ({ disableHidden: !state.disableHidden }));
@@ -65,6 +83,15 @@ export function BrowsingModeMenu({ closeMenu }: { closeMenu?: () => void }) {
                 <Text color="dimmed">Select the levels of content you want to see</Text>
               </Stack>
               <BrowsingLevelsGrouped />
+              {browsingSettingsAddons.settings.disablePoi && (
+                <Group spacing="sm" mt={4}>
+                  <IconAlertTriangle size={16} />
+                  <Text color="dimmed" size="xs">
+                    With X or XXX enabled, some content may be hidden.{' '}
+                    <Anchor href="/articles/13632">Learn more</Anchor>
+                  </Text>
+                </Group>
+              )}
             </Stack>
             <Checkbox
               checked={blurNsfw}

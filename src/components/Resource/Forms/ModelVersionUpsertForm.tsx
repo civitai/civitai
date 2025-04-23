@@ -319,6 +319,7 @@ export function ModelVersionUpsertForm({ model, version, children, onSubmit }: P
   const isPublished = version?.status === 'Published';
   const isPrivateModel = model?.availability === Availability.Private;
   const showEarlyAccessInput =
+    !model?.poi && // POI models won't allow EA.
     !isPrivateModel &&
     (currentUser?.isModerator ||
       (maxEarlyAccessModels > 0 &&
