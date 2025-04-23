@@ -1653,7 +1653,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     excludedTagIds,
     disablePoi,
     disableMinor,
-    withoutMeta,
+    requiringMeta,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1671,9 +1671,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       // Avoids blocked resources to the public
       `((blockedFor IS NULL) OR "userId" = ${currentUserId})`
     );
-
-    // Require Metadata for images > R rating.
-    filters.push(`("userId" = ${currentUserId} OR requiresMeta != true)`);
   }
 
   if (postId) {
@@ -1807,8 +1804,8 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   */
 
   if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
-  if (withoutMeta) {
-    filters.push(`(requiresMeta = true)`);
+  if (requiringMeta) {
+    filters.push(`(blockedFor = ${BlockedReason.AiNotVerified})`);
   }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 

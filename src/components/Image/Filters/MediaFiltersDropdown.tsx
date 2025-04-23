@@ -81,7 +81,7 @@ export function MediaFiltersDropdown({
   const filterLength =
     ('types' in mergedFilters && !hideMediaTypes ? mergedFilters.types?.length ?? 0 : 0) +
     (mergedFilters.withMeta ? 1 : 0) +
-    (mergedFilters.withoutMeta ? 1 : 0) +
+    (mergedFilters.requiringMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.hideManualResources ? 1 : 0) +
@@ -98,7 +98,7 @@ export function MediaFiltersDropdown({
     const reset = {
       types: undefined,
       withMeta: false,
-      withoutMeta: false,
+      requiringMeta: false,
       hidden: false,
       fromPlatform: false,
       notPublished: false,
@@ -212,8 +212,8 @@ export function MediaFiltersDropdown({
           </FilterChip>
           {currentUser && (
             <FilterChip
-              checked={mergedFilters.withoutMeta}
-              onChange={(checked) => handleChange({ withoutMeta: checked })}
+              checked={mergedFilters.requiringMeta}
+              onChange={(checked) => handleChange({ requiringMeta: checked })}
             >
               <Tooltip label="Only shows your images that are missing metadata">
                 <span>Requiring Metadata</span>
