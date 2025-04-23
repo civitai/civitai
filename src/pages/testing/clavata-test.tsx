@@ -1,0 +1,140 @@
+import { w } from '@faker-js/faker/dist/airline-C5Qwd7_q';
+import {
+  Container,
+  Title,
+  Text,
+  useMantineTheme,
+  Stack,
+  TextInput,
+  Alert,
+  List,
+  Paper,
+  Group,
+  Badge,
+} from '@mantine/core';
+import { Dropzone } from '@mantine/dropzone';
+import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
+import { useState } from 'react';
+import { NotFound } from '~/components/AppLayout/NotFound';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
+import { ImageTag } from '~/server/integrations/clavata';
+import { getBase64 } from '~/utils/file-utils';
+
+export default function MetadataTester() {
+  const theme = useMantineTheme();
+  const user = useCurrentUser();
+  const [policyId, setPolicyId] = useState<string | undefined>(undefined);
+  const [tags, setTags] = useState<ImageTag[]>([]);
+  const [error, setError] = useState<string | undefined>(undefined);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const onDrop = async (files: File[]) => {
+    if (isLoading) {
+      return;
+    }
+
+    setError(undefined);
+    setIsLoading(true);
+    const [file] = files;
+    try {
+      // const base64 = await getBase64(file);
+      setTags([]);
+      const buffer = await file.arrayBuffer();
+      const base64 =
+        typeof Buffer !== 'undefined'
+          ? Buffer.from(buffer).toString('base64')
+          : btoa(String.fromCharCode(...new Uint8Array(buffer)));
+
+      const res = await fetch('/api/mod/clavata-image-process', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          image: base64,
+          policyId: policyId,
+        }),
+      });
+
+      if (!res.ok) {
+        throw new Error(res.statusText);
+      }
+
+      const resJson: ImageTag[] = await res.json();
+      setTags(resJson);
+    } catch (e) {
+      console.error('Error processing image with Clavata:', e);
+      setError('Failed to process image with Clavata: ' + (e as Error).message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  if (!user?.isModerator) {
+    return <NotFound />;
+  }
+
+  return (
+    <Container size={350}>
+      <Stack>
+        <Title>Clavata Tester</Title>
+        <TextInput
+          onChange={(e) => setPolicyId(e.currentTarget.value)}
+          placeholder="Leave empty for default."
+          label="Clavata Policy ID"
+        />
+        <Dropzone onDrop={onDrop} accept={IMAGE_MIME_TYPE} maxFiles={1} loading={isLoading}>
+          <Dropzone.Accept>
+            <IconUpload
+              size={50}
+              stroke={1.5}
+              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
+            />
+          </Dropzone.Accept>
+          <Dropzone.Reject>
+            <IconX
+              size={50}
+              stroke={1.5}
+              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
+            />
+          </Dropzone.Reject>
+          <Dropzone.Idle>
+            <IconPhoto size={50} stroke={1.5} />
+          </Dropzone.Idle>
+
+          <div>
+            <Text size="xl" inline>
+              Drag image here or click to select file
+            </Text>
+            <Text size="sm" color="dimmed" inline mt={7}>
+              Image should not exceed 16mb
+            </Text>
+          </div>
+        </Dropzone>
+
+        {error && (
+          <Alert color="red" title="Error while processing your request.">
+            <Text inline>{error}</Text>
+          </Alert>
+        )}
+
+        {tags.length > 0 && (
+          <Stack spacing={4}>
+            <Text size="lg" weight={700}>
+              Detected Tags
+            </Text>
+            {tags.map((tag) => (
+              <Paper withBorder radius="sm" p="xs" key={tag.tag}>
+                <Group>
+                  <Text>{tag.tag}</Text>
+                  <Badge>({tag.confidence.toFixed(2)}%)</Badge>
+                </Group>
+              </Paper>
+            ))}
+          </Stack>
+        )}
+      </Stack>
+    </Container>
+  );
+}
