@@ -203,18 +203,20 @@ export function ModelCard({ data }: Props) {
                     <IconMessageCircle2 size={14} strokeWidth={2.5} />
                     <Text size="xs">{abbreviateNumber(data.rank.commentCount)}</Text>
                   </Group>
-                  <InteractiveTipBuzzButton
-                    toUserId={data.user.id}
-                    entityType={'Model'}
-                    entityId={data.id}
-                  >
-                    <Group spacing={2}>
-                      <IconBolt size={14} strokeWidth={2.5} />
-                      <Text size="xs" tt="uppercase">
-                        {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
-                      </Text>
-                    </Group>
-                  </InteractiveTipBuzzButton>
+                  {!isPOI && (
+                    <InteractiveTipBuzzButton
+                      toUserId={data.user.id}
+                      entityType={'Model'}
+                      entityId={data.id}
+                    >
+                      <Group spacing={2}>
+                        <IconBolt size={14} strokeWidth={2.5} />
+                        <Text size="xs" tt="uppercase">
+                          {abbreviateNumber(data.rank.tippedAmountCount + tippedAmount)}
+                        </Text>
+                      </Group>
+                    </InteractiveTipBuzzButton>
+                  )}
                 </Badge>
               )}
               {!data.locked && !!data.rank.thumbsUpCount && (

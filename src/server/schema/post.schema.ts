@@ -40,6 +40,8 @@ export const postsQuerySchema = baseQuerySchema.merge(
     followed: z.boolean().optional(),
     clubId: z.number().optional(),
     pending: z.boolean().optional(),
+    disablePoi: z.boolean().optional(),
+    disableMinor: z.boolean().optional(),
   })
 );
 

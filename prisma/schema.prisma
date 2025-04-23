@@ -1356,6 +1356,8 @@ model Image {
   assignedUser      User?                   @relation("profilePicture")
   sortAt            DateTime                @default(now())
   minor             Boolean                 @default(false)
+  poi               Boolean                 @default(false)
+  acceptableMinor   Boolean                 @default(false)
 
   reports             ImageReport[]
   reactions           ImageReaction[]

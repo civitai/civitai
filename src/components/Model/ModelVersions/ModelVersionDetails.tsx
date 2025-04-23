@@ -404,7 +404,9 @@ export function ModelVersionDetails({
           )}
           {version.rank?.earnedAmountAllTime && (
             <IconBadge radius="xs" icon={<IconBolt size={14} />} tooltip="Buzz Earned">
-              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>{abbreviateNumber(version.rank?.earnedAmountAllTime)}</Text>
+              <Text title={(version.rank?.earnedAmountAllTime).toLocaleString()}>
+                {abbreviateNumber(version.rank?.earnedAmountAllTime)}
+              </Text>
             </IconBadge>
           )}
         </Group>
@@ -1008,7 +1010,7 @@ export function ModelVersionDetails({
                     td="underline"
                     href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                     className={!features.canWrite ? 'pointer-events-none' : undefined}
-                   >
+                  >
                     here
                   </Text>{' '}
                   to change this behavior.
@@ -1186,7 +1188,7 @@ export function ModelVersionDetails({
                           onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/edit`}
                           className={!features.canWrite ? 'pointer-events-none' : undefined}
-                         >
+                        >
                           Edit Model Details
                         </Menu.Item>
                         <Menu.Item
@@ -1194,7 +1196,7 @@ export function ModelVersionDetails({
                           onClick={(e) => e.stopPropagation()}
                           href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
                           className={!features.canWrite ? 'pointer-events-none' : undefined}
-                         >
+                        >
                           Edit Version Details
                         </Menu.Item>
                       </Menu.Dropdown>
@@ -1336,6 +1338,7 @@ export function ModelVersionDetails({
             user={model.user}
             tipBuzzEntityType="Model"
             tipBuzzEntityId={model.id}
+            tipsEnabled={!model.poi}
           />
           {onSite && (
             <Group
@@ -1431,7 +1434,7 @@ export function ModelVersionDetails({
             </AlertWithIcon>
           )}
           {model.poi && <PoiAlert />}
-          {!model.nsfw && <AdUnitSide_2 />}
+          {!model.nsfw && !model.poi && <AdUnitSide_2 />}
         </Stack>
       </ContainerGrid.Col>
 

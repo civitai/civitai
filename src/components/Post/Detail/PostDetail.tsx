@@ -73,13 +73,16 @@ import { CollectionMetadataSchema } from '~/server/schema/collection.schema';
 import { RenderAdUnitOutstream } from '~/components/Ads/AdUnitOutstream';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
 import { useSearchParams } from 'next/navigation';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 
 type Props = { postId: number };
 
 export function PostDetail(props: Props) {
   return (
     <BrowsingLevelProvider>
-      <PostDetailContent {...props} />
+      <BrowsingSettingsAddonsProvider>
+        <PostDetailContent {...props} />
+      </BrowsingSettingsAddonsProvider>
     </BrowsingLevelProvider>
   );
 }

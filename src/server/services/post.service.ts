@@ -3,7 +3,7 @@ import { uniq } from 'lodash-es';
 import { SessionUser } from 'next-auth';
 import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { env } from '~/env/server';
-import { PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -32,6 +32,7 @@ import {
   deleteImageById,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
+  ingestImage,
   purgeImageGenerationDataCache,
   purgeResizeCache,
   queueImageSearchIndexUpdate,
@@ -126,6 +127,9 @@ export const getPostsInfinite = async ({
   clubId,
   browsingLevel,
   pending,
+  excludedTagIds,
+  disablePoi,
+  disableMinor,
 }: Omit<PostsQueryInput, 'include'> & {
   user?: SessionUser;
   include?: string[];
@@ -374,6 +378,8 @@ export const getPostsInfinite = async ({
         user,
         browsingLevel,
         pending,
+        disablePoi,
+        disableMinor,
       })
     : [];
 
@@ -944,19 +950,29 @@ export async function bustCachesForPost(postId: number) {
 }
 
 export const updatePostImage = async (image: UpdatePostImageInput) => {
-  const currentImage = await dbWrite.image.findUnique({
+  const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
-    select: { hideMeta: true },
+    select: { hideMeta: true, ingestion: true, blockedFor: true },
   });
+
+  const isBlockedForAiValidation = currentImage.blockedFor === BlockedReason.AiNotVerified;
 
   const result = await dbWrite.image.update({
     where: { id: image.id },
     data: {
       ...image,
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
+      // If this image was blocked due to missing metadata, we need to set it back to pending
+      ingestion: isBlockedForAiValidation ? 'Pending' : undefined,
+      blockedFor: isBlockedForAiValidation ? null : undefined,
     },
     select: { id: true, url: true, userId: true },
   });
+
+  if (isBlockedForAiValidation) {
+    // Ensures a proper rescan of this image.
+    await ingestImage({ image: result });
+  }
 
   // If changing hide meta, purge the resize cache so that we strip metadata
   if (image.hideMeta && currentImage && currentImage.hideMeta !== image.hideMeta) {

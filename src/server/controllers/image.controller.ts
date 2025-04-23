@@ -21,7 +21,7 @@ import {
   getPostDetailByImageId,
   queueImageSearchIndexUpdate,
   setVideoThumbnail,
-  updateImageMinor,
+  updateImageAcceptableMinor,
   updateImageReportStatusByReason,
 } from '~/server/services/image.service';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -44,7 +44,7 @@ import {
   ImageModerationSchema,
   ImageReviewQueueInput,
   SetVideoThumbnailInput,
-  UpdateImageMinorInput,
+  UpdateImageAcceptableMinorInput,
 } from './../schema/image.schema';
 import {
   getAllImages,
@@ -604,11 +604,11 @@ export function setVideoThumbnailController({
 }
 
 // This is only available for collections
-export async function updateImageMinorHandler({
+export async function updateImageAcceptableMinorHandler({
   input,
   ctx,
 }: {
-  input: UpdateImageMinorInput;
+  input: UpdateImageAcceptableMinorInput;
   ctx: DeepNonNullable<Context>;
 }) {
   try {
@@ -622,7 +622,7 @@ export async function updateImageMinorHandler({
     });
     if (!permissions.manage) throw throwAuthorizationError();
 
-    const image = await updateImageMinor(input);
+    const image = await updateImageAcceptableMinor(input);
     return image;
   } catch (error) {
     if (error instanceof TRPCError) throw error;

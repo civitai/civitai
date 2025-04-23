@@ -26,6 +26,7 @@ import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 
 export default function ModelsSearch() {
   return (
@@ -40,11 +41,16 @@ export default function ModelsSearch() {
 
 const RenderFilters = () => {
   const currentUser = useCurrentUser();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
+
   return (
     <>
       <ApplyCustomFilter
         filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}
       />
+      {browsingSettingsAddons.settings.disablePoi && (
+        <ApplyCustomFilter filters={`(poi != true)`} />
+      )}
       <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort models by"

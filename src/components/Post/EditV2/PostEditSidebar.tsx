@@ -33,6 +33,10 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { removeEmpty } from '~/utils/object-helpers';
+import { Flags } from '~/shared/utils';
+import { nsfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { isValidAIGeneration } from '~/utils/image-utils';
+import { ImageMetaProps } from '~/server/schema/image.schema';
 
 export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
   // #region [state]
@@ -55,8 +59,20 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
       state.images,
     ]);
   const todayRef = useRef(new Date());
+  const isAiVerified = !images.some(
+    (image) =>
+      image.type === 'added' &&
+      !isValidAIGeneration({
+        id: image.data.id,
+        nsfwLevel: image.data.nsfwLevel,
+        resources: image.data.resourceHelper,
+        tools: image.data.tools,
+        meta: image.data.meta as ImageMetaProps,
+        tags: image.data.tags,
+      })
+  );
+  const canPublish = hasImages && !isReordering && isAiVerified && features.canWrite;
 
-  const canPublish = hasImages && !isReordering && features.canWrite;
   const canSchedule = post.publishedAt && post.publishedAt.getTime() > new Date().getTime();
   const { returnUrl, afterPublish } = params;
 
@@ -210,7 +226,9 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
         <Tooltip
           disabled={canPublish}
           label={
-            isReordering
+            !isAiVerified
+              ? 'We could not verify some of your NSFW images were AI generated. Please add proper metadata before publishing this post.'
+              : isReordering
               ? 'Finish rearranging your images before you publish'
               : 'At least one image is required in order to publish this post to the community'
           }

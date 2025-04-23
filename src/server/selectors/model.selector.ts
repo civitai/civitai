@@ -215,6 +215,7 @@ export const modelSearchIndexSelect = Prisma.validator<Prisma.ModelSelect>()({
   allowCommercialUse: true,
   allowDerivatives: true,
   allowDifferentLicense: true,
+  poi: true,
   // Joins:
   user: {
     select: userWithCosmeticsSelect,

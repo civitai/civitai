@@ -70,6 +70,7 @@ import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
 import '~/styles/globals.css';
+import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 
 dayjs.extend(duration);
 dayjs.extend(isBetween);
@@ -113,18 +114,20 @@ function MyApp(props: CustomAppProps) {
   const getLayout = (page: ReactElement) => (
     <FeatureLayout conditional={Component?.features}>
       <BrowsingLevelProviderOptional browsingLevel={Component.browsingLevel}>
-        {Component.getLayout?.(page) ?? (
-          <AppLayout
-            left={Component.left}
-            right={Component.right}
-            subNav={Component.subNav}
-            scrollable={Component.scrollable}
-            footer={Component.footer}
-            announcements={Component.announcements}
-          >
-            {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
-          </AppLayout>
-        )}
+        <BrowsingSettingsAddonsProvider>
+          {Component.getLayout?.(page) ?? (
+            <AppLayout
+              left={Component.left}
+              right={Component.right}
+              subNav={Component.subNav}
+              scrollable={Component.scrollable}
+              footer={Component.footer}
+              announcements={Component.announcements}
+            >
+              {Component.InnerLayout ? <Component.InnerLayout>{page}</Component.InnerLayout> : page}
+            </AppLayout>
+          )}
+        </BrowsingSettingsAddonsProvider>
       </BrowsingLevelProviderOptional>
     </FeatureLayout>
   );
@@ -154,46 +157,50 @@ function MyApp(props: CustomAppProps) {
                     <ErrorBoundary>
                       <BrowserSettingsProvider>
                         <BrowsingLevelProvider>
-                          <SignalProvider>
-                            <ActivityReportingProvider>
-                              <ReferralsProvider {...cookies.referrals}>
-                                <FiltersProvider>
-                                  <AdsProvider>
-                                    <PaddleProvider>
-                                      <HiddenPreferencesProvider>
-                                        <CivitaiLinkProvider>
-                                          <NotificationsProvider
-                                            className="notifications-container"
-                                            zIndex={9999}
-                                          >
-                                            <BrowserRouterProvider>
-                                              <IntersectionObserverProvider>
-                                                <ToursProvider>
-                                                  <AuctionContextProvider>
-                                                    <BaseLayout>
-                                                      {isProd && <TrackPageView />}
-                                                      <ChatContextProvider>
-                                                        <CustomModalsProvider>
-                                                          {getLayout(<Component {...pageProps} />)}
-                                                          {/* <StripeSetupSuccessProvider /> */}
-                                                          <DialogProvider />
-                                                          <RoutedDialogProvider />
-                                                        </CustomModalsProvider>
-                                                      </ChatContextProvider>
-                                                    </BaseLayout>
-                                                  </AuctionContextProvider>
-                                                </ToursProvider>
-                                              </IntersectionObserverProvider>
-                                            </BrowserRouterProvider>
-                                          </NotificationsProvider>
-                                        </CivitaiLinkProvider>
-                                      </HiddenPreferencesProvider>
-                                    </PaddleProvider>
-                                  </AdsProvider>
-                                </FiltersProvider>
-                              </ReferralsProvider>
-                            </ActivityReportingProvider>
-                          </SignalProvider>
+                          <BrowsingSettingsAddonsProvider>
+                            <SignalProvider>
+                              <ActivityReportingProvider>
+                                <ReferralsProvider {...cookies.referrals}>
+                                  <FiltersProvider>
+                                    <AdsProvider>
+                                      <PaddleProvider>
+                                        <HiddenPreferencesProvider>
+                                          <CivitaiLinkProvider>
+                                            <NotificationsProvider
+                                              className="notifications-container"
+                                              zIndex={9999}
+                                            >
+                                              <BrowserRouterProvider>
+                                                <IntersectionObserverProvider>
+                                                  <ToursProvider>
+                                                    <AuctionContextProvider>
+                                                      <BaseLayout>
+                                                        {isProd && <TrackPageView />}
+                                                        <ChatContextProvider>
+                                                          <CustomModalsProvider>
+                                                            {getLayout(
+                                                              <Component {...pageProps} />
+                                                            )}
+                                                            {/* <StripeSetupSuccessProvider /> */}
+                                                            <DialogProvider />
+                                                            <RoutedDialogProvider />
+                                                          </CustomModalsProvider>
+                                                        </ChatContextProvider>
+                                                      </BaseLayout>
+                                                    </AuctionContextProvider>
+                                                  </ToursProvider>
+                                                </IntersectionObserverProvider>
+                                              </BrowserRouterProvider>
+                                            </NotificationsProvider>
+                                          </CivitaiLinkProvider>
+                                        </HiddenPreferencesProvider>
+                                      </PaddleProvider>
+                                    </AdsProvider>
+                                  </FiltersProvider>
+                                </ReferralsProvider>
+                              </ActivityReportingProvider>
+                            </SignalProvider>
+                          </BrowsingSettingsAddonsProvider>
                         </BrowsingLevelProvider>
                       </BrowserSettingsProvider>
                     </ErrorBoundary>
@@ -276,9 +283,12 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const session = token?.user ? { user: token.user as SessionUser } : null;
   const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host });
 
-  const settings = await fetch(`${process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL}/api/user/settings`, {
-    headers: { ...request.headers } as HeadersInit,
-  }).then((res) => res.json() as UserSettingsSchema);
+  const settings = await fetch(
+    `${process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL}/api/user/settings`,
+    {
+      headers: { ...request.headers } as HeadersInit,
+    }
+  ).then((res) => res.json() as UserSettingsSchema);
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;

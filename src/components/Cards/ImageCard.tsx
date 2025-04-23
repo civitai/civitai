@@ -51,6 +51,7 @@ export function ImageCard({ data }: Props) {
                 tippedAmountCount: data.stats?.tippedAmountCountAllTime,
               }}
               targetUserId={data.user.id}
+              disableBuzzTip={data.poi}
             />
             {data.hasMeta && (
               <ImageMetaPopover2 imageId={data.id} type={data.type}>

@@ -44,7 +44,6 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
   const isMod = user?.isModerator ?? false;
-  // const canViewNsfw = user?.showNsfw ?? env.UNAUTHENTICATED_LIST_NSFW;
 
   const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
   const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
