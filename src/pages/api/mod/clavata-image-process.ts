@@ -26,7 +26,7 @@ export default ModEndpoint(
     } catch (e) {
       console.error('Error processing image with Clavata:', e);
       return res.status(500).json({
-        error: 'Failed to process image with Clavata',
+        error: (e as Error).message,
       });
     }
   },

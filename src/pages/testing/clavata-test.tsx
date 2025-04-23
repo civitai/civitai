@@ -1,4 +1,3 @@
-import { w } from '@faker-js/faker/dist/airline-C5Qwd7_q';
 import {
   Container,
   Title,
@@ -19,7 +18,6 @@ import { NotFound } from '~/components/AppLayout/NotFound';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { IMAGE_MIME_TYPE } from '~/server/common/mime-types';
 import { ImageTag } from '~/server/integrations/clavata';
-import { getBase64 } from '~/utils/file-utils';
 
 export default function MetadataTester() {
   const theme = useMantineTheme();
@@ -58,7 +56,8 @@ export default function MetadataTester() {
       });
 
       if (!res.ok) {
-        throw new Error(res.statusText);
+        const data = await res.json();
+        throw new Error(data.error ?? res.statusText);
       }
 
       const resJson: ImageTag[] = await res.json();
