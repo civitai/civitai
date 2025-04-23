@@ -6,9 +6,12 @@ import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
-import { Group } from '@mantine/core';
+import { Group, Alert } from '@mantine/core';
 import { CollectionSelectDropdown } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
 import { isDefined } from '~/utils/type-guards';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+
 
 const titleCharLimit = 255;
 const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nullish() });
@@ -21,6 +24,7 @@ export function PostEditForm() {
     defaultValues: { ...post, title: post?.title ?? postTitle },
   });
   const debounce = useDebouncer(1000);
+  const features = useFeatureFlags();
 
   const { mutate } = trpc.post.update.useMutation({
     onError(error) {
@@ -61,6 +65,7 @@ export function PostEditForm() {
 
   return (
     <Form form={form} className="flex flex-col gap-3">
+      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this post."} />
       <InputTextArea
         data-tour="post:title"
         name="title"

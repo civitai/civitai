@@ -171,37 +171,41 @@ export function ImageMeta({
               </Code>
             </Stack>
           ))}
-          {metas.medium.map(({ label, value }) => (
-            <Group key={label} position="apart">
-              <Text size="sm" mr="xs" weight={500}>
-                {label}
-              </Text>
-              <Code
-                sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'pre-wrap' }}
-              >
-                {value}
-              </Code>
-            </Group>
-          ))}
-          <SimpleGrid cols={2} verticalSpacing="xs">
-            {metas.short.map(({ label, value }) => (
-              <Group key={label} spacing="xs">
+          {metas.medium
+            .filter(({ value }) => typeof value !== 'object')
+            .map(({ label, value }) => (
+              <Group key={label} position="apart">
                 <Text size="sm" mr="xs" weight={500}>
                   {label}
                 </Text>
                 <Code
-                  sx={{
-                    flex: '1',
-                    textAlign: 'right',
-                    overflow: 'hidden',
-                    whiteSpace: 'pre-wrap',
-                    maxWidth: 300,
-                  }}
+                  sx={{ flex: '1', textAlign: 'right', overflow: 'hidden', whiteSpace: 'pre-wrap' }}
                 >
                   {value}
                 </Code>
               </Group>
             ))}
+          <SimpleGrid cols={2} verticalSpacing="xs">
+            {metas.short
+              .filter(({ value }) => typeof value !== 'object')
+              .map(({ label, value }) => (
+                <Group key={label} spacing="xs">
+                  <Text size="sm" mr="xs" weight={500}>
+                    {label}
+                  </Text>
+                  <Code
+                    sx={{
+                      flex: '1',
+                      textAlign: 'right',
+                      overflow: 'hidden',
+                      whiteSpace: 'pre-wrap',
+                      maxWidth: 300,
+                    }}
+                  >
+                    {value}
+                  </Code>
+                </Group>
+              ))}
           </SimpleGrid>
           <Button.Group>
             {canCreate && (

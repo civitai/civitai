@@ -1,6 +1,6 @@
 import type { TransactionNotification } from '@paddle/paddle-node-sdk';
 import { env } from '~/env/server';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import {
   GetUserSubscriptionInput,
   SubscriptionMetadata,
@@ -21,7 +21,7 @@ export const getPlans = async ({
   includeFree?: boolean;
   includeInactive?: boolean;
 }) => {
-  const products = await dbRead.product.findMany({
+  const products = await dbWrite.product.findMany({
     where: {
       provider: paymentProvider,
       active: includeInactive ? undefined : true,
@@ -75,7 +75,7 @@ export const getPlans = async ({
 export type SubscriptionPlan = Awaited<ReturnType<typeof getPlans>>[number];
 
 export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) => {
-  const subscription = await dbRead.customerSubscription.findUnique({
+  const subscription = await dbWrite.customerSubscription.findUnique({
     where: { userId },
     select: {
       id: true,
@@ -130,6 +130,7 @@ export const getUserSubscription = async ({ userId }: GetUserSubscriptionInput) 
     productMeta,
   };
 };
+
 export type UserSubscription = Awaited<ReturnType<typeof getUserSubscription>>;
 
 export const paddleTransactionContainsSubscriptionItem = async (data: TransactionNotification) => {
@@ -139,7 +140,7 @@ export const paddleTransactionContainsSubscriptionItem = async (data: Transactio
     return false;
   }
 
-  const products = await dbRead.product.findMany({
+  const products = await dbWrite.product.findMany({
     where: {
       provider: PaymentProvider.Paddle,
       prices: { some: { id: { in: priceIds } } },

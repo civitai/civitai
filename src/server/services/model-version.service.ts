@@ -211,7 +211,7 @@ export const upsertModelVersion = async ({
   }
 
   if (!id || templateId) {
-    const existingVersions = await dbRead.modelVersion.findMany({
+    const existingVersions = await dbWrite.modelVersion.findMany({
       where: { modelId: data.modelId },
       select: {
         id: true,
@@ -284,7 +284,7 @@ export const upsertModelVersion = async ({
 
     return version;
   } else {
-    const existingVersion = await dbRead.modelVersion.findUniqueOrThrow({
+    const existingVersion = await dbWrite.modelVersion.findUniqueOrThrow({
       where: { id },
       select: {
         id: true,
@@ -1563,7 +1563,7 @@ export const createModelVersionPostFromTraining = async ({
   await Promise.all(
     uploadedImages.map((image) =>
       addPostImage({
-        type: 'image',
+        type: image.type,
         postId: post.id,
         modelVersionId,
         width: image.metadata?.width,

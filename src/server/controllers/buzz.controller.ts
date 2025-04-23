@@ -3,7 +3,7 @@ import dayjs from 'dayjs';
 import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { Context } from '~/server/createContext';
-import { dbRead } from '~/server/db/client';
+import { dbWrite } from '~/server/db/client';
 import { dailyBoostReward } from '~/server/rewards/active/dailyBoost.reward';
 import {
   ClubTransactionSchema,
@@ -141,7 +141,7 @@ export async function createBuzzTipTransactionHandler({
 
     let accountCreatedAt = ctx.user?.createdAt ? new Date(ctx.user.createdAt) : undefined;
     if (!accountCreatedAt) {
-      const user = await dbRead.user.findUnique({
+      const user = await dbWrite.user.findUnique({
         where: { id: fromAccountId },
         select: { createdAt: true },
       });
@@ -190,7 +190,7 @@ export async function createBuzzTipTransactionHandler({
 
     if (targetUserIds.length > 0) {
       // Confirm none of the target users are banned:
-      const bannedUsers = await dbRead.user.findMany({
+      const bannedUsers = await dbWrite.user.findMany({
         where: { id: { in: targetUserIds }, bannedAt: { not: null } },
         select: { id: true },
       });
@@ -249,7 +249,7 @@ export async function createBuzzTipTransactionHandler({
       const toAccountId = transactions[0].toAccountId;
       const description = transactions[0].description;
       if (toAccountId !== 0) {
-        const fromUser = await dbRead.user.findUnique({
+        const fromUser = await dbWrite.user.findUnique({
           where: { id: fromAccountId },
           select: { username: true },
         });
@@ -350,7 +350,7 @@ export async function withdrawClubFundsHandler({
       throw throwAuthorizationError('You do not have permission to withdraw funds from this club');
     }
 
-    const club = await dbRead.club.findUniqueOrThrow({ where: { id: input.clubId } });
+    const club = await dbWrite.club.findUniqueOrThrow({ where: { id: input.clubId } });
 
     return createBuzzTransaction({
       toAccountId: id,
@@ -386,7 +386,7 @@ export async function depositClubFundsHandler({
       throw throwAuthorizationError('You do not have permission to deposit funds on this club');
     }
 
-    const club = await dbRead.club.findUniqueOrThrow({ where: { id: input.clubId } });
+    const club = await dbWrite.club.findUniqueOrThrow({ where: { id: input.clubId } });
 
     return createBuzzTransaction({
       fromAccountId: id,

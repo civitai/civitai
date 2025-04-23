@@ -28,7 +28,8 @@ import { getLoginLink } from '~/utils/login-helpers';
 export const getServerSideProps = createServerSideProps({
   useSession: true,
   resolver: async ({ features, session, ctx }) => {
-    if (!session)
+    // Avoids redirecting when a sync is about to happen.
+    if (!session && !ctx.resolvedUrl.includes('sync-account='))
       return {
         redirect: {
           destination: getLoginLink({ returnUrl: ctx.resolvedUrl, reason: 'purchase-buzz' }),

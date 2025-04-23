@@ -25,6 +25,7 @@ const featureAvailability = [
   ...roleAvailablity,
 ] as const;
 const featureFlags = createFeatureFlags({
+  canWrite: ['mod'],
   earlyAccessModel: ['public'],
   apiKeys: ['public'],
   ambientCard: ['public'],

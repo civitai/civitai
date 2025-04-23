@@ -1,7 +1,5 @@
 import { Anchor, Text, Alert, Stack } from '@mantine/core';
-import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ModelType } from '~/shared/utils/prisma/enums';
-import { IconAlertCircle } from '@tabler/icons-react';
 import React from 'react';
 
 import { Countdown } from '~/components/Countdown/Countdown';
@@ -102,13 +100,16 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
         <LoginRedirect reason="notify-version">
           <Text
             variant="link"
-            onClick={!toggleNotifyMutation.isLoading ? handleNotifyMeClick : undefined}
+            onClick={
+              !toggleNotifyMutation.isLoading && features.canWrite ? handleNotifyMeClick : undefined
+            }
             sx={{
-              cursor: toggleNotifyMutation.isLoading ? 'not-allowed' : 'pointer',
+              cursor:
+                toggleNotifyMutation.isLoading || !features.canWrite ? 'not-allowed' : 'pointer',
               lineHeight: 1,
             }}
-            span
             color="yellow"
+            span
           >
             {alreadyNotifying
               ? 'Remove me from this notification.'

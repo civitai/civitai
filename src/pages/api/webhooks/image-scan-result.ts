@@ -184,10 +184,10 @@ async function handleSuccess({
   result,
 }: BodyProps) {
   // this is a temporary solution to add all clavata tags to the table `ShadowTagsOnImage`
-  if (source === TagSource.Clavata) {
+  if (source === TagSource.Clavata && env.CLAVATA_SCAN === 'shadow') {
     const response = await getTagsFromIncomingTags({
       id,
-      tags: incomingTags?.filter((x) => x.confidence >= 35),
+      tags: incomingTags,
       source,
     });
     if (!response) return;
@@ -377,6 +377,13 @@ async function handleSuccess({
       `) ?? [];
       if (isNewUser) reviewKey = 'newUser';
     }
+    if (!reviewKey) {
+      const reviewer = determineReviewer({ tags, source });
+      if (reviewer === 'moderators') reviewKey = 'tag';
+      else if (reviewer === 'knights') {
+        // TODO @manuelurenah - Add knight review logic
+      }
+    }
 
     const data: Prisma.ImageUpdateInput = {};
     if (reviewKey) data.needsReview = reviewKey;
@@ -492,12 +499,44 @@ const tagPreprocessors: Partial<Record<TagSource, (tags: IncomingTag[]) => Incom
   [TagSource.Clavata]: processClavataTags,
 };
 
+const clavataTagConfidenceRequirements: Record<string, number> = {
+  daipers: 70,
+  urine: 60,
+  unconscious: 60,
+  'graphic language': 70,
+  'light violence': 70,
+  hypnosis: 70,
+  minimum: 35,
+};
+const clavataNsfwTags = ['pg', 'pg-13', 'r', 'x', 'xxx'];
 function processClavataTags(tags: IncomingTag[]) {
-  return tags.map((tag) => ({
+  // Map tags to lowercase
+  tags = tags.map((tag) => ({
     ...tag,
     confidence: tag.confidence ?? 70,
     tag: tag.tag.toLowerCase(),
   }));
+
+  // Filter out tags
+  let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
+  tags = tags.filter((tag) => {
+    // Remove nsfw tags
+    const nsfwLevelIndex = clavataNsfwTags.indexOf(tag.tag);
+    if (nsfwLevelIndex !== -1) {
+      if (nsfwLevelIndex > clavataNsfwTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
+      return false;
+    }
+
+    // Remove tags below confidence threshold
+    const requiredConfidence =
+      clavataTagConfidenceRequirements[tag.tag] ?? clavataTagConfidenceRequirements.minimum;
+    return tag.confidence >= requiredConfidence;
+  });
+
+  // Add back nsfw tag
+  tags.push(highestNsfwTag);
+
+  return tags;
 }
 
 function processWDTags(tags: IncomingTag[]) {
@@ -532,6 +571,8 @@ function processHiveTags(tags: IncomingTag[]) {
   return results;
 }
 
+// Moderation Rules
+// --------------------------------------------------
 type IngestedImage = {
   id: number;
   userId: number;
@@ -600,6 +641,8 @@ async function applyModerationRules(image: IngestedImage) {
   }
 }
 
+// Tag Fetching
+// --------------------------------------------------
 async function getTagsFromIncomingTags({
   id,
   tags: incomingTags = [],
@@ -730,4 +773,60 @@ async function getTagsFromIncomingTags({
   }
 
   return { image, tags, hasBlockedTag };
+}
+
+// Review Condition Processing
+// --------------------------------------------------
+type Reviewer = 'moderators' | 'knights';
+type ReviewConditionStored = {
+  reviewer: Reviewer;
+  condition: string;
+};
+type ReviewConditionContext = {
+  tags: IncomingTag[];
+  source: TagSource;
+};
+type ReviewConditionFn = {
+  reviewer: Reviewer;
+  condition: (tag: IncomingTag, ctx: ReviewConditionContext) => boolean;
+};
+type ReviewCondition = ReviewConditionStored | ReviewConditionFn;
+
+const reviewConditions: ReviewCondition[] = [
+  {
+    condition: (tag, ctx) =>
+      tag.tag === 'unconscious' && ctx.tags.some((t) => ['r', 'x', 'xxx'].includes(t.tag)),
+    reviewer: 'moderators',
+  },
+  {
+    condition: (tag, ctx) =>
+      tag.tag === 'bestiality' &&
+      ctx.tags.some((t) => t.tag === 'animal') &&
+      !ctx.tags.some((t) => t.tag === 'furry'),
+    reviewer: 'moderators',
+  },
+  {
+    condition: (tag, ctx) => tag.tag === 'bestiality' && ctx.tags.some((t) => t.tag === 'animal'),
+    reviewer: 'knights',
+  },
+  {
+    condition: (tag) => tag.tag === 'celebrity',
+    reviewer: 'knights',
+  },
+];
+
+export function determineReviewer(ctx: ReviewConditionContext) {
+  for (const tag of ctx.tags) {
+    for (const { condition, reviewer } of reviewConditions) {
+      const conditionFn =
+        typeof condition === 'function'
+          ? condition
+          : (new Function('tag', 'ctx', `return ${condition}`) as (
+              tag: Tag,
+              ctx: ReviewConditionContext
+            ) => boolean);
+      // Return the first action that matches
+      if (conditionFn(tag, ctx)) return reviewer;
+    }
+  }
 }

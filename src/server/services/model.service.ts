@@ -1868,14 +1868,14 @@ export const getTrainingModelsByUserId = async <TSelect extends Prisma.ModelVers
     },
   };
 
-  const items = await dbRead.modelVersion.findMany({
+  const items = await dbWrite.modelVersion.findMany({
     select,
     skip,
     take,
     where,
     orderBy: { updatedAt: 'desc' },
   });
-  const count = await dbRead.modelVersion.count({ where });
+  const count = await dbWrite.modelVersion.count({ where });
 
   return getPagingData({ items, count }, take, page);
 };
