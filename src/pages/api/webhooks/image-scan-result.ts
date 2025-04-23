@@ -367,7 +367,7 @@ async function handleSuccess({
           -- Check based on associated bounty entries
           SELECT
             SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false "minor"
+            false "minor",
             false "hasResource"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
@@ -375,7 +375,7 @@ async function handleSuccess({
           JOIN "Bounty" b ON b.id = be."bountyId"
           WHERE ic."imageId" = ${image.id}
         )
-        SELECT bool_or(poi) "poi", bool_or(minor) "minor" FROM to_check;
+        SELECT bool_or(poi) "poi", bool_or(minor) "minor", bool_or("hasResource") "hasResource" FROM to_check;
       `;
 
     if (minor) {
