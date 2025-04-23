@@ -129,6 +129,7 @@ export const serverSchema = z.object({
   EXTERNAL_MODERATION_CATEGORIES: commaDelimitedStringObject().optional(),
   EXTERNAL_MODERATION_THRESHOLD: z.coerce.number().optional().default(0.5),
   BLOCKED_IMAGE_HASH_CHECK: zc.booleanString.optional().default(false),
+  MODERATION_KNIGHT_TAGS: commaDelimitedStringArray().default([]),
 
   EXTERNAL_IMAGE_SCANNER: z.string().optional(),
   CLAVATA_SCAN: z.enum(['off', 'shadow', 'active']).default('shadow'),
