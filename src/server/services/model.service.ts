@@ -1081,6 +1081,7 @@ export const getModelsWithImagesAndModelVersions = async ({
     number,
     { modelVersionId: number; images: ImagesForModelVersions[] }
   > = {};
+  const { excludedTagIds, status } = input;
   if (!!modelVersionIds.length) {
     if (input.pending) {
       const images = await getImagesForModelVersion({
@@ -1089,6 +1090,7 @@ export const getModelsWithImagesAndModelVersions = async ({
         pending: input.pending,
         browsingLevel: input.browsingLevel,
         user,
+        include: excludedTagIds ? ['tags'] : undefined,
       });
       for (const image of images) {
         if (!modelVersionImages[image.modelVersionId])
@@ -1103,7 +1105,6 @@ export const getModelsWithImagesAndModelVersions = async ({
     }
   }
 
-  const { excludedTagIds, status } = input;
   const includeDrafts = status?.includes(ModelStatus.Draft);
 
   const unavailableGenResources = await getUnavailableResources();
