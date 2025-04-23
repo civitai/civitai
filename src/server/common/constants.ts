@@ -453,6 +453,7 @@ export const maxVideoDurationSeconds = 245;
 export const orchestratorUrls = [
   'https://orchestration.civitai.com',
   'https://orchestration-dev.civitai.com',
+  'https://orchestration-stage.civitai.com',
 ];
 export function isOrchestratorUrl(url: string) {
   return orchestratorUrls.some((orchestratorUrl) => url.startsWith(orchestratorUrl));

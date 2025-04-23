@@ -12,11 +12,7 @@ import { getImageData } from '~/utils/media-preprocessors';
 import { trpc } from '~/utils/trpc';
 import { useEffect, useMemo, useState } from 'react';
 import { ImageDropzone } from '~/components/Image/ImageDropzone/ImageDropzone';
-import {
-  maxOrchestratorImageFileSize,
-  isOrchestratorUrl,
-  maxUpscaleSize,
-} from '~/server/common/constants';
+import { maxOrchestratorImageFileSize, maxUpscaleSize } from '~/server/common/constants';
 import { withController } from '~/libs/form/hoc/withController';
 import { getBase64 } from '~/utils/file-utils';
 import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';

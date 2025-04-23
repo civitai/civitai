@@ -25,6 +25,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { CivitaiResource } from '~/server/schema/image.schema';
 import { parseAIR } from '~/utils/string-helpers';
+import { getStepMeta } from './GenerationForm/generation.utils';
 
 const limit = pLimit(10);
 export function GeneratedImageActions({
@@ -101,16 +102,7 @@ export function GeneratedImageActions({
         const workflow = data?.find((x) => x.id === image.workflowId);
         if (workflow) {
           const step = workflow.steps.find((x) => x.name === image.stepName);
-          // TODO - handle resources
-          const civitaiResources = step?.resources?.map((args): CivitaiResource => {
-            if ('air' in args) {
-              const { version, type } = parseAIR(args.air);
-              return { modelVersionId: version, type, weight: args.strength };
-            } else {
-              return { modelVersionId: args.id, type: args.model.type, weight: args.strength };
-            }
-          });
-          return { url: image.url, meta: removeEmpty({ ...step?.params, civitaiResources }) };
+          return { url: image.url, meta: getStepMeta(step) };
         }
       })
       .filter(isDefined);

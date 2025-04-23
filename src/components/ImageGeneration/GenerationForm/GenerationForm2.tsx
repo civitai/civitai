@@ -1152,9 +1152,13 @@ export function GenerationFormContent() {
                             <InputNumberSlider
                               name="denoise"
                               label="Denoise"
-                              min={
-                                browsingSettingsAddons.settings.generationMinValues?.denoise ?? 0
-                              }
+                              min={0}
+                              // min={
+                              //   !remixOfId
+                              //     ? browsingSettingsAddons.settings.generationMinValues?.denoise ??
+                              //       0
+                              //     : 0
+                              // }
                               max={isTxt2Img ? 0.75 : 1}
                               step={0.05}
                             />
