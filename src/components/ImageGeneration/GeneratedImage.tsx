@@ -30,7 +30,7 @@ import {
   IconDiamond,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useState } from 'react';
+import { DragEvent, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore, useDialogStore } from '~/components/Dialog/dialogStore';
 // import { GeneratedImageLightbox } from '~/components/ImageGeneration/GeneratedImageLightbox';
@@ -75,6 +75,8 @@ import { useGeneratedItemStore } from '~/components/Generation/stores/generated-
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { EmblaCarouselType } from 'embla-carousel';
+import { getStepMeta } from './GenerationForm/generation.utils';
+import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 
 export type GeneratedImageProps = {
   image: NormalizedGeneratedImage;
@@ -207,6 +209,20 @@ export function GeneratedImage({
     }
   }
 
+  function handleDataTransfer(e: DragEvent<HTMLVideoElement> | DragEvent<HTMLImageElement>) {
+    const url = e.currentTarget.currentSrc;
+    const meta = getStepMeta(step);
+    if (meta) mediaDropzoneData.setData(url, meta);
+    e.dataTransfer.setData('text/uri-list', url);
+    // const encoded = meta ? encodeURIComponent(JSON.stringify(meta)) : undefined;
+    // console.log(encoded ? `${url}?data=${encoded}` : url);
+    // e.dataTransfer.setData('text/uri-list', encoded ? `${url}?data=${encoded}` : url);
+  }
+
+  function handleDragVideo(e: DragEvent<HTMLVideoElement>) {
+    handleDataTransfer(e);
+  }
+
   return (
     <TwCard
       ref={ref}
@@ -252,6 +268,8 @@ export function GeneratedImage({
               videoProps={{
                 onLoadedData: handleLoad,
                 onError: handleError,
+                onDragStart: handleDragVideo,
+                draggable: true,
               }}
             />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />

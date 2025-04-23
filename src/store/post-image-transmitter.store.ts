@@ -1,7 +1,8 @@
 import pLimit from 'p-limit';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { fetchBlob } from '~/utils/file-utils';
+import { isOrchestratorUrl } from '~/server/common/constants';
+import { fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 import { isDefined } from '~/utils/type-guards';
 
 type DataProps = {
@@ -65,3 +66,33 @@ export const useExternalMetaStore = create<{
     return url;
   },
 }));
+
+function MediaDropzoneData() {
+  const dictionary: Record<string, Record<string, unknown>> = {};
+
+  function setData(url: string, data: Record<string, unknown>) {
+    dictionary[url] = data;
+  }
+
+  async function getData(url: string, options?: { allowExternalUrl?: boolean }) {
+    const { allowExternalUrl } = options ?? {};
+    const data = dictionary[url];
+    delete data[url];
+    if (!allowExternalUrl && !isOrchestratorUrl(url)) return;
+    if (!data) return;
+    const filename = url.substring(url.lastIndexOf('/')).split('?')[0];
+    const file = await fetchBlobAsFile(url, filename);
+    if (!file) return;
+    return { file, data };
+  }
+
+  async function getAllData(options?: { allowExternalUrl?: boolean }) {
+    return await Promise.all(Object.keys(dictionary).map((url) => getData(url, options))).then(
+      (data) => data.filter(isDefined)
+    );
+  }
+
+  return { setData, getData, getAllData };
+}
+
+export const mediaDropzoneData = MediaDropzoneData();
