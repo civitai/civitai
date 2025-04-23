@@ -1,29 +1,39 @@
 import { Button, Kbd, ActionIcon, Tooltip, Text, Modal } from '@mantine/core';
 import { HotkeyItem, useHotkeys } from '@mantine/hooks';
 import { IconArrowBackUp, IconFlag, IconVolumeOff, IconVolume } from '@tabler/icons-react';
-import { useState, useMemo, useCallback, useRef } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { damnedReasonOptions, ratingOptions } from '~/components/Games/KnightsNewOrder.utils';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
 import { browsingLevelDescriptions } from '~/shared/constants/browsingLevel.constants';
 import { getDisplayName } from '~/utils/string-helpers';
 
-export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Props) {
+let timeoutRef: NodeJS.Timeout | undefined;
+
+export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkipClick }: Props) {
   const mobile = useIsMobile({ breakpoint: 'md' });
   const [showReasons, setShowReasons] = useState(false);
-  const timeoutRef = useRef<NodeJS.Timeout>();
 
   const debouncedRatingClick = useCallback(
     (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
+      if (timeoutRef) {
+        clearTimeout(timeoutRef);
       }
-      timeoutRef.current = setTimeout(() => {
+      timeoutRef = setTimeout(() => {
         onRatingClick(data);
       }, 500);
     },
     [onRatingClick]
   );
+
+  const debouncedSkipClick = useCallback(() => {
+    if (timeoutRef) {
+      clearTimeout(timeoutRef);
+    }
+    timeoutRef = setTimeout(() => {
+      onSkipClick();
+    }, 500);
+  }, [onSkipClick]);
 
   const handleHotkeyPress = useCallback(
     (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
@@ -83,7 +93,12 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Prop
     [showReasons, handleHotkeyPress]
   );
 
-  useHotkeys([['m', () => onVolumeClick()], ['Escape', () => setShowReasons(false)], ...hotKeys]);
+  useHotkeys([
+    ['m', () => onVolumeClick()],
+    ['Escape', () => setShowReasons(false)],
+    ['Space', debouncedSkipClick],
+    ...hotKeys,
+  ]);
 
   const handleRatingClick = useCallback(
     (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => {
@@ -94,7 +109,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Prop
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex flex-nowrap gap-2">
+      <div className="flex flex-wrap justify-center gap-2">
         {showReasons ? (
           mobile ? (
             <Modal
@@ -120,40 +135,45 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Prop
             />
           )
         ) : (
-          <Button.Group>
-            {ratingOptions.map((rating) => {
-              const level = NsfwLevel[rating];
-              const isBlocked = level === 'Blocked';
+          <>
+            <Button.Group>
+              {ratingOptions.map((rating) => {
+                const level = NsfwLevel[rating];
+                const isBlocked = level === 'Blocked';
 
-              return (
-                <Tooltip
-                  key={rating}
-                  label={browsingLevelDescriptions[rating]}
-                  position="top"
-                  openDelay={1000}
-                  maw={350}
-                  withArrow
-                  multiline
-                >
-                  <Button
+                return (
+                  <Tooltip
                     key={rating}
-                    variant={isBlocked ? 'filled' : 'default'}
-                    color={isBlocked ? 'red' : undefined}
-                    onClick={() =>
-                      isBlocked ? setShowReasons(true) : handleRatingClick({ rating })
-                    }
+                    label={browsingLevelDescriptions[rating]}
+                    position="top"
+                    openDelay={1000}
+                    maw={350}
+                    withArrow
+                    multiline
                   >
-                    {isBlocked ? <IconFlag size={18} /> : level}
-                  </Button>
-                </Tooltip>
-              );
-            })}
-          </Button.Group>
+                    <Button
+                      key={rating}
+                      variant={isBlocked ? 'filled' : 'default'}
+                      color={isBlocked ? 'red' : undefined}
+                      onClick={() =>
+                        isBlocked ? setShowReasons(true) : handleRatingClick({ rating })
+                      }
+                    >
+                      {isBlocked ? <IconFlag size={18} /> : level}
+                    </Button>
+                  </Tooltip>
+                );
+              })}
+            </Button.Group>
+            <Button variant="default" onClick={debouncedSkipClick}>
+              Skip
+            </Button>
+          </>
         )}
       </div>
       <div className="flex w-full justify-between gap-2">
         <Text className="hidden md:block" size="xs">
-          Use the numbers <Kbd>1-6</Kbd> to rate.
+          Use the numbers <Kbd>1-6</Kbd> to rate, <Kbd>Space</Kbd> to skip.
           {showReasons && (
             <>
               {' '}
@@ -172,6 +192,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick }: Prop
 type Props = {
   onRatingClick: (data: { rating: NsfwLevel; damnedReason?: NewOrderDamnedReason }) => void;
   onVolumeClick: () => void;
+  onSkipClick: () => void;
   muted?: boolean;
 };
 

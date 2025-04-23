@@ -15,7 +15,7 @@ export function NewOrderImageRatings({ imageId, imageNsfwLevel, ratings }: Props
   if (!ratings || ratings.length === 0) return null;
 
   return (
-    <div className="fixed right-0 top-1/2 z-50 -translate-y-1/2">
+    <div className="pointer-events-none fixed right-0 top-1/2 z-50 -translate-y-1/2">
       <div
         className={`relative flex items-center transition-transform duration-300 ${
           opened ? 'translate-x-0' : 'translate-x-[300px]'

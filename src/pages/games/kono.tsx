@@ -1,4 +1,4 @@
-import { ActionIcon, Skeleton } from '@mantine/core';
+import { ActionIcon, Button, Skeleton, ThemeIcon } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
@@ -66,8 +66,13 @@ export default Page(
 
     const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
     const { playerData, isLoading, joined } = useJoinKnightsNewOrder();
-    const { addRating } = useAddImageRating();
-    const { data, isLoading: loadingImagesQueue } = useQueryKnightsNewOrderImageQueue();
+    const { addRating, skipRating } = useAddImageRating();
+    const {
+      data,
+      isLoading: loadingImagesQueue,
+      refetch,
+      isRefetching,
+    } = useQueryKnightsNewOrderImageQueue();
 
     useKnightsNewOrderListener();
 
@@ -103,8 +108,6 @@ export default Page(
     };
 
     const currentImage = data[0];
-    const isLandscape =
-      (currentImage?.metadata?.width ?? 0) > (currentImage?.metadata?.height ?? 0);
 
     return (
       <GameErrorBoundary>
@@ -119,21 +122,19 @@ export default Page(
           ) : isLoading ? (
             <PageLoader />
           ) : playerData ? (
-            <div className="relative -mt-3 flex h-full flex-col gap-4 bg-dark-9 p-4 md:flex-row md:p-0">
+            <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-dark-9 p-4 md:flex-row md:p-0">
               {isLevelingUp && <LevelUp />}
               <NewOrderSidebar />
-              <div className="flex size-full items-center justify-center gap-4 md:overflow-hidden">
-                {loadingImagesQueue && (
+              <div className="flex size-full p-0 md:p-4 items-center justify-center gap-4 overflow-hidden md:h-auto">
+                {loadingImagesQueue ? (
                   <Skeleton className="h-1/2 w-full max-w-sm p-4" visible animate />
-                )}
-                {currentImage ? (
-                  <div className="flex h-full max-h-[75%] flex-col items-center justify-center gap-4">
+                ) : currentImage ? (
+                  <div className="flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
                     <ImageGuard2 image={currentImage}>
                       {() => (
                         <div
                           className={clsx(
-                            'relative my-auto flex items-center justify-center',
-                            isLandscape ? 'h-auto' : 'h-full'
+                            'relative flex max-h-[75%] my-auto max-w-full items-center justify-center md:my-0'
                           )}
                         >
                           {currentUser?.isModerator && (
@@ -145,8 +146,7 @@ export default Page(
                           <EdgeMedia2
                             src={currentImage.url}
                             className={clsx(
-                              'max-w-full rounded-lg object-contain',
-                              isLandscape ? 'h-auto' : 'h-full'
+                              'max-w-full rounded-lg h-full object-contain',
                             )}
                             type="image"
                             width={700}
@@ -170,6 +170,7 @@ export default Page(
                     <NewOrderImageRater
                       muted={muted}
                       onVolumeClick={() => setMuted((prev) => !prev)}
+                      onSkipClick={() => skipRating({ imageId: currentImage.id })}
                       onRatingClick={({ rating, damnedReason }) =>
                         damnedReason
                           ? handleAddDamnedReason({ reason: damnedReason })
@@ -184,7 +185,22 @@ export default Page(
                       />
                     )}
                   </div>
-                ) : null}
+                ) : (
+                  <div className="flex max-w-sm flex-col items-center justify-center gap-4">
+                    <ThemeIcon size={96} radius={999} variant="light">
+                      <span className="text-4xl">🎉</span>
+                    </ThemeIcon>
+                    <div className="text-center">
+                      <p className="text-lg">
+                        Hooray! Looks like you have rated all images in the queue.
+                      </p>
+                      <p className="text-lg">Come back later or refresh to get new ones!</p>
+                    </div>
+                    <Button radius="xl" onClick={() => refetch()} loading={isRefetching}>
+                      Refresh now
+                    </Button>
+                  </div>
+                )}
               </div>
             </div>
           ) : null}

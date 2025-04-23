@@ -107,12 +107,13 @@ export const useJoinKnightsNewOrder = () => {
 export const useQueryKnightsNewOrderImageQueue = (opts?: { enabled?: boolean }) => {
   const { playerData } = useJoinKnightsNewOrder();
 
-  const { data = [], isLoading } = trpc.games.newOrder.getImagesQueue.useQuery(undefined, {
+  // TODO.newOrder: Change this to be infinite query
+  const { data = [], ...rest } = trpc.games.newOrder.getImagesQueue.useQuery(undefined, {
     ...opts,
     enabled: !!playerData && opts?.enabled !== false,
   });
 
-  return { data, isLoading };
+  return { data, ...rest };
 };
 export const useQueryInfiniteKnightsNewOrderHistory = (
   filter?: Partial<GetHistoryInput>,
@@ -153,10 +154,8 @@ export const useAddImageRating = () => {
 
         return {
           ...old,
-          stats: {
-            ...old.stats,
-            exp: old.stats.exp + 100,
-          },
+          // TODO.newOrder: update other stats here
+          stats: { ...old.stats, exp: old.stats.exp + 100 },
         };
       });
 
@@ -165,7 +164,7 @@ export const useAddImageRating = () => {
     onError: (error, _variables, context) => {
       showErrorNotification({ title: 'Failed to send rating', error: new Error(error.message) });
       if (context) {
-        queryUtils.games.newOrder.getImagesQueue.setData(undefined, context.prevQueue);
+        // We are not going to revert the image queue to allow the user to keep rating
         queryUtils.games.newOrder.getPlayer.setData(undefined, context.prevPlayerData);
       }
     },
@@ -175,7 +174,20 @@ export const useAddImageRating = () => {
     return addRatingMutation.mutateAsync(input);
   };
 
-  return { addRating: handleAddRating, isLoading: addRatingMutation.isLoading };
+  const handleSkipImage = async ({ imageId }: { imageId: number }) => {
+    await queryUtils.games.newOrder.getImagesQueue.cancel();
+    queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
+      if (!old) return old;
+
+      return old.filter((image) => image.id !== imageId);
+    });
+  };
+
+  return {
+    addRating: handleAddRating,
+    isLoading: addRatingMutation.isLoading,
+    skipRating: handleSkipImage,
+  };
 };
 
 export const ratingOptions = [...browsingLevels, NsfwLevel.Blocked];
