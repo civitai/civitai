@@ -1,12 +1,8 @@
-// import sharp from 'sharp';
-import { encode } from 'blurhash';
-import arrayBufferToBuffer from 'arraybuffer-to-buffer';
+import { NsfwLevel } from '~/server/common/enums';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { TagType } from '~/shared/utils/prisma/enums';
 
 import { fetchBlob } from '~/utils/file-utils';
-import { ImageMetaProps } from '~/server/schema/image.schema';
-import { NSFWLevel } from '@civitai/client';
-import { NsfwLevel } from '~/server/common/enums';
-import { TagType } from '~/shared/utils/prisma/enums';
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
