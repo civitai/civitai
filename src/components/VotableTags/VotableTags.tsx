@@ -1,7 +1,7 @@
 import { ActionIcon, Center, Group, GroupProps, Loader, createStyles } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import { openSetBrowsingLevelModal } from '~/components/Dialog/dialog-registry';
 import { BrowsingLevelBadge } from '~/components/ImageGuard/ImageGuard2';
 import { VotableTag } from '~/components/VotableTags/VotableTag';
@@ -25,6 +25,7 @@ export function VotableTags({
   collapsible = false,
   nsfwLevel,
   highlightContested,
+  onTagsLoaded,
   ...props
 }: GalleryTagProps) {
   const currentUser = useCurrentUser();
@@ -57,6 +58,26 @@ export function VotableTags({
     if (!collapsible || showAll) return displayTags;
     return displayTags.slice(0, limit);
   }, [tags, showAll, collapsible, limit, canViewNsfw]);
+
+  useEffect(() => {
+    if (onTagsLoaded && tags && !initialTags) {
+      onTagsLoaded([
+        {
+          score: 9,
+          upVotes: 0,
+          downVotes: 0,
+          automated: true,
+          needsReview: false,
+          concrete: true,
+          lastUpvote: null,
+          id: 111755,
+          type: 'Moderation',
+          nsfwLevel: 4,
+          name: 'suggestive',
+        },
+      ]);
+    }
+  }, [onTagsLoaded, tags, initialTags]);
 
   if (!initialTags && isLoading)
     return (
@@ -141,6 +162,7 @@ type GalleryTagProps = {
   collapsible?: boolean;
   nsfwLevel?: number;
   highlightContested?: boolean;
+  onTagsLoaded?: (tags: VotableTagModel[]) => void;
 } & Omit<GroupProps, 'id'>;
 
 const useStyles = createStyles((theme) => ({

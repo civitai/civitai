@@ -3,18 +3,25 @@ import { OnboardingSteps } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { Flags } from '~/shared/utils';
+import { useDomainColor } from '~/hooks/useDomainColor';
 
-export const onboardingSteps = [
-  OnboardingSteps.TOS,
-  OnboardingSteps.Profile,
-  OnboardingSteps.BrowsingLevels,
-  OnboardingSteps.Buzz,
-];
+const onboardingSteps: Record<string, OnboardingSteps[]> = {
+  default: [
+    OnboardingSteps.TOS,
+    OnboardingSteps.Profile,
+    OnboardingSteps.BrowsingLevels,
+    OnboardingSteps.Buzz,
+  ],
+};
 
 export const useGetRequiredOnboardingSteps = () => {
   const currentUser = useCurrentUser();
+  const domainColor = useDomainColor();
+
   if (!currentUser) return [];
-  return onboardingSteps.filter((step) => !Flags.hasFlag(currentUser.onboarding, step));
+
+  const steps = onboardingSteps[domainColor] || onboardingSteps.default;
+  return steps.filter((step) => !Flags.hasFlag(currentUser.onboarding, step));
 };
 
 export const useOnboardingStepCompleteMutation = () => {

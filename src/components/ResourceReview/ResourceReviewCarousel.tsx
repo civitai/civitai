@@ -107,6 +107,7 @@ export function ResourceReviewCarousel({
                             readonly={!safe}
                             className={classes.reactions}
                             targetUserId={image.user.id}
+                            disableBuzzTip={image.poi}
                           />
                           {image.hasMeta && (
                             <div className="absolute bottom-0.5 right-0.5 z-10">

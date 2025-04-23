@@ -1,5 +1,12 @@
 // import sharp from 'sharp';
+import { encode } from 'blurhash';
+import arrayBufferToBuffer from 'arraybuffer-to-buffer';
+
 import { fetchBlob } from '~/utils/file-utils';
+import { ImageMetaProps } from '~/server/schema/image.schema';
+import { NSFWLevel } from '@civitai/client';
+import { NsfwLevel } from '~/server/common/enums';
+import { TagType } from '~/shared/utils/prisma/enums';
 
 // deprecated?
 export async function imageToBlurhash(url: string) {
@@ -95,4 +102,48 @@ export function calculateAspectRatioFit(
   } else {
     return { width: srcWidth, height: srcHeight, mutated: false };
   }
+}
+
+type ImageForAiVerification = {
+  id: number;
+  nsfwLevel: number;
+  meta?: ImageMetaProps | null;
+  tools?: any[] | null;
+  resources?: any[] | null;
+  tags?:
+    | {
+        nsfwLevel: number;
+        type: TagType;
+      }[]
+    | null;
+};
+
+/**
+ * Check if the image is a valid AI generation. Currently, the only way we can tell this is by checking metadata values & tools.
+ *
+ * @param image Image object with meta and tools properties.
+ * @returns
+ */
+
+export function isValidAIGeneration(image: ImageForAiVerification) {
+  if (image.meta?.prompt) return true;
+  if (image.tools?.length) return true;
+  if (image.resources?.length) return true;
+  if (image.meta?.comfy) return true;
+  if (image.meta?.extra) return true;
+
+  // PG images are alright for us anyway.
+  if (image.nsfwLevel !== 0 && image.nsfwLevel < NsfwLevel.R) return true;
+
+  if (image.nsfwLevel >= NsfwLevel.R) {
+    // We need some of the above.
+    return false;
+  }
+
+  // If NSFW level is 0 or something else, we can go ahead and check tags:.
+  const hasNsfwTag = image.tags?.some((tag) => {
+    return tag.nsfwLevel >= NsfwLevel.R && tag.type === TagType.Moderation;
+  });
+
+  return !hasNsfwTag;
 }

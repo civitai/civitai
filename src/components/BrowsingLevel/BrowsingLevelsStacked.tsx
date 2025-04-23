@@ -10,9 +10,10 @@ import {
 import { Flags } from '~/shared/utils';
 
 export function BrowsingLevelsStacked() {
+  const levels = browsingLevels;
   return (
     <ToggleList>
-      {browsingLevels.map((level) => (
+      {levels.map((level) => (
         <BrowsingLevelItem key={level} level={level} />
       ))}
     </ToggleList>

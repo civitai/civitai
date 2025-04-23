@@ -482,7 +482,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 </Text>
                 <InputRadioGroup
                   name="poi"
-                  label="Depicts an actual person (Resource cannot be used on Civitai on-site Generator)"
+                  label="Depicts an actual person (Resource cannot be used on Civitai on-site Generator or have Early Access)"
                   description={isLockedDescription(
                     'category',
                     'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
