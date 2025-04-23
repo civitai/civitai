@@ -302,6 +302,7 @@ export const getInfiniteImagesSchema = baseQuerySchema
     username: zc.usernameValidationSchema.optional(),
     // view: z.enum(['categories', 'feed']),
     withMeta: z.boolean().optional(),
+    withoutMeta: z.boolean().optional(),
 
     // - additional
     cursor: z

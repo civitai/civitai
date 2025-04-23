@@ -1653,6 +1653,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     excludedTagIds,
     disablePoi,
     disableMinor,
+    withoutMeta,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1672,7 +1673,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     );
 
     // Require Metadata for images > R rating.
-    filters.push(`(nsfwLevel < ${NsfwLevel.R} OR "userId" = ${currentUserId} OR hasMeta = true)`);
+    filters.push(`("userId" = ${currentUserId} OR requiresMeta != true)`);
   }
 
   if (postId) {
@@ -1806,6 +1807,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   */
 
   if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
+  if (withoutMeta) {
+    filters.push(`(requiresMeta = true)`);
+  }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
   if (isModerator) {

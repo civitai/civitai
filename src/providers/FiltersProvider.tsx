@@ -83,6 +83,7 @@ const imageFilterSchema = z.object({
   baseModels: z.enum(constants.baseModels).array().optional(),
   remixesOnly: z.boolean().optional(),
   nonRemixesOnly: z.boolean().optional(),
+  withoutMeta: z.boolean().optional(),
 });
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;

@@ -9,6 +9,7 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
+import { isValidAIGeneration } from '~/utils/image-utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
@@ -150,6 +151,7 @@ export type SearchBaseImage = {
   availability?: Availability;
   poi: boolean;
   acceptableMinor?: boolean;
+  requiresMeta?: boolean;
 };
 
 type Metrics = {
@@ -241,6 +243,15 @@ const transformData = async ({
         nsfwLevel: imageRecord.nsfwLevel,
         tagIds: imageTags[imageRecord.id]?.tags ?? [],
         flags: Object.keys(flags).length > 0 ? flags : undefined,
+        // Basically, we'll make this value on the fly for filtering only.
+        // No need to expose this value to the FE.
+        requiresMeta: !isValidAIGeneration({
+          nsfwLevel: imageRecord.nsfwLevel,
+          id: imageRecord.id,
+          meta: !imageRecord.requiresMeta ? { prompt: 'valid' } : undefined,
+          tools: imageTools,
+          resources: modelVersionIdsAuto,
+        }),
       };
     })
     .filter(isDefined);
@@ -354,6 +365,13 @@ export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor(
             ELSE FALSE
           END
         ) AS "hasPositivePrompt",
+        (
+          CASE
+            WHEN i."nsfwLevel" < 8 OR (i.meta IS NOT NULL AND jsonb_typeof(i.meta) != 'null')
+            THEN FALSE
+            ELSE TRUE
+          END
+        ) AS "requiresMeta",
         (
           CASE
             WHEN i.meta->>'civitaiResources' IS NOT NULL

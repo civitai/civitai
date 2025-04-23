@@ -68,6 +68,7 @@ const imagesEndpointSchema = z.object({
   type: z.nativeEnum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray(z.enum(constants.baseModels)).optional(),
   withMeta: booleanString().optional(),
+  withoutMeta: booleanString().optional(),
 });
 
 export default PublicEndpoint(async function handler(req: NextApiRequest, res: NextApiResponse) {
