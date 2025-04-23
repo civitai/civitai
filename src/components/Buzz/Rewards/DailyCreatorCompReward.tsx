@@ -273,57 +273,65 @@ export function DailyCreatorCompReward() {
                   <Loader />
                 </Center>
               ) : filteredResources.length > 0 ? (
-                <ScrollArea.Autosize maxHeight={400}>
-                  <Stack spacing={8} px="md">
-                    {filteredResources.map((version) => {
-                      const isSelected = filteredVersionIds.includes(version.id);
+                <div>
+                  <ScrollArea.Autosize
+                    maxHeight={400}
+                    style={{ width: '100%', overflow: 'hidden' }}
+                    type="auto"
+                    className="[&>*]:w-full"
+                  >
+                    <Stack spacing={8} px="md">
+                      {filteredResources.map((version) => {
+                        const isSelected = filteredVersionIds.includes(version.id);
 
-                      return (
-                        <UnstyledButton
-                          key={version.id}
-                          py={4}
-                          px={8}
-                          sx={(theme) => ({
-                            borderRadius: theme.radius.sm,
-                            backgroundColor: isSelected
-                              ? theme.fn.rgba(theme.colors.yellow[7], 0.1)
-                              : undefined,
-                          })}
-                          onClick={() => {
-                            setFilteredVersionIds((ids) =>
-                              isSelected
-                                ? ids.filter((id) => id !== version.id)
-                                : [...ids, version.id]
-                            );
-                            setSearch('');
-                          }}
-                        >
-                          <Group position="apart" spacing={8} noWrap>
-                            <Stack spacing={0}>
-                              <Text size="sm" weight="bold" lineClamp={1}>
-                                {version.modelName}
-                              </Text>
-                              <Text size="xs" color="dimmed" lineClamp={1}>
-                                {version.name}
-                              </Text>
-                            </Stack>
-                            <Group spacing={4} noWrap>
-                              <CurrencyIcon currency={Currency.BUZZ} size={16} />
-                              <Text
-                                size="sm"
-                                color="yellow.7"
-                                weight="bold"
-                                style={{ fontVariant: 'tabular-nums' }}
-                              >
-                                {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
-                              </Text>
+                        return (
+                          <UnstyledButton
+                            key={version.id}
+                            py={4}
+                            px={8}
+                            sx={(theme) => ({
+                              borderRadius: theme.radius.sm,
+                              backgroundColor: isSelected
+                                ? theme.fn.rgba(theme.colors.yellow[7], 0.1)
+                                : undefined,
+                            })}
+                            onClick={() => {
+                              setFilteredVersionIds((ids) =>
+                                isSelected
+                                  ? ids.filter((id) => id !== version.id)
+                                  : [...ids, version.id]
+                              );
+                              setSearch('');
+                            }}
+                            w="100%"
+                          >
+                            <Group position="apart" spacing={8} noWrap>
+                              <Stack spacing={0}>
+                                <Text size="sm" weight="bold" lineClamp={1}>
+                                  {version.modelName}
+                                </Text>
+                                <Text size="xs" color="dimmed" lineClamp={1}>
+                                  {version.name}
+                                </Text>
+                              </Stack>
+                              <Group spacing={4} noWrap>
+                                <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                                <Text
+                                  size="sm"
+                                  color="yellow.7"
+                                  weight="bold"
+                                  style={{ fontVariant: 'tabular-nums' }}
+                                >
+                                  {formatCurrencyForDisplay(version.totalSum, Currency.BUZZ)}
+                                </Text>
+                              </Group>
                             </Group>
-                          </Group>
-                        </UnstyledButton>
-                      );
-                    })}
-                  </Stack>
-                </ScrollArea.Autosize>
+                          </UnstyledButton>
+                        );
+                      })}
+                    </Stack>
+                  </ScrollArea.Autosize>
+                </div>
               ) : (
                 <Center px="md">
                   <NoData

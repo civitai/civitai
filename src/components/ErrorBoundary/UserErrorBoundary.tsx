@@ -49,7 +49,7 @@ class UserErrorBoundary extends Component<Props, State> {
         <ul className="mt-1 flex flex-wrap gap-2">
           {this.options.map(({ key, url }, i) => (
             <Fragment key={key}>
-              <Anchor component={NextLink} href={url} className="capitalize leading-none">
+              <Anchor component="a" href={url} className="capitalize leading-none">
                 {key}
               </Anchor>
               {i !== this.options.length - 1 && <Divider orientation="vertical" />}

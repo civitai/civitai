@@ -52,7 +52,7 @@ export function ImageMeta({ imageId }: { imageId: number }) {
           </CopyButton>
         ) : null;
       default:
-        return <span>{meta[key]}</span>;
+        return typeof meta[key] !== 'object' ? <span>{meta[key]}</span> : null;
     }
   }
 
