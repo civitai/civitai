@@ -538,7 +538,7 @@ const clavataTagConfidenceRequirements: Record<string, number> = {
   'graphic language': 70,
   'light violence': 70,
   hypnosis: 70,
-  minimum: 35,
+  minimum: 50,
 };
 const clavataNsfwTags = ['pg', 'pg-13', 'r', 'x', 'xxx'];
 function processClavataTags(tags: IncomingTag[]) {
@@ -552,6 +552,11 @@ function processClavataTags(tags: IncomingTag[]) {
   // Filter out tags
   let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
   tags = tags.filter((tag) => {
+    // Remove tags below confidence threshold
+    const requiredConfidence =
+      clavataTagConfidenceRequirements[tag.tag] ?? clavataTagConfidenceRequirements.minimum;
+    if (tag.confidence < requiredConfidence) return false;
+
     // Remove nsfw tags
     const nsfwLevelIndex = clavataNsfwTags.indexOf(tag.tag);
     if (nsfwLevelIndex !== -1) {
@@ -559,14 +564,12 @@ function processClavataTags(tags: IncomingTag[]) {
       return false;
     }
 
-    // Remove tags below confidence threshold
-    const requiredConfidence =
-      clavataTagConfidenceRequirements[tag.tag] ?? clavataTagConfidenceRequirements.minimum;
-    return tag.confidence >= requiredConfidence;
+    return true;
   });
 
   // Add back nsfw tag
   tags.push(highestNsfwTag);
+  console.log(tags);
 
   return tags;
 }
