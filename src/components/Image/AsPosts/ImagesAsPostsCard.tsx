@@ -397,7 +397,7 @@ export function ImagesAsPostsCard({
                               placeholder="empty"
                               wrapperProps={{ style: { zIndex: 1 } }}
                               skip={getSkipValue(image)}
-                              fadeIn
+                              // fadeIn
                               className="z-[1] object-cover"
                             />
                           )}
@@ -495,7 +495,7 @@ export function ImagesAsPostsCard({
                                         placeholder="empty"
                                         wrapperProps={{ style: { zIndex: 1 } }}
                                         skip={getSkipValue(image)}
-                                        fadeIn
+                                        // fadeIn
                                         className="z-[1] object-cover"
                                       />
                                     )}
