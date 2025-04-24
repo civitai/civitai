@@ -183,14 +183,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     useEffect(() => {
       const videoElem = ref.current;
-      if (!videoElem || threshold === null) return;
+      if (!videoElem || threshold === null || !options?.anim) return;
       if (!observerRef.current) {
         observerRef.current = new IntersectionObserver(
           ([{ isIntersecting, intersectionRatio, target }]) => {
             const elem = target as HTMLVideoElement;
-            if (!options?.anim) return;
             if (isIntersecting && intersectionRatio >= threshold) {
-              elem.play().catch(console.error);
+              elem.play();
             } else if (!isIntersecting || (isIntersecting && intersectionRatio < threshold)) {
               elem.pause();
             }
@@ -223,12 +222,12 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       // extra div wrapper to prevent positioning errors of parent components that make their child absolute
       <div
         ref={containerRef}
+        {...wrapperProps}
         className={cx(
           classes.iosScroll,
-          wrapperProps?.className,
-          'overflow-hidden relative flex items-center justify-center h-full'
+          wrapperProps?.className ? wrapperProps?.className : 'h-full',
+          'overflow-hidden relative flex items-center justify-center'
         )}
-        {...wrapperProps}
       >
         <video
           key={videoUrl}
