@@ -183,7 +183,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     useEffect(() => {
       const videoElem = ref.current;
-      if (!videoElem || threshold === null || !options?.anim) return;
+      if (!videoElem || threshold === null || !options?.anim || !loaded) return;
       if (!observerRef.current) {
         observerRef.current = new IntersectionObserver(
           ([{ isIntersecting, intersectionRatio, target }]) => {
@@ -201,7 +201,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       return () => {
         observerRef.current?.unobserve(videoElem);
       };
-    }, [threshold, options?.anim]);
+    }, [threshold, options?.anim, loaded]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
