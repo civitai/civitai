@@ -90,52 +90,54 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 
   Prohibited Content Includes (but is not limited to):
 
-- (a) Content involving real individuals or minors (under 18) in any mature or suggestive context, including but not limited to:
+- (a) Content involving real individuals or minors (under 18) in any sexualized context or context that insinuates, or portrays sexual intent, including but not limited to:
   - All stylized, anime, or cartoon content depicting children in inappropriate or sexualized situations. For a more detailed explanation, please [review our safety center for guidelines on depicting the likeness of real people and depicting minors](https://civitai.com/safety).
   - "Loli", "Lolicon", "Shota", or "Shotacon" content.
   - Photorealistic minors in any context.
 
 - (b) Illegal or violent activities, including:
-  - Depictions of incest.
+  - Depictions of incest, including sexual activity between immediate or close biological family members.
   - Child abuse, exploitation, or endangerment.
   - Rape, sexual violence, or domestic abuse.
   - Depictions of human death, brutal violence, or graphic injuries.
   - Bestiality.
 
-- (c) The following content depicted in any mature or suggestive context, including but not limited to;
-  - Firearms aimed at or pointed toward individuals.
-  - Mind-altered states including being drunk, drugged, under hypnosis, or mind control.
+- (c) The following content depicting sexual activity or context that insinuates, or portrays sexual intent;
+  - Weapons aimed at or pointed toward individuals.
   - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).
+  - Vomit.
 
-- (d) Bodily excretions and related fetishes, including:
+- (d) Content depicting sexual activity while in a mind-altered state, including;
+  - Being drunk, drugged, under hypnosis, or mind control.
+
+- (e) The depiction of the following bodily excretions and related content, regardless of context;
   - Urine.
   - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
-  - Vomit.
   - Menstruation.
-  - Diapers (regardless of context).
+  - Diapers.
 
-- (e) Self-harm, body image disorders, or promotion of dangerous behavior:
+- (f) Self-harm, body image disorders, or promotion of dangerous behavior:
   - Cutting, mutilation, or suicide themes.
   - Depictions of anorexia, bulimia, or other disordered eating.
 
-- (f) Content that promotes hate, harm, or extremist ideologies, including:
+- (g) Content that promotes hate, harm, or extremist ideologies, including:
   - Hate speech or imagery targeting groups or individuals.
   - Extremist propaganda or incitement to violence.
 
-- (g) Misleading or impersonated content:
+- (h) Misleading or impersonated content:
   - Falsely labeled content claiming to be from another creator.
   - Impersonation of real individuals or creators.
   - Bounties requesting likenesses of real people, living or deceased.
 
-- (h) Nudity-manipulating tools or AI workflows:
+- (i) Nudity-manipulating tools or AI workflows:
   - AI workflows, models, or tools designed with the intention of removing clothing or otherwise "nudifying" real individuals.
 
 Any content that violates one of the following terms above but has been self-censored using black bars, blurring, or other means may also be flagged or removed.
 
 In addition to the categories of explicitly prohibited content above, certain types of content are subject to additional requirements to ensure community safety, legal compliance, and content authenticity.
 
-- (i) Metadata Requirement for Mature or Suggestive Content:
-  - Any mature or sexually suggestive content must be accompanied by AI generation metadata. At a minimum, this must include the prompt used. Where possible, additional metadata such as model name, sampler, seed, and any other available generation parameters should also be provided.
+- (j) Metadata Requirement for sexualized content, or content that insinuates, or portrays sexual intent:
+  - Such content must be accompanied by AI generation metadata. At a minimum, this must include the prompt used. Where possible, additional metadata such as model name, sampler, seed, and any other available generation parameters should also be provided.
 
 - 9.7 **Reporting and Appeals.** You are encouraged to report any inappropriate User Content that violate these Terms or our published policies. Reports can be submitted through our standard reporting mechanism, and should include relevant information to assist in the investigation. We reserve the right to suspend or terminate the accounts of Users who are found to be repeatedly violating these Terms or our published policies. Users can request an explanation or appeal a moderation decision by submitting an appeal through our Appeal Form for further review.
 
