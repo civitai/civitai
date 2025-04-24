@@ -4,17 +4,17 @@ import { getDownloadFilename } from '~/server/services/file.service';
 import { getDownloadUrl } from '~/utils/delivery-worker';
 
 const byteMap: Record<number, string> = {
-  96: '14b',
-  200: '14b',
-  160: '14b 720p',
-  168: '1.3b',
-  128: 'i2v 14B 720p',
-  72: 'i2v 14B',
-  120: '1.3b 720p', // maybe not
-  240: '1.3b t2v',
-  32: 'i2v', // 14b?
-  24: 'i2v 14b',
   16: '14b',
+  24: '14b;;i2v',
+  32: ';;i2v', // 14b?
+  72: '14B;;i2v',
+  96: '14b',
+  120: '1.3b;720p', // maybe not
+  128: '14B;720p;i2v',
+  160: '14b;720p',
+  168: '1.3b',
+  200: '14b',
+  240: '1.3b;;t2v',
   // 0
 };
 
@@ -46,19 +46,19 @@ async function main() {
         },
       },
     },
-    take: 50,
+    // take: 5,
   });
 
   for (const mv of mvs) {
     // if (!mv) {
     //   console.error('Model version not found');
     // }
-    console.log('----------------------');
-    console.log(mv.id, ':', mv.model.name, '-', mv.name);
+    // console.log('----------------------');
+    // console.log(mv.id, ':', mv.model.name, '-', mv.name);
 
     const file = mv.files[0];
     if (!file) {
-      console.error('Model version has no files');
+      console.error('Model version has no files', mv.id);
       continue;
     }
 
@@ -79,16 +79,24 @@ async function main() {
       });
 
       if (!response.ok) {
-        console.log(`HTTP error! status: ${response.status}`);
+        console.log(`HTTP error! status: ${response.status}`, mv.id);
         continue;
       }
 
       const buffer = await response.arrayBuffer();
       // const bytes = new Uint8Array(buffer, 0, 1);
       const bytes = new Uint8Array(buffer);
-      console.log(Array.from(bytes), byteMap[bytes[0]] ?? String(bytes[0]));
+      // TODO check for 14b/1.3b, 720p, etc. in both names
+      console.log(
+        [
+          mv.id,
+          `${mv.model.name}:${mv.name}`,
+          Array.from(bytes).toString(),
+          byteMap[bytes[0]] ?? 'UNK',
+        ].join(';')
+      );
     } catch (e) {
-      console.error(e);
+      console.error(e, mv.id);
     }
   }
 }
