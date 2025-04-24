@@ -119,6 +119,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   - Urine.
   - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
   - Menstruation.
+  - Smegma.
   - Diapers.
 
 - (f) Self-harm, body image disorders, or promotion of dangerous behavior:
