@@ -154,7 +154,6 @@ export function GenerationFormContent() {
 
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
   const [sourceImage] = form.watch(['sourceImage']);
-  console.log({ sourceImage });
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);

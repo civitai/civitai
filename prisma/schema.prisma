@@ -2874,6 +2874,10 @@ model EcosystemCheckpoints {
   name String
 }
 
+model GenerationBaseModel {
+  baseModel String @id
+}
+
 model Club {
   id            Int     @id @default(autoincrement())
   userId        Int

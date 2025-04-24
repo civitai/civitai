@@ -87,7 +87,7 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
 
   return (
     <Embla
-      key={modelId}
+      key={modelVersionId}
       align={totalItems > slidesToShow ? 'start' : 'center'}
       slidesToScroll={1}
       withControls={totalItems > slidesToShow ? true : false}
