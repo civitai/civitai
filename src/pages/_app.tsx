@@ -256,7 +256,7 @@ function MyApp(props: CustomAppProps) {
 //     ...appProps,
 //   };
 // };
-
+const baseUrl = process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL;
 MyApp.getInitialProps = async (appContext: AppContext) => {
   const initialProps = await App.getInitialProps(appContext);
   const { req: request } = appContext.ctx;
@@ -283,12 +283,9 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   const session = token?.user ? { user: token.user as SessionUser } : null;
   const flags = getFeatureFlags({ user: session?.user, host: request?.headers.host });
 
-  const settings = await fetch(
-    `${process.env.NEXTAUTH_URL_INTERNAL ?? env.NEXT_PUBLIC_BASE_URL}/api/user/settings`,
-    {
-      headers: { ...request.headers } as HeadersInit,
-    }
-  ).then((res) => res.json() as UserSettingsSchema);
+  const settings = await fetch(`${baseUrl}/api/user/settings`, {
+    headers: { ...request.headers } as HeadersInit,
+  }).then((res) => res.json() as UserSettingsSchema);
   // Pass this via the request so we can use it in SSR
   if (session) {
     (appContext.ctx.req as any)['session'] = session;

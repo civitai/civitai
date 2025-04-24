@@ -4,8 +4,9 @@ import { IconPhoto, IconUpload, IconX } from '@tabler/icons-react';
 import dayjs from 'dayjs';
 import { DragEvent } from 'react';
 import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
-import { constants } from '~/server/common/constants';
+import { constants, isOrchestratorUrl } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
+import { mediaDropzoneData } from '~/store/post-image-transmitter.store';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
 
@@ -16,11 +17,12 @@ export function MediaDropzone({
   onDrop,
   error,
   ...dropzoneProps
-}: Omit<DropzoneProps, 'children' | 'onDropCapture'> & {
+}: Omit<DropzoneProps, 'children' | 'onDropCapture' | 'onDrop'> & {
   label?: string;
   description?: React.ReactNode;
   accept?: string[];
   error?: Error;
+  onDrop: (args: { file: File; meta?: Record<string, unknown> }[]) => void;
 }) {
   // #region [state]
   const settings = useMediaUploadSettingsContext();
@@ -36,17 +38,10 @@ export function MediaDropzone({
   // #region [handle drop]
   const handleDropCapture = async (e: DragEvent) => {
     const url = e.dataTransfer.getData('text/uri-list');
-    if (
-      !(
-        url.startsWith('https://orchestration.civitai.com') ||
-        url.startsWith('https://orchestration-stage.civitai.com')
-      )
-    )
-      return;
-    const blob = await fetchBlob(url);
-    if (!blob) return;
-    const file = new File([blob], url.substring(url.lastIndexOf('/')), { type: blob.type });
-    onDrop([file]);
+    const result = await mediaDropzoneData.getData(url);
+    if (!result) return;
+    const { file, data } = result;
+    onDrop([{ file, meta: data }]);
   };
   // #endregion
 
@@ -62,12 +57,17 @@ export function MediaDropzone({
     seconds > 60
       ? dayjs.duration(seconds, 'seconds').format(`mm [minutes (${seconds} seconds)]`)
       : `${seconds} seconds`;
+
+  function handleDrop(files: File[]) {
+    onDrop(files.map((file) => ({ file })));
+  }
+
   // #region [render]
   return (
     <div className="flex w-full flex-col gap-1">
       <Dropzone
         {...dropzoneProps}
-        onDrop={onDrop}
+        onDrop={handleDrop}
         onDropCapture={handleDropCapture}
         accept={accept}
       >

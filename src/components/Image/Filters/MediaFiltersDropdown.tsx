@@ -10,6 +10,7 @@ import {
   ScrollArea,
   Stack,
   useMantineTheme,
+  Tooltip,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp, IconFilter } from '@tabler/icons-react';
@@ -80,6 +81,7 @@ export function MediaFiltersDropdown({
   const filterLength =
     ('types' in mergedFilters && !hideMediaTypes ? mergedFilters.types?.length ?? 0 : 0) +
     (mergedFilters.withMeta ? 1 : 0) +
+    (mergedFilters.requiringMeta ? 1 : 0) +
     (mergedFilters.hidden ? 1 : 0) +
     (mergedFilters.fromPlatform ? 1 : 0) +
     (mergedFilters.hideManualResources ? 1 : 0) +
@@ -96,6 +98,7 @@ export function MediaFiltersDropdown({
     const reset = {
       types: undefined,
       withMeta: false,
+      requiringMeta: false,
       hidden: false,
       fromPlatform: false,
       notPublished: false,
@@ -207,6 +210,16 @@ export function MediaFiltersDropdown({
           >
             <span>Metadata only</span>
           </FilterChip>
+          {currentUser && (
+            <FilterChip
+              checked={mergedFilters.requiringMeta}
+              onChange={(checked) => handleChange({ requiringMeta: checked })}
+            >
+              <Tooltip label="Only shows your images that are missing metadata">
+                <span>Requiring Metadata</span>
+              </Tooltip>
+            </FilterChip>
+          )}
           {isFeed && currentUser && (
             <>
               <FilterChip

@@ -1,7 +1,6 @@
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
-import { EdgeVideoSettingsProvider } from '~/components/EdgeMedia/EdgeVideoSettingsProvider';
 import { ImageDetailProvider } from '~/components/Image/Detail/ImageDetailProvider';
 import { ImageDetail2 } from '~/components/Image/DetailV2/ImageDetail2';
 import { imagesQueryParamSchema } from '~/components/Image/image.utils';
@@ -36,9 +35,7 @@ export default Page(
 
     return (
       <ImageDetailProvider imageId={imageId} filters={filters}>
-        <EdgeVideoSettingsProvider skipManualPlay>
-          <ImageDetail2 />
-        </EdgeVideoSettingsProvider>
+        <ImageDetail2 />
       </ImageDetailProvider>
     );
   },

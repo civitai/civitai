@@ -1643,6 +1643,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
     excludedTagIds,
     disablePoi,
     disableMinor,
+    requiringMeta,
     // TODO check the unused stuff in here
   } = input;
   let { browsingLevel, userId } = input;
@@ -1660,9 +1661,6 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       // Avoids blocked resources to the public
       `((blockedFor IS NULL) OR "userId" = ${currentUserId})`
     );
-
-    // Require Metadata for images > R rating.
-    filters.push(`(nsfwLevel < ${NsfwLevel.R} OR "userId" = ${currentUserId} OR hasMeta = true)`);
   }
 
   if (postId) {
@@ -1796,6 +1794,9 @@ async function getImagesFromSearch(input: ImageSearchInput) {
   */
 
   if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
+  if (requiringMeta) {
+    filters.push(`(blockedFor = ${BlockedReason.AiNotVerified})`);
+  }
   if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
 
   if (isModerator) {
@@ -1919,7 +1920,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       // check for good data
       if (!hit.url) return false;
       // filter out items flagged with minor unless it's the owner or moderator
-      if (hit.minor) return hit.userId === currentUserId || isModerator;
+      if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
 
@@ -4248,7 +4249,7 @@ export async function addImageTools({
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
   // Update these images if blocked:
-  const updated = await dbRead.image.updateManyAndReturn({
+  const updated = await dbWrite.image.updateManyAndReturn({
     where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
     data: {
       blockedFor: null,

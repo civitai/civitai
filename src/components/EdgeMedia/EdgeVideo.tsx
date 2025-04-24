@@ -23,7 +23,6 @@ import { useLocalStorage, useTimeout } from '@mantine/hooks';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
-import { useEdgeVideoSettingsContext } from '~/components/EdgeMedia/EdgeVideoSettingsProvider';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -49,10 +48,7 @@ export type EdgeVideoRef = {
 };
 
 type State = {
-  loaded: boolean;
   muted: boolean;
-  isPlaying: boolean;
-  showPlayIndicator: boolean;
 };
 
 export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
@@ -81,14 +77,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     forwardedRef
   ) => {
     const ref = useRef<HTMLVideoElement | null>(null);
-    const settings = useEdgeVideoSettingsContext();
     const containerRef = useRef<HTMLDivElement | null>(null);
     const [state, setState] = useState<State>({
-      loaded: false,
       muted: initialMuted,
-      isPlaying: false,
-      showPlayIndicator: false,
     });
+    const [loaded, setLoaded] = useState(false);
+    const [showPlayIndicator, setShowPlayIndicator] = useState(false);
+    const [isPlaying, setIsPlaying] = useState(false);
     const [volume, setVolume] = useLocalStorage({
       key: 'global-volume',
       defaultValue: state.muted ? 0 : 0.5,
@@ -113,8 +108,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           ref.current.pause();
         }
 
-        setState((current) => ({ ...current, showPlayIndicator: true }));
-        setTimeout(() => setState((current) => ({ ...current, showPlayIndicator: false })), 500);
+        setShowPlayIndicator(true);
+        setTimeout(() => setShowPlayIndicator(false), 500);
       }
     }, [controls, html5Controls]);
 
@@ -133,7 +128,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     const handleLoadedData = useCallback((e: React.SyntheticEvent<HTMLVideoElement>) => {
       props.onLoadedData?.(e);
-      setState((current) => ({ ...current, loaded: true }));
+      setLoaded(true);
       e.currentTarget.style.opacity = '1';
     }, []);
 
@@ -159,10 +154,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       [setVolume]
     );
 
-    const showCustomControls = state.loaded && controls && !html5Controls;
+    const showCustomControls = loaded && controls && !html5Controls;
     const enableAudioControl = ref.current && hasAudio(ref.current);
 
-    if (!initialMuted && state.loaded && ref.current) ref.current.volume = volume;
+    if (!initialMuted && loaded && ref.current) ref.current.volume = volume;
 
     useEffect(() => {
       // Hard set the width to 100% for Safari because it doesn't render in full size otherwise ¯\_(ツ)_/¯ -Manuel
@@ -188,14 +183,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     useEffect(() => {
       const videoElem = ref.current;
-      if (!videoElem || threshold === null) return;
+      if (!videoElem || threshold === null || !options?.anim || !loaded) return;
       if (!observerRef.current) {
         observerRef.current = new IntersectionObserver(
           ([{ isIntersecting, intersectionRatio, target }]) => {
             const elem = target as HTMLVideoElement;
-            if (!options?.anim) return;
-            if (isIntersecting && intersectionRatio >= threshold && !settings?.skipManualPlay) {
-              elem.play().catch(console.error);
+            if (isIntersecting && intersectionRatio >= threshold) {
+              elem.play();
             } else if (!isIntersecting || (isIntersecting && intersectionRatio < threshold)) {
               elem.pause();
             }
@@ -207,15 +201,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       return () => {
         observerRef.current?.unobserve(videoElem);
       };
-    }, [threshold, options?.anim]);
-
-    const [mouseOver, setMouseOver] = useState(false);
+    }, [threshold, options?.anim, loaded]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
         const [event] = e;
         (event.target as HTMLVideoElement).play();
-        setMouseOver(true);
+        // setMouseOver(true);
       },
       1000
     );
@@ -223,19 +215,19 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const handleMouseLeave: MouseEventHandler<HTMLVideoElement> = (e) => {
       e.currentTarget.pause();
       clear();
-      setMouseOver(false);
+      // setMouseOver(false);
     };
 
     const defaultPlayer = (
       // extra div wrapper to prevent positioning errors of parent components that make their child absolute
       <div
         ref={containerRef}
+        {...wrapperProps}
         className={cx(
           classes.iosScroll,
-          wrapperProps?.className,
-          'overflow-hidden relative flex items-center justify-center h-full'
+          wrapperProps?.className ? wrapperProps?.className : 'h-full',
+          'overflow-hidden relative flex items-center justify-center'
         )}
-        {...wrapperProps}
       >
         <video
           key={videoUrl}
@@ -247,28 +239,28 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           onLoad={onLoad}
           controls={html5Controls}
           onClick={handleTogglePlayPause}
-          onPlaying={() => setState((current) => ({ ...current, isPlaying: true }))}
-          onPause={() => setState((current) => ({ ...current, isPlaying: false }))}
+          onPlaying={() => setIsPlaying(true)}
+          onPause={() => setIsPlaying(false)}
           onVolumeChange={(e) => {
             !initialMuted ? handleVolumeChange(e.currentTarget.volume) : undefined;
           }}
           playsInline
           onMouseOver={!options?.anim ? handleMouseEnter : undefined}
           onMouseLeave={!options?.anim ? handleMouseLeave : undefined}
-          autoPlay={options?.anim}
+          autoPlay={!!(options?.anim && disablePoster)}
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture
-          preload="none"
+          preload="metadata"
           onError={onError}
           {...props}
         >
           {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}
           <source src={videoUrl} type="video/mp4" />
         </video>
-        {!options?.anim && !showCustomControls && !html5Controls && !mouseOver && (
+        {!options?.anim && !showCustomControls && !html5Controls && !isPlaying && (
           <IconPlayerPlayFilled
-            className={cx(classes.playButton, 'absolute-center pointer-events-none')}
+            className={cx(classes.playButton, 'absolute-center pointer-events-none z-10')}
           />
         )}
         {showCustomControls && (
@@ -280,11 +272,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
               size="lg"
               radius="xl"
             >
-              {state.isPlaying ? (
-                <IconPlayerPauseFilled size={16} />
-              ) : (
-                <IconPlayerPlayFilled size={16} />
-              )}
+              {isPlaying ? <IconPlayerPauseFilled size={16} /> : <IconPlayerPlayFilled size={16} />}
             </ActionIcon>
             <div className="flex flex-nowrap gap-4">
               {enableAudioControl && (
@@ -332,7 +320,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             </div>
           </div>
         )}
-        {state.showPlayIndicator && (
+        {showPlayIndicator && (
           <ThemeIcon className={classes.playIndicator} size={64} radius="xl" color="dark">
             {ref.current?.paused ? <IconPlayerPauseFilled /> : <IconPlayerPlayFilled />}
           </ThemeIcon>

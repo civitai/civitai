@@ -340,12 +340,15 @@ async function handleSuccess({
 
     // We now will mark images as poi / minor regardless of whether or not they're NSFW. This so that we know we need to hide from from
     // NSFW feeds.
-    const [{ poi, minor }] = await dbWrite.$queryRaw<{ poi: boolean; minor: boolean }[]>`
+    const [{ poi, minor, hasResource }] = await dbWrite.$queryRaw<
+      { poi: boolean; minor: boolean; hasResource: boolean }[]
+    >`
         WITH to_check AS (
           -- Check based on associated resources
           SELECT
             SUM(IIF(m.poi, 1, 0)) > 0 "poi",
-            SUM(IIF(m.minor, 1, 0)) > 0 "minor"
+            SUM(IIF(m.minor, 1, 0)) > 0 "minor",
+            true "hasResource"
           FROM "ImageResourceNew" ir
           JOIN "ModelVersion" mv ON ir."modelVersionId" = mv.id
           JOIN "Model" m ON m.id = mv."modelId"
@@ -354,7 +357,8 @@ async function handleSuccess({
           -- Check based on associated bounties
           SELECT
             SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false "minor"
+            false "minor",
+            false "hasResource"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "Bounty" b ON ic."entityType" = 'Bounty' AND b.id = ic."entityId"
@@ -363,23 +367,25 @@ async function handleSuccess({
           -- Check based on associated bounty entries
           SELECT
             SUM(IIF(b.poi, 1, 0)) > 0 "poi",
-            false "minor"
+            false "minor",
+            false "hasResource"
           FROM "Image" i
           JOIN "ImageConnection" ic ON ic."imageId" = i.id
           JOIN "BountyEntry" be ON ic."entityType" = 'BountyEntry' AND be.id = ic."entityId"
           JOIN "Bounty" b ON b.id = be."bountyId"
           WHERE ic."imageId" = ${image.id}
         )
-        SELECT bool_or(poi) "poi", bool_or(minor) "minor" FROM to_check;
+        SELECT bool_or(poi) "poi", bool_or(minor) "minor", bool_or("hasResource") "hasResource" FROM to_check;
       `;
 
     if (minor) {
+      if (!reviewKey && nsfw) reviewKey = 'minor';
       reviewKey = 'minor';
       // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
       data.minor = true;
     }
     if (poi) {
-      reviewKey = 'poi';
+      if (!reviewKey && nsfw) reviewKey = 'poi';
       // Makes this image tied to POI.
       data.poi = true;
     }
@@ -414,6 +420,8 @@ async function handleSuccess({
         nsfwLevel: Math.max(image.nsfwLevel, nsfw ? NsfwLevel.R : NsfwLevel.PG),
         meta: image.meta as ImageMetadata | VideoMetadata,
         tools: image.tools,
+        // Avoids blocking images that we know are AI generated with some resources.
+        resources: hasResource ? [1] : [],
       })
     ) {
       data.ingestion = ImageIngestionStatus.Blocked;
@@ -538,7 +546,8 @@ const clavataTagConfidenceRequirements: Record<string, number> = {
   'graphic language': 70,
   'light violence': 70,
   hypnosis: 70,
-  minimum: 35,
+  minimum: 51,
+  minimumNsfw: 51,
 };
 const clavataNsfwTags = ['pg', 'pg-13', 'r', 'x', 'xxx'];
 function processClavataTags(tags: IncomingTag[]) {
@@ -552,17 +561,23 @@ function processClavataTags(tags: IncomingTag[]) {
   // Filter out tags
   let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
   tags = tags.filter((tag) => {
-    // Remove nsfw tags
     const nsfwLevelIndex = clavataNsfwTags.indexOf(tag.tag);
-    if (nsfwLevelIndex !== -1) {
+    const isNsfwLevel = nsfwLevelIndex !== -1;
+
+    // Remove tags below confidence threshold
+    const minimumConfidence = isNsfwLevel
+      ? clavataTagConfidenceRequirements.minimumNsfw
+      : clavataTagConfidenceRequirements.minimum;
+    const requiredConfidence = clavataTagConfidenceRequirements[tag.tag] ?? minimumConfidence;
+    if (tag.confidence < requiredConfidence) return false;
+
+    // Remove nsfw tags
+    if (isNsfwLevel) {
       if (nsfwLevelIndex > clavataNsfwTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
       return false;
     }
 
-    // Remove tags below confidence threshold
-    const requiredConfidence =
-      clavataTagConfidenceRequirements[tag.tag] ?? clavataTagConfidenceRequirements.minimum;
-    return tag.confidence >= requiredConfidence;
+    return true;
   });
 
   // Add back nsfw tag
@@ -847,7 +862,7 @@ const reviewConditions: ReviewCondition[] = [
     reviewer: 'knights',
   },
   {
-    condition: (tag) => tag.tag === 'celebrity',
+    condition: (tag) => env.MODERATION_KNIGHT_TAGS.includes(tag.tag),
     reviewer: 'knights',
   },
 ];

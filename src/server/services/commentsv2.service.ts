@@ -166,7 +166,7 @@ export async function getCommentsThreadDetails2({
     depth?: number;
   }): CommentThread {
     const allComments = comments.filter(
-      (comment) => comment.threadId === thread.id && !excludedUserIds?.includes(comment.user.id)
+      (comment) => comment.threadId === thread.id // && !excludedUserIds?.includes(comment.user.id)
     );
     const filtered = allComments.filter((comment) => comment.hidden === hidden);
     const hiddenCount = !hidden ? allComments.length - filtered.length : 0;
@@ -184,6 +184,8 @@ export async function getCommentsThreadDetails2({
     ...combineThreadWithComments(mainThread),
     children: childThreads.map(combineThreadWithComments),
   };
+
+  // console.log(result);
 
   return result;
 }

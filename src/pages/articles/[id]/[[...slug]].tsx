@@ -1,5 +1,6 @@
 import {
   ActionIcon,
+  Alert,
   Anchor,
   AspectRatio,
   Badge,
@@ -366,7 +367,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                       cryCount: article.stats?.cryCountAllTime,
                     }}
                     targetUserId={article.user.id}
-                    
                   />
                   {actionButtons}
                 </Group>
@@ -380,7 +380,17 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               />
             </Grid.Col>
           </Grid>
-          <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+          {article.id === 13632 ? ( // TODO: REMOVE THIS BANDAID.
+            <Alert mt="md" title="Comments are disabled" color="yellow">
+              <Text>
+                We have temporarily disabled comments for this article due to a bug. Please note, no data has been lost and comments will come back to what they were soon.
+                <br/>
+                Please check back later. 
+              </Text>
+            </Alert> 
+          ) : ( 
+            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+          )}
         </Container>
       </SensitiveShield>
     </>
