@@ -247,7 +247,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           playsInline
           onMouseOver={!options?.anim ? handleMouseEnter : undefined}
           onMouseLeave={!options?.anim ? handleMouseLeave : undefined}
-          // autoPlay={options?.anim}
+          autoPlay={!!(options?.anim && disablePoster)}
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture
