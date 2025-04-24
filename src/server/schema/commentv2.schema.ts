@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { constants } from '~/server/common/constants';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 
 export type CommentConnectorInput = z.infer<typeof commentConnectorSchema>;
@@ -27,9 +28,11 @@ export const upsertCommentv2Schema = commentConnectorSchema.extend({
   id: z.number().optional(),
   content: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
-  }).refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  })
+    .refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty')
+    .refine((data) => data.length <= constants.comments.maxLength, 'Comment content too long'),
   nsfw: z.boolean().optional(),
   tosViolation: z.boolean().optional(),
 });

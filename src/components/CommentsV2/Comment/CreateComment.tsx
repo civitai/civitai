@@ -60,9 +60,10 @@ export function CreateComment({
       <Alert color="yellow" icon={<IconLock />}>
         <Center>
           {isMuted
-            ? 'You cannot add comments because you have been muted' :
-            isLocked ? 'This thread has been locked' :
-          'Civitai is currently in read-only mode'}
+            ? 'You cannot add comments because you have been muted'
+            : isLocked
+            ? 'This thread has been locked'
+            : 'Civitai is currently in read-only mode'}
         </Center>
       </Alert>
     );
