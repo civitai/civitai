@@ -188,11 +188,6 @@ export const getCommentsThreadDetailsHandler = async ({
     const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
     const excludedUserIds = [...hiddenUsers, ...blockedByUsers, ...blockedUsers];
 
-    // TODO: Remove this Band-Aid:
-    if (input.entityId === 13632 && input.entityType === 'article') {
-      throw new Error('Comments for this article temporarily disabled');
-    }
-    
     return await getCommentsThreadDetails2({ ...input, excludedUserIds });
   } catch (error) {
     throw throwDbError(error);

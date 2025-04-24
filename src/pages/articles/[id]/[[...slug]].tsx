@@ -1,6 +1,5 @@
 import {
   ActionIcon,
-  Alert,
   Anchor,
   AspectRatio,
   Badge,
@@ -380,17 +379,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               />
             </Grid.Col>
           </Grid>
-          {article.id === 13632 ? ( // TODO: REMOVE THIS BANDAID.
-            <Alert mt="md" title="Comments are disabled" color="yellow">
-              <Text>
-                We have temporarily disabled comments for this article due to a bug. Please note, no data has been lost and comments will come back to what they were soon.
-                <br/>
-                Please check back later. 
-              </Text>
-            </Alert> 
-          ) : ( 
-            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
-          )}
+          <ArticleDetailComments articleId={article.id} userId={article.user.id} />
         </Container>
       </SensitiveShield>
     </>
