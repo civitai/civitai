@@ -61,6 +61,8 @@ export function PlayerCard({
   const progression = calculateLevelProgression(exp);
   const rankExplanation = ranksExplanation[rank.type];
 
+  const remainingSmites = MAX_SMITE_COUNT - smites;
+
   return (
     <Paper className={clsx('flex items-center gap-4', className)} {...paperProps}>
       <UserAvatar user={user} size="xl" radius={999} />
@@ -80,7 +82,7 @@ export function PlayerCard({
 
           {smites < MAX_SMITE_COUNT && (
             <Tooltip
-              label={`Receive ${MAX_SMITE_COUNT - smites} more smite and it's game over!`}
+              label={`Receive ${remainingSmites} more ${remainingSmites === 1 ? 'smite' : 'smites'} and it's game over!`}
               withinPortal
             >
               <div className="flex flex-nowrap items-center">

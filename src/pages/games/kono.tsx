@@ -117,7 +117,7 @@ export default Page(
           links={[{ rel: 'canonical', href: '/games/kono' }]}
         />
         <IsClient>
-          {!isLoading && !playerData && !joined ? (
+          {(!isLoading && !playerData) || !joined ? (
             <NewOrderJoin />
           ) : isLoading ? (
             <PageLoader />
@@ -125,16 +125,16 @@ export default Page(
             <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-dark-9 p-4 md:flex-row md:p-0">
               {isLevelingUp && <LevelUp />}
               <NewOrderSidebar />
-              <div className="flex size-full p-0 md:p-4 items-center justify-center gap-4 overflow-hidden md:h-auto">
+              <div className="flex size-full items-center justify-center gap-4 overflow-hidden p-0 md:h-auto md:p-4">
                 {loadingImagesQueue ? (
                   <Skeleton className="h-1/2 w-full max-w-sm p-4" visible animate />
                 ) : currentImage ? (
                   <div className="flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
-                    <ImageGuard2 image={currentImage}>
+                    <ImageGuard2 image={currentImage} explain={false}>
                       {() => (
                         <div
                           className={clsx(
-                            'relative flex max-h-[75%] my-auto max-w-full items-center justify-center md:my-0'
+                            'relative my-auto flex max-h-[75%] max-w-full items-center justify-center md:my-0'
                           )}
                         >
                           {currentUser?.isModerator && (
@@ -145,9 +145,7 @@ export default Page(
                           )}
                           <EdgeMedia2
                             src={currentImage.url}
-                            className={clsx(
-                              'max-w-full rounded-lg h-full object-contain',
-                            )}
+                            className={clsx('h-full max-w-full rounded-lg object-contain')}
                             type="image"
                             width={700}
                             contain
