@@ -103,7 +103,8 @@ import {
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
-import { parsePromptMetadata } from '~/utils/metadata';
+import { fetchBlobAsFile } from '~/utils/file-utils';
+import { getParsedExifData, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
@@ -152,6 +153,8 @@ export function GenerationFormContent() {
     trpc.generation.getWorkflowDefinitions.useQuery();
 
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
+  const [sourceImage] = form.watch(['sourceImage']);
+  console.log({ sourceImage });
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -366,6 +369,21 @@ export function GenerationFormContent() {
     activeTour,
     loadingGeneratorData,
   ]); // These are the dependencies that make it work, please only update if you know what you're doing
+
+  const [minDenoise, setMinDenoise] = useState(0);
+  useEffect(() => {
+    if (sourceImage)
+      fetchBlobAsFile(sourceImage.url).then((file) => {
+        if (file)
+          getParsedExifData(file).then((data) => {
+            const min = data ? 0 : 0.5;
+            const denoise = form.getValues('denoise') ?? 0.4;
+            if (min > denoise) form.setValue('denoise', 0.65);
+            setMinDenoise(min);
+          });
+      });
+    else setMinDenoise(0);
+  }, [sourceImage, form]);
 
   return (
     <Form
@@ -1152,13 +1170,7 @@ export function GenerationFormContent() {
                             <InputNumberSlider
                               name="denoise"
                               label="Denoise"
-                              min={0}
-                              // min={
-                              //   !remixOfId
-                              //     ? browsingSettingsAddons.settings.generationMinValues?.denoise ??
-                              //       0
-                              //     : 0
-                              // }
+                              min={minDenoise}
                               max={isTxt2Img ? 0.75 : 1}
                               step={0.05}
                             />
