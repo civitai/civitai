@@ -1,6 +1,6 @@
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { z } from 'zod';
-import { CacheTTL } from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 
 import { ReviewFilter, ReviewSort } from '~/server/common/enums';
 import { RateLimit } from '~/server/middleware.trpc';
@@ -36,9 +36,11 @@ export const commentUpsertInput = z.object({
   parentId: z.number().nullish(),
   content: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'span'],
-  }).refine((data) => {
-    return data && data.length > 0 && data !== '<p></p>';
-  }, 'Cannot be empty'),
+  })
+    .refine((data) => {
+      return data && data.length > 0 && data !== '<p></p>';
+    }, 'Cannot be empty')
+    .refine((data) => data.length <= constants.comments.maxLength, 'Comment content too long'),
   hidden: z.boolean().nullish(),
 });
 

@@ -378,16 +378,17 @@ async function handleSuccess({
         SELECT bool_or(poi) "poi", bool_or(minor) "minor", bool_or("hasResource") "hasResource" FROM to_check;
       `;
 
+    if (poi) {
+      if (!reviewKey && nsfw) reviewKey = 'poi';
+      // Makes this image tied to POI.
+      data.poi = true;
+    }
+
     if (minor) {
       if (!reviewKey && nsfw) reviewKey = 'minor';
       reviewKey = 'minor';
       // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
       data.minor = true;
-    }
-    if (poi) {
-      if (!reviewKey && nsfw) reviewKey = 'poi';
-      // Makes this image tied to POI.
-      data.poi = true;
     }
 
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {

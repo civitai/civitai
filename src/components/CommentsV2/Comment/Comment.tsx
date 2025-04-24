@@ -254,6 +254,7 @@ export function CommentContent({
                   <RenderHtml
                     html={comment.content}
                     sx={(theme) => ({ fontSize: theme.fontSizes.sm })}
+                    allowCustomStyles={false}
                   />
                 </LineClamp>
               </Box>
