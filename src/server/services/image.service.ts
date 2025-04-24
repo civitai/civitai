@@ -4259,7 +4259,7 @@ export async function addImageTools({
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
   // Update these images if blocked:
-  const updated = await dbRead.image.updateManyAndReturn({
+  const updated = await dbWrite.image.updateManyAndReturn({
     where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
     data: {
       blockedFor: null,
