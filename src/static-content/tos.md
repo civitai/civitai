@@ -3,7 +3,7 @@ title: Terms of Service
 description: The Terms of Service for the model sharing platform Civitai
 ---
 
-Last Updated: 04/14/2025
+Last Updated: 04/24/2025
 
 Welcome, and thank you for your interest in Civit AI, Inc. (“Civitai,” “we,” or “us”) and our website at [www.civitai.com](https://www.civitai.com), along with our related websites, hosted applications, mobile or other downloadable applications, and other services provided by us (collectively, the “Service”). These Terms of Service are a legally binding contract between you and Civitai regarding your use of the Service.
 
@@ -105,7 +105,6 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
 - (c) The following content depicting sexual activity or context that insinuates, or portrays sexual intent;
   - Weapons aimed at or pointed toward individuals.
   - Promotion or depiction of illegal substances or regulated products (e.g., narcotics, pharmaceuticals).
-  - Vomit.
 
 - (d) Content depicting sexual activity while in a mind-altered state, including;
   - Being drunk, drugged, under hypnosis, or mind control.
@@ -115,6 +114,7 @@ ARBITRATION NOTICE. EXCEPT FOR CERTAIN KINDS OF DISPUTES DESCRIBED IN SECTION 18
   - Feces (scat, coprophagia, gaseous emission, object or lifeform being ejected from an anus, etc.)
   - Menstruation.
   - Diapers.
+  - Vomit.
 
 - (f) Self-harm, body image disorders, or promotion of dangerous behavior:
   - Cutting, mutilation, or suicide themes.
