@@ -379,12 +379,13 @@ async function handleSuccess({
       `;
 
     if (minor) {
+      if (!reviewKey && nsfw) reviewKey = 'minor';
       reviewKey = 'minor';
       // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
       data.minor = true;
     }
     if (poi) {
-      reviewKey = 'poi';
+      if (!reviewKey && nsfw) reviewKey = 'poi';
       // Makes this image tied to POI.
       data.poi = true;
     }

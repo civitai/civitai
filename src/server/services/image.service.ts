@@ -1930,7 +1930,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       // check for good data
       if (!hit.url) return false;
       // filter out items flagged with minor unless it's the owner or moderator
-      if (hit.minor) return hit.userId === currentUserId || isModerator;
+      if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
 
