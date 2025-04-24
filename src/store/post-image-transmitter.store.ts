@@ -76,10 +76,9 @@ function MediaDropzoneData() {
 
   async function getData(url: string, options?: { allowExternalUrl?: boolean }) {
     const { allowExternalUrl } = options ?? {};
-    const data = dictionary[url];
-    delete data[url];
+    const data = dictionary[url] ?? {};
+    delete dictionary[url];
     if (!allowExternalUrl && !isOrchestratorUrl(url)) return;
-    if (!data) return;
     const filename = url.substring(url.lastIndexOf('/')).split('?')[0];
     const file = await fetchBlobAsFile(url, filename);
     if (!file) return;
