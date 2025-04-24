@@ -9,7 +9,6 @@ import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
 import { generationFormWorkflowConfigurations } from '~/shared/constants/generation.constants';
 import { Availability } from '~/shared/utils/prisma/enums';
-import { isValidAIGeneration } from '~/utils/image-utils';
 import { removeEmpty } from '~/utils/object-helpers';
 import { isDefined } from '~/utils/type-guards';
 
