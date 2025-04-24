@@ -366,7 +366,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                       cryCount: article.stats?.cryCountAllTime,
                     }}
                     targetUserId={article.user.id}
-                    
                   />
                   {actionButtons}
                 </Group>
@@ -380,7 +379,7 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               />
             </Grid.Col>
           </Grid>
-          <ArticleDetailComments articleId={article.id} userId={article.user.id} />
+          {/* <ArticleDetailComments articleId={article.id} userId={article.user.id} /> */}
         </Container>
       </SensitiveShield>
     </>
