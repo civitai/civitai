@@ -42,10 +42,22 @@ export const ResourceSelectMultiple = forwardRef<HTMLDivElement, ResourceSelectM
   ) => {
     // const { types } = options;
     const types = options.resources?.map((x) => x.type);
+    const baseModels = [
+      ...new Set(
+        options.resources?.flatMap((x) => [...(x.baseModels ?? []), ...(x.partialSupport ?? [])]) ??
+          []
+      ),
+    ];
 
     // _types used to set up groups
     const _types = types ?? [...new Set(value?.map((x) => x.model.type))];
-    const _values = types ? [...value].filter((x) => types.includes(x.model.type)) : value;
+    const _values = types
+      ? [...value].filter(
+          (x) =>
+            types.includes(x.model.type) &&
+            (!!baseModels?.length ? baseModels.includes(x.baseModel) : true)
+        )
+      : value;
     const groups = _types
       .map((type) => ({
         type,

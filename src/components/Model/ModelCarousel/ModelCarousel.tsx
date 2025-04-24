@@ -1,13 +1,4 @@
-import {
-  ActionIcon,
-  Box,
-  Card,
-  Center,
-  createStyles,
-  Indicator,
-  Loader,
-  Stack,
-} from '@mantine/core';
+import { ActionIcon, Card, Center, createStyles, Indicator, Loader, Stack } from '@mantine/core';
 import { IconBrush, IconInfoCircle } from '@tabler/icons-react';
 import { BrowsingLevelProvider } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
@@ -26,7 +17,6 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { ImageSort } from '~/server/common/enums';
 import { generationPanel } from '~/store/generation.store';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { useContainerSmallerThan } from '~/components/ContainerProvider/useContainerSmallerThan';
