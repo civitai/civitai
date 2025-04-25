@@ -596,6 +596,7 @@ export interface ModelFlag {
   model?: Model;
   poi: boolean;
   minor: boolean;
+  sfwOnly: boolean;
   nsfw: boolean;
   triggerWords: boolean;
   poiName: boolean;

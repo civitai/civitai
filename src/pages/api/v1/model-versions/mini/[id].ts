@@ -34,6 +34,7 @@ type VersionRow = {
   covered?: boolean;
   freeTrialLimit?: number;
   minor: boolean;
+  sfwOnly: boolean;
   usageControl: ModelUsageControl;
 };
 type FileRow = {
@@ -73,6 +74,7 @@ export default MixedAuthEndpoint(async function handler(
       mv."publishedAt",
       m.type,
       m.minor,
+      m.sfwOnly,
       mv."earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
@@ -211,7 +213,8 @@ export default MixedAuthEndpoint(async function handler(
     earlyAccessEndsAt: modelVersion.checkPermission ? modelVersion.earlyAccessEndsAt : undefined,
     freeTrialLimit: modelVersion.checkPermission ? modelVersion.freeTrialLimit : undefined,
     additionalResourceCharge: shouldChargeResult[modelVersion.modelId],
-    minor: modelVersion.minor,
+    minor: modelVersion.minor || modelVersion.sfwOnly, // Ensures we keep the legacy minor behavior.
+    sfwOnly: modelVersion.sfwOnly,
   };
   res.status(200).json(data);
 });

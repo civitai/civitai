@@ -674,6 +674,7 @@ model ModelFlag {
   model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   poi          Boolean         @default(false)
   minor        Boolean         @default(false)
+  sfwOnly      Boolean         @default(false)
   nsfw         Boolean         @default(false)
   triggerWords Boolean         @default(false)
   poiName      Boolean         @default(false)

@@ -58,7 +58,7 @@ export function ModelCard({ data }: Props) {
   const isArchived = data.mode === ModelModifier.Archived;
 
   const isPOI = data.poi;
-  const isSFWOnly = data.minor;
+  const isSFWOnly = data.sfwOnly;
   const isNSFW = data.nsfw;
   const isPrivate = data.availability === Availability.Private;
 

@@ -77,7 +77,7 @@ const schema = modelUpsertSchema
   .refine((data) => !(data.nsfw && data.poi === 'true'), {
     message: 'Mature content depicting actual people is not permitted.',
   })
-  .refine((data) => !(data.nsfw && data.minor), {
+  .refine((data) => !(data.nsfw && data.sfwOnly), {
     message:
       'This resource is intended to produce mature themes and cannot be used for NSFW generation',
   });
@@ -97,7 +97,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
+const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category', 'tags'];
 
 const availabilityDetails = {
   [Availability.Public]: {
@@ -149,10 +149,10 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
-  const [nsfw, poi, minor] = form.watch(['nsfw', 'poi', 'minor']);
+  const [nsfw, poi, sfwOnly] = form.watch(['nsfw', 'poi', 'sfwOnly']);
   const allowCommercialUse = form.watch('allowCommercialUse');
   const hasPoiInNsfw = nsfw && poi === 'true';
-  const hasMinorInNsfw = nsfw && minor;
+  const hasSfwOnlyNsfw = nsfw && sfwOnly;
   const { isDirty, errors } = form.formState;
   const features = useFeatureFlags();
 
@@ -489,7 +489,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   )}
                   onChange={(value) => {
                     form.setValue('nsfw', value === 'true' ? false : undefined);
-                    form.setValue('minor', value === 'true');
+                    form.setValue('sfwOnly', value === 'true');
                   }}
                 >
                   <Radio value="true" label="Yes" disabled={isLocked('poi')} />
@@ -500,15 +500,18 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   label="Is intended to produce mature themes"
                   disabled={isLocked('nsfw') || poi === 'true'}
                   description={isLockedDescription('category')}
-                  onChange={(event) =>
-                    event.target.checked ? form.setValue('minor', false) : null
-                  }
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      form.setValue('poi', 'false');
+                      form.setValue('sfwOnly', false);
+                    }
+                  }}
                 />
                 <InputCheckbox
-                  name="minor"
+                  name="sfwOnly"
                   label="Cannot be used for NSFW generation"
-                  disabled={isLocked('minor') || nsfw}
-                  description={isLockedDescription('minor')}
+                  disabled={isLocked('sfwOnly') || nsfw}
+                  description={isLockedDescription('sfwOnly')}
                 />
               </Stack>
             </Paper>
@@ -539,7 +542,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 </Text>
               </>
             )}
-            {hasMinorInNsfw && (
+            {hasSfwOnlyNsfw && (
               <>
                 <Alert color="red" pl={10}>
                   <Group noWrap spacing={10}>

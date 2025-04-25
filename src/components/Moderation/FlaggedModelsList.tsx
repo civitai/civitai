@@ -88,7 +88,8 @@ export function FlaggedModelsList() {
           const items = Object.entries(original)
             .filter(
               ([key, value]) =>
-                ['poi', 'nsfw', 'minor', 'triggerWords', 'poiName'].includes(key) && !!value
+                ['poi', 'nsfw', 'minor', 'sfwOnly', 'triggerWords', 'poiName'].includes(key) &&
+                !!value
             )
             .map(([key, value]) => ({ name: key, value }));
 
@@ -215,6 +216,7 @@ const schema = modelUpsertSchema.pick({
   type: true,
   uploadType: true,
   status: true,
+  sfwOnly: true,
 });
 
 function DetailsModal({ model, details }: { model: z.infer<typeof schema>; details: MixedObject }) {
@@ -302,15 +304,19 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
                   name="nsfw"
                   label="Is intended to produce mature themes"
                   disabled={poi}
-                  onChange={(event) =>
-                    event.target.checked ? form.setValue('minor', false) : null
-                  }
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      form.setValue('minor', false);
+                      form.setValue('sfwOnly', false);
+                    }
+                  }}
                 />
                 <InputCheckbox
-                  name="minor"
+                  name="sfwOnly"
                   label="Cannot be used for NSFW generation"
                   disabled={nsfw}
                 />
+                <InputCheckbox name="minor" label="Depicts a minor" disabled={nsfw} />
               </Stack>
             </Paper>
             <Button
