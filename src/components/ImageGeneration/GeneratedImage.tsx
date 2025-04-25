@@ -270,6 +270,7 @@ export function GeneratedImage({
                 onError: handleError,
                 onDragStart: handleDragVideo,
                 draggable: true,
+                autoPlay: true,
               }}
             />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
