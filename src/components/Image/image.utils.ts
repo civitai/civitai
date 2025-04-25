@@ -64,6 +64,7 @@ export const imagesQueryParamSchema = z
     username: z.coerce.string().transform(postgresSlugify),
     view: z.enum(['categories', 'feed']),
     withMeta: booleanString(),
+    requiringMeta: booleanString(),
     remixOfId: numericString(),
   })
   .partial();
