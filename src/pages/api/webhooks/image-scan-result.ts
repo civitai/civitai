@@ -472,7 +472,7 @@ async function handleSuccess({
           WHERE id = ${id}
           GROUP BY id
         )
-        UPDATE "Image" i SET "scannedAt" = NOW(), "updatedAt" = NOW(), "createdAt" = NOW(), "ingestion" ='Scanned'
+        UPDATE "Image" i SET "scannedAt" = NOW(), "updatedAt" = NOW(), "ingestion" ='Scanned'
         FROM scan_count s
         WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS}
         RETURNING "ingestion";
