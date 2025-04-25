@@ -81,10 +81,9 @@ async function sendImagesForScanBulk(images: IngestImageInput[]) {
 
 const delayedBlockCutoff = new Date('2025-05-31');
 export const removeBlockedImages = createJob('remove-blocked-images', '0 23 * * *', async () => {
-  if (!isProd) return;
-  let cutoff = decreaseDate(new Date(), 7, 'days');
   // During the delayed block period, we want to keep the images for 30 days
-  if (delayedBlockCutoff > cutoff) cutoff = delayedBlockCutoff;
+  if (!isProd || delayedBlockCutoff > new Date()) return;
+  const cutoff = decreaseDate(new Date(), 7, 'days');
 
   const images = await dbRead.image.findMany({
     where: {
