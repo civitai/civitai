@@ -643,7 +643,7 @@ export const engineDefinitions: EnginesDictionary = {
   wan: {
     label: 'Wan',
     description: '',
-    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft'],
+    whatIf: ['duration', 'steps', 'aspectRatio', 'cfgScale', 'draft', 'resources'],
   },
   vidu: {
     label: 'Vidu',
