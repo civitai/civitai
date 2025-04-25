@@ -140,9 +140,6 @@ function ImageContent({
     defaultValue: true,
   });
 
-  // We'll be using the client to avoid mis-reading te defaultMuted settings on videos.
-  const isClient = useIsClient();
-
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
 
