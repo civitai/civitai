@@ -16,6 +16,7 @@ import {
   SliderProps,
   Stack,
   Text,
+  Notification,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -184,6 +185,7 @@ export function GenerationFormContent() {
 
   // #region [handle parse prompt]
   const [showFillForm, setShowFillForm] = useState(false);
+  const [submitError, setSubmitError] = useState<string>();
 
   async function handleParsePrompt() {
     const prompt = form.getValues('prompt');
@@ -260,6 +262,7 @@ export function GenerationFormContent() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
         const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
+        setSubmitError(undefined);
         await mutateAsync({
           resources,
           params: {
@@ -269,6 +272,8 @@ export function GenerationFormContent() {
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
+        }).catch((error: any) => {
+          setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
         });
 
         if (hasEarlyAccess) {
@@ -1298,7 +1303,18 @@ export function GenerationFormContent() {
                     )}
                     {reviewed && (
                       <>
-                        <QueueSnackbar />
+                        {!submitError ? (
+                          <QueueSnackbar />
+                        ) : (
+                          <Notification
+                            icon={<IconX size={18} />}
+                            color="red"
+                            onClose={() => setSubmitError(undefined)}
+                            className="rounded-md bg-red-8/20"
+                          >
+                            {submitError}
+                          </Notification>
+                        )}
                         <WhatIfAlert />
                         <div className="flex gap-2">
                           <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">
