@@ -2173,6 +2173,10 @@ export interface EcosystemCheckpoints {
   name: string;
 }
 
+export interface GenerationBaseModel {
+  baseModel: string;
+}
+
 export interface Club {
   id: number;
   userId: number;
