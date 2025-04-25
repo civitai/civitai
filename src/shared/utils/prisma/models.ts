@@ -562,6 +562,7 @@ export interface Model {
   nsfwLevel: number;
   lockedProperties: string[];
   scannedAt: Date | null;
+  sfwOnly: boolean;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;

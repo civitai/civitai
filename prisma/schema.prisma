@@ -629,6 +629,7 @@ model Model {
   nsfwLevel           Int             @default(0)
   lockedProperties    String[]        @default([])
   scannedAt           DateTime?
+  sfwOnly             Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
