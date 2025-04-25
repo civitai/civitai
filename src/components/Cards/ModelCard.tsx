@@ -58,7 +58,8 @@ export function ModelCard({ data }: Props) {
   const isArchived = data.mode === ModelModifier.Archived;
 
   const isPOI = data.poi;
-  const isSFWOnly = data.sfwOnly;
+  // Ensures we don't show both flags for the most part. But it makes sense something can be both.
+  const isSFWOnly = !isPOI && (data.sfwOnly || data.minor);
   const isNSFW = data.nsfw;
   const isPrivate = data.availability === Availability.Private;
 
