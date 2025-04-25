@@ -262,6 +262,18 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
 
       const newItemsTasks = Math.ceil((endId - startId) / batchSize);
 
+      // if (true) {
+      //   console.log({
+      //     startid: startId,
+      //     endid: endId,
+      //     update: queuedUpdates.content.length,
+      //     delete: queuedDeletes.content.length,
+      //     total: endId - startId,
+      //   });
+
+      //   return;
+      // }
+
       for (let i = 0; i < newItemsTasks; i++) {
         const start = startId + i * batchSize;
         const batch = {

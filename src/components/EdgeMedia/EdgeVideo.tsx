@@ -182,14 +182,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
 
     useEffect(() => {
       const videoElem = ref.current;
-
-      if (!videoElem || !options?.anim) return;
+      if (!videoElem || !options?.anim || props.autoPlay) return;
       const observer = new IntersectionObserver(
         ([{ intersectionRatio, target }]) => {
           const elem = target as HTMLVideoElement;
-          if (intersectionRatio >= threshold) {
-            elem.play();
-          } else if (intersectionRatio < threshold) {
+          if (intersectionRatio >= threshold && elem.paused) {
+            elem.play().catch(() => elem.play());
+          } else if (intersectionRatio < threshold && !elem.paused) {
             elem.pause();
           }
         },
