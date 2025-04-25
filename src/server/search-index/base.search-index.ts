@@ -268,6 +268,7 @@ export function createSearchIndexUpdateProcessor(processor: SearchIndexProcessor
       //     endid: endId,
       //     update: queuedUpdates.content.length,
       //     delete: queuedDeletes.content.length,
+      //     total: endId - startId,
       //   });
 
       //   return;

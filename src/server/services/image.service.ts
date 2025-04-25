@@ -150,6 +150,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { RuleDefinition } from '~/server/utils/mod-rules';
+import { IconChevronsDownLeft } from '@tabler/icons-react';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -825,7 +826,9 @@ export const getAllImages = async (
   } else if (!pending) AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
   if (!isModerator) {
-    AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+    AND.push(
+      Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
+    );
   }
 
   if (disablePoi) {
