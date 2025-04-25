@@ -77,6 +77,6 @@ export function WanInput({
     sourceImage,
     // duration: 5,
     loras: resources.map(({ air, strength }) => ({ air, strength })),
-    // model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1501125',
+    // model: 'urn:air:wanvideo:checkpoint:civitai:1329096@1707796',
   };
 }
