@@ -2,6 +2,7 @@ import { BadgeProps, Box, Group, MantineColor, MantineSize, Text, Tooltip } from
 import { IconCrown } from '@tabler/icons-react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { IconBadge } from '~/components/IconBadge/IconBadge';
+import styles from './RankBadge.module.scss';
 
 const rankColors: Record<number, MantineColor> = {
   1: 'blue',
@@ -20,21 +21,27 @@ export const RankBadge = ({
 }: Props) => {
   if (!rank || !rank.leaderboardRank || rank.leaderboardRank > 100) return null;
 
-  let badgeColor: MantineColor = 'gray';
-  for (const [rankLimit, rankColor] of Object.entries(rankColors)) {
+  let rankClass = styles.rank100;
+  for (const [rankLimit] of Object.entries(rankColors)) {
     if (rank.leaderboardRank <= parseInt(rankLimit)) {
-      badgeColor = rankColor;
+      rankClass = styles[`rank${rankLimit}`];
       break;
     }
   }
 
   const hasLeaderboardCosmetic = !!rank.leaderboardCosmetic;
+  const badgeClasses = [
+    styles.rankBadge,
+    rankClass,
+    withTitle ? styles.transparent : '',
+    hasLeaderboardCosmetic ? styles.cosmeticBadge : '',
+  ].join(' ');
 
   return (
     <Tooltip label={`${rank.leaderboardTitle} Rank`} position="top" color="dark" withArrow>
       <Group spacing={0} noWrap sx={{ position: 'relative' }}>
         {rank.leaderboardCosmetic ? (
-          <Box pos="relative" sx={{ zIndex: 2 }}>
+          <Box className={styles.cosmeticImage}>
             <EdgeMedia
               src={rank.leaderboardCosmetic}
               alt={`${rank.leaderboardTitle} position #${rank.leaderboardRank}`}
@@ -44,26 +51,20 @@ export const RankBadge = ({
         ) : null}
         <IconBadge
           size={size}
-          color={badgeColor}
-          // @ts-ignore
-          variant={withTitle ? 'transparent' : badgeColor === 'gray' ? 'filled' : undefined}
+          className={badgeClasses}
           href={`/leaderboard/${rank.leaderboardId}?position=${rank.leaderboardRank}`}
           icon={!hasLeaderboardCosmetic ? <IconCrown size={iconSize} /> : undefined}
-          sx={
-            hasLeaderboardCosmetic
-              ? {
-                  paddingLeft: 16,
-                  marginLeft: -14,
-                  borderTopLeftRadius: 0,
-                  borderBottomLeftRadius: 0,
-                }
-              : undefined
-          }
           {...props}
         >
-          <Text size={textSize} inline>
-            #{rank.leaderboardRank} {withTitle ? rank.leaderboardTitle : null}
+          <Text size={textSize} className={styles.rankNumber} inline>
+            #{rank.leaderboardRank}
           </Text>
+          {withTitle && (
+            <Text size={textSize} className={styles.rankTitle} inline>
+              {' '}
+              {rank.leaderboardTitle}
+            </Text>
+          )}
         </IconBadge>
       </Group>
     </Tooltip>
@@ -81,3 +82,4 @@ type Props = {
   iconSize?: number;
   withTitle?: boolean;
 } & Omit<BadgeProps, 'leftSection'>;
+

@@ -1,0 +1,45 @@
+.label {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  padding-left: 6px;
+  padding-right: 10px;
+}
+
+.container {
+  position: relative;
+
+  &:hover {
+    .scrollArea {
+      &::-webkit-scrollbar {
+        opacity: 1;
+      }
+
+      &::-webkit-scrollbar-thumb {
+        background-color: var(--mantine-color-dark-7);
+      }
+    }
+  }
+}
+
+.root {
+  overflow: auto;
+  scroll-snap-type: x mandatory;
+
+  &::-webkit-scrollbar {
+    background: transparent;
+    opacity: 0;
+    height: 8px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    border-radius: 4px;
+  }
+
+  background-color: transparent;
+  gap: 8px;
+  max-width: 100%;
+}
+
+.control {
+  border: none !important;
+}

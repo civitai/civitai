@@ -1,0 +1,17 @@
+.actions {
+  @media (max-width: 768px) {
+    flex-direction: column;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    padding: var(--mantine-spacing-md);
+  }
+}
+
+.submitButton {
+  @media (max-width: 768px) {
+    width: 100%;
+    order: 1;
+  }
+}

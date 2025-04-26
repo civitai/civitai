@@ -7,7 +7,6 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  createStyles,
 } from '@mantine/core';
 import { titleCase } from '~/utils/string-helpers';
 import {
@@ -18,6 +17,7 @@ import {
   IconSearch,
   IconProps,
 } from '@tabler/icons-react';
+import classes from './AutocompleteDropdown.module.scss';
 
 export type FilterIndex = 'models' | 'users' | 'tags' | 'articles';
 export type FilterIdentifier = FilterIndex | 'all';
@@ -33,47 +33,10 @@ export function FilterIcon({ type, ...props }: IconProps & { type: FilterIdentif
 }
 
 const filterOptions: FilterIdentifier[] = ['models', 'users', 'tags', 'articles'];
-const useStyles = createStyles((theme, _, getRef) => {
-  const ref = getRef('iconWrapper');
-
-  return {
-    label: {
-      padding: `0 ${theme.spacing.xs}px`,
-
-      '&[data-checked]': {
-        '&, &:hover': {
-          backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-          color: theme.white,
-        },
-
-        [`& .${ref}`]: {
-          display: 'none',
-        },
-      },
-    },
-
-    iconWrapper: { ref },
-
-    filterIcon:
-      theme.colorScheme === 'dark'
-        ? {
-            background: theme.colors.gray[8],
-            borderColor: theme.colors.gray[7],
-            color: theme.colors.gray[5],
-          }
-        : {
-            background: theme.colors.gray[3],
-            borderColor: theme.colors.gray[4],
-            color: theme.colors.gray[6],
-          },
-  };
-});
 
 type Props = PopoverDropdownProps;
 
 export function AutocompleteDropdown({ children, ...props }: Props) {
-  const { classes } = useStyles();
-
   return (
     <div {...props}>
       <Stack spacing={0}>
@@ -115,3 +78,4 @@ export function AutocompleteDropdown({ children, ...props }: Props) {
     </div>
   );
 }
+

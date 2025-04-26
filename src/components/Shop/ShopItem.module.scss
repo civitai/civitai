@@ -1,0 +1,106 @@
+.card {
+  height: 100%;
+  background: var(--mantine-color-dark-6);
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-md);
+  position: relative;
+}
+
+[data-mantine-color-scheme="light"] .card {
+  background: var(--mantine-color-gray-1);
+}
+
+.cardHeader {
+  background: var(--mantine-color-dark-9);
+  margin: calc(-1 * var(--mantine-spacing-md));
+  padding: var(--mantine-spacing-md);
+  margin-bottom: var(--mantine-spacing-md);
+  border-radius: var(--mantine-radius-md);
+  border-bottom-right-radius: 0;
+  border-bottom-left-radius: 0;
+  height: 250px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+[data-mantine-color-scheme="light"] .cardHeader {
+  background: var(--mantine-color-gray-2);
+}
+
+.availability {
+  position: absolute;
+  left: var(--mantine-spacing-md);
+  right: var(--mantine-spacing-md);
+  top: var(--mantine-spacing-md);
+  display: flex;
+  align-items: stretch;
+  z-index: 2;
+}
+
+.availability :global(.mantine-Badge-inner) {
+  display: block;
+  width: 100%;
+}
+
+.availability :global(.mantine-Text-root) {
+  margin: 0 auto;
+}
+
+.countdown {
+  position: absolute;
+  left: var(--mantine-spacing-md);
+  right: var(--mantine-spacing-md);
+  bottom: var(--mantine-spacing-md);
+  display: flex;
+  align-items: stretch;
+  text-align: center;
+  z-index: 2;
+}
+
+.countdown :global(.mantine-Badge-inner) {
+  display: block;
+  width: 100%;
+}
+
+.countdown :global(.mantine-Text-root) {
+  margin: 0 auto;
+}
+
+.type {
+  position: absolute;
+  left: var(--mantine-spacing-md);
+  right: var(--mantine-spacing-md);
+  bottom: var(--mantine-spacing-md);
+  z-index: 2;
+  text-align: center;
+  font-weight: 600;
+}
+
+.new {
+  outline: 1px solid var(--mantine-color-yellow-4);
+}
+
+.new::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: -1;
+  margin: -2px;
+  border-radius: inherit;
+  background: linear-gradient(45deg, var(--mantine-color-yellow-4), var(--mantine-color-yellow-1));
+  filter: blur(3px);
+  opacity: 0.5;
+}
+
+.newBadge {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  z-index: 1;
+}

@@ -1,7 +1,7 @@
-import { createStyles } from '@mantine/core';
 import React from 'react';
 import { useResizeObserver } from '~/hooks/useResizeObserver';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import styles from './ShowcaseGrid.module.scss';
 
 type Props = {
   itemCount: number;
@@ -16,7 +16,6 @@ export function ShowcaseGrid({
   className,
   ...props
 }: Props & { children: React.ReactNode; className?: string }) {
-  const { classes, cx } = useStyles(props);
   const ref = useResizeObserver<HTMLDivElement>((entry) => {
     const children = [...entry.target.childNodes] as HTMLElement[];
     for (const child of children) {
@@ -29,9 +28,13 @@ export function ShowcaseGrid({
   if (props.carousel) {
     // Return a wrapped version:
     return (
-      <div className={classes.container}>
-        <div className={classes.scrollArea}>
-          <div ref={ref} className={cx(classes.grid, classes.gridCarousel, className)}>
+      <div className={styles.container}>
+        <div className={styles.scrollArea}>
+          <div
+            ref={ref}
+            className={`${styles.grid} ${styles.gridCarousel} ${className}`}
+            style={{ '--item-count': props.itemCount } as React.CSSProperties}
+          >
             {children}
           </div>
         </div>
@@ -40,110 +43,12 @@ export function ShowcaseGrid({
   }
 
   return (
-    <div ref={ref} className={cx(classes.grid, className)}>
+    <div
+      ref={ref}
+      className={`${styles.grid} ${className}`}
+      style={{ '--item-count': props.itemCount } as React.CSSProperties}
+    >
       {children}
     </div>
   );
 }
-
-export const useStyles = createStyles<string, Props>(
-  (theme, { itemCount, rows, minWidth = 280, defaultWidth = 280 }, getRef) => {
-    return {
-      grid: {
-        display: 'grid',
-        gridTemplateColumns: `repeat(auto-fill, minmax(${minWidth}px, 1fr))`,
-        gridTemplateRows: `repeat(${rows ?? '2'}, auto)`,
-        gridAutoRows: 0,
-        overflow: 'hidden',
-        marginTop: -8,
-        // paddingBottom: theme.spacing.md,
-
-        '&::-webkit-scrollbar': {
-          background: 'transparent',
-          opacity: 0,
-          height: 8,
-        },
-        '&::-webkit-scrollbar-thumb': {
-          borderRadius: 4,
-        },
-
-        '& > *': {
-          margin: 8,
-        },
-
-        [containerQuery.smallerThan('sm')]: {
-          gridAutoFlow: 'column',
-          gridTemplateColumns: `repeat(${itemCount}, ${defaultWidth}px)`,
-          gridTemplateRows: 'auto',
-          scrollSnapType: 'x mandatory',
-          overflowX: 'auto',
-          marginRight: -theme.spacing.md,
-          marginLeft: -theme.spacing.md,
-          paddingLeft: theme.spacing.md,
-          paddingRight: theme.spacing.md,
-
-          '& > *': {
-            scrollSnapAlign: 'center',
-          },
-        },
-      },
-      gridCarousel: {
-        gridAutoRows: undefined,
-        gridAutoFlow: 'column',
-        gridTemplateColumns: `repeat(${itemCount}, ${defaultWidth}px)`,
-        gridTemplateRows: 'auto',
-        overflow: 'visible',
-        marginRight: -theme.spacing.md,
-        marginLeft: -theme.spacing.md,
-        paddingLeft: theme.spacing.md,
-        paddingRight: theme.spacing.md,
-
-        '& > *': {
-          scrollSnapAlign: 'initial',
-        },
-
-        [containerQuery.smallerThan('sm')]: {
-          scrollSnapType: 'x mandatory',
-
-          '& > *': {
-            scrollSnapAlign: 'center',
-          },
-        },
-      },
-
-      container: {
-        position: 'relative',
-        '&:hover': {
-          [`& .${getRef('scrollArea')}`]: {
-            '&::-webkit-scrollbar': {
-              opacity: 1,
-            },
-            '&::-webkit-scrollbar-thumb': {
-              backgroundColor:
-                theme.colorScheme === 'dark'
-                  ? theme.fn.rgba(theme.white, 0.5)
-                  : theme.fn.rgba(theme.black, 0.5),
-            },
-          },
-        },
-      },
-      scrollArea: {
-        ref: getRef('scrollArea'),
-        overflow: 'auto',
-        scrollSnapType: 'auto',
-        [containerQuery.smallerThan('sm')]: {
-          scrollSnapType: 'x mandatory',
-        },
-
-        '&::-webkit-scrollbar': {
-          background: 'transparent',
-          opacity: 0,
-          height: 8,
-        },
-        '&::-webkit-scrollbar-thumb': {
-          borderRadius: 4,
-        },
-      },
-    };
-  }
-);

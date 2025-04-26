@@ -1,4 +1,4 @@
-import { Group, Modal, Stack, UnstyledButton, Text, createStyles } from '@mantine/core';
+import { Group, Modal, Stack, UnstyledButton, Text } from '@mantine/core';
 import { useDialogContext } from '../Dialog/DialogProvider';
 import { dialogStore } from '../Dialog/dialogStore';
 import { IconFile, IconPencilMinus, IconPictureInPicture } from '@tabler/icons-react';
@@ -8,21 +8,12 @@ import { ClubAdminPermission } from '~/shared/utils/prisma/enums';
 import { useClubContributorStatus } from './club.utils';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
-
-const useStyles = createStyles((theme) => ({
-  button: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    borderRadius: theme.radius.lg,
-    padding: theme.spacing.md,
-    width: '150px',
-  },
-}));
+import styles from './ClubAddContent.module.scss';
 
 export const ClubAddContent = ({ clubId }: { clubId: number }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
   const router = useRouter();
-  const { classes } = useStyles();
   const { isOwner, isModerator, isClubAdmin, permissions } = useClubContributorStatus({
     clubId,
   });
@@ -40,7 +31,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
         <Group position="apart">
           {canCreatePosts && (
             <UnstyledButton
-              className={classes.button}
+              className={styles.button}
               onClick={() => {
                 // dialogStore.trigger({
                 //   component: ClubPostUpsertFormModal,
@@ -64,7 +55,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
                 router.push(`/posts/create?clubId=${clubId}&returnUrl=${router.asPath}`);
                 handleClose();
               }}
-              className={classes.button}
+              className={styles.button}
             >
               <Stack align="center">
                 <IconPictureInPicture />
@@ -74,7 +65,7 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
           )}
           {canCreateResources && (
             <UnstyledButton
-              className={classes.button}
+              className={styles.button}
               onClick={() => {
                 dialogStore.trigger({
                   component: AddResourceToClubModal,
@@ -102,3 +93,4 @@ export const ClubAddContent = ({ clubId }: { clubId: number }) => {
     </Modal>
   );
 };
+

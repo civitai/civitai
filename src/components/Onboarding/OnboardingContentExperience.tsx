@@ -1,4 +1,18 @@
-import { Button, Card, Container, Group, Stack, createStyles, Text, Switch } from '@mantine/core';
+import {
+  Button,
+  Card,
+  Container,
+  Group,
+  Stack,
+  createStyles,
+  Text,
+  Switch,
+  Box,
+  BoxProps,
+  Image,
+  Title,
+  Flex,
+} from '@mantine/core';
 import { IconEyeExclamation } from '@tabler/icons-react';
 import { NewsletterToggle } from '~/components/Account/NewsletterToggle';
 import { OnboardingAbortButton } from '~/components/Onboarding/OnboardingAbortButton';
@@ -6,9 +20,42 @@ import { useOnboardingContext } from '~/components/Onboarding/OnboardingProvider
 import { useOnboardingStepCompleteMutation } from '~/components/Onboarding/onboarding.utils';
 import { StepperTitle } from '~/components/Stepper/StepperTitle';
 import { OnboardingSteps } from '~/server/common/enums';
+import React, { forwardRef } from 'react';
+import { useStyles } from './OnboardingContentExperience.module.scss';
+import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { IconArrowRight } from '@tabler/icons-react';
+import { useMediaQuery } from '@mantine/hooks';
 
 // TODO.manuel - On merge of NSFW stuff, feel free to throw away everything I've done here...
+export interface OnboardingContentExperienceProps extends BoxProps {
+  newsletterCard?: boolean;
+  newsletterBot?: boolean;
+}
+
+export const OnboardingContentExperience = forwardRef<
+  HTMLDivElement,
+  OnboardingContentExperienceProps
+>((props, ref) => {
+  const { newsletterCard, newsletterBot, className, ...others } = props;
+
+  return (
+    <Box
+      className={`${newsletterCard ? useStyles().newsletterCard : ''} ${
+        newsletterBot ? useStyles().newsletterBot : ''
+      } ${className}`}
+      {...others}
+      ref={ref}
+    />
+  );
+});
+
+OnboardingContentExperience.displayName = 'OnboardingContentExperience';
+
 export function OnboardingContentExperience() {
+  const { t } = useTranslation();
+  const navigate = useNavigate();
+  const isMobile = useMediaQuery('(max-width: 48em)');
   const { classes } = useStyles();
   const { next, isReturningUser } = useOnboardingContext();
   const { mutate, isLoading } = useOnboardingStepCompleteMutation();
@@ -18,55 +65,70 @@ export function OnboardingContentExperience() {
   };
 
   return (
-    <Container size="xs" px={0}>
-      <Stack spacing="xl">
-        {!isReturningUser ? (
-          <>
-            <StepperTitle
-              title="Content Experience"
-              description="Personalize your AI content exploration! Fine-tune preferences for a delightful and safe browsing experience."
-            />
-            <Card withBorder className={classes.newsletterCard}>
-              <Card.Section withBorder inheritPadding py="xs">
-                <Group position="apart">
-                  <Text weight={500}>Send me the Civitai Newsletter!</Text>
-                  <NewsletterToggle>
-                    {({ subscribed, setSubscribed, isLoading: subscriptionLoading }) => (
-                      <Switch
-                        disabled={subscriptionLoading}
-                        checked={subscribed}
-                        onChange={({ target }) => setSubscribed(target.checked)}
-                      />
-                    )}
-                  </NewsletterToggle>
-                </Group>
-              </Card.Section>
-
-              <Text lh={1.3} mt="xs">
-                Biweekly updates on industry news, new Civitai features, trending resources,
-                community contests, and more!
-              </Text>
-              <img
-                src="/images/newsletter-banner.png"
-                alt="Robot holding a newspaper"
-                className={classes.newsletterBot}
-              />
+    <Container size="xl" py={80}>
+      <Stack spacing={80}>
+        <Box>
+          <Title order={2} ta="center" mb={40}>
+            {t('onboarding.contentExperience.title')}
+          </Title>
+          <Flex gap={40} direction={isMobile ? 'column' : 'row'} align="stretch">
+            <Card className={classes.newsletterCard} p={40} radius="lg" withBorder>
+              <Stack spacing={24}>
+                <Image
+                  src="/images/onboarding/newsletter.png"
+                  alt="Newsletter"
+                  width={isMobile ? 280 : 360}
+                  height={isMobile ? 280 : 360}
+                  mx="auto"
+                />
+                <Stack spacing={16}>
+                  <Title order={3} ta="center">
+                    {t('onboarding.contentExperience.newsletter.title')}
+                  </Title>
+                  <Text size="lg" c="dimmed" ta="center">
+                    {t('onboarding.contentExperience.newsletter.description')}
+                  </Text>
+                </Stack>
+                <Button
+                  variant="light"
+                  size="lg"
+                  rightSection={<IconArrowRight size={20} />}
+                  onClick={() => navigate('/onboarding/newsletter')}
+                >
+                  {t('onboarding.contentExperience.newsletter.button')}
+                </Button>
+              </Stack>
             </Card>
-          </>
-        ) : (
-          <StepperTitle
-            title="Updated Content Experience"
-            description={
-              <Text>
-                We have updated our rating system to simplify filtering content on the site. Going
-                forward content on Civitai will be rated on a standard scale consistent with other
-                media. This is a one-time process to set your basic filtering, but you can adjust it
-                any time using the <IconEyeExclamation style={{ display: 'inline-block' }} /> icon
-                in the top right.
-              </Text>
-            }
-          />
-        )}
+
+            <Card className={classes.newsletterBot} p={40} radius="lg" withBorder>
+              <Stack spacing={24}>
+                <Image
+                  src="/images/onboarding/newsletter-bot.png"
+                  alt="Newsletter Bot"
+                  width={isMobile ? 280 : 360}
+                  height={isMobile ? 280 : 360}
+                  mx="auto"
+                />
+                <Stack spacing={16}>
+                  <Title order={3} ta="center">
+                    {t('onboarding.contentExperience.newsletterBot.title')}
+                  </Title>
+                  <Text size="lg" c="dimmed" ta="center">
+                    {t('onboarding.contentExperience.newsletterBot.description')}
+                  </Text>
+                </Stack>
+                <Button
+                  variant="light"
+                  size="lg"
+                  rightSection={<IconArrowRight size={20} />}
+                  onClick={() => navigate('/onboarding/newsletter-bot')}
+                >
+                  {t('onboarding.contentExperience.newsletterBot.button')}
+                </Button>
+              </Stack>
+            </Card>
+          </Flex>
+        </Box>
 
         <Stack>
           <Text>
@@ -85,48 +147,3 @@ export function OnboardingContentExperience() {
     </Container>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  newsletterCard: {
-    position: 'relative',
-    overflow: 'visible',
-    borderColor: theme.colors.blue[5],
-    marginTop: 60,
-    [theme.fn.largerThan('sm')]: {
-      marginTop: 70,
-    },
-
-    '&::before': {
-      content: '""',
-      position: 'absolute',
-      left: '-3px',
-      top: '-3px',
-      background: theme.fn.linearGradient(
-        10,
-        theme.colors.blue[9],
-        theme.colors.blue[7],
-        theme.colors.blue[5],
-        theme.colors.cyan[9],
-        theme.colors.cyan[7],
-        theme.colors.cyan[5]
-      ),
-      backgroundSize: '200%',
-      borderRadius: theme.radius.sm,
-      width: 'calc(100% + 6px)',
-      height: 'calc(100% + 6px)',
-      filter: 'blur(4px)',
-      zIndex: -1,
-      animation: 'glowing 20s linear infinite',
-      transition: 'opacity .3s ease-in-out',
-    },
-  },
-  newsletterBot: {
-    objectPosition: 'top',
-    objectFit: 'cover',
-    position: 'absolute',
-    top: -100,
-    right: 0,
-    width: 200,
-    zIndex: -1,
-  },
-}));

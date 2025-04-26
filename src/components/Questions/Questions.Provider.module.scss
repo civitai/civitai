@@ -1,0 +1,9 @@
+.title {
+  overflow-wrap: break-word;
+}
+
+@media (max-width: 576px) {
+  .title {
+    font-size: 16px;
+  }
+}

@@ -1,0 +1,63 @@
+.hashContainer {
+  display: flex;
+  align-items: center;
+  user-select: none;
+}
+
+.typeBadge {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  border-right: 0;
+  white-space: nowrap;
+  padding: 4px 6px;
+}
+
+.hashBadge {
+  cursor: pointer;
+  overflow: hidden;
+  padding: 4px 6px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  transition: all 0.2s ease;
+}
+
+.hashBadge:hover {
+  background-color: var(--mantine-color-gray-1);
+}
+
+.hashBadgeCopied {
+  background-color: var(--mantine-color-teal-1);
+  color: var(--mantine-color-teal-7);
+}
+
+.typeSelector {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  border-left: 0;
+  cursor: pointer;
+  padding: 2px;
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.typeSelector:hover {
+  background-color: var(--mantine-color-gray-1);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .typeBadge,
+  .hashBadge {
+    padding: 2px 4px;
+    font-size: 0.75rem;
+  }
+
+  .typeSelector {
+    width: 18px;
+    height: 18px;
+  }
+}

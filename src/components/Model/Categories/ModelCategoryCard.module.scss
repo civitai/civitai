@@ -1,0 +1,99 @@
+.root {
+  position: relative;
+  overflow: hidden;
+}
+
+.image {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.8));
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.root:hover .overlay {
+  opacity: 1;
+}
+
+.content {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 12px;
+  color: white;
+}
+
+.title {
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.2;
+  margin-bottom: 4px;
+  color: white;
+}
+
+.stats {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.statBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.5);
+  border-radius: var(--mantine-radius-sm);
+  font-size: 12px;
+  color: white;
+}
+
+.floatingBadge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  z-index: 1;
+}
+
+.typeBadge {
+  background: var(--mantine-color-blue-6);
+}
+
+.statusBadge {
+  background: var(--mantine-color-yellow-6);
+}
+
+.earlyAccessBadge {
+  background: var(--mantine-color-violet-6);
+}
+
+.actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 1;
+  display: flex;
+  gap: 4px;
+}
+
+.actionButton {
+  background: rgba(0, 0, 0, 0.5);
+  color: white;
+  border-radius: var(--mantine-radius-sm);
+  padding: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.actionButton:hover {
+  background: rgba(0, 0, 0, 0.7);
+}

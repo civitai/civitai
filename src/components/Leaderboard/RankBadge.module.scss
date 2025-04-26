@@ -1,0 +1,68 @@
+.rankBadge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.rankBadge:hover {
+  transform: translateY(-1px);
+}
+
+.rankNumber {
+  font-weight: 600;
+  color: var(--mantine-color-gray-0);
+}
+
+.rankTitle {
+  color: var(--mantine-color-gray-3);
+  font-size: 0.875rem;
+}
+
+.cosmeticImage {
+  position: relative;
+  z-index: 2;
+  margin-right: -14px;
+}
+
+.cosmeticBadge {
+  padding-left: 16px;
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+}
+
+/* Rank-specific colors */
+.rank1 {
+  background-color: var(--mantine-color-blue-6);
+}
+
+.rank3 {
+  background-color: var(--mantine-color-yellow-6);
+}
+
+.rank10 {
+  background-color: var(--mantine-color-gray-6);
+}
+
+.rank100 {
+  background-color: var(--mantine-color-orange-6);
+}
+
+/* Transparent variants */
+.transparent {
+  background-color: transparent;
+  border: 1px solid currentColor;
+}
+
+.transparent .rankNumber {
+  color: currentColor;
+}
+
+.transparent .rankTitle {
+  color: currentColor;
+  opacity: 0.8;
+}

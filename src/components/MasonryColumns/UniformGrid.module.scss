@@ -1,0 +1,22 @@
+.empty {
+  height: var(--column-width);
+}
+
+.grid {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  min-height: var(--column-width);
+  column-gap: var(--column-gap);
+  row-gap: var(--row-gap);
+}
+
+.grid > div {
+  width: var(--grid-item-width);
+  max-width: var(--max-single-column-width);
+}
+
+.gridItem {
+  position: relative;
+  padding-top: 100%;
+}

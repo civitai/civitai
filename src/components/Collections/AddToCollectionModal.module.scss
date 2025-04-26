@@ -1,0 +1,16 @@
+.body {
+  align-items: center;
+}
+
+.labelWrapper {
+  flex: 1;
+}
+
+.contentWrap {
+  padding-top: var(--mantine-spacing-xs);
+  padding-bottom: var(--mantine-spacing-xs);
+}
+
+.description {
+  opacity: 0.7;
+}

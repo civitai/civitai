@@ -1,5 +1,5 @@
 import { trpc } from '~/utils/trpc';
-import { createStyles } from '@mantine/core';
+import { createStyles } from '@mantine/styles';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
 
@@ -11,9 +11,9 @@ import { env } from '~/env/client';
 import { TrackView } from '~/components/TrackView/TrackView';
 import { ScrollArea } from '~/components/ScrollArea/ScrollArea';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { NoContent } from '~/components/NoContent/NoContent';
+import { styles } from './ProfileLayout.styles';
 
 export function ProfileLayout({
   username,
@@ -80,19 +80,4 @@ export function ProfileLayout({
 
 export default ProfileLayout;
 
-const useStyles = createStyles((theme) => ({
-  sidebar: {
-    width: 320,
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-
-    [containerQuery.smallerThan('sm')]: {
-      display: 'none',
-    },
-  },
-  root: {
-    display: 'flex',
-    flex: 1,
-    height: '100%',
-  },
-}));
+const useStyles = createStyles(styles);

@@ -1,0 +1,56 @@
+.newsletterCard {
+  position: relative;
+  overflow: visible;
+  border-color: var(--mantine-color-blue-5);
+  margin-top: 60px;
+
+  @media (min-width: 768px) {
+    margin-top: 70px;
+  }
+
+  &::before {
+    content: '';
+    position: absolute;
+    left: -3px;
+    top: -3px;
+    background: linear-gradient(
+      10deg,
+      var(--mantine-color-blue-9),
+      var(--mantine-color-blue-7),
+      var(--mantine-color-blue-5),
+      var(--mantine-color-cyan-9),
+      var(--mantine-color-cyan-7),
+      var(--mantine-color-cyan-5)
+    );
+    background-size: 200%;
+    border-radius: var(--mantine-radius-sm);
+    width: calc(100% + 6px);
+    height: calc(100% + 6px);
+    filter: blur(4px);
+    z-index: -1;
+    animation: glowing 20s linear infinite;
+    transition: opacity 0.3s ease-in-out;
+  }
+}
+
+.newsletterBot {
+  object-position: top;
+  object-fit: cover;
+  position: absolute;
+  top: -100px;
+  right: 0;
+  width: 200px;
+  z-index: -1;
+}
+
+@keyframes glowing {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}

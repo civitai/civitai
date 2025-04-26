@@ -1,0 +1,26 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 16px;
+}
+
+.listItem {
+  width: 100%;
+  transition: all 0.2s ease;
+}
+
+.listItem:hover {
+  transform: translateX(4px);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .list {
+    padding: 8px;
+    gap: 8px;
+  }
+}

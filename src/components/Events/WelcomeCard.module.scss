@@ -1,0 +1,20 @@
+.card {
+  padding: 64px 80px !important;
+  background: var(--mantine-color-dark-6);
+}
+
+@media (max-width: 767px) {
+  .card {
+    padding: 32px 16px !important;
+  }
+}
+
+.title {
+  font-size: 40px;
+}
+
+@media (max-width: 767px) {
+  .title {
+    font-size: 28px;
+  }
+}

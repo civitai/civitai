@@ -96,6 +96,7 @@ import {
 import { bytesToKB } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import styles from './TrainingImages.module.scss';
 
 const TrainingImagesCaptions = dynamic(() =>
   import('~/components/Training/Form/TrainingImagesCaptionViewer').then(
@@ -117,39 +118,6 @@ const MAX_FILES_ALLOWED = 1000;
 export const blankTagStr = '@@none@@';
 
 const limit = pLimit(10);
-
-const useStyles = createStyles((theme) => ({
-  imgOverlay: {
-    borderBottom: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2]
-    }`,
-    position: 'relative',
-    '&:hover .trashIcon': {
-      display: 'flex',
-    },
-  },
-  badLabel: {
-    // more border
-    border: '1px solid red',
-    boxShadow: '0 0 10px red',
-  },
-  trash: {
-    display: 'none',
-    position: 'absolute',
-    top: 0,
-    right: 0,
-    zIndex: 10,
-    margin: 4,
-  },
-  source: {
-    display: 'none',
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    zIndex: 10,
-    margin: 4,
-  },
-}));
 
 // TODO [bw] is this enough? do we want jfif?
 const imageExts: { [key: string]: string } = {
@@ -326,7 +294,6 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
   const showImgResizeUp = useRef<number>(0);
 
   const theme = useMantineTheme();
-  const { classes, cx } = useStyles();
   const queryUtils = trpc.useUtils();
   const { upload, getStatus: getUploadStatus } = useS3UploadStore();
   const { connected } = useSignalContext();
@@ -1302,24 +1269,31 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
 
                     <ImageDropzone
                       onDrop={handleDrop}
-                      label="Drag images (or a zip file) here or click to select files"
-                      description={
-                        <Text mt="xs" fz="sm" color={theme.colors.red[5]}>
-                          Changes made here are not permanently saved until you hit &quot;Next&quot;
-                        </Text>
-                      }
-                      max={MAX_FILES_ALLOWED}
-                      // loading={isLoading}
-                      count={imageList.length}
-                      accept={[...IMAGE_MIME_TYPE, ...ZIP_MIME_TYPE]}
-                      onExceedMax={() =>
-                        showErrorNotification({
-                          title: 'Too many images',
-                          error: new Error(`Truncating to ${MAX_FILES_ALLOWED}.`),
-                          autoClose: false,
-                        })
-                      }
-                    />
+                      maxFiles={MAX_FILES_ALLOWED}
+                      accept={IMAGE_MIME_TYPE}
+                      className={styles.imgOverlay}
+                    >
+                      <Group
+                        position="center"
+                        spacing="xl"
+                        style={{ minHeight: 220, pointerEvents: 'none' }}
+                      >
+                        <Stack align="center" spacing={50}>
+                          <ThemeIcon size={80} radius="md">
+                            <IconTransferIn size={40} />
+                          </ThemeIcon>
+                          <Stack spacing={10} align="center">
+                            <Text size="xl" inline>
+                              Drag images here or click to select files
+                            </Text>
+                            <Text size="sm" color="dimmed" inline>
+                              Attach up to {MAX_FILES_ALLOWED} files, each file should not exceed
+                              10mb
+                            </Text>
+                          </Stack>
+                        </Stack>
+                      </Group>
+                    </ImageDropzone>
                   </Stack>
                 </Accordion.Panel>
               </Accordion.Item>
@@ -1510,7 +1484,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                       }
                     }}
                     style={{ flexGrow: 1 }}
-                    className={cx({ [classes.badLabel]: triggerWordInvalid })}
+                    className={styles.badLabel}
                     rightSection={
                       <ActionIcon
                         onClick={() => {
@@ -1583,11 +1557,11 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                         p={4}
                         radius="sm"
                         withBorder
-                        className={cx({ [classes.badLabel]: imgData.invalidLabel })}
+                        className={styles.badLabel}
                       >
                         <Card.Section mb="xs">
-                          <div className={classes.imgOverlay}>
-                            <Group spacing={4} className={cx(classes.trash, 'trashIcon')}>
+                          <div className={styles.imgOverlay}>
+                            <Group spacing={4} className={styles.trashIcon}>
                               <Tooltip label="Remove labels">
                                 <ActionIcon
                                   color="violet"
@@ -1633,14 +1607,12 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                               </Tooltip>
                             </Group>
                             {imgData.source?.type && (
-                              <div className={cx(classes.source, 'trashIcon')}>
+                              <div className={styles.source}>
                                 <Badge
                                   variant="filled"
                                   className="px-1"
                                   leftSection={
-                                    // <ThemeIcon color="blue" size="lg" radius="xl" variant="filled">
                                     <IconTransferIn size={14} />
-                                    // </ThemeIcon>
                                   }
                                 >
                                   <Text>{imgData.source.type}</Text>
@@ -1654,11 +1626,8 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
                                 style: {
                                   height: isZoomed ? '100%' : '250px',
                                   width: '100%',
-                                  // if we want to show full image, change objectFit to contain
                                   objectFit: 'cover',
-                                  // object-position: top;
                                 },
-                                // onLoad: () => URL.revokeObjectURL(imageUrl)
                               }}
                             />
                           </div>
@@ -1799,3 +1768,5 @@ const AttestDiv = () => {
     </>
   );
 };
+
+

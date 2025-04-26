@@ -49,6 +49,7 @@ import { CollectionType, CosmeticEntity, ImageIngestionStatus } from '~/shared/u
 import { imageStore, useImageStore } from '~/store/image.store';
 import { trpc } from '~/utils/trpc';
 import { NextLink } from '~/components/NextLink/NextLink';
+import styles from './ImageContextMenu.module.scss';
 
 type ImageContextMenuProps = {
   image: Omit<ImageProps, 'tags'> & { ingestion?: ImageIngestionStatus };
@@ -93,6 +94,7 @@ export function ImageContextMenu({
         )}
       </Menu.Target>
       <Menu.Dropdown
+        className={styles.menuDropdown}
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -176,7 +178,11 @@ function ImageMenuItems(
       )}
       {(context === 'post' || postId) && (
         <LoginRedirect reason="add-to-collection">
-          <Menu.Item icon={<IconBookmark size={14} stroke={1.5} />} onClick={handleSaveClick}>
+          <Menu.Item
+            className={styles.menuItem}
+            icon={<IconBookmark className={styles.menuItemIcon} />}
+            onClick={handleSaveClick}
+          >
             Save {context} to collection
           </Menu.Item>
         </LoginRedirect>
@@ -185,7 +191,8 @@ function ImageMenuItems(
         <Menu.Item
           component={NextLink}
           href={`/posts/${postId}`}
-          icon={<IconEye size={14} stroke={1.5} />}
+          className={styles.menuItem}
+          icon={<IconEye className={styles.menuItemIcon} />}
         >
           View Post
         </Menu.Item>
@@ -193,7 +200,11 @@ function ImageMenuItems(
       {!isOwner && (
         <>
           <LoginRedirect reason="report-content">
-            <Menu.Item icon={<IconFlag size={14} stroke={1.5} />} onClick={handleReportClick}>
+            <Menu.Item
+              className={styles.menuItem}
+              icon={<IconFlag className={styles.menuItemIcon} />}
+              onClick={handleReportClick}
+            >
               Report image
             </Menu.Item>
           </LoginRedirect>
@@ -278,7 +289,7 @@ function NeedsReviewBadge({
     ingestion: initialIngestion,
   });
   const moderateImagesMutation = trpc.image.moderate.useMutation();
-  if (!needsReview && ingestion !== 'Blocked') return null;
+  const isBlocked = ingestion === 'Blocked';
 
   const handleModerate = (action: 'accept' | 'delete' | 'removeName' | 'mistake') => {
     if (!isModerator) return;
@@ -380,19 +391,19 @@ function NeedsReviewBadge({
     );
   } else {
     return (
-      <HoverCard width={200} withArrow>
-        <HoverCard.Target>{Badge}</HoverCard.Target>
-        <HoverCard.Dropdown p={8}>
-          <Stack spacing={0}>
-            <Text weight="bold" size="xs">
-              Flagged for review
-            </Text>
-            <Text size="xs">
-              {`This image won't be visible to other users until it's reviewed by our moderators.`}
-            </Text>
-          </Stack>
-        </HoverCard.Dropdown>
-      </HoverCard>
+      <div className={styles.badgeContainer}>
+        {isBlocked ? (
+          <div className={styles.blockedBadge}>
+            <IconBan className={styles.badgeIcon} />
+            Blocked
+          </div>
+        ) : (
+          <div className={styles.reviewBadge}>
+            <IconAlertTriangle className={styles.badgeIcon} />
+            Needs Review
+          </div>
+        )}
+      </div>
     );
   }
 }
@@ -413,3 +424,4 @@ export function ImageContextMenuProvider({
     <ImageContextMenuContext.Provider value={props}>{children}</ImageContextMenuContext.Provider>
   );
 }
+

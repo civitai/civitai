@@ -7,7 +7,6 @@ import {
   Chip,
   Badge,
   Center,
-  createStyles,
   Group,
   Loader,
   Pagination,
@@ -27,6 +26,7 @@ import { slugit, splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { useFiltersContext } from '~/providers/FiltersProvider';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import styles from './Questions.Provider.module.scss';
 
 export function Questions({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
@@ -113,7 +113,6 @@ function QuestionsFilter() {
 }
 
 function QuestionsList() {
-  const { classes, theme } = useStyles();
   const filters = useQuestionFilters();
 
   const { data: questions, isLoading } = trpc.question.getPaged.useQuery(filters);
@@ -132,7 +131,7 @@ function QuestionsList() {
         >
           <Paper withBorder p="sm">
             <Stack spacing="xs">
-              <Title order={3} className={classes.title}>
+              <Title order={3} className={styles.title}>
                 {question.title}
               </Title>
               <Group position="apart" spacing="sm">
@@ -145,7 +144,7 @@ function QuestionsList() {
                 </Group>
                 <Group spacing={4}>
                   <Badge
-                    variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+                    variant="light"
                     color={question.rank.heartCount ? 'pink' : 'gray'}
                     size="xs"
                     leftSection={
@@ -157,7 +156,7 @@ function QuestionsList() {
                     {question.rank.heartCount}
                   </Badge>
                   <Badge
-                    variant={theme.colorScheme === 'dark' ? 'light' : 'filled'}
+                    variant="light"
                     color={question.selectedAnswerId ? 'green' : 'gray'}
                     size="xs"
                     leftSection={
@@ -206,17 +205,8 @@ function QuestionsList() {
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  title: {
-    overflowWrap: 'break-word',
-
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 16,
-    },
-  },
-}));
-
 Questions.Sort = QuestionsSort;
 Questions.Period = QuestionsPeriod;
 Questions.Filter = QuestionsFilter;
 Questions.List = QuestionsList;
+

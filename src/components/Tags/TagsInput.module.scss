@@ -1,0 +1,34 @@
+.badge {
+  cursor: pointer;
+  user-select: none;
+  background-color: var(--mantine-color-blue-1);
+  color: var(--mantine-color-blue-7);
+  border: 1px solid var(--mantine-color-blue-3);
+  transition: background-color 150ms ease;
+}
+
+.badge:hover {
+  background-color: var(--mantine-color-blue-2);
+}
+
+.inner {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.dropdown {
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.createOption {
+  padding: 8px 12px;
+  color: var(--mantine-color-blue-7);
+  font-weight: 500;
+  transition: background-color 150ms ease;
+}
+
+.createOption:hover {
+  background-color: var(--mantine-color-blue-1);
+}

@@ -1,7 +1,6 @@
 import {
   Button,
   Center,
-  createStyles,
   Flex,
   Group,
   Image,
@@ -34,29 +33,10 @@ import { orchestratorMediaTransmitter } from '~/store/post-image-transmitter.sto
 import { ModelVersionById } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelFileFormat } from '~/utils/file-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { bytesToKB, formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles((theme) => ({
-  epochRow: {
-    [containerQuery.smallerThan('sm')]: {
-      flexDirection: 'column',
-      gap: theme.spacing.md,
-    },
-    flexWrap: 'nowrap',
-  },
-  selectedRow: {
-    border: `2px solid ${theme.fn.rgba(theme.colors.green[5], 0.7)}`,
-  },
-  paperRow: {
-    cursor: 'pointer',
-    '&:hover': {
-      backgroundColor: theme.fn.rgba(theme.colors.blue[2], 0.1),
-    },
-  },
-}));
+import { styles } from './TrainingSelectFile.styles';
 
 const TRANSMITTER_KEY = 'trainer';
 
@@ -84,8 +64,6 @@ const EpochRow = ({
   isVideo: boolean;
 }) => {
   const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
-  // const features = useFeatureFlags();
 
   return (
     <Paper
@@ -93,14 +71,11 @@ const EpochRow = ({
       radius="sm"
       p="xs"
       withBorder
-      className={cx(
-        classes.paperRow,
-        selectedFile === epoch.modelUrl ? classes.selectedRow : undefined
-      )}
+      sx={[styles.paperRow, selectedFile === epoch.modelUrl ? styles.selectedRow : undefined]}
       onClick={() => setSelectedFile(epoch.modelUrl)}
     >
       <Stack>
-        <Group position="apart" className={classes.epochRow}>
+        <Group position="apart" sx={styles.epochRow}>
           <Text fz="md" fw={700}>
             Epoch #{epoch.epochNumber}
           </Text>
@@ -142,7 +117,7 @@ const EpochRow = ({
           </Group>
         </Group>
         <Group
-          className={classes.epochRow}
+          sx={styles.epochRow}
           style={{ justifyContent: 'space-evenly', alignItems: 'flex-start' }}
         >
           {epoch.sampleImages && epoch.sampleImages.length > 0 ? (

@@ -1,0 +1,30 @@
+.centerRadio :global(.mantine-Group-root) {
+  justify-content: space-between;
+  align-items: stretch;
+}
+
+@media (max-width: 768px) {
+  .centerRadio :global(.mantine-Group-root) {
+    justify-content: center;
+  }
+}
+
+.centerRadio :global(.mantine-Radio-inner) {
+  display: none;
+}
+
+.centerRadio :global(.mantine-Radio-label) {
+  padding: var(--mantine-spacing-md);
+}
+
+.centerRadio :global(.mantine-Radio-root) {
+  border-radius: var(--mantine-radius-md);
+}
+
+.centerRadio :global(.mantine-Radio-root:hover) {
+  background-color: rgba(var(--mantine-color-blue-2-rgb), 0.1);
+}
+
+.centerRadio :global(.mantine-Radio-root[data-checked]) {
+  background-color: rgba(var(--mantine-color-blue-9-rgb), 0.2);
+}

@@ -1,6 +1,5 @@
 import {
   Paper,
-  createStyles,
   Text,
   Stack,
   Group,
@@ -11,6 +10,7 @@ import {
   Center,
   Box,
 } from '@mantine/core';
+import { createStyles } from '@mantine/styles';
 import { IconCheck, IconDiscountCheck } from '@tabler/icons-react';
 import { capitalize } from 'lodash-es';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -25,35 +25,9 @@ import { formatPriceForDisplay, numberWithCommas } from '~/utils/number-helpers'
 import { trpc } from '~/utils/trpc';
 import { MembershipUpgradeModal } from '~/components/Stripe/MembershipChangePrevention';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { styles } from './MembershipUpsell.styles';
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[0],
-    width: '100%',
-    height: '100%',
-    margin: 0,
-    padding: theme.spacing.md,
-    borderRadius: theme.radius.md,
-    display: 'flex',
-  },
-  title: {
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-    fontSize: 24,
-    fontWeight: 600,
-  },
-  subtitle: {
-    fontSize: 18,
-    fontWeight: 500,
-  },
-  listItem: {
-    color: `${theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black} !important`,
-    fontSize: 16,
-
-    '.mantine-Text-root': {
-      color: `${theme.colorScheme === 'dark' ? theme.colors.dark[0] : theme.black} !important`,
-    },
-  },
-}));
+const useStyles = createStyles(styles);
 
 export const MembershipUpsell = ({ buzzAmount }: { buzzAmount: number }) => {
   const { classes } = useStyles();

@@ -1,13 +1,4 @@
-import {
-  Stack,
-  FileInput,
-  Progress,
-  FileInputProps,
-  Group,
-  Text,
-  createStyles,
-  Box,
-} from '@mantine/core';
+import { Stack, FileInput, Progress, FileInputProps, Group, Text, Box } from '@mantine/core';
 import { IconUpload, IconCircleCheck, IconBan } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useS3Upload } from '~/hooks/useS3Upload';
@@ -20,6 +11,7 @@ import { isEqual } from 'lodash-es';
 import { bytesToKB } from '~/utils/number-helpers';
 import { ModelFileInput } from '~/server/schema/model-file.schema';
 import { ModelFileType } from '~/server/common/constants';
+import styles from './FileInputUpload.module.scss';
 
 export function FileInputUpload({
   uploadType = 'Model',
@@ -45,7 +37,6 @@ export function FileInputUpload({
   };
 
   const [fileTypeError, setFileTypeError] = useState('');
-  const { classes, cx } = useStyles();
 
   useDidUpdate(() => {
     const shouldUpdate = !isEqual(value, state);
@@ -103,7 +94,9 @@ export function FileInputUpload({
   );
 
   return (
-    <Stack className={cx(stackUploadProgress && classes.stackedProgress, grow && classes.grow)}>
+    <Stack
+      className={`${stackUploadProgress ? styles.stackedProgress : ''} ${grow ? styles.grow : ''}`}
+    >
       <Group spacing="xs" align="flex-end" noWrap>
         <FileInput
           {...props}
@@ -111,7 +104,7 @@ export function FileInputUpload({
           icon={<IconUpload size={16} />}
           onChange={handleOnChange}
           value={file ?? localFile}
-          className={cx(grow && classes.grow)}
+          className={grow ? styles.grow : ''}
           rightSection={
             file && (
               <>
@@ -134,7 +127,7 @@ export function FileInputUpload({
         <>
           {status === 'uploading' &&
             (stackUploadProgress ? (
-              <Box className={classes.stackedProgressProgress}>
+              <Box className={styles.stackedProgressProgress}>
                 <Progress
                   sx={{ width: '100%' }}
                   size="xl"
@@ -146,15 +139,15 @@ export function FileInputUpload({
                     root: { height: '100%', borderTopRightRadius: 0, borderBottomRightRadius: 0 },
                     bar: { alignItems: 'flex-start', paddingTop: 6, textShadow: '0 0 2px #000' },
                   }}
-                  className={classes.stackedProgressBar}
+                  className={styles.stackedProgressBar}
                   striped
                   animate
                 />
-                <Group position="apart" className={classes.stackedProgressStatus}>
-                  <Text className={classes.stackedProgressStatusText}>{`${formatBytes(
+                <Group position="apart" className={styles.stackedProgressStatus}>
+                  <Text className={styles.stackedProgressStatusText}>{`${formatBytes(
                     speed
                   )}/s`}</Text>
-                  <Text className={classes.stackedProgressStatusText}>{`${formatSeconds(
+                  <Text className={styles.stackedProgressStatusText}>{`${formatSeconds(
                     timeRemaining
                   )} remaining`}</Text>
                 </Group>
@@ -200,41 +193,3 @@ type Props = Omit<FileInputProps, 'icon' | 'onChange' | 'value'> & {
   extra?: React.ReactNode;
 };
 
-const useStyles = createStyles(() => ({
-  stackedProgress: {
-    position: 'relative',
-    overflow: 'hidden',
-  },
-  stackedProgressProgress: {
-    position: 'absolute',
-    top: 1,
-    left: 1,
-    bottom: 1,
-    width: 'calc(100% - 32px)',
-    zIndex: 2,
-    opacity: 1,
-  },
-  stackedProgressBar: {
-    position: 'absolute',
-    top: '0',
-    width: '100%',
-  },
-  stackedProgressStatus: {
-    position: 'absolute',
-    bottom: '0',
-    width: '100%',
-    marginBottom: 0,
-    paddingLeft: 12,
-    paddingRight: 12,
-    zIndex: 3,
-  },
-  stackedProgressStatusText: {
-    fontSize: 10,
-    color: '#fff',
-    textShadow: '0 0 2px #000',
-    fontWeight: 500,
-  },
-  grow: {
-    flexGrow: 1,
-  },
-}));

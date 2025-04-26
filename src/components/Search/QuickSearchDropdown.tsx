@@ -1,4 +1,4 @@
-import { AutocompleteProps, createStyles, Group, Select, Stack, Text } from '@mantine/core';
+import { AutocompleteProps, Group, Select, Stack, Text } from '@mantine/core';
 import { useDebouncedValue } from '@mantine/hooks';
 import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import { IconChevronDown } from '@tabler/icons-react';
@@ -27,88 +27,17 @@ import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { IMAGES_SEARCH_INDEX, TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { ShowcaseItemSchema } from '~/server/schema/user-profile.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { paired } from '~/utils/type-guards';
 import { searchClient } from '~/components/Search/search.client';
 import { BrowsingLevelFilter } from './CustomSearchComponents';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
+import { styles } from './QuickSearchDropdown.styles';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
   env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
   { primaryKey: 'id' }
 );
-
-// TODO: These styles were taken from the original SearchBar component. We should probably migrate that searchbar to use this component.
-const useStyles = createStyles((theme) => ({
-  root: {
-    flexGrow: 1,
-
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-      flexGrow: 1,
-    },
-  },
-  wrapper: {
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  input: {
-    borderRadius: 0,
-
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  dropdown: {
-    [containerQuery.smallerThan('sm')]: {
-      marginTop: '-7px',
-    },
-  },
-
-  targetSelectorRoot: {
-    width: '110px',
-
-    [containerQuery.smallerThan('sm')]: {
-      width: '25%',
-    },
-  },
-
-  targetSelectorInput: {
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    paddingRight: '18px',
-
-    '&:not(:focus)': {
-      borderRightStyle: 'none',
-    },
-
-    [containerQuery.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-
-  targetSelectorRightSection: {
-    pointerEvents: 'none',
-  },
-
-  searchButton: {
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
-    },
-
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-}));
 
 export type QuickSearchDropdownProps = Omit<AutocompleteProps, 'data'> & {
   supportedIndexes?: SearchIndexKey[];
@@ -189,10 +118,8 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   indexName: TIndex;
   onIndexNameChange: (indexName: TIndex) => void;
 }) {
-  // const currentUser = useCurrentUser();
   const { query, refine: setQuery } = useSearchBox();
   const { hits, results } = useHitsTransformed<TIndex>();
-  const { classes } = useStyles();
   const features = useFeatureFlags();
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -225,13 +152,13 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
   }, [debouncedSearch, query]);
 
   return (
-    <Group className={classes.wrapper} spacing={0} noWrap>
+    <Group className={styles.wrapper} spacing={0} noWrap>
       {!!showIndexSelect && (
         <Select
           classNames={{
-            root: classes.targetSelectorRoot,
-            input: classes.targetSelectorInput,
-            rightSection: classes.targetSelectorRightSection,
+            root: styles.targetSelectorRoot,
+            input: styles.targetSelectorInput,
+            rightSection: styles.targetSelectorRightSection,
           }}
           maxDropdownHeight={280}
           defaultValue={availableIndexes[0]}
@@ -250,58 +177,51 @@ function QuickSearchDropdownContent<TIndex extends SearchIndexKey>({
         />
       )}
       <ClearableAutoComplete
-        key={indexName}
-        classNames={classes}
-        placeholder={placeholder ?? 'Search Civitai'}
-        type="search"
-        maxDropdownHeight={300}
-        nothingFound={
-          !hits.length ? (
-            <Stack spacing={0} align="center">
-              <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-            </Stack>
-          ) : undefined
-        }
-        limit={
-          results && results.nbHits > dropdownItemLimit
-            ? dropdownItemLimit + 1 // Allow one more to show more results option
-            : dropdownItemLimit
-        }
-        defaultValue={query}
-        value={search}
-        data={items}
-        onChange={setSearch}
-        onClear={() => setSearch('')}
-        // onBlur={() => (!isMobile ? onClear?.() : undefined)}
-        onItemSubmit={(item) => {
-          if (item.hit) {
-            onItemSelected(
-              {
-                entityId: item.hit.id,
-                entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
-              },
-              item.hit
-            );
-
-            setSearch('');
-          }
+        classNames={{
+          root: styles.root,
+          input: styles.input,
+          dropdown: styles.dropdown,
         }}
-        itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
-        // prevent default filtering behavior
-        filter={() => true}
-        clearable={query.length > 0}
+        placeholder={placeholder ?? 'Search...'}
+        value={search}
+        onChange={setSearch}
+        data={items}
+        onItemSubmit={(item) => {
+          onItemSelected(
+            {
+              entityId: item.hit.id,
+              entityType: SearchIndexEntityTypes[searchIndexMap[indexName]],
+            },
+            item.hit
+          );
+        }}
+        itemComponent={getItemComponent(indexName)}
+        nothingFound={
+          <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
+        }
         {...autocompleteProps}
       />
     </Group>
   );
 }
 
-const IndexRenderItem: Record<SearchIndexKey, React.FC> = {
-  models: ModelSearchItem,
-  articles: ArticlesSearchItem,
-  users: UserSearchItem,
-  images: ImagesSearchItem,
-  collections: CollectionsSearchItem,
-  bounties: BountiesSearchItem,
-  tools: ToolSearchItem,
-};
+function getItemComponent(indexName: SearchIndexKey) {
+  switch (indexName) {
+    case 'models':
+      return ModelSearchItem;
+    case 'images':
+      return ImagesSearchItem;
+    case 'articles':
+      return ArticlesSearchItem;
+    case 'users':
+      return UserSearchItem;
+    case 'collections':
+      return CollectionsSearchItem;
+    case 'bounties':
+      return BountiesSearchItem;
+    case 'tools':
+      return ToolSearchItem;
+    default:
+      return ModelSearchItem;
+  }
+}

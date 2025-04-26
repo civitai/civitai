@@ -2,7 +2,6 @@ import { IndexToLabel, useSearchStore } from '~/components/Search/useSearchState
 import { useInstantSearch, usePagination, useSearchBox } from 'react-instantsearch';
 import {
   Box,
-  createStyles,
   Group,
   SegmentedControl,
   SegmentedControlItem,
@@ -40,52 +39,8 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isDefined } from '~/utils/type-guards';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { searchIndexMap } from '~/components/Search/search.types';
+import styles from './SearchHeader.module.scss';
 
-const useStyles = createStyles((theme) => ({
-  wrapper: {
-    [containerQuery.smallerThan('sm')]: {
-      overflow: 'auto',
-      maxWidth: '100%',
-    },
-  },
-  label: {
-    paddingTop: 6,
-    paddingBottom: 6,
-    paddingLeft: 6,
-    paddingRight: 10,
-  },
-  root: {
-    backgroundColor: 'transparent',
-    gap: 8,
-    [containerQuery.smallerThan('sm')]: {
-      overflow: 'visible',
-      maxWidth: '100%',
-    },
-  },
-  control: {
-    border: 'none !important',
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-    svg: {
-      color: theme.colorScheme === 'dark' ? theme.colors.gray[1] : theme.colors.dark[6],
-    },
-    borderRadius: theme.radius.xl,
-  },
-  active: { borderRadius: theme.radius.xl },
-  controlActive: {
-    borderRadius: theme.radius.xl,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[3] : theme.colors.dark[6],
-    svg: {
-      color: theme.colorScheme === 'dark' ? undefined : theme.colors.gray[1],
-    },
-    '& label': {
-      color: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[1],
-
-      '&:hover': {
-        color: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
-      },
-    },
-  },
-}));
 export const SearchHeader = () => {
   const { uiState, status } = useInstantSearch();
   const { setSearchParamsByUiState, ...states } = useSearchStore((state) => state);
@@ -95,7 +50,6 @@ export const SearchHeader = () => {
   const features = useFeatureFlags();
 
   const router = useRouter();
-  const { classes, theme } = useStyles();
   const { classes: searchLayoutStyles } = useSearchLayoutStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
 
@@ -132,7 +86,7 @@ export const SearchHeader = () => {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={index === MODELS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+            color={index === MODELS_SEARCH_INDEX ? 'var(--mantine-color-dark-7)' : 'transparent'}
             p={6}
             radius="xl"
           >
@@ -151,7 +105,9 @@ export const SearchHeader = () => {
             <Group align="center" spacing={8} noWrap>
               <ThemeIcon
                 size={30}
-                color={index === IMAGES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+                color={
+                  index === IMAGES_SEARCH_INDEX ? 'var(--mantine-color-dark-7)' : 'transparent'
+                }
                 p={6}
                 radius="xl"
               >
@@ -170,7 +126,7 @@ export const SearchHeader = () => {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={index === ARTICLES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+            color={index === ARTICLES_SEARCH_INDEX ? 'var(--mantine-color-dark-7)' : 'transparent'}
             p={6}
             radius="xl"
           >
@@ -188,7 +144,9 @@ export const SearchHeader = () => {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={index === COLLECTIONS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+            color={
+              index === COLLECTIONS_SEARCH_INDEX ? 'var(--mantine-color-dark-7)' : 'transparent'
+            }
             p={6}
             radius="xl"
           >
@@ -207,7 +165,9 @@ export const SearchHeader = () => {
             <Group align="center" spacing={8} noWrap>
               <ThemeIcon
                 size={30}
-                color={index === BOUNTIES_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+                color={
+                  index === BOUNTIES_SEARCH_INDEX ? 'var(--mantine-color-dark-7)' : 'transparent'
+                }
                 p={6}
                 radius="xl"
               >
@@ -226,7 +186,7 @@ export const SearchHeader = () => {
         <Group align="center" spacing={8} noWrap>
           <ThemeIcon
             size={30}
-            color={index === USERS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+            color={index === USERS_SEARCH_INDEX ? 'var(--mantine-color-dark-7)' : 'transparent'}
             p={6}
             radius="xl"
           >
@@ -245,7 +205,7 @@ export const SearchHeader = () => {
             <Group align="center" spacing={8} noWrap>
               <ThemeIcon
                 size={30}
-                color={index === TOOLS_SEARCH_INDEX ? theme.colors.dark[7] : 'transparent'}
+                color={index === TOOLS_SEARCH_INDEX ? 'var(--mantine-color-dark-7)' : 'transparent'}
                 p={6}
                 radius="xl"
               >
@@ -289,7 +249,7 @@ export const SearchHeader = () => {
     <Stack>
       <Title order={3}>{titleString}</Title>
       <Box sx={{ overflow: 'hidden' }}>
-        <Group spacing="xs" noWrap className={classes.wrapper}>
+        <Group spacing="xs" noWrap className={styles.wrapper}>
           <Tooltip label="Filters & sorting" position="bottom" withArrow>
             <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
               <ThemeIcon
@@ -304,7 +264,7 @@ export const SearchHeader = () => {
             </UnstyledButton>
           </Tooltip>
           <SegmentedControl
-            classNames={classes}
+            classNames={styles}
             size="md"
             value={index}
             data={data}
@@ -315,3 +275,4 @@ export const SearchHeader = () => {
     </Stack>
   );
 };
+

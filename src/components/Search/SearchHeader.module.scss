@@ -1,0 +1,73 @@
+.wrapper {
+  overflow: auto;
+  max-width: 100%;
+}
+
+.label {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  padding-left: 6px;
+  padding-right: 10px;
+}
+
+.root {
+  background-color: transparent;
+  gap: 8px;
+  overflow: visible;
+  max-width: 100%;
+}
+
+.control {
+  border: none !important;
+  background-color: var(--mantine-color-dark-5);
+  border-radius: var(--mantine-radius-xl);
+}
+
+.control svg {
+  color: var(--mantine-color-gray-1);
+}
+
+.control[data-light] {
+  background-color: var(--mantine-color-gray-1);
+}
+
+.control[data-light] svg {
+  color: var(--mantine-color-dark-6);
+}
+
+.active {
+  border-radius: var(--mantine-radius-xl);
+}
+
+.controlActive {
+  border-radius: var(--mantine-radius-xl);
+  background-color: var(--mantine-color-gray-3);
+}
+
+.controlActive[data-light] {
+  background-color: var(--mantine-color-dark-6);
+}
+
+.controlActive svg {
+  color: var(--mantine-color-gray-1);
+}
+
+.controlActive[data-light] svg {
+  color: var(--mantine-color-gray-1);
+}
+
+.controlActive label {
+  color: var(--mantine-color-dark-7);
+}
+
+.controlActive[data-light] label {
+  color: var(--mantine-color-gray-1);
+}
+
+.controlActive label:hover {
+  color: var(--mantine-color-dark-3);
+}
+
+.controlActive[data-light] label:hover {
+  color: var(--mantine-color-gray-2);
+}

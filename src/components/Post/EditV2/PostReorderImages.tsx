@@ -9,7 +9,7 @@ import {
 } from '@dnd-kit/core';
 import { SortableContext, arrayMove, useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Button, Center, Paper, createStyles } from '@mantine/core';
+import { Button, Center, Paper } from '@mantine/core';
 import { usePrevious } from '@mantine/hooks';
 import { IconArrowsMaximize, IconArrowsSort, IconCheck } from '@tabler/icons-react';
 import { isEqual } from 'lodash-es';
@@ -18,6 +18,7 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { ControlledImage, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import classes from './PostReorderImages.module.scss';
 
 export function PostReorderImages() {
   const [images, setImages] = usePostEditStore((state) => [
@@ -78,8 +79,6 @@ function SortableImage({ image, sortableId }: ItemProps) {
     id: sortableId,
   });
 
-  const { classes } = useStyles();
-
   const style: CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
@@ -112,58 +111,6 @@ function SortableImage({ image, sortableId }: ItemProps) {
     </Paper>
   );
 }
-
-const useStyles = createStyles((theme) => ({
-  root: {
-    position: 'relative',
-    transformOrigin: '0 0',
-    backgroundSize: 'cover',
-    backgroundPosition: 'center',
-    backgroundColor: 'grey',
-    overflow: 'hidden',
-
-    '&:before': {
-      content: '""',
-      display: 'block',
-      width: '100%',
-      paddingTop: '100%',
-    },
-  },
-  hidden: {
-    opacity: 0,
-  },
-  image: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    objectPosition: '50% 50%',
-  },
-  draggableIcon: {
-    background: theme.fn.rgba('dark', 0.5),
-    height: '120px',
-    width: '120px',
-    display: 'flex',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  draggable: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    opacity: 0,
-
-    // transition: '.3s ease-in-out opacity',
-
-    ['&:hover']: {
-      opacity: 1,
-    },
-  },
-}));
 
 export function ReorderImagesButton() {
   const queryUtils = trpc.useUtils();
@@ -205,3 +152,4 @@ export function ReorderImagesButton() {
     </Button>
   );
 }
+

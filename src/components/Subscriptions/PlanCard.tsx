@@ -4,7 +4,6 @@ import {
   ButtonProps,
   Card,
   Center,
-  createStyles,
   Group,
   Select,
   Stack,
@@ -50,6 +49,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { formatKBytes, numberWithCommas } from '~/utils/number-helpers';
 import { getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import styles from './PlanCard.module.scss';
 
 type PlanCardProps = {
   product: SubscriptionPlan;
@@ -79,7 +79,6 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const features = useFeatureFlags();
   const hasActiveSubscription = subscription?.status === 'active';
   const isActivePlan = hasActiveSubscription && subscription?.product?.id === product.id;
-  const { classes } = useStyles();
   const meta = (product.metadata ?? {}) as SubscriptionProductMetadata;
   const subscriptionMeta = (subscription?.product.metadata ?? {}) as SubscriptionProductMetadata;
   const isUpgrade =
@@ -115,17 +114,17 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
     !isActivePlan && appliesForFounderDiscount(metadata?.tier) && features.membershipsV2;
 
   return (
-    <Card className={classes.card}>
+    <Card className={styles.card}>
       <Stack justify="space-between" style={{ height: '100%' }}>
         <Stack>
           <Stack spacing="md" mb="md">
-            <Title className={classes.title} order={2} align="center" mb="sm">
+            <Title className={styles.title} order={2} align="center" mb="sm">
               {product.name}
             </Title>
             {image && (
               <Center>
                 <Box w={128}>
-                  <EdgeMedia src={image} className={classes.image} />
+                  <EdgeMedia src={image} className={styles.image} />
                 </Box>
               </Center>
             )}
@@ -136,7 +135,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                   </Text>
                   <Group position="center" spacing={4} align="flex-end">
-                    <Text className={classes.price} align="center" lh={1}>
+                    <Text className={styles.price} align="center" lh={1}>
                       {getStripeCurrencyDisplay(
                         price.unitAmount *
                           (constants.memberships.founderDiscount.discountPercent / 100),
@@ -150,7 +149,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                 </Stack>
               ) : (
                 <Group position="center" spacing={4} align="flex-end">
-                  <Text className={classes.price} align="center" lh={1}>
+                  <Text className={styles.price} align="center" lh={1}>
                     {getStripeCurrencyDisplay(price.unitAmount, price.currency)}
                   </Text>
                   <Text align="center" color="dimmed">
@@ -199,49 +198,39 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   <Button
                     radius="xl"
                     {...btnProps}
-                    disabled={disabledDueToProvider}
                     onClick={() => {
                       dialogStore.trigger({
                         component: DowngradeFeedbackModal,
-                        props: {
-                          priceId,
-                          upcomingVaultSizeKb: meta.vaultSizeKb,
-                          fromTier: subscriptionMeta.tier,
-                          toTier: meta.tier,
-                        },
+                        props: { product },
                       });
                     }}
                   >
-                    Downgrade to {meta?.tier}
+                    Downgrade
                   </Button>
                 ) : isUpgrade ? (
                   <Button
                     radius="xl"
                     {...btnProps}
-                    disabled={disabledDueToProvider}
                     onClick={() => {
                       dialogStore.trigger({
                         component: MembershipUpgradeModal,
-                        props: {
-                          priceId,
-                          meta: planDetails,
-                        },
+                        props: { product },
                       });
                     }}
                   >
-                    Upgrade to {meta?.tier}
+                    Upgrade
                   </Button>
                 ) : (
-                  <SubscribeButton priceId={priceId} disabled={disabledDueToProvider}>
-                    <Button radius="xl" {...btnProps}>
-                      {isActivePlan ? `You are ${meta?.tier}` : `Subscribe to ${meta?.tier}`}
-                    </Button>
-                  </SubscribeButton>
+                  <SubscribeButton
+                    priceId={priceId}
+                    disabled={disabledDueToProvider}
+                    {...btnProps}
+                  />
                 )}
               </>
             )}
           </Stack>
-          {benefits && <PlanBenefitList benefits={benefits} tier={meta?.tier} />}
+          <PlanBenefitList benefits={benefits} />
         </Stack>
       </Stack>
     </Card>
@@ -432,26 +421,3 @@ export type PlanMeta = {
   benefits: BenefitItem[];
 };
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-  },
-  image: {
-    [containerQuery.smallerThan('sm')]: {
-      width: 96,
-      marginBottom: theme.spacing.xs,
-    },
-  },
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: 20,
-    },
-  },
-  price: {
-    fontSize: 48,
-    fontWeight: 'bold',
-  },
-}));

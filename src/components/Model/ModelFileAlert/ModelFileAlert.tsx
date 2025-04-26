@@ -1,6 +1,7 @@
 import { Anchor, Text } from '@mantine/core';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { IconAlertCircle } from '@tabler/icons-react';
+import styles from './ModelFileAlert.module.scss';
 
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { BaseModel } from '~/server/common/constants';
@@ -30,8 +31,13 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
   return (
     <>
       {onlyPickle && (
-        <AlertWithIcon icon={<IconAlertCircle />} iconColor="yellow" color="yellow">
-          <Text>
+        <AlertWithIcon
+          icon={<IconAlertCircle className={styles.alertIcon} />}
+          iconColor="yellow"
+          color="yellow"
+          className={`${styles.alert} ${styles.warningAlert}`}
+        >
+          <Text className={styles.alertText}>
             {modelType === 'TextualInversion' || modelType === 'Hypernetwork'
               ? "This asset is only available as a PickleTensor which is an insecure format. We've taken precautions to ensure the safety of these files but please be aware that some may harbor malicious code."
               : 'This asset is only available as a PickleTensor which is a deprecated and insecure format. We caution against using this asset until it can be converted to the modern SafeTensor format.'}
@@ -39,75 +45,110 @@ export const ModelFileAlert = ({ files, modelType, versionId, baseModel }: Model
         </AlertWithIcon>
       )}
       {isWildcards && (
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          This is a Wildcard collection, it requires an{' '}
-          <Anchor
-            href="https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards"
-            rel="nofollow"
-            target="_blank"
-          >
-            additional extension in Automatic 1111
-          </Anchor>{' '}
-          to work.
+        <AlertWithIcon
+          icon={<IconAlertCircle className={styles.alertIcon} />}
+          className={`${styles.alert} ${styles.infoAlert}`}
+        >
+          <Text className={styles.alertText}>
+            This is a Wildcard collection, it requires an{' '}
+            <Anchor
+              href="https://github.com/AUTOMATIC1111/stable-diffusion-webui-wildcards"
+              rel="nofollow"
+              target="_blank"
+              className={styles.link}
+            >
+              additional extension in Automatic 1111
+            </Anchor>{' '}
+            to work.
+          </Text>
         </AlertWithIcon>
       )}
       {isMotion && (
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          This is a Motion Module for{' '}
-          <Anchor href="https://github.com/guoyww/AnimateDiff/" rel="nofollow" target="_blank">
-            AnimateDiff
-          </Anchor>
-          , it requires an{' '}
-          <Anchor
-            href="https://github.com/continue-revolution/sd-webui-animatediff"
-            rel="nofollow"
-            target="_blank"
-          >
-            additional extension in Automatic 1111
-          </Anchor>{' '}
-          to work.
+        <AlertWithIcon
+          icon={<IconAlertCircle className={styles.alertIcon} />}
+          className={`${styles.alert} ${styles.infoAlert}`}
+        >
+          <Text className={styles.alertText}>
+            This is a Motion Module for{' '}
+            <Anchor
+              href="https://github.com/guoyww/AnimateDiff/"
+              rel="nofollow"
+              target="_blank"
+              className={styles.link}
+            >
+              AnimateDiff
+            </Anchor>
+            , it requires an{' '}
+            <Anchor
+              href="https://github.com/continue-revolution/sd-webui-animatediff"
+              rel="nofollow"
+              target="_blank"
+              className={styles.link}
+            >
+              additional extension in Automatic 1111
+            </Anchor>{' '}
+            to work.
+          </Text>
         </AlertWithIcon>
       )}
       {hasNegativeEmbed && (
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          This Textual Inversion includes a{' '}
-          <Anchor
-            href={createModelFileDownloadUrl({
-              versionId,
-              type: 'Negative',
-            })}
-          >
-            Negative embed
-          </Anchor>
-          , install the negative and use it in the negative prompt for full effect.
+        <AlertWithIcon
+          icon={<IconAlertCircle className={styles.alertIcon} />}
+          className={`${styles.alert} ${styles.infoAlert}`}
+        >
+          <Text className={styles.alertText}>
+            This Textual Inversion includes a{' '}
+            <Anchor
+              href={createModelFileDownloadUrl({
+                versionId,
+                type: 'Negative',
+              })}
+              className={styles.link}
+            >
+              Negative embed
+            </Anchor>
+            , install the negative and use it in the negative prompt for full effect.
+          </Text>
         </AlertWithIcon>
       )}
       {hasConfig && (
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          This checkpoint includes a{' '}
-          <Anchor
-            href={createModelFileDownloadUrl({
-              versionId,
-              type: 'Config',
-            })}
-          >
-            config file
-          </Anchor>
-          , download and place it along side the checkpoint.
+        <AlertWithIcon
+          icon={<IconAlertCircle className={styles.alertIcon} />}
+          className={`${styles.alert} ${styles.infoAlert}`}
+        >
+          <Text className={styles.alertText}>
+            This checkpoint includes a{' '}
+            <Anchor
+              href={createModelFileDownloadUrl({
+                versionId,
+                type: 'Config',
+              })}
+              className={styles.link}
+            >
+              config file
+            </Anchor>
+            , download and place it along side the checkpoint.
+          </Text>
         </AlertWithIcon>
       )}
       {hasVAE && (
-        <AlertWithIcon icon={<IconAlertCircle />}>
-          This checkpoint recommends a{' '}
-          <Anchor
-            href={createModelFileDownloadUrl({
-              versionId,
-              type: 'VAE',
-            })}
-          >
-            VAE
-          </Anchor>
-          , download and place it in the VAE folder.
+        <AlertWithIcon
+          icon={<IconAlertCircle className={styles.alertIcon} />}
+          className={`${styles.alert} ${styles.infoAlert}`}
+        >
+          <Text className={styles.alertText}>
+            This checkpoint recommends a{' '}
+            <Anchor
+              href={createModelFileDownloadUrl({
+                versionId,
+                type: 'VAE',
+              })}
+              className={styles.link}
+            >
+              VAE
+            </Anchor>
+            , download and place it in the VAE folder.
+          </Text>
         </AlertWithIcon>
       )}
     </>
@@ -120,3 +161,4 @@ type ModelFileAlertProps = {
   modelType: ModelType;
   versionId: number;
 };
+

@@ -1,4 +1,4 @@
-import { Button, Dialog, Group, Image, Stack, Text, createStyles } from '@mantine/core';
+import { Button, Dialog, Group, Image, Stack, Text } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { useEffect, useState } from 'react';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -10,39 +10,13 @@ import {
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { increaseDate } from '~//utils/date-helpers';
+import styles from './NewsletterDialog.module.scss';
 
 const REFETCH_TIMEOUT = 30000; // 30 seconds
-
-const useStyles = createStyles((theme) => ({
-  dialogRoot: {
-    width: '400px',
-
-    [theme.fn.smallerThan('sm')]: {
-      width: '85vw',
-    },
-  },
-  bannerRoot: {
-    position: 'absolute',
-    top: '-85%',
-    left: '50%',
-    height: '85%',
-    width: '70% !important',
-    transform: 'translateX(-50%)',
-
-    [theme.fn.smallerThan('sm')]: {
-      top: '-65%',
-      height: '65%',
-      width: '65% !important',
-    },
-  },
-  bannerFigure: { height: '100%' },
-  bannerImageWrapper: { height: '100%' },
-}));
 
 export function NewsletterDialog() {
   const queryUtils = trpc.useUtils();
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
 
   const [opened, setOpened] = useState(true);
   const [postponedUntil, setPostponedUntil] = useLocalStorage<string | null>({
@@ -100,7 +74,7 @@ export function NewsletterDialog() {
       radius="md"
       shadow="lg"
       p={0}
-      classNames={{ root: classes.dialogRoot }}
+      classNames={{ root: styles.dialogRoot }}
       position={{ bottom: 10, right: 10 }}
       opened={opened && !isLoading && !!subscription?.showNewsletterDialog && postponedExpired}
       onClose={handleClose}
@@ -110,9 +84,9 @@ export function NewsletterDialog() {
         src="/images/newsletter-banner.png"
         alt="Robot holding a newspaper"
         classNames={{
-          root: classes.bannerRoot,
-          figure: classes.bannerFigure,
-          imageWrapper: classes.bannerImageWrapper,
+          root: styles.bannerRoot,
+          figure: styles.bannerFigure,
+          imageWrapper: styles.bannerImageWrapper,
         }}
         imageProps={{
           style: {
@@ -152,3 +126,4 @@ export function NewsletterDialog() {
     </Dialog>
   );
 }
+

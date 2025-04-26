@@ -1,4 +1,4 @@
-import { Box, Stack, StepProps, Stepper, Text, Title, createStyles } from '@mantine/core';
+import { Box, Stack, StepProps, Stepper, Text, Title } from '@mantine/core';
 import { useRef, useState } from 'react';
 import { OnboardingContentExperience } from '~/components/Onboarding/OnboardingContentExperience';
 import { OnboardingBuzz } from '~/components/Onboarding/OnboardingBuzz';
@@ -7,15 +7,15 @@ import { OnboardingTos } from '~/components/Onboarding/OnboardingTos';
 import { OnboardingRedTos } from '~/components/Onboarding/OnboardingRedTos';
 import { useGetRequiredOnboardingSteps } from '~/components/Onboarding/onboarding.utils';
 import { OnboardingSteps } from '~/server/common/enums';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { LogoBadge } from '~/components/Logo/LogoBadge';
 import { OnboardingProvider } from '~/components/Onboarding/OnboardingProvider';
 import { ColorDomain } from '~/server/common/constants';
 import { useDomainColor } from '~/hooks/useDomainColor';
+import classes from './OnboardingWizard.module.scss';
 
 type StepPropsCustom = Omit<StepProps, 'step'> & {
   step: number;
-  Component: React.FC; 
+  Component: React.FC;
 };
 
 const steps: StepPropsCustom[] = [
@@ -55,7 +55,6 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
   const onboardingSteps = useGetRequiredOnboardingSteps();
   const onboardingStepsRef = useRef(onboardingSteps);
   const [active, setActive] = useState(0);
-  const { classes } = useStyles();
   const domain = useDomainColor();
 
   const next = () => {
@@ -106,58 +105,3 @@ export default function OnboardingWizard({ onComplete }: { onComplete: () => voi
   );
 }
 
-const useStyles = createStyles((theme, _params, getRef) => ({
-  steps: {
-    marginTop: 20,
-    marginBottom: 20,
-    [containerQuery.smallerThan('xs')]: {
-      marginTop: 0,
-      marginBottom: 0,
-    },
-  },
-  step: {
-    [containerQuery.smallerThan('md')]: {
-      '&[data-progress]': {
-        display: 'flex',
-        [`& .${getRef('stepBody')}`]: {
-          display: 'block',
-        },
-      },
-    },
-  },
-  stepBody: {
-    ref: getRef('stepBody'),
-    [containerQuery.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-  stepDescription: {
-    whiteSpace: 'nowrap',
-  },
-  stepIcon: {
-    [containerQuery.smallerThan('sm')]: {
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      width: 24,
-      height: 24,
-      minWidth: 24,
-    },
-  },
-  stepCompletedIcon: {
-    [containerQuery.smallerThan('sm')]: {
-      width: 14,
-      height: 14,
-      minWidth: 14,
-      position: 'relative',
-    },
-  },
-  separator: {
-    [containerQuery.smallerThan('xs')]: {
-      marginLeft: 4,
-      marginRight: 4,
-      minWidth: 10,
-      // display: 'none',
-    },
-  },
-}));

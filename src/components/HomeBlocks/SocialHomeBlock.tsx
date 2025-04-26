@@ -1,4 +1,4 @@
-import { ActionIcon, Box, createStyles, Group, Popover, Stack, Text, Title } from '@mantine/core';
+import { ActionIcon, Box, Group, Popover, Stack, Text, Title } from '@mantine/core';
 import { useDebouncedState } from '@mantine/hooks';
 import { IconChevronLeft, IconChevronRight, IconInfoCircle } from '@tabler/icons-react';
 import { useCallback, useMemo, useRef } from 'react';
@@ -11,89 +11,7 @@ import { SocialLinks } from '~/components/SocialLinks/SocialLinks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsLive } from '~/hooks/useIsLive';
 import { HomeBlockMetaSchema } from '~/server/schema/home-block.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
-
-const useStyles = createStyles<string, { columnWidth?: number; columnGap?: number }>(
-  (theme, { columnGap, columnWidth }, getRef) => ({
-    root: {
-      paddingTop: '32px',
-      paddingBottom: '32px',
-    },
-
-    carousel: {
-      [containerQuery.smallerThan('sm')]: {
-        marginRight: -theme.spacing.md,
-        marginLeft: -theme.spacing.md,
-      },
-    },
-    nextButton: {
-      backgroundColor: `${theme.colors.gray[0]} !important`,
-      color: theme.colors.dark[9],
-      opacity: 0.65,
-      transition: 'opacity 300ms ease',
-      zIndex: 10,
-
-      '&:hover': {
-        opacity: 1,
-      },
-
-      [containerQuery.smallerThan('sm')]: {
-        display: 'none',
-      },
-    },
-
-    hidden: {
-      display: 'none !important',
-    },
-
-    grid: {
-      display: 'grid',
-      gridAutoFlow: 'column',
-      columnGap: columnGap,
-      gridAutoColumns: columnWidth,
-      gridTemplateRows: 'auto',
-      gridAutoRows: 0,
-      overflowX: 'visible',
-      paddingBottom: 4,
-      alignItems: 'center',
-
-      [containerQuery.smallerThan('sm')]: {
-        marginRight: -theme.spacing.md,
-        marginLeft: -theme.spacing.md,
-        paddingLeft: theme.spacing.md,
-      },
-    },
-    container: {
-      position: 'relative',
-      '&:hover': {
-        [`& .${getRef('scrollArea')}`]: {
-          '&::-webkit-scrollbar': {
-            opacity: 1,
-          },
-          '&::-webkit-scrollbar-thumb': {
-            backgroundColor:
-              theme.colorScheme === 'dark'
-                ? theme.fn.rgba(theme.white, 0.5)
-                : theme.fn.rgba(theme.black, 0.5),
-          },
-        },
-      },
-    },
-    scrollArea: {
-      ref: getRef('scrollArea'),
-      overflow: 'auto',
-      scrollSnapType: 'x mandatory',
-      '&::-webkit-scrollbar': {
-        background: 'transparent',
-        opacity: 0,
-        height: 8,
-      },
-      '&::-webkit-scrollbar-thumb': {
-        borderRadius: 4,
-      },
-    },
-  })
-);
+import classes from './SocialHomeBlock.module.scss';
 
 export const SocialHomeBlock = ({ showAds, ...props }: Props) => {
   if (!props.metadata.socials?.length) return null;
@@ -113,7 +31,6 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   const itemCount = socialData?.length ?? 0;
   const isLive = useIsLive();
   const { columnWidth, columnGap, columnCount } = useMasonryContext();
-  const { classes, cx } = useStyles({ columnWidth, columnGap });
 
   // ---------------------
   // Snap Scrolling with buttons
@@ -214,47 +131,52 @@ const SocialHomeBlockContent = ({ metadata }: Props) => {
   }, [socialData, isLive]);
 
   return (
-    <>
-      <Box mb="md" className={classes.meta}>
-        {MetaDataTop}
-      </Box>
+    <Stack spacing="xl">
+      {MetaDataTop}
       <div className={classes.container}>
         <div className={classes.scrollArea} ref={viewportRef} onScroll={onScroll}>
-          <div className={classes.grid}>
-            {blocks.map((block) => {
-              return <SocialBlock key={block.url} {...block} />;
-            })}
+          <div
+            className={classes.grid}
+            style={
+              {
+                '--column-gap': `${columnGap}px`,
+                '--column-width': `${columnWidth}px`,
+              } as React.CSSProperties
+            }
+          >
+            {blocks.map((block) => (
+              <SocialBlock key={block.url} {...block} />
+            ))}
           </div>
         </div>
-        {blocks.length > 2 && (
-          <>
-            <ActionIcon
-              className={cx(classes.nextButton, { [classes.hidden]: atStart })}
-              radius="xl"
-              size="md"
-              color="gray"
-              p={4}
-              sx={{ position: 'absolute', top: '50%', left: 10 }}
-              onClick={() => scroll('left')}
-            >
-              <IconChevronLeft />
-            </ActionIcon>
-            <ActionIcon
-              className={cx(classes.nextButton, { [classes.hidden]: atEnd })}
-              radius="xl"
-              size="md"
-              color="gray"
-              p={4}
-              sx={{ position: 'absolute', top: '50%', right: 10 }}
-              onClick={() => scroll('right')}
-            >
-              <IconChevronRight />
-            </ActionIcon>
-          </>
+        {!atStart && (
+          <ActionIcon
+            className={classes.nextButton}
+            size="lg"
+            radius="xl"
+            variant="filled"
+            onClick={() => scroll('left')}
+            style={{ left: 0, top: '50%', transform: 'translateY(-50%)' }}
+          >
+            <IconChevronLeft size={20} />
+          </ActionIcon>
+        )}
+        {!atEnd && (
+          <ActionIcon
+            className={classes.nextButton}
+            size="lg"
+            radius="xl"
+            variant="filled"
+            onClick={() => scroll('right')}
+            style={{ right: 0, top: '50%', transform: 'translateY(-50%)' }}
+          >
+            <IconChevronRight size={20} />
+          </ActionIcon>
         )}
       </div>
-    </>
+    </Stack>
   );
 };
 
 type Props = { metadata: HomeBlockMetaSchema; showAds?: boolean };
+

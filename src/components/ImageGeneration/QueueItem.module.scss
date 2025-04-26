@@ -1,0 +1,75 @@
+.root {
+  position: relative;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.status {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--mantine-color-blue-1);
+  border-radius: var(--mantine-radius-sm);
+  overflow: hidden;
+}
+
+.progressBar {
+  height: 100%;
+  background: var(--mantine-color-blue-6);
+  transition: width 0.3s ease;
+}
+
+.delayed {
+  color: var(--mantine-color-yellow-6);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.error {
+  color: var(--mantine-color-red-6);
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.resource {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: var(--mantine-color-dark-6);
+  border-radius: var(--mantine-radius-sm);
+  font-size: 12px;
+}
+
+.resourceIcon {
+  width: 16px;
+  height: 16px;
+  color: var(--mantine-color-gray-4);
+}
+
+.resourceName {
+  color: var(--mantine-color-gray-0);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}

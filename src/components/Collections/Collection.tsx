@@ -2,6 +2,7 @@ import {
   ActionIcon,
   AspectRatio,
   Box,
+  BoxProps,
   Button,
   Center,
   ContainerProps,
@@ -30,7 +31,7 @@ import {
 import { capitalize, truncate } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
-import { CSSProperties, useState } from 'react';
+import { CSSProperties, useState, forwardRef } from 'react';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -96,6 +97,7 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import { Meta } from '../Meta/Meta';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
+import styles from './Collection.module.scss';
 
 const AddUserContentModal = dynamic(() =>
   import('~/components/Collections/AddUserContentModal').then((x) => x.AddUserContentModal)
@@ -468,6 +470,25 @@ const ArticleCollection = ({ collection }: { collection: NonNullable<CollectionB
     </Stack>
   );
 };
+
+export interface CollectionProps extends BoxProps {
+  bannerPosition?: React.CSSProperties['objectPosition'];
+}
+
+export const Collection = forwardRef<HTMLDivElement, CollectionProps>((props, ref) => {
+  const { bannerPosition, className, ...others } = props;
+
+  return (
+    <Box
+      className={`${styles.coverImage} ${className}`}
+      style={{ '--banner-position': bannerPosition ?? 'top center' } as React.CSSProperties}
+      {...others}
+      ref={ref}
+    />
+  );
+});
+
+Collection.displayName = 'Collection';
 
 export function Collection({
   collectionId,

@@ -1,0 +1,59 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 24px;
+  padding: 24px;
+  min-height: 100vh;
+  width: 100%;
+}
+
+.banIcon {
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.2));
+}
+
+.title {
+  color: var(--mantine-color-red-6);
+  text-align: center;
+  margin: 0;
+}
+
+.message {
+  color: var(--mantine-color-gray-6);
+  text-align: center;
+  max-width: 600px;
+}
+
+.detailsContainer {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 600px;
+}
+
+.signOutButton {
+  margin-top: 16px;
+  background-color: var(--mantine-color-red-6);
+}
+
+.signOutButton:hover {
+  background-color: var(--mantine-color-red-7);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .container {
+    padding: 16px;
+    gap: 16px;
+  }
+
+  .title {
+    font-size: 1.5rem;
+  }
+
+  .message {
+    font-size: 1rem;
+  }
+}

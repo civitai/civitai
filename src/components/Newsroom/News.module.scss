@@ -1,0 +1,68 @@
+.root {
+  background-color: var(--mantine-color-dark-8);
+  padding-top: var(--mantine-spacing-xl) * 2;
+  padding-bottom: var(--mantine-spacing-xl) * 2;
+}
+
+.articles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: var(--mantine-spacing-xl);
+}
+
+.card {
+  display: block;
+  overflow: hidden;
+}
+
+.card:hover {
+  border-color: var(--mantine-color-blue-7);
+}
+
+.card:hover .action {
+  background-color: rgba(var(--mantine-color-blue-7), 0.1);
+}
+
+.imageContainer {
+  width: 100%;
+  height: 200px;
+  overflow: hidden;
+}
+
+@media (min-width: 800px) {
+  .imageContainer {
+    width: 200px;
+    height: auto;
+  }
+}
+
+.title {
+  font-size: var(--mantine-font-size-lg);
+}
+
+@media (min-width: 48em) {
+  .title {
+    font-size: var(--mantine-font-size-xl);
+  }
+}
+
+.publishDate {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-dark-2);
+}
+
+.summary {
+  font-size: var(--mantine-font-size-md);
+  margin-top: var(--mantine-spacing-xs);
+  margin-bottom: var(--mantine-spacing-md);
+}
+
+@media (min-width: 48em) {
+  .summary {
+    font-size: var(--mantine-font-size-lg);
+  }
+}
+
+.action {
+  /* This class is used for the hover effect */
+}

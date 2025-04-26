@@ -3,6 +3,7 @@ import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useState } from 'react';
 import { ModelHashType } from '~/shared/utils/prisma/enums';
+import styles from './ModelHash.module.scss';
 
 export const ModelHash = ({
   hashes,
@@ -30,37 +31,18 @@ export const ModelHash = ({
   };
 
   return (
-    <Group spacing={0} noWrap sx={{ userSelect: 'none' }}>
-      <Badge
-        variant="outline"
-        color={color}
-        px={6}
-        sx={{
-          // width: 60,
-          borderTopRightRadius: 0,
-          borderBottomRightRadius: 0,
-          borderRight: 0,
-          whiteSpace: 'nowrap',
-        }}
-      >
+    <Group spacing={0} noWrap className={styles.hashContainer}>
+      <Badge variant="outline" color={color} className={styles.typeBadge}>
         {type}
       </Badge>
       <CopyButton value={hash}>
         {({ copied, copy }) => (
           <Tooltip label="Copy" withArrow withinPortal>
             <Badge
-              px={6}
               variant="outline"
               color={copied ? 'teal' : color}
-              sx={{
-                cursor: 'pointer',
-                overflow: 'hidden',
-                width,
-                borderTopLeftRadius: 0,
-                borderBottomLeftRadius: 0,
-                borderTopRightRadius: hasMore ? 0 : undefined,
-                borderBottomRightRadius: hasMore ? 0 : undefined,
-              }}
+              className={`${styles.hashBadge} ${copied ? styles.hashBadgeCopied : ''}`}
+              style={{ width }}
               onClick={(e) => {
                 e.stopPropagation();
                 copy();
@@ -73,22 +55,15 @@ export const ModelHash = ({
       </CopyButton>
       {hasMore && (
         <ActionIcon
-          px={2}
-          size={20}
           variant="outline"
           color={color}
-          sx={{
-            borderTopLeftRadius: 0,
-            borderBottomLeftRadius: 0,
-            borderLeft: 0,
-            cursor: 'pointer',
-          }}
+          className={styles.typeSelector}
           onClick={(e) => {
             e.stopPropagation();
             handleNext();
           }}
         >
-          <IconChevronRight />
+          <IconChevronRight size={14} />
         </ActionIcon>
       )}
     </Group>
@@ -104,3 +79,4 @@ type Props = {
   }[];
   width?: number;
 };
+

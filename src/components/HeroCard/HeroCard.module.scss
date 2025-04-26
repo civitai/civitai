@@ -1,0 +1,39 @@
+.card {
+  background: var(--mantine-color-dark-6);
+}
+
+@media (min-width: 768px) {
+  .card {
+    max-height: 376px;
+    display: flex;
+    gap: 40px;
+  }
+}
+
+.section {
+  margin-right: 0;
+  margin-bottom: -40px;
+}
+
+.title {
+  font-size: 40px;
+}
+
+@media (max-width: 767px) {
+  .title {
+    font-size: 28px;
+    margin-top: var(--mantine-spacing-xl);
+  }
+}
+
+.root {
+  height: 100%;
+}
+
+.figure {
+  height: 100%;
+}
+
+.imageWrapper {
+  height: 100%;
+}

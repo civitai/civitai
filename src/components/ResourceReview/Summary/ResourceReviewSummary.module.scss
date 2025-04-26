@@ -1,0 +1,64 @@
+.summary {
+  display: flex;
+  flex-direction: column;
+  gap: var(--mantine-spacing-md);
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--mantine-spacing-md);
+}
+
+.title {
+  font-size: var(--mantine-font-size-lg);
+  font-weight: 600;
+}
+
+.stats {
+  display: flex;
+  gap: var(--mantine-spacing-md);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--mantine-spacing-xs);
+}
+
+.statValue {
+  font-size: var(--mantine-font-size-xl);
+  font-weight: 600;
+}
+
+.statLabel {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-dimmed);
+}
+
+.progress {
+  margin-top: var(--mantine-spacing-xs);
+}
+
+.progressLabel {
+  font-size: var(--mantine-font-size-sm);
+  color: var(--mantine-color-dimmed);
+  margin-top: var(--mantine-spacing-xs);
+}
+
+.totals {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content;
+  align-items: center;
+  column-gap: var(--mantine-spacing-md);
+  row-gap: 4px;
+}
+
+.badgeText {
+  font-size: var(--mantine-font-size-md);
+
+  @container (max-width: 992px) {
+    font-size: var(--mantine-font-size-sm);
+  }
+}

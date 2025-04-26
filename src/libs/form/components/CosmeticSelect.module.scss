@@ -1,0 +1,30 @@
+.decoration {
+  border-radius: var(--mantine-radius-md);
+  background-color: var(--mantine-color-gray-1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  width: 100%;
+}
+
+[data-mantine-color-scheme='dark'] .decoration {
+  background-color: var(--mantine-color-dark-8);
+}
+
+.selected {
+  border: 2px solid var(--mantine-color-blue-4);
+}
+
+.noContent {
+  background-color: var(--mantine-color-gray-1);
+  grid-column: 2 / min-content;
+}
+
+[data-mantine-color-scheme='dark'] .noContent {
+  background-color: var(--mantine-color-dark-8);
+}
+
+.noContentNoUrl {
+  grid-column: 1 / min-content;
+}

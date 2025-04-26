@@ -4,6 +4,8 @@ import React, { forwardRef } from 'react';
 import { useContainerGridContext } from './ContainerGrid.context';
 import useStyles from './ContainerCol.styles';
 import { Box, ColSpan, DefaultProps, useComponentDefaultProps } from '@mantine/core';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import styles from './ContainerCol.module.scss';
 
 export interface ColProps extends DefaultProps, React.ComponentPropsWithoutRef<'div'> {
   /** Default col span */
@@ -59,6 +61,8 @@ export interface ColProps extends DefaultProps, React.ComponentPropsWithoutRef<'
 
   /** Col span at (min-width: theme.breakpoints.xl) */
   xl?: ColSpan;
+
+  containerName?: string;
 }
 
 const defaultProps: Partial<ColProps> = {};
@@ -68,6 +72,70 @@ function isValidSpan(span: ColSpan) {
     return true;
   }
   return typeof span === 'number' && span > 0 && span % 1 === 0;
+}
+
+const getColumnFlexBasis = (colSpan: ColSpan, columns: number) => {
+  if (colSpan === 'content') {
+    return 'auto';
+  }
+  if (colSpan === 'auto') {
+    return '0px';
+  }
+  return colSpan ? `${100 / (columns / colSpan)}%` : undefined;
+};
+
+const getColumnMaxWidth = (colSpan: ColSpan, columns: number, grow: boolean) => {
+  if (grow || colSpan === 'auto' || colSpan === 'content') {
+    return 'unset';
+  }
+  return getColumnFlexBasis(colSpan, columns);
+};
+
+const getColumnFlexGrow = (colSpan: ColSpan, grow: boolean) => {
+  if (!colSpan) {
+    return undefined;
+  }
+  return colSpan === 'auto' || grow ? 1 : 0;
+};
+
+const getColumnOffset = (offset: number, columns: number) =>
+  offset === 0 ? 0 : offset ? `${100 / (columns / offset)}%` : undefined;
+
+const getGutterSize = (gutter: number) => (typeof gutter !== 'undefined' ? gutter / 2 : undefined);
+
+function getBreakpointsStyles({
+  sizes,
+  offsets,
+  orders,
+  columns,
+  gutters,
+  grow,
+  containerName,
+}: {
+  sizes: Record<string, ColSpan>;
+  offsets: Record<string, number>;
+  orders: Record<string, React.CSSProperties['order']>;
+  gutters: Record<string, number>;
+  grow: boolean;
+  columns: number;
+  containerName?: string;
+}) {
+  return Object.entries(sizes).reduce<Record<string, React.CSSProperties>>(
+    (acc, [size, colSpan]) => {
+      acc[containerQuery.largerThan(size, containerName)] = {
+        order: orders[size],
+        flexBasis: getColumnFlexBasis(colSpan, columns),
+        padding: getGutterSize(gutters[size]),
+        flexShrink: 0,
+        width: colSpan === 'content' ? 'auto' : undefined,
+        maxWidth: getColumnMaxWidth(colSpan, columns, grow),
+        marginLeft: getColumnOffset(offsets[size], columns),
+        flexGrow: getColumnFlexGrow(colSpan, grow),
+      };
+      return acc;
+    },
+    {}
+  );
 }
 
 export const ContainerCol = forwardRef<HTMLDivElement, ColProps>((props: ColProps, ref) => {
@@ -94,7 +162,7 @@ export const ContainerCol = forwardRef<HTMLDivElement, ColProps>((props: ColProp
     className,
     id,
     unstyled,
-    ...others
+    containerName,
   } = useComponentDefaultProps('GridCol', defaultProps, props);
 
   const ctx = useContainerGridContext();
@@ -128,20 +196,42 @@ export const ContainerCol = forwardRef<HTMLDivElement, ColProps>((props: ColProp
       grow: ctx.grow,
       columns: ctx.columns,
       span: colSpan,
-      containerName: ctx.containerName,
+      containerName: containerName || ctx.containerName,
     },
     { unstyled, name: 'ContainerGrid' }
   );
+
+  const style = {
+    flexGrow: getColumnFlexGrow(colSpan, false),
+    order,
+    padding: getGutterSize(0),
+    marginLeft: getColumnOffset(offset, 12),
+    flexBasis: getColumnFlexBasis(colSpan, 12),
+    width: colSpan === 'content' ? 'auto' : undefined,
+    maxWidth: getColumnMaxWidth(colSpan, 12, false),
+  };
+
+  const mediaQueries = getBreakpointsStyles({
+    sizes: { xs, sm, md, lg, xl },
+    offsets: { xs: offsetXs, sm: offsetSm, md: offsetMd, lg: offsetLg, xl: offsetXl },
+    orders: { xs: orderXs, sm: orderSm, md: orderMd, lg: orderLg, xl: orderXl },
+    gutters: { xs: 0, sm: 0, md: 0, lg: 0, xl: 0 },
+    columns: 12,
+    grow: false,
+    containerName: containerName || ctx.containerName,
+  });
 
   if (!isValidSpan(colSpan) || (typeof colSpan === 'number' && colSpan > ctx.columns)) {
     return null;
   }
 
   return (
-    <Box className={cx(classes.col, className)} ref={ref} {...others}>
+    <Box className={cx(classes.col, className)} ref={ref} style={{ ...style, ...mediaQueries }}>
       {children}
     </Box>
   );
 });
 
 ContainerCol.displayName = 'ContainerCol';
+
+

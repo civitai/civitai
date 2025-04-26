@@ -1,6 +1,5 @@
 import {
   Center,
-  createStyles,
   Group,
   MantineSize,
   Paper,
@@ -12,13 +11,13 @@ import {
 import { IconAlertOctagon, IconAward, IconBell } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React, { MouseEvent, useMemo } from 'react';
-
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { getNotificationMessage } from '~/server/notifications/utils.notifications';
 import { NotificationGetAll } from '~/types/router';
 import { QS } from '~/utils/qs';
 import { isDefined } from '~/utils/type-guards';
+import styles from './NotificationList.module.scss';
 
 export function NotificationList({
   items,
@@ -28,7 +27,6 @@ export function NotificationList({
   searchText,
 }: Props) {
   const router = useRouter();
-  const { classes } = useStyles();
 
   const fullItems = useMemo(() => {
     return items
@@ -104,7 +102,7 @@ export function NotificationList({
             onAuxClick={handleMiddleClick}
             radius={0}
             data-unread={!notification.read}
-            className={classes.listItem}
+            className={styles.listItem}
           >
             <Group spacing="xl" position="apart" align="start" noWrap>
               <Group spacing="md" align="start" noWrap>
@@ -158,28 +156,3 @@ type Props = {
   searchText: string;
 };
 
-const useStyles = createStyles((theme) => ({
-  listItem: {
-    cursor: 'pointer',
-    borderTop: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-    }`,
-    '&:first-of-type': {
-      borderTop: 'none',
-    },
-    padding: theme.spacing.sm,
-    '&[data-unread="true"]': {
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-      ':hover': {
-        background:
-          theme.colorScheme === 'dark'
-            ? theme.fn.lighten(theme.colors.dark[6], 0.05)
-            : theme.fn.darken(theme.colors.gray[0], 0.05),
-      },
-    },
-    ':hover': {
-      background:
-        theme.colorScheme === 'dark' ? `rgba(255, 255, 255, 0.05)` : `rgba(0, 0, 0, 0.05)`,
-    },
-  },
-}));

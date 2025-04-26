@@ -1,15 +1,4 @@
-import {
-  Badge,
-  Button,
-  createStyles,
-  Group,
-  Image,
-  Input,
-  Radio,
-  Stack,
-  Text,
-  Tooltip,
-} from '@mantine/core';
+import { Badge, Button, Group, Image, Input, Radio, Stack, Text, Tooltip } from '@mantine/core';
 import { IconPhoto, IconVideo } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { z } from 'zod';
@@ -31,6 +20,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { titleCase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import styles from './TrainingBasicInfo.module.scss';
 
 type tmTypes = TrainingDetailsObj['type'];
 type tMediaTypes = TrainingDetailsObj['mediaType'];
@@ -68,34 +58,6 @@ const trainingModelTypesMap: {
     type: 'vid',
   },
 };
-
-const useStyles = createStyles((theme) => ({
-  centerRadio: {
-    '& .mantine-Group-root': {
-      justifyContent: 'space-between',
-      alignItems: 'stretch',
-      [containerQuery.smallerThan('sm')]: {
-        justifyContent: 'center',
-      },
-    },
-    '& .mantine-Radio-inner': {
-      display: 'none',
-    },
-    '& .mantine-Radio-label': {
-      padding: theme.spacing.md,
-    },
-    '& .mantine-Radio-root': {
-      borderRadius: theme.radius.md,
-      // TODO [bw] check for dark theme here
-      '&:hover': {
-        backgroundColor: theme.fn.rgba(theme.colors.blue[2], 0.1),
-      },
-      '&[data-checked]': {
-        backgroundColor: theme.fn.rgba(theme.colors.blue[9], 0.2),
-      },
-    },
-  },
-}));
 
 const RadioImg = ({
   value,
@@ -171,8 +133,6 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
   const thisTrainingDetails = thisModelVersion?.trainingDetails as TrainingDetailsObj | undefined;
   const existingTrainingModelType = thisTrainingDetails?.type ?? undefined;
   const existingTrainingMediaType = thisTrainingDetails?.mediaType ?? 'image';
-
-  const { classes } = useStyles();
 
   const thisStep = 1;
 
@@ -362,89 +322,44 @@ export function TrainingFormBasic({ model }: { model?: TrainingModelData }) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <Stack>
-        <Input.Wrapper
-          label="Choose your media type"
-          labelProps={{ w: '100%', pb: 10 }}
+      <Stack spacing="xl">
+        <InputText
+          name="name"
+          label="Name"
+          placeholder="Enter a name for your model"
           withAsterisk
-          // error={'A media type must be chosen'}
-          // errorProps={{ mt: 'xs' }}
-        >
-          <InputSegmentedControl
-            name="trainingMediaType"
-            radius="sm"
-            data={constants.trainingMediaTypes.map((mt) => {
-              const videoNotAllowed = mt === 'video' && !features.videoTraining;
-
-              return {
-                label: (
-                  <Tooltip
-                    withinPortal
-                    disabled={!videoNotAllowed}
-                    // label={videoNotAllowed ? 'Currently available to subscribers only' : undefined}
-                    label="Temporarily disabled - check back soon!"
-                  >
-                    <Group spacing="xs" position="center">
-                      {mt === 'video' ? <IconVideo size={18} /> : <IconPhoto size={16} />}
-                      <Text>{titleCase(mt)}</Text>
-                      {mt === 'video' && new Date() < new Date('2025-04-30') && (
-                        <Badge color="green">New</Badge>
-                      )}
-                    </Group>
-                  </Tooltip>
-                ),
-                value: mt,
-                disabled: videoNotAllowed,
-              };
-            })}
-            fullWidth
-            styles={(theme) => ({
-              root: {
-                border: `1px solid ${
-                  theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-                }`,
-              },
-            })}
-          />
-        </Input.Wrapper>
+        />
         <InputRadioGroup
-          className={classes.centerRadio} // why is this not easier to do?
           name="trainingModelType"
-          label="Choose your LoRA type"
+          label="Model Type"
+          description="Choose the type of model you want to train"
+          className={styles.centerRadio}
           withAsterisk
         >
-          {Object.entries(trainingModelTypesMap)
-            .filter(([, v]) =>
-              !!trainingMediaType ? v.allowedTypes.includes(trainingMediaType) : true
-            )
-            .map(([k, v]) => (
-              <RadioImg
-                value={k}
-                description={v.description}
-                src={v.src}
-                type={v.type}
-                isNew={k === 'Effect' && new Date() < new Date('2025-04-30')}
-                key={k}
-              />
-            ))}
+          {Object.entries(trainingModelTypesMap).map(([key, value]) => (
+            <RadioImg
+              key={key}
+              value={key}
+              src={value.src}
+              description={value.description}
+              type={value.type}
+              isNew={key === 'Effect' && new Date() < new Date('2025-04-30')}
+            />
+          ))}
         </InputRadioGroup>
-        <InputText name="name" label="Name" placeholder="Name" withAsterisk />
+        <InputSegmentedControl
+          name="trainingMediaType"
+          label="Media Type"
+          description="Choose the type of media you want to train with"
+          data={[
+            { label: 'Images', value: 'image', icon: <IconPhoto size={16} /> },
+            { label: 'Videos', value: 'video', icon: <IconVideo size={16} /> },
+          ]}
+          withAsterisk
+        />
+        <Button type="submit">Next</Button>
       </Stack>
-      {/*
-        TODO: option to "select existing model"
-          would find all training models and spawn a new version
-          instead of creating a new model
-       */}
-      <Group mt="xl" position="right">
-        <Button
-          type="submit"
-          loading={
-            upsertModelMutation.isLoading || upsertVersionMutation.isLoading || awaitInvalidate
-          }
-        >
-          Next
-        </Button>
-      </Group>
     </Form>
   );
 }
+

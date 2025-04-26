@@ -1,9 +1,10 @@
-import { Chip, Group, GroupProps, createStyles } from '@mantine/core';
+import { Chip, Group, GroupProps } from '@mantine/core';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettings, useToggleBrowsingLevel } from '~/providers/BrowserSettingsProvider';
 import { NsfwLevel } from '~/server/common/enums';
 import { browsingLevels, browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils';
+import styles from './BrowsingLevelsGrouped.module.scss';
 
 export function BrowsingLevelsGrouped(props: GroupProps) {
   const currentUser = useCurrentUser();
@@ -23,14 +24,11 @@ function BrowsingLevelLabel({ level }: { level: NsfwLevel }) {
   const browsingLevel = useBrowsingSettings((x) => x.browsingLevel);
   const isSelected = Flags.hasFlag(browsingLevel, level);
   const toggleBrowsingLevel = useToggleBrowsingLevel();
-  const { classes } = useStyles();
-
-  // const browsingLevel = useStore((x) => x.browsingLevel);
   const isDefaultBrowsingLevel = browsingLevel === 0 && level === NsfwLevel.PG;
 
   return (
     <Chip
-      classNames={classes}
+      classNames={styles}
       checked={isSelected || isDefaultBrowsingLevel}
       onChange={() => toggleBrowsingLevel(level)}
       variant={!isDefaultBrowsingLevel ? 'outline' : 'filled'}
@@ -42,40 +40,3 @@ function BrowsingLevelLabel({ level }: { level: NsfwLevel }) {
   );
 }
 
-const useStyles = createStyles((theme, _params, getRef) => ({
-  root: {
-    flex: 1,
-  },
-  label: {
-    width: '100%',
-    display: 'inline-flex',
-    justifyContent: 'center',
-    '&[data-checked]': {
-      '&, &:hover': {
-        backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-        color: theme.white,
-      },
-
-      [`& .${getRef('iconWrapper')}`]: {
-        color: theme.white,
-        display: 'none',
-
-        [`@media (min-width: ${theme.breakpoints.xs}px)`]: {
-          display: 'inline-block',
-        },
-      },
-    },
-    paddingLeft: 10,
-    paddingRight: 10,
-    [`@media (min-width: ${theme.breakpoints.xs}px)`]: {
-      '&': {
-        paddingLeft: 20,
-        paddingRight: 20,
-      },
-    },
-  },
-
-  iconWrapper: {
-    ref: getRef('iconWrapper'),
-  },
-}));

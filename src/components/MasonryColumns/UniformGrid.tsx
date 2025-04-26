@@ -1,9 +1,9 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { createStyles } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
+import classes from './UniformGrid.module.scss';
 
 type Props<TData> = {
   data: TData[];
@@ -22,14 +22,6 @@ export function UniformGrid<TData>({
 }: Props<TData>) {
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
 
-  const { classes } = useStyles({
-    columnCount,
-    columnWidth,
-    columnGap,
-    rowGap,
-    maxSingleColumnWidth,
-  });
-
   const items = useMemo(() => {
     if (!maxRows) return data;
     const wholeRows = Math.floor(data.length / columnCount);
@@ -39,7 +31,18 @@ export function UniformGrid<TData>({
   }, [columnCount, data, maxRows]);
 
   return items.length ? (
-    <div className={classes.grid}>
+    <div
+      className={classes.grid}
+      style={
+        {
+          '--column-width': `${columnWidth}px`,
+          '--column-gap': `${columnGap}px`,
+          '--row-gap': `${rowGap}px`,
+          '--grid-item-width': columnCount === 1 ? '100%' : `${columnWidth}px`,
+          '--max-single-column-width': maxSingleColumnWidth ? `${maxSingleColumnWidth}px` : 'none',
+        } as React.CSSProperties
+      }
+    >
       {items.map((item, index) => {
         const key = itemId?.(item) ?? index;
         return (
@@ -56,46 +59,6 @@ export function UniformGrid<TData>({
   );
 }
 
-const useStyles = createStyles(
-  (
-    theme,
-    {
-      columnCount,
-      columnWidth,
-      columnGap,
-      rowGap,
-      maxSingleColumnWidth,
-    }: {
-      columnCount: number;
-      columnWidth: number;
-      columnGap: number;
-      rowGap: number;
-      maxSingleColumnWidth?: number;
-    }
-  ) => ({
-    empty: { height: columnWidth },
-    grid: {
-      display: 'flex',
-      flexDirection: 'row',
-      flexWrap: 'wrap',
-      minHeight: columnWidth,
-      columnGap,
-      rowGap,
-
-      '& > div': {
-        width: columnCount === 1 ? '100%' : columnWidth,
-        maxWidth: maxSingleColumnWidth,
-        // height: columnCount === 1 ? '100%' : columnWidth,
-        // maxHeight: maxSingleColumnWidth,
-      },
-    },
-    gridItem: {
-      position: 'relative',
-      paddingTop: '100%',
-    },
-  })
-);
-
 const createRenderElement = trieMemoize(
   [OneKeyMap, {}, WeakMap, OneKeyMap, OneKeyMap],
   (RenderComponent, index, data, columnWidth) => (
@@ -106,3 +69,4 @@ const createRenderElement = trieMemoize(
 // UniformGrid.Item = function UniformGridItem({ children }: { children: React.ReactNode }) {
 //   return <></>;
 // };
+

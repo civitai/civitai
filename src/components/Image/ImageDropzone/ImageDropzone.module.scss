@@ -1,0 +1,92 @@
+.dropzone {
+  border: 2px dashed var(--mantine-color-gray-4);
+  border-radius: 8px;
+  padding: 24px;
+  transition: all 0.2s ease;
+  background-color: var(--mantine-color-gray-0);
+}
+
+.dropzone:hover {
+  border-color: var(--mantine-color-blue-5);
+  background-color: var(--mantine-color-gray-1);
+}
+
+.dropzoneDisabled {
+  background-color: var(--mantine-color-gray-1);
+  border-color: var(--mantine-color-gray-3);
+  cursor: not-allowed;
+}
+
+.dropzoneDisabled * {
+  color: var(--mantine-color-gray-5);
+}
+
+.dropzoneError {
+  border-color: var(--mantine-color-red-6);
+  margin-bottom: 4px;
+}
+
+.dropzoneContent {
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 112px;
+}
+
+.icon {
+  stroke-width: 1.5;
+}
+
+.iconAccept {
+  color: var(--mantine-color-blue-6);
+}
+
+.iconReject {
+  color: var(--mantine-color-red-6);
+}
+
+.iconIdle {
+  color: var(--mantine-color-gray-6);
+}
+
+.textContainer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.title {
+  font-size: 1.25rem;
+  text-align: center;
+}
+
+.description {
+  font-size: 0.875rem;
+  color: var(--mantine-color-gray-6);
+  text-align: center;
+}
+
+.error {
+  margin-top: 4px;
+  color: var(--mantine-color-red-6);
+  font-size: 0.875rem;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .dropzone {
+    padding: 16px;
+  }
+
+  .title {
+    font-size: 1.125rem;
+  }
+
+  .description {
+    font-size: 0.8125rem;
+  }
+}

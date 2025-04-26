@@ -1,0 +1,29 @@
+.container {
+  display: flex;
+  flex-direction: column;
+}
+
+.sliderContainer {
+  margin-top: 0.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.sliderContainerReverse {
+  flex-direction: row-reverse;
+}
+
+.slider {
+  flex: 1;
+}
+
+.numberInput {
+  min-width: 60px;
+  flex: 0;
+}
+
+.label {
+  width: 100%;
+  margin-bottom: 5px;
+}

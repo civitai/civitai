@@ -1,5 +1,5 @@
-import { createStyles, ContainerProps, Box, BoxProps } from '@mantine/core';
-import React, { CSSProperties } from 'react';
+import { Box, BoxProps } from '@mantine/core';
+import React, { forwardRef } from 'react';
 import {
   MasonryContextState,
   MasonryProvider,
@@ -12,30 +12,17 @@ type MasonryContainerProps = Omit<BoxProps, 'children'> & {
   children: React.ReactNode | ((state: MasonryContextState) => React.ReactNode);
 };
 
-export function MasonryContainer({ children, ...boxProps }: MasonryContainerProps) {
-  const masonryProviderState = useMasonryContext();
-  const { columnWidth, columnGap, maxColumnCount, columnCount, combinedWidth } =
-    masonryProviderState;
-
-  const state = {
-    ...masonryProviderState,
-  };
+export const MasonryContainer = forwardRef<HTMLDivElement, MasonryContainerProps>((props, ref) => {
+  const { children, className, ...others } = props;
+  const masonryContext = useMasonryContext();
 
   return (
-    <MasonryProvider
-      px="md"
-      {...boxProps}
-      className={clsx('@container', boxProps.className)}
-      maxColumnCount={columnCount}
-    >
-      <div
-        style={{
-          width: columnCount > 1 && combinedWidth ? combinedWidth : undefined,
-        }}
-        className={styles.queries}
-      >
-        {typeof children === 'function' ? children(state) : children}
-      </div>
+    <MasonryProvider>
+      <Box className={`${styles.container} ${className}`} {...others} ref={ref}>
+        {typeof children === 'function' ? children(masonryContext) : children}
+      </Box>
     </MasonryProvider>
   );
-}
+});
+
+MasonryContainer.displayName = 'MasonryContainer';

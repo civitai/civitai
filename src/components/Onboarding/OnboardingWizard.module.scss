@@ -1,0 +1,60 @@
+.steps {
+  margin-top: 20px;
+  margin-bottom: 20px;
+}
+
+@media (max-width: 36em) {
+  .steps {
+    margin-top: 0;
+    margin-bottom: 0;
+  }
+}
+
+.step {
+  @media (max-width: 48em) {
+    &[data-progress] {
+      display: flex;
+    }
+    &[data-progress] .stepBody {
+      display: block;
+    }
+  }
+}
+
+.stepBody {
+  @media (max-width: 48em) {
+    display: none;
+  }
+}
+
+.stepDescription {
+  white-space: nowrap;
+}
+
+.stepIcon {
+  @media (max-width: 36em) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+  }
+}
+
+.stepCompletedIcon {
+  @media (max-width: 36em) {
+    width: 14px;
+    height: 14px;
+    min-width: 14px;
+    position: relative;
+  }
+}
+
+.separator {
+  @media (max-width: 36em) {
+    margin-left: 4px;
+    margin-right: 4px;
+    min-width: 10px;
+  }
+}

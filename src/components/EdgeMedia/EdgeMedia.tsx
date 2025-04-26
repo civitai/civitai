@@ -1,4 +1,4 @@
-import { createStyles, Text } from '@mantine/core';
+import { Text } from '@mantine/core';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import React, { SyntheticEvent, useEffect, useRef } from 'react';
 import { EdgeUrlProps, getInferredMediaType } from '~/client-utils/cf-images-utils';
@@ -7,6 +7,7 @@ import { EdgeVideo, EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import styles from './EdgeMedia.module.scss';
 
 export type EdgeMediaProps = EdgeUrlProps &
   Omit<JSX.IntrinsicElements['img'], 'src' | 'srcSet' | 'ref' | 'width' | 'height' | 'metadata'> & {
@@ -65,8 +66,6 @@ export function EdgeMedia({
   imageProps,
   ...imgProps
 }: EdgeMediaProps) {
-  const { classes, cx } = useStyles({ maxWidth: width ?? undefined });
-
   const imgRef = useRef<HTMLImageElement>(null);
   if (fadeIn && imgRef.current?.complete) imgRef?.current?.style?.setProperty('opacity', '1');
   useEffect(() => {
@@ -112,8 +111,10 @@ export function EdgeMedia({
           src={src}
           thumbnailUrl={thumbnailUrl}
           options={options}
-          className={cx(classes.responsive, className, { [classes.fadeIn]: fadeIn })}
-          style={style}
+          className={`${styles.responsive} ${className ?? ''} ${fadeIn ? styles.fadeIn : ''}`}
+          style={
+            { ...style, '--max-width': width ? `${width}px` : undefined } as React.CSSProperties
+          }
           controls={controls}
           wrapperProps={wrapperProps}
           contain={contain}
@@ -149,27 +150,4 @@ export function EdgeMedia2({
   return <EdgeMedia {...props} anim={anim} />;
 }
 
-const useStyles = createStyles((theme, params: { maxWidth?: number }, getRef) => {
-  return {
-    responsive: {
-      width: '100%',
-      height: 'auto',
-      maxWidth: params.maxWidth,
-    },
-    fadeIn: {
-      opacity: 0,
-      transition: theme.other.fadeIn,
-    },
-    videoThumbRoot: {
-      height: '100%',
-      width: '100%',
-      position: 'relative',
 
-      img: {
-        objectFit: 'cover',
-        height: '100%',
-        objectPosition: '50% 50%',
-      },
-    },
-  };
-});

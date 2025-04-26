@@ -3,7 +3,6 @@ import {
   Anchor,
   Badge,
   Center,
-  createStyles,
   Divider,
   Group,
   LoadingOverlay,
@@ -12,8 +11,10 @@ import {
   Stack,
   Table,
   Text,
+  Box,
+  BoxProps,
 } from '@mantine/core';
-import { openConfirmModal } from '@mantine/modals';
+import React, { forwardRef } from 'react';
 import { IconAlertCircle, IconExternalLink, IconTrash } from '@tabler/icons-react';
 import { useState } from 'react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
@@ -23,34 +24,27 @@ import { getModelWizardUrl } from '~/server/common/model-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { splitUppercase } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import styles from './UserDraftModels.module.scss';
 
-const useStyles = createStyles((theme) => ({
-  header: {
-    position: 'sticky',
-    top: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    transition: 'box-shadow 150ms ease',
-    zIndex: 10,
+export interface UserDraftModelsProps extends BoxProps {
+  scrolled?: boolean;
+}
 
-    '&::after': {
-      content: '""',
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2]
-      }`,
-    },
-  },
+export const UserDraftModels = forwardRef<HTMLDivElement, UserDraftModelsProps>((props, ref) => {
+  const { scrolled, className, ...others } = props;
 
-  scrolled: {
-    boxShadow: theme.shadows.sm,
-  },
-}));
+  return (
+    <Box
+      className={`${styles.header} ${scrolled ? styles.scrolled : ''} ${className}`}
+      {...others}
+      ref={ref}
+    />
+  );
+});
+
+UserDraftModels.displayName = 'UserDraftModels';
 
 export function UserDraftModels() {
-  const { classes, cx } = useStyles();
   const queryUtils = trpc.useContext();
 
   const [page, setPage] = useState(1);
@@ -94,7 +88,7 @@ export function UserDraftModels() {
         onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
       >
         <Table verticalSpacing="md" fontSize="md" striped={hasDrafts}>
-          <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
+          <thead className={styles.header}>
             <tr>
               <th>Name</th>
               <th>Type</th>

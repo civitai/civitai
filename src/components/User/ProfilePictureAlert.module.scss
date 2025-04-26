@@ -1,0 +1,36 @@
+.alert {
+  margin: 16px 0;
+  border-radius: 8px;
+  padding: 16px;
+}
+
+.pendingAlert {
+  background-color: var(--mantine-color-yellow-1);
+  border: 1px solid var(--mantine-color-yellow-3);
+  color: var(--mantine-color-yellow-9);
+}
+
+.blockedAlert {
+  background-color: var(--mantine-color-red-1);
+  border: 1px solid var(--mantine-color-red-3);
+  color: var(--mantine-color-red-9);
+}
+
+.link {
+  color: currentColor;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.link:hover {
+  text-decoration: none;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .alert {
+    margin: 12px 0;
+    padding: 12px;
+    font-size: 0.875rem;
+  }
+}

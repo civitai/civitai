@@ -1,0 +1,10 @@
+.empty {
+  height: var(--column-width);
+}
+
+.grid {
+  display: grid;
+  column-gap: var(--column-gap);
+  row-gap: var(--row-gap);
+  justify-content: center;
+}

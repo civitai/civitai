@@ -1,6 +1,7 @@
 import { Anchor, Text, Alert, Stack } from '@mantine/core';
 import { ModelType } from '~/shared/utils/prisma/enums';
 import React from 'react';
+import styles from './EarlyAccessAlert.module.scss';
 
 import { Countdown } from '~/components/Countdown/Countdown';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
@@ -73,23 +74,22 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
   const earlyAccessDonationGoal = (donationGoals ?? []).find((dg) => dg.isEarlyAccess);
 
   return (
-    <Alert color="yellow">
+    <Alert className={styles.alert}>
       <Stack>
-        <Text size="xs">
+        <Text className={styles.alertText}>
           The creator of this {getDisplayName(modelType)} has set this version to{' '}
-          <Text weight="bold" component="span">
+          <Text className={styles.boldText} component="span">
             Early Access
           </Text>{' '}
           and as such it is only available for people who purchase it. This{' '}
           {getDisplayName(modelType)} will be available for free in{' '}
-          <Text weight="bold" component="span">
+          <Text className={styles.countdown} component="span">
             <Countdown endTime={deadline} />
           </Text>{' '}
           {earlyAccessDonationGoal ? ' or once the donation goal is met' : ''}. If you want to know
           more, check out our article{' '}
           <Anchor
-            color="yellow"
-            td="underline"
+            className={styles.link}
             target="_blank"
             href={`/articles/${constants.earlyAccess.article}`}
           >
@@ -99,17 +99,14 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
         </Text>
         <LoginRedirect reason="notify-version">
           <Text
-            variant="link"
+            className={`${styles.notifyButton} ${
+              toggleNotifyMutation.isLoading || !features.canWrite
+                ? styles.notifyButtonDisabled
+                : ''
+            }`}
             onClick={
               !toggleNotifyMutation.isLoading && features.canWrite ? handleNotifyMeClick : undefined
             }
-            sx={{
-              cursor:
-                toggleNotifyMutation.isLoading || !features.canWrite ? 'not-allowed' : 'pointer',
-              lineHeight: 1,
-            }}
-            color="yellow"
-            span
           >
             {alreadyNotifying
               ? 'Remove me from this notification.'
@@ -122,3 +119,4 @@ export function EarlyAccessAlert({ modelId, versionId, modelType, deadline }: Pr
 }
 
 type Props = { modelId: number; versionId: number; modelType: ModelType; deadline?: Date };
+

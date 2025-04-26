@@ -1,0 +1,23 @@
+.link {
+  color: var(--mantine-color-blue-5);
+  text-decoration: none;
+  transition: all 0.2s ease;
+}
+
+.link:hover {
+  color: var(--mantine-color-blue-4);
+  text-decoration: underline;
+}
+
+.deleted {
+  color: var(--mantine-color-gray-5);
+  text-decoration: line-through;
+  cursor: not-allowed;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .link {
+    font-size: 0.875rem;
+  }
+}

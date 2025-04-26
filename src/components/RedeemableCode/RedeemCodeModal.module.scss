@@ -1,0 +1,13 @@
+.cancelButton {
+  @media (max-width: 48em) {
+    width: 100%;
+    order: 2;
+  }
+}
+
+.submitButton {
+  @media (max-width: 48em) {
+    width: 100%;
+    order: 1;
+  }
+}

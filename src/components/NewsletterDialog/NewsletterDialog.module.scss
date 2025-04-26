@@ -1,0 +1,34 @@
+.dialogRoot {
+  width: 400px;
+}
+
+@media (max-width: 767px) {
+  .dialogRoot {
+    width: 85vw;
+  }
+}
+
+.bannerRoot {
+  position: absolute;
+  top: -85%;
+  left: 50%;
+  height: 85%;
+  width: 70% !important;
+  transform: translateX(-50%);
+}
+
+@media (max-width: 767px) {
+  .bannerRoot {
+    top: -65%;
+    height: 65%;
+    width: 65% !important;
+  }
+}
+
+.bannerFigure {
+  height: 100%;
+}
+
+.bannerImageWrapper {
+  height: 100%;
+}

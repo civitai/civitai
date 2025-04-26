@@ -1,0 +1,57 @@
+.title {
+  font-size: 32px;
+
+  @media (max-width: 576px) {
+    font-size: 24px;
+  }
+}
+
+.profileSection {
+  padding-left: var(--mantine-spacing-md);
+  padding-right: var(--mantine-spacing-md);
+  padding-top: var(--mantine-spacing-xl);
+  padding-bottom: var(--mantine-spacing-xl);
+  margin-right: calc(var(--mantine-spacing-md) * -1);
+  margin-left: calc(var(--mantine-spacing-md) * -1);
+
+  &:nth-of-type(even) {
+    background: var(--mantine-color-dark-8);
+  }
+
+  &:hover {
+    &::-webkit-scrollbar {
+      opacity: 1;
+    }
+    &::-webkit-scrollbar-thumb {
+      background-color: var(--mantine-color-white);
+      opacity: 0.5;
+    }
+  }
+}
+
+.loader {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 101;
+}
+
+.nullState {
+  position: relative;
+}
+
+.loading {
+  position: relative;
+
+  &::after {
+    position: absolute;
+    height: 100%;
+    width: 100%;
+    top: 0;
+    left: 0;
+    content: '';
+    background: rgba(0, 0, 0, 0.3);
+    z-index: 100;
+  }
+}

@@ -1,0 +1,24 @@
+.title {
+  font-size: 32px;
+
+  @media (max-width: 576px) {
+    font-size: 24px;
+  }
+}
+
+.expandButton {
+  margin-left: auto;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  margin-bottom: var(--mantine-spacing-md);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(var(--grid-count, 1), 1fr);
+  grid-template-rows: repeat(var(--grid-rows, 1), 1fr);
+  gap: var(--mantine-spacing-md);
+}

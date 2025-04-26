@@ -1,0 +1,103 @@
+.menuContainer {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+}
+
+.menuDropdown {
+  z-index: 1000;
+  min-width: 200px;
+  background-color: var(--mantine-color-gray-0);
+  border: 1px solid var(--mantine-color-gray-3);
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.menuItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 0.875rem;
+  color: var(--mantine-color-gray-7);
+  transition: all 0.2s ease;
+}
+
+.menuItem:hover {
+  background-color: var(--mantine-color-gray-1);
+}
+
+.menuItemIcon {
+  color: var(--mantine-color-gray-6);
+  width: 16px;
+  height: 16px;
+}
+
+.menuItemDanger {
+  color: var(--mantine-color-red-7);
+}
+
+.menuItemDanger:hover {
+  background-color: var(--mantine-color-red-1);
+}
+
+.menuItemDanger .menuItemIcon {
+  color: var(--mantine-color-red-6);
+}
+
+.menuDivider {
+  margin: 4px 0;
+  border-color: var(--mantine-color-gray-3);
+}
+
+.badgeContainer {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reviewBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background-color: var(--mantine-color-yellow-1);
+  color: var(--mantine-color-yellow-7);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.blockedBadge {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background-color: var(--mantine-color-red-1);
+  color: var(--mantine-color-red-7);
+  font-size: 0.75rem;
+  font-weight: 500;
+}
+
+.badgeIcon {
+  width: 14px;
+  height: 14px;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .menuDropdown {
+    min-width: 180px;
+  }
+
+  .menuItem {
+    padding: 6px 10px;
+    font-size: 0.8125rem;
+  }
+
+  .menuItemIcon {
+    width: 14px;
+    height: 14px;
+  }
+}

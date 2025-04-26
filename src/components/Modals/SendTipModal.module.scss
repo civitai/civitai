@@ -1,0 +1,87 @@
+.presetCard {
+  position: relative;
+  width: 100%;
+  border-radius: var(--mantine-radius-sm);
+  border: 1px solid var(--mantine-color-dark-4);
+}
+
+.presetCard:hover:not([disabled]) {
+  border-color: var(--mantine-color-blue-6);
+}
+
+.presetCard[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.sendIcon {
+  background-color: var(--mantine-color-blue-filled);
+  color: var(--mantine-color-white);
+  border-top-right-radius: var(--mantine-radius-sm);
+  border-bottom-right-radius: var(--mantine-radius-sm);
+}
+
+.label {
+  padding: 0 var(--mantine-spacing-xs);
+}
+
+.label[data-checked] {
+  border: 2px solid var(--mantine-color-accent-5);
+  color: var(--mantine-color-accent-5);
+}
+
+.label[data-checked][data-variant="filled"],
+.label[data-checked][data-variant="filled"]:hover {
+  background-color: var(--mantine-color-dark-7);
+}
+
+.iconWrapper {
+  display: none;
+}
+
+.chipGroup {
+  gap: 8px;
+}
+
+@media (max-width: 48em) {
+  .chipGroup {
+    gap: var(--mantine-spacing-md);
+  }
+}
+
+.actions {
+  position: relative;
+}
+
+@media (max-width: 48em) {
+  .actions {
+    flex-direction: column;
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    padding: var(--mantine-spacing-md);
+  }
+}
+
+.cancelButton {
+  position: relative;
+}
+
+@media (max-width: 48em) {
+  .cancelButton {
+    width: 100%;
+    order: 2;
+  }
+}
+
+.submitButton {
+  position: relative;
+}
+
+@media (max-width: 48em) {
+  .submitButton {
+    width: 100%;
+    order: 1;
+  }
+}

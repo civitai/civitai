@@ -3,7 +3,6 @@ import {
   ScrollArea,
   Stack,
   TextInput,
-  createStyles,
   Skeleton,
   Text,
   ThemeIcon,
@@ -18,13 +17,13 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { CollectionGetAllUserModel } from '~/types/router';
 import { trpc } from '~/utils/trpc';
 import { useRouter } from 'next/router';
+import styles from './MyCollections.module.scss';
 
 export function MyCollections({ children, onSelect }: MyCollectionsProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery] = useDebouncedValue(query, 300);
   const currentUser = useCurrentUser();
   const router = useRouter();
-  const { classes } = useStyles();
   const { data: collections = [], isLoading } = trpc.collection.getAllUser.useQuery(
     { permission: CollectionContributorPermission.VIEW },
     { enabled: !!currentUser }
@@ -63,7 +62,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
       {ownedFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
-          className={classes.navItem}
+          className={styles.navItem}
           onClick={() => selectCollection(c.id)}
           active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
@@ -73,7 +72,7 @@ export function MyCollections({ children, onSelect }: MyCollectionsProps) {
       {contributingFilteredCollections.map((c) => (
         <NavLink
           key={c.id}
-          className={classes.navItem}
+          className={styles.navItem}
           onClick={() => selectCollection(c.id)}
           active={router.query?.collectionId === c.id.toString()}
           label={<Text>{c.name}</Text>}
@@ -120,9 +119,3 @@ type MyCollectionsProps = {
   pathnameOverride?: string;
 };
 
-const useStyles = createStyles((theme) => ({
-  navItem: {
-    borderRadius: theme.radius.sm,
-  },
-  header: {},
-}));

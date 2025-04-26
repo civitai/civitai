@@ -1,4 +1,4 @@
-import { ActionIcon, Center, Group, GroupProps, Loader, createStyles } from '@mantine/core';
+import { ActionIcon, Center, Group, GroupProps, Loader } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import { IconChevronDown, IconChevronUp } from '@tabler/icons-react';
 import { useEffect, useMemo } from 'react';
@@ -14,6 +14,7 @@ import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.const
 import { trpc } from '~/utils/trpc';
 import { NsfwLevel } from '~/server/common/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import classes from './VotableTags.module.scss';
 
 export function VotableTags({
   entityId: id,
@@ -30,7 +31,6 @@ export function VotableTags({
 }: GalleryTagProps) {
   const currentUser = useCurrentUser();
   const { canViewNsfw } = useFeatureFlags();
-  const { classes } = useStyles();
   const { data: tags = [], isLoading } = trpc.tag.getVotableTags.useQuery(
     { id, type },
     { enabled: !initialTags, initialData: initialTags }
@@ -165,8 +165,3 @@ type GalleryTagProps = {
   onTagsLoaded?: (tags: VotableTagModel[]) => void;
 } & Omit<GroupProps, 'id'>;
 
-const useStyles = createStyles((theme) => ({
-  nsfwBadge: {
-    backgroundColor: theme.colors.blue[9],
-  },
-}));

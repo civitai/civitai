@@ -1,0 +1,31 @@
+.label {
+  padding: 0 var(--mantine-spacing-xs);
+}
+
+.label[data-checked] {
+  background-color: var(--mantine-color-blue-6);
+  color: var(--mantine-color-white);
+}
+
+.label[data-checked]:hover {
+  background-color: var(--mantine-color-blue-6);
+  color: var(--mantine-color-white);
+}
+
+.label[data-checked] .iconWrapper {
+  display: none;
+}
+
+.filterIcon {
+  background: var(--mantine-color-gray-3);
+  border-color: var(--mantine-color-gray-4);
+  color: var(--mantine-color-gray-6);
+}
+
+@media (prefers-color-scheme: dark) {
+  .filterIcon {
+    background: var(--mantine-color-gray-8);
+    border-color: var(--mantine-color-gray-7);
+    color: var(--mantine-color-gray-5);
+  }
+}

@@ -1,0 +1,14 @@
+.card {
+  padding: 32px !important;
+  background: var(--mantine-color-dark-6);
+}
+
+[data-mantine-color-scheme="light"] .card {
+  background: var(--mantine-color-gray-0);
+}
+
+@media (max-width: 768px) {
+  .card {
+    padding: 16px !important;
+  }
+}

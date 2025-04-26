@@ -1,0 +1,10 @@
+.creatorCard {
+  &.active {
+    border-color: var(--mantine-color-blue-8);
+    box-shadow: 0 0 10px var(--mantine-color-blue-8);
+  }
+
+  &:hover {
+    background-color: var(--mantine-color-dark-6);
+  }
+}

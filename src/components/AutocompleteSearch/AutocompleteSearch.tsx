@@ -8,7 +8,6 @@ import {
   Select,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedValue, useHotkeys } from '@mantine/hooks';
 import { IconChevronDown, IconSearch } from '@tabler/icons-react';
@@ -61,6 +60,7 @@ import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { includesPoi } from '~/utils/metadata/audit';
+import classes from './AutocompleteSearch.module.scss';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -101,84 +101,6 @@ const searchClient: InstantSearchProps['searchClient'] = {
 };
 
 const DEFAULT_DROPDOWN_ITEM_LIMIT = 6;
-const useStyles = createStyles((theme) => ({
-  root: {
-    flexGrow: 1,
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-      flexGrow: 1,
-    },
-  },
-  wrapper: {
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  input: {
-    borderRadius: 0,
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-  dropdown: {
-    [theme.fn.smallerThan('sm')]: {
-      marginTop: '-7px',
-    },
-  },
-
-  targetSelectorRoot: {
-    width: '110px',
-
-    [theme.fn.smallerThan('md')]: {
-      display: 'none', // TODO.search: Remove this once we figure out a way to prevent hiding the whole bar when selecting a target
-      height: '100%',
-
-      '&, & > [role="combobox"], & > [role="combobox"] *': {
-        height: '100%',
-      },
-    },
-
-    [theme.fn.smallerThan('sm')]: {
-      width: '25%',
-    },
-  },
-
-  targetSelectorInput: {
-    borderTopRightRadius: 0,
-    borderBottomRightRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    paddingRight: '18px',
-
-    '&:not(:focus)': {
-      borderRightStyle: 'none',
-    },
-
-    [theme.fn.smallerThan('md')]: {
-      height: '100%',
-    },
-  },
-
-  targetSelectorRightSection: {
-    pointerEvents: 'none',
-  },
-
-  searchButton: {
-    borderTopLeftRadius: 0,
-    borderBottomLeftRadius: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[8] : theme.colors.gray[3],
-    color: theme.colorScheme === 'dark' ? theme.white : theme.black,
-
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.gray[7] : theme.colors.gray[4],
-    },
-
-    [theme.fn.smallerThan('md')]: {
-      display: 'none',
-    },
-  },
-}));
 
 const targetData = [
   { value: 'models', label: 'Models' },
@@ -264,7 +186,6 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
 ) {
   // const currentUser = useCurrentUser();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
-  const { classes } = useStyles();
   const router = useRouter();
   const isMobile = useIsMobile();
   const features = useFeatureFlags();
@@ -409,126 +330,64 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     : true;
 
   return (
-    <>
-      <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
-      <Group className={classes.wrapper} spacing={0} noWrap>
+    <div className={classes.root}>
+      <div className={classes.wrapper}>
         <Select
-          classNames={{
-            root: classes.targetSelectorRoot,
-            input: classes.targetSelectorInput,
-            rightSection: classes.targetSelectorRightSection,
-          }}
-          maxDropdownHeight={280}
-          defaultValue={targetData[0].value}
-          // Ensure we disable search targets if they are not enabled
-          data={targetData.filter(
-            ({ value }) =>
-              (features.imageSearch ? true : value !== 'images') &&
-              (features.bounties ? true : value !== 'bounties') &&
-              (features.articles ? true : value !== 'articles') &&
-              (features.toolSearch ? true : value !== 'tools')
-          )}
-          rightSection={<IconChevronDown size={16} color="currentColor" />}
-          sx={{ flexShrink: 1 }}
+          className={classes.select}
+          data={targetData}
+          value={indexName}
           onChange={onTargetChange}
-          autoComplete="off"
-          withinPortal
+          rightSection={<IconChevronDown size={16} />}
         />
         <ClearableAutoComplete
           ref={inputRef}
-          key={indexName}
-          className={className}
-          classNames={classes}
-          placeholder="Search Civitai"
-          type="search"
-          nothingFound={
-            !canPerformQuery ? (
-              <Stack spacing={0} align="center">
-                <Text>
-                  Due to your current browsing settings, searching for people of interest has been
-                  disabled.
-                </Text>
-                <Text size="xs">
-                  You may remove X and XXX browsing settings to search for these.
-                </Text>
-              </Stack>
-            ) : searchErrorState ? (
-              <Stack spacing={0} align="center">
-                <Text>There was an error while performing your request&hellip;</Text>
-                <Text size="xs">Please try again later</Text>
-              </Stack>
-            ) : query && !hits.length ? (
-              <Stack spacing={0} align="center">
-                <TimeoutLoader delay={1500} renderTimeout={() => <Text>No results found</Text>} />
-              </Stack>
-            ) : undefined
-          }
-          limit={
-            results && results.nbHits > DEFAULT_DROPDOWN_ITEM_LIMIT
-              ? DEFAULT_DROPDOWN_ITEM_LIMIT + 1 // Allow one more to show more results option
-              : DEFAULT_DROPDOWN_ITEM_LIMIT
-          }
-          defaultValue={query}
-          value={search}
-          data={canPerformQuery ? items : []}
-          onChange={setSearch}
-          onBlur={handleClear}
+          className={classes.input}
+          value={query}
+          onChange={setQuery}
           onClear={handleClear}
-          onKeyDown={getHotkeyHandler([
-            ['Escape', blurInput],
-            ['Enter', handleSubmit],
-          ])}
           onItemSubmit={handleItemClick}
-          itemComponent={IndexRenderItem[indexName] ?? ModelSearchItem}
-          rightSection={
-            <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
-              <HoverCard.Target>
-                <Text
-                  weight="bold"
-                  sx={(theme) => ({
-                    border: `1px solid ${
-                      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3]
-                    }`,
-                    borderRadius: theme.radius.sm,
-                    backgroundColor:
-                      theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-                    color:
-                      theme.colorScheme === 'dark' ? theme.colors.gray[5] : theme.colors.gray[6],
-                    textAlign: 'center',
-                    width: 24,
-                    userSelect: 'none',
-                  })}
-                >
-                  /
-                </Text>
-              </HoverCard.Target>
-              <HoverCard.Dropdown>
-                <Text size="sm" color="yellow" weight={500}>
-                  Pro-tip: Quick search faster!
-                </Text>
-                <Text size="xs" lh={1.2}>
-                  Open the quick search without leaving your keyboard by tapping the <Code>/</Code>{' '}
-                  key from anywhere and just start typing.
-                </Text>
-              </HoverCard.Dropdown>
-            </HoverCard>
+          onKeyDown={getHotkeyHandler([
+            ['Enter', handleSubmit],
+            ['Escape', blurInput],
+          ])}
+          data={items}
+          nothingFound={
+            status === 'loading' ? (
+              <TimeoutLoader />
+            ) : status === 'error' ? (
+              'Error loading results'
+            ) : (
+              'No results found'
+            )
           }
-          // prevent default filtering behavior
-          filter={() => true}
-          clearable={query.length > 0}
-          maxDropdownHeight={isMobile ? 'calc(90vh - var(--header-height))' : undefined}
           {...autocompleteProps}
         />
         <ActionIcon
           className={classes.searchButton}
+          onClick={handleSubmit}
+          size="lg"
           variant="filled"
-          size={36}
-          onMouseDown={handleSubmit}
         >
-          <IconSearch size={18} />
+          <IconSearch size={16} />
         </ActionIcon>
-      </Group>
-    </>
+      </div>
+      <HoverCard withArrow width={300} shadow="sm" openDelay={500}>
+        <HoverCard.Target>
+          <Text className={classes.searchIconButton}>
+            /
+          </Text>
+        </HoverCard.Target>
+        <HoverCard.Dropdown>
+          <Text size="sm" color="yellow" weight={500}>
+            Pro-tip: Quick search faster!
+          </Text>
+          <Text size="xs" lh={1.2}>
+            Open the quick search without leaving your keyboard by tapping the <Code>/</Code>{' '}
+            key from anywhere and just start typing.
+          </Text>
+        </HoverCard.Dropdown>
+      </HoverCard>
+    </div>
   );
 }
 
@@ -611,3 +470,4 @@ function parseQuery(index: string, query: string) {
 
   return { query, filters: filters.join(' AND '), searchPageQuery: searchPageQuery.join('&') };
 }
+

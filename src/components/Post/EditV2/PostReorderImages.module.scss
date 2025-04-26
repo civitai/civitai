@@ -1,0 +1,51 @@
+.root {
+  position: relative;
+  transform-origin: 0 0;
+  background-size: cover;
+  background-position: center;
+  background-color: grey;
+  overflow: hidden;
+}
+
+.root:before {
+  content: "";
+  display: block;
+  width: 100%;
+  padding-top: 100%;
+}
+
+.hidden {
+  opacity: 0;
+}
+
+.image {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: 50% 50%;
+}
+
+.draggableIcon {
+  background: rgba(0, 0, 0, 0.5);
+  height: 120px;
+  width: 120px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+.draggable {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  opacity: 0;
+}
+
+.draggable:hover {
+  opacity: 1;
+}

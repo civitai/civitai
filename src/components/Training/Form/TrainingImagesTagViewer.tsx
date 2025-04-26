@@ -4,7 +4,6 @@ import {
   Badge,
   Button,
   Chip,
-  createStyles,
   Group,
   Menu,
   Paper,
@@ -45,31 +44,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import { titleCase } from '~/utils/string-helpers';
-
-const useStyles = createStyles((theme) => ({
-  tagOverlay: {
-    position: 'relative',
-    height: 'auto',
-    '&:hover button': {
-      display: 'flex',
-    },
-  },
-  trash: {
-    display: 'none',
-    position: 'absolute',
-    width: '100%',
-    height: '100%',
-    top: 0,
-    left: 0,
-    border: 0,
-    borderRadius: '4px',
-
-    backgroundColor: theme.fn.rgba(
-      theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[2],
-      0.9
-    ),
-  },
-}));
+import styles from './TrainingImagesTagViewer.module.scss';
 
 export const TrainingImagesLabelTypeSelect = ({
   modelId,
@@ -157,7 +132,6 @@ export const TrainingImagesTags = ({
   selectedTags: string[];
 }) => {
   const theme = useMantineTheme();
-  const { classes } = useStyles();
   const [addTagTxt, setAddTagTxt] = useState('');
 
   const { autoLabeling } = useTrainingImageStore(
@@ -190,94 +164,43 @@ export const TrainingImagesTags = ({
 
   return (
     <Stack spacing="xs">
-      <Paper
-        h={100}
-        // mih="xl"
-        // mah={100}
-        p={6}
-        shadow="xs"
-        radius="sm"
-        withBorder
-        style={{
-          backgroundColor:
-            theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-        }}
-        sx={{ overflowY: 'auto', scrollbarWidth: 'thin' }}
-      >
-        {tags.length > 0 ? (
-          <Group spacing={8}>
-            {tags.map((cap, index) => (
-              <Badge
-                key={index}
-                variant="outline"
-                color={selectedTags.includes(cap) ? 'green' : 'gray'}
-                px={6}
-                className={classes.tagOverlay}
-                styles={{
-                  inner: {
-                    overflow: 'auto',
-                    overflowWrap: 'break-word',
-                    whiteSpace: 'normal',
-                  },
-                }}
-              >
-                <Text>{cap}</Text>
+      <Paper h={100} p={6} shadow="xs" radius="sm" withBorder className={styles.tagOverlay}>
+        <Stack spacing={4}>
+          <Group spacing={4}>
+            {tags.map((tag) => (
+              <Chip key={tag} size="xs" variant="filled" disabled={autoLabeling.isRunning}>
+                {tag}
                 <ActionIcon
+                  size="xs"
+                  variant="subtle"
+                  onClick={() => removeTag(tag)}
                   disabled={autoLabeling.isRunning}
-                  size={14}
-                  variant="transparent"
-                  className={classes.trash}
-                  onClick={() => removeTag(cap)}
                 >
-                  <IconX size={12} />
+                  <IconX size={14} />
                 </ActionIcon>
-              </Badge>
+              </Chip>
             ))}
           </Group>
-        ) : (
-          <Text lh={1} py={3} align="center" size="sm" fs="italic">
-            No Tags
-          </Text>
-        )}
+          <Group spacing={4}>
+            <TextInput
+              size="xs"
+              placeholder="Add tags..."
+              value={addTagTxt}
+              onChange={(e) => setAddTagTxt(e.currentTarget.value)}
+              disabled={autoLabeling.isRunning}
+              style={{ flex: 1 }}
+            />
+            <ActionIcon
+              size="xs"
+              variant="filled"
+              onClick={addTags}
+              disabled={!addTagTxt || autoLabeling.isRunning}
+            >
+              <IconPlus size={14} />
+            </ActionIcon>
+          </Group>
+        </Stack>
       </Paper>
-
-      <Textarea
-        placeholder="Add tags..."
-        autosize
-        disabled={autoLabeling.isRunning}
-        minRows={1}
-        maxRows={4}
-        value={addTagTxt}
-        onChange={(event) => {
-          setAddTagTxt(event.target.value);
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            if (!e.shiftKey) {
-              e.preventDefault();
-              if (!addTagTxt.length) return;
-              addTags();
-              setAddTagTxt('');
-            }
-          }
-        }}
-        styles={{ input: { scrollbarWidth: 'thin' } }}
-        rightSectionWidth={52}
-        rightSection={
-          <ActionIcon
-            h="100%"
-            onClick={() => {
-              if (!addTagTxt.length) return;
-              addTags();
-              setAddTagTxt('');
-            }}
-            // disabled={!addTagTxt.length}
-            sx={{ borderRadius: 0 }}
-          >
-            <IconPlus />
-          </ActionIcon>
-        }
-      />
     </Stack>
   );
 };
@@ -495,3 +418,5 @@ export const TrainingImagesTagViewer = ({
     </Accordion>
   );
 };
+
+

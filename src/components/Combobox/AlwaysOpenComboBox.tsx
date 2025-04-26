@@ -1,7 +1,8 @@
 import { Combobox, ComboboxInput, ComboboxOptions, ComboboxOption } from '@headlessui/react';
-import { Divider, Input, Loader, ScrollArea, Text, createStyles } from '@mantine/core';
+import { Divider, Input, Loader, ScrollArea, Text } from '@mantine/core';
 import React, { Key, useState } from 'react';
 import { ComboboxOption as ComboboxOptionProps } from '~/components/Combobox/combobox.types';
+import classes from './AlwaysOpenComboBox.module.scss';
 
 type Props<T extends Key, TOption extends ComboboxOptionProps> = {
   value?: T[];
@@ -26,7 +27,6 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
   showSelected,
   loading,
 }: Props<T, TOption>) {
-  const { classes } = useStyles();
   const [search, setSearch] = useState('');
 
   const filtered = search.length
@@ -48,7 +48,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
   const nothingFound = !tupleOptions.length;
 
   return (
-    <div className="flex flex-col">
+    <div className={classes.root}>
       <Combobox
         value={value}
         onChange={onChange}
@@ -61,8 +61,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
           displayValue={() => search}
           // @ts-ignore eslint-disable-next-line
           placeholder="search..."
-          className="m-2"
-          radius="xl"
+          className={classes.input}
         />
         <Divider />
         <ScrollArea.Autosize
@@ -72,7 +71,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
           classNames={classes}
         >
           {loading ? (
-            <div className="flex justify-center p-3">
+            <div className={classes.loadingContainer}>
               <Loader />
             </div>
           ) : nothingFound ? (
@@ -80,18 +79,14 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
               Nothing found
             </Text>
           ) : (
-            <div className="p-2 pr-0">
+            <div className={classes.optionsContainer}>
               <ComboboxOptions static>
                 {tupleOptions.map(([key, options]) => (
                   <React.Fragment key={key}>
                     {!!options.length && key !== 'undefined' && (
                       <Divider
                         label={
-                          <Text
-                            component="li"
-                            color="dimmed"
-                            className="px-2 py-1 text-sm font-semibold"
-                          >
+                          <Text component="li" color="dimmed" className={classes.groupLabel}>
                             {key}
                           </Text>
                         }
@@ -102,9 +97,7 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
                         key={option.value}
                         value={option.value}
                         className={({ active }) =>
-                          `flex justify-between items-center gap-3 py-1 px-2 cursor-pointer rounded ${
-                            active ? 'bg-gray-1 dark:bg-dark-5' : ''
-                          }`
+                          `${classes.option} ${active ? classes.optionActive : ''}`
                         }
                       >
                         {(props) => <>{renderOption?.({ ...props, ...option }) ?? option.label}</>}
@@ -122,9 +115,3 @@ export function AlwaysOpenCombobox<T extends Key, TOption extends ComboboxOption
   );
 }
 
-const useStyles = createStyles(() => ({
-  viewport: { paddingBottom: 0 },
-  scrollbar: {
-    '&[data-orientation="horizontal"]': { display: 'none' },
-  },
-}));

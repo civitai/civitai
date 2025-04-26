@@ -1,0 +1,62 @@
+.alert {
+  background-color: var(--mantine-color-yellow-1);
+  border: 1px solid var(--mantine-color-yellow-3);
+  color: var(--mantine-color-yellow-9);
+  border-radius: 8px;
+  padding: 16px;
+  margin: 16px 0;
+}
+
+.alertText {
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.boldText {
+  font-weight: 600;
+}
+
+.countdown {
+  font-weight: 600;
+  color: var(--mantine-color-yellow-7);
+}
+
+.link {
+  color: currentColor;
+  text-decoration: underline;
+  font-weight: 500;
+}
+
+.link:hover {
+  text-decoration: none;
+}
+
+.notifyButton {
+  cursor: pointer;
+  line-height: 1;
+  color: var(--mantine-color-yellow-7);
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.notifyButton:hover {
+  color: var(--mantine-color-yellow-8);
+  text-decoration: underline;
+}
+
+.notifyButtonDisabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .alert {
+    padding: 12px;
+    margin: 12px 0;
+  }
+
+  .alertText {
+    font-size: 0.8125rem;
+  }
+}

@@ -1,19 +1,26 @@
-import { Autocomplete, Badge, createStyles, Group, TextInput } from '@mantine/core';
+import { Autocomplete, Badge, Group, TextInput, Box, BoxProps } from '@mantine/core';
 import { getHotkeyHandler, useDebouncedValue, useDisclosure } from '@mantine/hooks';
 import { IconPlus } from '@tabler/icons-react';
-import { useCallback, useState } from 'react';
+import { useCallback, useState, forwardRef } from 'react';
 import { TagTarget } from '~/shared/utils/prisma/enums';
 import { getDisplayName } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import styles from './VotableTagAdd.module.scss';
 
-export function VotableTagAdd({ addTag, autosuggest }: VotableTagAddProps) {
+export interface VotableTagAddProps extends BoxProps {
+  addTag: (tag: string) => void;
+  excludeTags?: string[];
+  autosuggest?: boolean;
+  onCreate?: (value: string) => void;
+}
+
+export const VotableTagAdd = forwardRef<HTMLDivElement, VotableTagAddProps>((props, ref) => {
+  const { addTag, excludeTags, autosuggest, onCreate, className, ...others } = props;
+
   // Autocomplete logic
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const [adding, { open, close }] = useDisclosure(false);
-
-  // Style
-  const { classes } = useStyles();
 
   const { data, isFetching } = trpc.tag.getAll.useQuery(
     {
@@ -41,7 +48,11 @@ export function VotableTagAdd({ addTag, autosuggest }: VotableTagAddProps) {
   }, [addTag, handleClose, search]);
 
   return (
-    <Badge radius="xs" className={classes.badge} px={5} onClick={!adding ? open : undefined}>
+    <Box
+      className={`${styles.badge} ${className}`}
+      {...others}
+      ref={ref}
+    >
       <Group spacing={4}>
         <IconPlus size={14} strokeWidth={2.5} />
         {!adding ? (
@@ -99,35 +110,4 @@ type VotableTagAddProps = {
   autosuggest?: boolean;
 };
 
-const useStyles = createStyles((theme) => {
-  const badgeColor = theme.fn.variant({ color: 'blue', variant: 'light' });
-  const badgeBorder = theme.fn.lighten(badgeColor.background ?? theme.colors.gray[4], 0.05);
-  return {
-    badge: {
-      cursor: 'pointer',
-      backgroundColor: badgeColor.background,
-      borderColor: badgeBorder,
-      color: badgeColor.color,
-    },
-    inner: {
-      display: 'flex',
-    },
-    createOption: {
-      fontSize: theme.fontSizes.sm,
-      padding: theme.spacing.xs,
-      borderRadius: theme.radius.sm,
 
-      '&:hover': {
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
-      },
-    },
-    input: {
-      textTransform: 'uppercase',
-      fontWeight: 'bold',
-      fontSize: 11,
-    },
-    dropdown: {
-      maxWidth: '300px !important',
-    },
-  };
-});

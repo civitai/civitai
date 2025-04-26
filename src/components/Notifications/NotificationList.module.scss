@@ -1,0 +1,21 @@
+.listItem {
+  cursor: pointer;
+  border-top: 1px solid var(--mantine-color-dark-4);
+  padding: var(--mantine-spacing-sm);
+}
+
+.listItem:first-of-type {
+  border-top: none;
+}
+
+.listItem[data-unread="true"] {
+  background: var(--mantine-color-dark-6);
+}
+
+.listItem[data-unread="true"]:hover {
+  background: color-mix(in srgb, var(--mantine-color-dark-6) 95%, white);
+}
+
+.listItem:hover {
+  background: rgba(255, 255, 255, 0.05);
+}

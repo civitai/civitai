@@ -1,0 +1,35 @@
+.announcement {
+  border: 1px solid var(--mantine-color-blue-2);
+  background-color: var(--mantine-color-blue-1);
+}
+
+[data-mantine-color-scheme='dark'] .announcement {
+  border-color: var(--mantine-color-blue-9);
+  background-color: color-mix(in srgb, var(--mantine-color-blue-8) 50%, transparent);
+}
+
+.title {
+  color: var(--mantine-color-blue-7);
+  line-height: 1.1;
+}
+
+[data-mantine-color-scheme='dark'] .title {
+  color: var(--mantine-color-blue-0);
+}
+
+.text {
+  color: var(--mantine-color-blue-9);
+  line-height: 1.2;
+}
+
+[data-mantine-color-scheme='dark'] .text {
+  color: var(--mantine-color-blue-2);
+}
+
+.text > div > a {
+  color: var(--mantine-color-blue-8);
+}
+
+[data-mantine-color-scheme='dark'] .text > div > a {
+  color: var(--mantine-color-blue-1);
+}

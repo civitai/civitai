@@ -1,0 +1,35 @@
+.root {
+  height: 36px;
+  margin-left: -8px;
+  cursor: pointer;
+  position: relative;
+  z-index: 3;
+}
+
+.svg {
+  height: 36px;
+  transform: translateZ(0);
+  stroke: var(--mantine-color-green-4);
+}
+
+.svg:hover {
+  animation: wiggle 750ms ease-in-out infinite;
+}
+
+@keyframes wiggle {
+  0% {
+    transform: rotate(0deg);
+  }
+  25% {
+    transform: rotate(-5deg);
+  }
+  50% {
+    transform: rotate(0deg);
+  }
+  75% {
+    transform: rotate(5deg);
+  }
+  100% {
+    transform: rotate(0deg);
+  }
+}

@@ -1,0 +1,19 @@
+.gauge {
+  appearance: none;
+  background-color: rgba(255, 255, 255, .3);
+  border: 0;
+  /* Clip path for the same IconStar from tabler-icons */
+  clip-path: polygon(54.598% 84.544%,26.516% 100%,31.88% 67.264%,9.131% 44.082%,40.525% 39.319%,54.566% 9.536%,68.606% 39.319%,100% 44.082%,77.251% 67.264%,82.615% 100%);
+}
+
+.gauge::-webkit-progress-bar {
+  background-color: rgba(255, 255, 255, .3);
+}
+
+.gauge::-webkit-progress-value {
+  background-color: var(--mantine-color-yellow-8);
+}
+
+.gauge::-moz-progress-bar {
+  background-color: var(--mantine-color-yellow-8);
+}

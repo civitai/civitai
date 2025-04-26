@@ -1,0 +1,37 @@
+.root {
+  flex: 1;
+}
+
+.label {
+  width: 100%;
+  display: inline-flex;
+  justify-content: center;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+.label[data-checked],
+.label[data-checked]:hover {
+  background-color: var(--mantine-color-blue-filled);
+  color: var(--mantine-color-white);
+}
+
+.label[data-checked] .iconWrapper {
+  color: var(--mantine-color-white);
+  display: none;
+}
+
+@media (min-width: 576px) {
+  .label {
+    padding-left: 20px;
+    padding-right: 20px;
+  }
+
+  .label[data-checked] .iconWrapper {
+    display: inline-block;
+  }
+}
+
+.iconWrapper {
+  /* iconWrapper styles */
+}

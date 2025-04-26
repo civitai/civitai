@@ -1,0 +1,14 @@
+.segControl {
+  :global {
+    .mantine-SegmentedControl-root {
+      border: 1px solid var(--mantine-color-dark-4);
+      background: none;
+      flex-wrap: wrap;
+    }
+
+    .mantine-SegmentedControl-label {
+      padding-left: var(--mantine-spacing-sm);
+      padding-right: var(--mantine-spacing-sm);
+    }
+  }
+}

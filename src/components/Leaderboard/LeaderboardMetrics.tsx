@@ -1,6 +1,5 @@
 import {
   Anchor,
-  createStyles,
   Grid,
   Group,
   MantineTheme,
@@ -9,6 +8,10 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  Box,
+  BoxProps,
+  Card,
+  Tooltip,
 } from '@mantine/core';
 import {
   IconArrowsHorizontal,
@@ -37,6 +40,8 @@ import {
   IconThumbUp,
   IconTrophy,
   IconX,
+  IconChartBar,
+  IconShare,
 } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
@@ -48,6 +53,10 @@ import { UserStatBadges } from '~/components/UserStatBadges/UserStatBadges';
 import { LeaderboardGetModel } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
+import React, { forwardRef } from 'react';
+import styles from './LeaderboardMetrics.module.scss';
+import { MetricType } from '~/types/metrics';
+import { LeaderboardMetric } from '~/types/leaderboard';
 
 type MetricDisplayOptions = {
   icon: React.ReactNode;
@@ -210,71 +219,73 @@ const metricTypes: Record<
   }),
 };
 
-export function LeaderboardMetrics({
-  metrics,
-  score,
-  delta,
-}: {
-  metrics: { type: string; value: number }[];
+interface LeaderboardMetricsProps {
+  metrics: LeaderboardMetric[];
   score: number;
   delta?: number;
-}) {
-  const { theme } = useStyles();
+}
+
+export function LeaderboardMetrics({ metrics, score, delta }: LeaderboardMetricsProps) {
+  const displayMetrics = useMemo(() => {
+    return metrics.filter(
+      (metric) => metric.value !== undefined && metric.value !== null && metric.display !== false
+    );
+  }, [metrics]);
 
   return (
-    <Group spacing={4}>
-      <IconBadge
-        size="lg"
-        color="gray"
-        variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-        icon={<IconTrophy {...iconProps} />}
-        tooltip={
-          <Stack spacing={0} align="center">
-            {delta && delta != 0 && (
-              <Text size="xs" color={delta > 0 ? 'green' : 'red'}>
-                {delta > 0 ? '+' : ''}
-                {numberWithCommas(delta)}
-              </Text>
-            )}
-            <>Score</>
-          </Stack>
-        }
-      >
-        {numberWithCommas(score)}
-      </IconBadge>
-      {metrics.map(({ type, value }) => {
-        const typeProcessor = metricTypes[type];
-        if (!typeProcessor) return null;
-
-        const badge = typeProcessor(metrics, theme);
-        if (value === 0 && badge.hideEmpty) return null;
-
-        return (
-          <IconBadge
-            size="lg"
-            color="gray"
-            variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-            key={type}
-            icon={badge.icon}
-            tooltip={badge.tooltip}
-          >
-            {badge.value ?? abbreviateNumber(value)}
-          </IconBadge>
-        );
-      })}
-    </Group>
+    <div className={styles.metrics}>
+      <div className={styles.scoreContainer}>
+        <span className={styles.score}>{score}</span>
+        {delta !== undefined && (
+          <span className={delta >= 0 ? styles.deltaPositive : styles.deltaNegative}>
+            {delta >= 0 ? '+' : ''}
+            {delta}
+          </span>
+        )}
+      </div>
+      {displayMetrics.map((metric, index) => (
+        <Tooltip key={index} label={metric.description || metric.name}>
+          <div className={styles.metricItem}>
+            <span>{metric.name}</span>
+            {metric.value !== undefined && <span>{metric.value}</span>}
+          </div>
+        </Tooltip>
+      ))}
+    </div>
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  creatorCard: {
-    '&.active': {
-      borderColor: theme.colors.blue[8],
-      boxShadow: `0 0 10px ${theme.colors.blue[8]}`,
-    },
-    '&:hover': {
-      backgroundColor:
-        theme.colorScheme === 'dark' ? 'rgba(255,255,255, 0.03)' : 'rgba(0,0,0, 0.01)',
-    },
-  },
-}));
+export interface LeaderboardMetricsCardProps extends LeaderboardMetricsProps {
+  active?: boolean;
+  onClick?: () => void;
+}
+
+export function LeaderboardMetricsCard({ active, onClick, ...props }: LeaderboardMetricsCardProps) {
+  return (
+    <Card
+      withBorder
+      p="md"
+      radius="md"
+      className={styles.metrics}
+      onClick={onClick}
+      sx={(theme) => ({
+        cursor: onClick ? 'pointer' : 'default',
+        backgroundColor: active ? theme.colors.blue[theme.fn.primaryShade()] : undefined,
+        color: active ? theme.white : undefined,
+        '&:hover': {
+          backgroundColor: onClick
+            ? active
+              ? theme.colors.blue[theme.fn.primaryShade()]
+              : theme.colorScheme === 'dark'
+              ? theme.colors.dark[6]
+              : theme.colors.gray[0]
+            : undefined,
+        },
+      })}
+    >
+      <LeaderboardMetrics {...props} />
+    </Card>
+  );
+}
+
+

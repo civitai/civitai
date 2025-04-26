@@ -1,0 +1,37 @@
+.stackedProgress {
+  position: relative;
+}
+
+.grow {
+  flex: 1;
+}
+
+.stackedProgressProgress {
+  position: absolute;
+  bottom: -40px;
+  left: 0;
+  right: 0;
+  height: 40px;
+  background: var(--mantine-color-dark-6);
+  border-radius: var(--mantine-radius-sm);
+  overflow: hidden;
+}
+
+.stackedProgressBar {
+  height: 100%;
+}
+
+.stackedProgressStatus {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.stackedProgressStatusText {
+  color: white;
+  font-size: 12px;
+  text-shadow: 0 0 2px rgba(0, 0, 0, 0.5);
+}

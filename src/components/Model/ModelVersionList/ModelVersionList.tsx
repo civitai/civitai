@@ -1,4 +1,4 @@
-import { ActionIcon, Box, Button, createStyles, Group, ScrollArea, ThemeIcon } from '@mantine/core';
+import { ActionIcon, Box, Button, Group, ScrollArea, ThemeIcon } from '@mantine/core';
 import {
   IconAlertTriangle,
   IconBolt,
@@ -13,53 +13,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ModelById } from '~/types/router';
 import { ModelVersionMenu } from '../ModelVersions/ModelVersionMenu';
-
-const useStyles = createStyles((theme) => ({
-  scrollContainer: { position: 'relative' },
-
-  arrowButton: {
-    '&:active': {
-      transform: 'none',
-    },
-  },
-
-  hidden: {
-    display: 'none !important',
-  },
-
-  leftArrow: {
-    position: 'absolute',
-    left: 0,
-    top: '50%',
-    transform: 'translateY(-50%)',
-    paddingRight: theme.spacing.xl,
-    zIndex: 12,
-    backgroundImage: theme.fn.gradient({
-      from: theme.colorScheme === 'dark' ? theme.colors.dark[7] : 'white',
-      to: 'transparent',
-      deg: 90,
-    }),
-    display: 'block',
-  },
-  rightArrow: {
-    position: 'absolute',
-    right: 0,
-    top: '50%',
-    transform: 'translateY(-50%)',
-    paddingLeft: theme.spacing.xl,
-    zIndex: 12,
-    backgroundImage: theme.fn.gradient({
-      from: theme.colorScheme === 'dark' ? theme.colors.dark[7] : 'white',
-      to: 'transparent',
-      deg: 270,
-    }),
-    display: 'block',
-  },
-  viewport: {
-    overflowX: 'scroll',
-    overflowY: 'hidden',
-  },
-}));
+import classes from './ModelVersionList.module.scss';
 
 type State = {
   scrollPosition: { x: number; y: number };
@@ -75,7 +29,6 @@ export function ModelVersionList({
   onVersionClick,
   showToggleCoverage = false,
 }: Props) {
-  const { classes, cx, theme } = useStyles();
   const router = useRouter();
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
@@ -121,7 +74,7 @@ export function ModelVersionList({
       }
       type="never"
     >
-      <Box className={cx(classes.leftArrow, state.atStart && classes.hidden)}>
+      <Box className={`${classes.leftArrow} ${state.atStart ? classes.hidden : ''}`}>
         <ActionIcon
           className={classes.arrowButton}
           variant="transparent"
@@ -161,7 +114,7 @@ export function ModelVersionList({
                   : {}),
               }}
             >
-              <IconBolt style={{ fill: theme.colors.dark[9] }} color="dark.9" size={16} />
+              <IconBolt style={{ fill: 'var(--mantine-color-dark-9)' }} color="dark.9" size={16} />
             </ThemeIcon>
           );
 
@@ -171,7 +124,7 @@ export function ModelVersionList({
               miw={40}
               ta="center"
               className="relative"
-              variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
+              variant={active ? 'filled' : 'light'}
               color={active ? 'blue' : 'gray'}
               onClick={() => {
                 if (showExtraIcons && !currentUser?.isModerator) {
@@ -255,121 +208,11 @@ export function ModelVersionList({
                 canGenerate={version.canGenerate}
                 showToggleCoverage={showToggleCoverage}
               />
-              {/* <Menu withinPortal>
-                <Menu.Target>
-                  <Button
-                    variant={active ? 'filled' : theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    px={4}
-                    color={active ? 'blue' : 'gray'}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      e.preventDefault();
-                    }}
-                    compact
-                  >
-                    <IconDotsVertical size={14} />
-                  </Button>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  {versions.length > 1 && (
-                    <Menu.Item
-                      color="red"
-                      icon={<IconTrash size={14} stroke={1.5} />}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        e.preventDefault();
-                        onDeleteClick(version.id);
-                      }}
-                    >
-                      Delete version
-                    </Menu.Item>
-                  )}
-                  {currentUser?.isModerator && published && (
-                    <Menu.Item
-                      color="yellow"
-                      icon={<IconBan size={14} stroke={1.5} />}
-                      onClick={() =>
-                        openContext('unpublishModel', {
-                          modelId: version.modelId,
-                          versionId: version.id,
-                        })
-                      }
-                    >
-                      Unpublish as Violation
-                    </Menu.Item>
-                  )}
-
-                  <Menu.Item
-                    component={Link}
-                    href={`/models/${version.modelId}/model-versions/${version.id}/edit`}
-                    icon={<IconEdit size={14} stroke={1.5} />}
-                  >
-                    Edit details
-                  </Menu.Item>
-                  <Menu.Item
-                    icon={<IconFileSettings size={14} stroke={1.5} />}
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      triggerRoutedDialog({
-                        name: 'filesEdit',
-                        state: {
-                          modelVersionId: version.id,
-                        },
-                      });
-                    }}
-                  >
-                    Manage files
-                  </Menu.Item>
-                  {version.posts.length > 0 ? (
-                    <Menu.Item
-                      component={Link}
-                      icon={<IconPhotoEdit size={14} stroke={1.5} />}
-                      onClick={(e) => e.stopPropagation()}
-                      href={`/posts/${version.posts[0].id}/edit`}
-                    >
-                      Manage images
-                    </Menu.Item>
-                  ) : (
-                    <Menu.Item
-                      component={Link}
-                      icon={<IconPhotoPlus size={14} stroke={1.5} />}
-                      onClick={(e) => e.stopPropagation()}
-                      href={`/models/${version.modelId}/model-versions/${version.id}/wizard?step=3`}
-                    >
-                      Add images
-                    </Menu.Item>
-                  )}
-                  {currentUser?.isModerator && showToggleCoverage && (
-                    <>
-                      <Menu.Divider />
-                      <Menu.Label>Moderation zone</Menu.Label>
-                      <Menu.Item
-                        disabled={isLoading}
-                        icon={isLoading ? <Loader size="xs" /> : undefined}
-                        onClick={() =>
-                          handleToggleCoverage({
-                            modelId: version.modelId,
-                            versionId: version.id,
-                          })
-                        }
-                        closeMenuOnClick={false}
-                      >
-                        {version.canGenerate ? 'Remove from generation' : 'Add to generation'}
-                      </Menu.Item>
-                    </>
-                  )}
-                </Menu.Dropdown>
-              </Menu> */}
             </Button.Group>
           );
         })}
       </Group>
-      <Box
-        className={cx(
-          classes.rightArrow,
-          (state.atEnd || !state.largerThanViewport) && classes.hidden
-        )}
-      >
+      <Box className={`${classes.rightArrow} ${state.atEnd ? classes.hidden : ''}`}>
         <ActionIcon
           className={classes.arrowButton}
           variant="transparent"
@@ -390,3 +233,4 @@ type Props = {
   showExtraIcons?: boolean;
   showToggleCoverage?: boolean;
 };
+

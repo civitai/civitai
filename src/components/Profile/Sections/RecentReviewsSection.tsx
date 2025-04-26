@@ -1,4 +1,4 @@
-import { Badge, Button, Group, Paper, Stack, Text, ThemeIcon, createStyles } from '@mantine/core';
+import { Badge, Button, Group, Paper, Stack, Text, ThemeIcon } from '@mantine/core';
 import { IconCategory, IconPhoto, IconStar } from '@tabler/icons-react';
 import React from 'react';
 
@@ -20,22 +20,9 @@ import { useInView } from '~/hooks/useInView';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
-
-const useStyles = createStyles(() => ({
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  ContainerGrid: {
-    [containerQuery.smallerThan('sm')]: {
-      flexDirection: 'column-reverse',
-    },
-  },
-}));
+import styles from './RecentReviewsSection.module.scss';
 
 export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
-  const { classes: sectionClasses } = useStyles();
   const [ref, inView] = useInViewDynamic({ id: 'profile-reviews-section' });
   const { classes, theme } = useProfileSectionStyles({});
 
@@ -64,7 +51,7 @@ export const RecentReviewsSection = ({ user }: ProfileSectionProps) => {
           <ProfileSectionPreview />
         ) : (
           <ProfileSection title="Recent Reviews" icon={<IconStar />}>
-            <ContainerGrid className={sectionClasses.ContainerGrid}>
+            <ContainerGrid className={styles.containerGrid}>
               <ContainerGrid.Col sm={12} md={8}>
                 <Stack>
                   {resourceReviews.map((review) => {

@@ -5,7 +5,6 @@ import {
   Stack,
   Text,
   Title,
-  createStyles,
   Group,
   Button,
   Anchor,
@@ -30,12 +29,7 @@ import { ModelVersionDonationGoal } from '~/types/router';
 import { showSuccessNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName } from '~/utils/string-helpers';
-
-const useStyles = createStyles((theme) => ({
-  donationGoalContainer: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
-  },
-}));
+import classes from './ModelVersionDonationGoals.module.scss';
 
 const DonationGoalItem = ({
   donationGoal,
@@ -44,7 +38,6 @@ const DonationGoalItem = ({
   donationGoal: ModelVersionDonationGoal;
   modelVersionId: number;
 }) => {
-  const { classes } = useStyles();
   const progress = Math.min(100, (donationGoal.total / donationGoal.goalAmount) * 100);
   const [donationAmount, setDonationAmount] = useState<number>(10);
   const currentUser = useCurrentUser();
@@ -223,3 +216,4 @@ type Props = {
 };
 
 export default ModelVersionDonationGoals;
+

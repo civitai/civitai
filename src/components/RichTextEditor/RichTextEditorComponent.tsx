@@ -1,12 +1,4 @@
-import {
-  createStyles,
-  CSSObject,
-  Group,
-  Input,
-  InputWrapperProps,
-  MantineSize,
-  Text,
-} from '@mantine/core';
+import { CSSObject, Group, Input, InputWrapperProps, MantineSize, Text } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { Link, RichTextEditor as RTE, RichTextEditorProps } from '@mantine/tiptap';
@@ -37,11 +29,11 @@ import { CustomImage } from '~/libs/tiptap/extensions/CustomImage';
 import { Instagram } from '~/libs/tiptap/extensions/Instagram';
 import { StrawPoll } from '~/libs/tiptap/extensions/StrawPoll';
 import { constants } from '~/server/common/constants';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { getRandomId, validateThirdPartyUrl } from '~/utils/string-helpers';
 import { InsertImageControl } from './InsertImageControl';
 import { InsertYoutubeVideoControl } from './InsertYoutubeVideoControl';
 import { getSuggestions } from './suggestion';
+import styles from './RichTextEditorComponent.module.scss';
 
 // const mapEditorSizeHeight: Omit<Record<MantineSize, string>, 'xs'> = {
 //   sm: '30px',
@@ -65,32 +57,6 @@ const mapEditorSize: Omit<Record<MantineSize, CSSObject>, 'xs'> = {
     minHeight: 90,
   },
 };
-
-const useStyles = createStyles((theme) => ({
-  mention: {
-    color: theme.colors.blue[4],
-  },
-  instagramEmbed: {
-    aspectRatio: '9/16',
-    maxHeight: 1060,
-    maxWidth: '50%',
-    overflow: 'hidden',
-
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100%',
-    },
-  },
-  strawPollEmbed: {
-    aspectRatio: '4/3',
-    maxHeight: 480,
-    // Ignoring because we want to use !important, if not then it complaints about it
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    pointerEvents: 'auto !important' as any,
-  },
-  bubbleTooltip: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-}));
 
 function openLinkWhitelistRequestModal() {
   return openModal({
@@ -167,7 +133,6 @@ export function RichTextEditor({
   inputClasses,
   ...props
 }: Props) {
-  const { classes } = useStyles();
   const addHeading = includeControls.includes('heading');
   const addFormatting = includeControls.includes('formatting');
   const addColors = addFormatting && includeControls.includes('colors');
@@ -200,101 +165,79 @@ export function RichTextEditor({
       ? [
           Heading.configure({
             levels: [1, 2, 3],
-          }).extend({
-            addAttributes() {
-              return {
-                ...this.parent?.(),
-                id: { default: null },
-              };
+            HTMLAttributes: {
+              class: 'mantine-Text-root mantine-Title-root',
             },
-            addOptions() {
-              return {
-                ...this.parent?.(),
-                HTMLAttributes: {
-                  id: null,
-                },
-              };
-            },
-            renderHTML({ node }) {
-              const hasLevel = this.options.levels.includes(node.attrs.level);
-              const level = hasLevel ? node.attrs.level : this.options.levels[0];
-              const id = `${slugify(node.textContent.toLowerCase())}-${getRandomId()}`;
-
-              return [`h${level}`, mergeAttributes(this.options.HTMLAttributes, { id }), 0];
-            },
-          }),
-        ]
-      : []),
-    ...(onSuperEnter
-      ? [
-          Extension.create({
-            name: 'onSubmitShortcut',
-            addKeyboardShortcuts: () => ({
-              'Mod-Enter': () => {
-                onSuperEnter();
-                return true; // Dunno why they want a boolean here
-              },
-            }),
           }),
         ]
       : []),
     ...(addFormatting ? [Underline] : []),
-    ...(addColors ? [TextStyle, Color] : []),
-    ...(addLink ? [linkExtension] : []),
+    ...(addColors ? [Color, TextStyle] : []),
+    ...(addLink
+      ? [
+          linkExtension.configure({
+            openOnClick: false,
+            HTMLAttributes: {
+              class: 'mantine-Anchor-root',
+            },
+          }),
+        ]
+      : []),
     ...(addMedia
       ? [
           CustomImage.configure({
-            // To allow links on images
-            inline: true,
-            uploadImage: uploadToCF,
-            onUploadStart: () => {
-              showNotification({
-                id: UPLOAD_NOTIFICATION_ID,
-                loading: true,
-                disallowClose: true,
-                autoClose: false,
-                message: 'Uploading images...',
-              });
-            },
-            onUploadEnd: () => {
-              hideNotification(UPLOAD_NOTIFICATION_ID);
+            HTMLAttributes: {
+              class: 'mantine-Image-root',
             },
           }),
           Youtube.configure({
-            addPasteHandler: false,
-            modestBranding: false,
-          }).extend({
-            renderHTML(input) {
-              const { HTMLAttributes } = input;
-              if (!HTMLAttributes.src || !this.parent) return ['div', { 'data-youtube-video': '' }];
-
-              return this.parent(input);
+            HTMLAttributes: {
+              class: 'mantine-Image-root',
             },
-            addPasteRules() {
-              return [
-                nodePasteRule({
-                  find: /^(https?:\/\/)?(www\.|music\.)?(youtube\.com|youtu\.be)(?!.*\/channel\/)(?!\/@)(.+)?$/g,
-                  type: this.type,
-                  getAttributes: (match) => ({ src: match.input }),
-                }),
-              ];
-            },
-          }),
-          Instagram.configure({
-            HTMLAttributes: { class: classes.instagramEmbed },
-            height: 'auto',
           }),
         ]
       : []),
     ...(addMentions
       ? [
           Mention.configure({
-            suggestion: getSuggestions({ defaultSuggestions }),
             HTMLAttributes: {
-              class: classes.mention,
+              class: styles.mention,
             },
-            renderLabel({ options, node }) {
-              return `${options.suggestion.char}${node.attrs.label ?? node.attrs.id}`;
+            suggestion: {
+              items: ({ query }) => getSuggestions({ query, defaultSuggestions }),
+              render: () => {
+                return {
+                  onStart: (props) => {
+                    showNotification({
+                      id: UPLOAD_NOTIFICATION_ID,
+                      title: 'Loading suggestions...',
+                      message: 'Please wait while we load suggestions',
+                      loading: true,
+                      autoClose: false,
+                    });
+                  },
+                  onUpdate: (props) => {
+                    if (props.items.length === 0) {
+                      showNotification({
+                        id: UPLOAD_NOTIFICATION_ID,
+                        title: 'No suggestions found',
+                        message: 'Try a different search term',
+                        color: 'yellow',
+                      });
+                    } else {
+                      hideNotification(UPLOAD_NOTIFICATION_ID);
+                    }
+                  },
+                  onKeyDown: (props) => {
+                    if (props.event.key === 'Escape') {
+                      props.event.preventDefault();
+                      props.event.stopPropagation();
+                      return true;
+                    }
+                    return false;
+                  },
+                };
+              },
             },
           }),
         ]
@@ -302,8 +245,9 @@ export function RichTextEditor({
     ...(addPolls
       ? [
           StrawPoll.configure({
-            HTMLAttributes: { class: classes.strawPollEmbed },
-            height: 'auto',
+            HTMLAttributes: {
+              class: styles.strawPollEmbed,
+            },
           }),
         ]
       : []),
@@ -311,46 +255,32 @@ export function RichTextEditor({
 
   const editor = useEditor({
     extensions,
-    content: value,
-    onUpdate: onChange ? ({ editor }) => onChange(editor.getHTML()) : undefined,
+    content: value ?? '',
+    onUpdate: ({ editor }) => {
+      onChange?.(editor.getHTML());
+    },
     editable: !disabled,
+    autofocus: autoFocus,
   });
 
-  const editorRef = useRef<Editor>();
-
-  // To clear content after a form submission
   useEffect(() => {
-    if (!value && editor) editor.commands.clearContent();
-  }, [editor, value]);
-
-  useEffect(() => {
-    if (reset > 0 && editor && value && editor.getHTML() !== value) {
-      editor.commands.setContent(value);
+    if (editor && value !== editor.getHTML()) {
+      editor.commands.setContent(value ?? '');
     }
-  }, [reset]); //eslint-disable-line
+  }, [editor, value, reset]);
 
-  useEffect(() => {
-    if (editor && autoFocus) editor.commands.focus('end', { scrollIntoView: true });
-  }, [editor, autoFocus]);
-
-  useEffect(() => {
-    if (editor && !editorRef.current) editorRef.current = editor;
-  }, [editor]);
-
-  // Used to call editor commands outside the component via a ref
-  useImperativeHandle(innerRef, () => ({
-    insertContentAtCursor: (value) => {
-      if (editorRef.current && innerRef) {
-        const currentPosition = editorRef.current.state.selection.$anchor.pos;
-        editorRef.current.commands.insertContentAt(currentPosition, value);
-      }
-    },
-    focus: () => {
-      if (editorRef.current && innerRef) {
-        editorRef.current.commands.focus('end');
-      }
-    },
-  }));
+  useImperativeHandle(
+    innerRef,
+    () => ({
+      insertContentAtCursor: (value: string) => {
+        editor?.commands.insertContent(value);
+      },
+      focus: () => {
+        editor?.commands.focus();
+      },
+    }),
+    [editor]
+  );
 
   return (
     <Input.Wrapper
@@ -360,118 +290,87 @@ export function RichTextEditor({
       description={description}
       withAsterisk={withAsterisk}
       error={error}
-      className={inputClasses}
+      classNames={inputClasses ? { root: inputClasses } : undefined}
     >
       <RTE
-        {...props}
         editor={editor}
-        id={id}
-        sx={(theme) => ({
-          marginTop: description ? 5 : undefined,
-          marginBottom: error ? 5 : undefined,
-          borderColor: error ? theme.colors.red[8] : undefined,
-
-          // Fixes gapcursor color for dark mode
-          '& .ProseMirror-gapcursor:after': {
-            borderTop: `1px solid ${theme.colorScheme === 'dark' ? 'white' : 'black'}`,
-          },
-
-          '& .ProseMirror': {
-            ...mapEditorSize[editorSize],
-            // minHeight: mapEditorSizeHeight[editorSize],
-
-            '& p.is-editor-empty:first-of-type::before': {
-              color: error ? theme.colors.red[8] : undefined,
-              fontSize: 14,
+        {...props}
+        sx={[
+          mapEditorSize[editorSize],
+          {
+            '& .ProseMirror': {
+              minHeight: mapEditorSize[editorSize].minHeight,
             },
           },
-
-          '& iframe': {
-            pointerEvents: 'none',
-          },
-        })}
+        ]}
       >
         {!hideToolbar && (
           <RTE.Toolbar sticky={stickyToolbar} stickyOffset={toolbarOffset}>
-            {addHeading && (
-              <RTE.ControlsGroup>
-                <RTE.H1 />
-                <RTE.H2 />
-                <RTE.H3 />
-              </RTE.ControlsGroup>
-            )}
-
-            {addFormatting && (
-              <RTE.ControlsGroup>
-                <RTE.Bold />
-                <RTE.Italic />
-                <RTE.Underline />
-                <RTE.Strikethrough />
-                <RTE.ClearFormatting />
-                <RTE.CodeBlock />
-                {addColors && (
-                  <RTE.ColorPicker colors={[...constants.richTextEditor.presetColors]} />
-                )}
-              </RTE.ControlsGroup>
-            )}
-
-            {addList && (
-              <RTE.ControlsGroup>
-                <RTE.BulletList />
-                <RTE.OrderedList />
-              </RTE.ControlsGroup>
-            )}
-
-            {addLink && (
-              <RTE.ControlsGroup>
-                <RTE.Link />
-                <RTE.Unlink />
-              </RTE.ControlsGroup>
-            )}
-
-            {addMedia && (
-              <RTE.ControlsGroup>
-                <InsertImageControl />
-                <InsertYoutubeVideoControl />
-                <InsertInstagramEmbedControl />
-              </RTE.ControlsGroup>
-            )}
-            {addPolls && (
-              <RTE.ControlsGroup>
-                <InsertStrawPollControl />
-              </RTE.ControlsGroup>
-            )}
-          </RTE.Toolbar>
-        )}
-
-        {editor && (
-          // Don't show the bubble menu for images, to prevent setting images as headings, etc.
-          <BubbleMenu
-            editor={editor}
-            shouldShow={({ editor }) => !editor.state.selection.empty && !editor.isActive('image')}
-            className={classes.bubbleTooltip}
-          >
             <RTE.ControlsGroup>
-              {addHeading ? (
+              {addHeading && (
                 <>
                   <RTE.H1 />
                   <RTE.H2 />
                   <RTE.H3 />
                 </>
-              ) : null}
-              {addFormatting ? (
+              )}
+              {addFormatting && (
                 <>
                   <RTE.Bold />
                   <RTE.Italic />
+                  <RTE.Underline />
+                  <RTE.Strikethrough />
+                  <RTE.ClearFormatting />
                 </>
-              ) : null}
-              {addList ? <RTE.BulletList /> : null}
-              {addLink ? <RTE.Link /> : null}
+              )}
+              {addColors && (
+                <>
+                  <RTE.ColorPicker colors={constants.richTextEditor.presetColors} />
+                  <RTE.Highlight />
+                </>
+              )}
             </RTE.ControlsGroup>
-          </BubbleMenu>
+
+            <RTE.ControlsGroup>
+              {addList && (
+                <>
+                  <RTE.BulletList />
+                  <RTE.OrderedList />
+                </>
+              )}
+              {addFormatting && (
+                <>
+                  <RTE.Blockquote />
+                  <RTE.CodeBlock />
+                </>
+              )}
+            </RTE.ControlsGroup>
+
+            <RTE.ControlsGroup>
+              {addLink && <RTE.Link />}
+              {addMedia && (
+                <>
+                  <InsertImageControl />
+                  <InsertYoutubeVideoControl />
+                  <InsertInstagramEmbedControl />
+                </>
+              )}
+              {addPolls && <InsertStrawPollControl />}
+            </RTE.ControlsGroup>
+          </RTE.Toolbar>
         )}
 
         <RTE.Content />
+
+        {addMentions && editor && (
+          <BubbleMenu editor={editor} tippyOptions={{ duration: 100 }} style={styles.bubbleTooltip}>
+            <RTE.ControlsGroup>
+              <RTE.Link />
+              <RTE.Bold />
+              <RTE.Italic />
+            </RTE.ControlsGroup>
+          </BubbleMenu>
+        )}
       </RTE>
     </Input.Wrapper>
   );

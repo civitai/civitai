@@ -1,0 +1,84 @@
+.root {
+  padding-top: 32px;
+  padding-bottom: 32px;
+}
+
+.carousel {
+  @media (max-width: 48em) {
+    margin-right: calc(-1 * var(--mantine-spacing-md));
+    margin-left: calc(-1 * var(--mantine-spacing-md));
+  }
+}
+
+.nextButton {
+  background-color: var(--mantine-color-gray-0) !important;
+  color: var(--mantine-color-dark-9);
+  opacity: 0.65;
+  transition: opacity 300ms ease;
+  z-index: 10;
+}
+
+.nextButton:hover {
+  opacity: 1;
+}
+
+@media (max-width: 48em) {
+  .nextButton {
+    display: none;
+  }
+}
+
+.hidden {
+  display: none !important;
+}
+
+.grid {
+  display: grid;
+  grid-auto-flow: column;
+  column-gap: var(--column-gap);
+  grid-auto-columns: var(--column-width);
+  grid-template-rows: auto;
+  grid-auto-rows: 0;
+  overflow-x: visible;
+  padding-bottom: 4px;
+  align-items: center;
+}
+
+@media (max-width: 48em) {
+  .grid {
+    margin-right: calc(-1 * var(--mantine-spacing-md));
+    margin-left: calc(-1 * var(--mantine-spacing-md));
+    padding-left: var(--mantine-spacing-md);
+  }
+}
+
+.container {
+  position: relative;
+}
+
+.container:hover .scrollArea::-webkit-scrollbar {
+  opacity: 1;
+}
+
+.container:hover .scrollArea::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--mantine-color-white) 50%, transparent);
+}
+
+[data-mantine-color-scheme='light'] .container:hover .scrollArea::-webkit-scrollbar-thumb {
+  background-color: color-mix(in srgb, var(--mantine-color-black) 50%, transparent);
+}
+
+.scrollArea {
+  overflow: auto;
+  scroll-snap-type: x mandatory;
+}
+
+.scrollArea::-webkit-scrollbar {
+  background: transparent;
+  opacity: 0;
+  height: 8px;
+}
+
+.scrollArea::-webkit-scrollbar-thumb {
+  border-radius: 4px;
+}

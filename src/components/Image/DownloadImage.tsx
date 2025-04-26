@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { EdgeUrlProps, useEdgeUrl } from '~/client-utils/cf-images-utils';
+import styles from './DownloadImage.module.scss';
 
 export function DownloadImage({
   children,
@@ -10,6 +11,9 @@ export function DownloadImage({
     onClick: () => void;
     isLoading: boolean;
     progress: number;
+    className: string;
+    progressBarClassName: string;
+    progressBarContainerClassName: string;
   }) => React.ReactElement;
 }) {
   const { url } = useEdgeUrl(src, options);
@@ -60,5 +64,13 @@ export function DownloadImage({
     // document.body.removeChild(a);
   }
 
-  return children({ onClick, isLoading: loading, progress });
+  return children({
+    onClick,
+    isLoading: loading,
+    progress,
+    className: `${styles.downloadButton} ${loading ? styles.downloadButtonLoading : ''}`,
+    progressBarClassName: styles.progressBar,
+    progressBarContainerClassName: styles.progressBarContainer,
+  });
 }
+

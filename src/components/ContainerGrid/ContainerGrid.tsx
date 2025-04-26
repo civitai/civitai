@@ -1,33 +1,35 @@
 // @ts-nocheck
 import React, { forwardRef } from 'react';
 import { DefaultProps, MantineNumberSize, useComponentDefaultProps } from '@mantine/styles';
+import { Box, BoxProps } from '@mantine/core';
+import { containerQuery } from '~/utils/mantine-css-helpers';
+import styles from './ContainerGrid.module.scss';
 
 import { ContainerCol } from './ContainerCol';
 import { ContainerGridProvider } from './ContainerGrid.context';
 import useStyles from './ContainerGrid.styles';
-import { Box } from '@mantine/core';
 
 export interface ContainerGridProps extends DefaultProps, React.ComponentPropsWithRef<'div'> {
   /** <Col /> components only */
   children: React.ReactNode;
 
   /** Spacing between columns, key of theme.spacing or number for value in px  */
-  gutter?: MantineNumberSize;
+  gutter?: number;
 
   /** Gutter when screen size is larger than theme.breakpoints.xs */
-  gutterXs?: MantineNumberSize;
+  gutterXs?: number;
 
   /** Gutter when screen size is larger than theme.breakpoints.sm */
-  gutterSm?: MantineNumberSize;
+  gutterSm?: number;
 
   /** Gutter when screen size is larger than theme.breakpoints.md */
-  gutterMd?: MantineNumberSize;
+  gutterMd?: number;
 
   /** Gutter when screen size is larger than theme.breakpoints.lg */
-  gutterLg?: MantineNumberSize;
+  gutterLg?: number;
 
   /** Gutter when screen size is larger than theme.breakpoints.xl */
-  gutterXl?: MantineNumberSize;
+  gutterXl?: number;
 
   /** Should columns in the last row take 100% of grid width */
   grow?: boolean;
@@ -55,7 +57,7 @@ type ForwardRefWithStaticComponents<
 type GridComponent = ForwardRefWithStaticComponents<ContainerGridProps, { Col: typeof Col }>;
 
 const defaultProps: Partial<ContainerGridProps> = {
-  gutter: 'md',
+  gutter: 0,
   justify: 'flex-start',
   align: 'stretch',
   columns: 12,
@@ -86,6 +88,24 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
       { unstyled, name: 'ContainerGrid' }
     );
 
+    const getGutterStyle = (size: number) => ({
+      margin: `-${size / 2}px`,
+    });
+
+    const style = {
+      ...getGutterStyle(gutter),
+      justifyContent: justify,
+      alignItems: align,
+    };
+
+    const mediaQueries = {
+      [containerQuery.largerThan('xs', containerName)]: gutterXs ? getGutterStyle(gutterXs) : {},
+      [containerQuery.largerThan('sm', containerName)]: gutterSm ? getGutterStyle(gutterSm) : {},
+      [containerQuery.largerThan('md', containerName)]: gutterMd ? getGutterStyle(gutterMd) : {},
+      [containerQuery.largerThan('lg', containerName)]: gutterLg ? getGutterStyle(gutterLg) : {},
+      [containerQuery.largerThan('xl', containerName)]: gutterXl ? getGutterStyle(gutterXl) : {},
+    };
+
     return (
       <ContainerGridProvider
         value={{
@@ -100,7 +120,12 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
           containerName,
         }}
       >
-        <Box className={cx(classes.root, className)} {...others} ref={ref}>
+        <Box
+          className={`${styles.root} ${cx(classes.root, className)}`}
+          style={{ ...style, ...mediaQueries }}
+          {...others}
+          ref={ref}
+        >
           {children}
         </Box>
       </ContainerGridProvider>
@@ -110,3 +135,5 @@ export const ContainerGrid: GridComponent = forwardRef<HTMLDivElement, Container
 
 ContainerGrid.Col = ContainerCol;
 ContainerGrid.displayName = 'ContainerGrid';
+
+

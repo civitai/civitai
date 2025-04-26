@@ -1,0 +1,27 @@
+.preview {
+  order: 1;
+
+  @container (min-width: 576px) {
+    order: 2;
+  }
+}
+
+.decorations {
+  order: 2;
+
+  @container (min-width: 576px) {
+    order: 1;
+  }
+}
+
+.hideMobile {
+  @container (max-width: 576px) {
+    display: none;
+  }
+}
+
+.showMobile {
+  @container (min-width: 576px) {
+    display: none;
+  }
+}

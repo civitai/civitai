@@ -10,6 +10,7 @@ import { encodeMetadata } from '~/utils/metadata';
 import { ImageMeta } from '~/components/Image/DetailV2/ImageMeta';
 import { useIsClient } from '~/providers/IsClientProvider';
 import { MediaType } from '~/shared/utils/prisma/enums';
+import styles from './ImageMetaPopover.module.scss';
 
 export function ImageMetaPopover2({
   imageId,
@@ -25,17 +26,17 @@ export function ImageMetaPopover2({
   if (!isClient) return children;
 
   return (
-    <Popover className="relative flex items-center">
+    <Popover className={styles.popover}>
       <PopoverButton>{children}</PopoverButton>
       <PopoverPanel
-        className="z-[500]"
+        className={styles.popoverPanel}
         anchor="top end"
         onClick={(e) => {
           e.preventDefault();
           e.stopPropagation();
         }}
       >
-        <Card withBorder className="flex w-96 max-w-full flex-col gap-3 rounded-xl">
+        <Card withBorder className={styles.card}>
           <ImageMetaPopoverInner imageId={imageId} />
         </Card>
       </PopoverPanel>
@@ -55,20 +56,20 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
   if (isLoading) {
     const Skeleton = (
       <>
-        <div className="h-3 w-32 rounded-full bg-gray-200 dark:bg-gray-700"></div>
-        <div className="flex flex-col gap-2">
+        <div className={`${styles.skeletonLine} ${styles.skeletonLineShort}`}></div>
+        <div className={styles.skeleton}>
           {Array(3)
             .fill(0)
             .map((_, i) => (
-              <div key={i} className="h-2.5 rounded-full bg-gray-200 dark:bg-gray-700"></div>
+              <div key={i} className={styles.skeletonLine}></div>
             ))}
-          <div className="h-2.5 w-56 rounded-full bg-gray-200 dark:bg-gray-700"></div>
+          <div className={`${styles.skeletonLine} ${styles.skeletonLineLong}`}></div>
         </div>
       </>
     );
 
     return (
-      <div className="flex animate-pulse flex-col gap-3">
+      <div className={styles.skeleton}>
         {Skeleton}
         <Divider />
         {Skeleton}
@@ -81,33 +82,37 @@ function ImageMetaPopoverInner({ imageId }: { imageId: number }) {
   return (
     <>
       <ImageMeta imageId={imageId} />
-      <Button.Group>
+      <div className={styles.buttonGroup}>
         {canRemix && (
           <CloseButton
             as={Button}
             {...sharedButtonProps}
             data-activity="remix:image-meta"
-            // @ts-ignore eslint-disable-next-line
             onClick={() => {
               generationPanel.open({ type, id: imageId ?? 0 });
             }}
-            className="flex-1"
+            className={`${styles.button} ${styles.buttonRemix}`}
           >
-            <IconBrush size={16} />
+            <IconBrush size={16} className={styles.buttonIcon} />
             Remix
           </CloseButton>
         )}
         {meta && (
           <CopyButton value={() => encodeMetadata(meta)}>
             {({ copy, copied, color, Icon }) => (
-              <Button {...sharedButtonProps} onClick={copy} color={color}>
-                <Icon size={16} />
+              <Button
+                {...sharedButtonProps}
+                onClick={copy}
+                className={`${styles.button} ${styles.buttonCopy}`}
+              >
+                <Icon size={16} className={styles.buttonIcon} />
                 {!canRemix && (!copied ? 'Copy Generation Data' : 'Copied')}
               </Button>
             )}
           </CopyButton>
         )}
-      </Button.Group>
+      </div>
     </>
   );
 }
+

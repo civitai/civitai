@@ -1,6 +1,7 @@
-import { Alert, AlertProps, createStyles, Group, MantineColor, Stack, Text } from '@mantine/core';
+import { Alert, AlertProps, Group, MantineColor, Stack, Text } from '@mantine/core';
 import { StorageType, useStorage } from '~/hooks/useStorage';
 import { useIsClient } from '~/providers/IsClientProvider';
+import classes from './DismissibleAlert.module.scss';
 
 export const DismissibleAlert = (props: DismissibleAlertProps) => {
   const isClient = useIsClient();
@@ -45,13 +46,12 @@ function AlertContentInner({
   onDismiss,
   ...props
 }: DismissibleAlertProps & { onDismiss?: () => void }) {
-  const { classes, cx } = useStyles({ color });
   const contentSize = size === 'md' ? 'sm' : 'xs';
   return (
     <Alert
       py={8}
       {...props}
-      className={cx(className, classes.announcement)}
+      className={className}
       onClose={onDismiss}
       closeButtonLabel="Close alert"
       withCloseButton={!!onDismiss}
@@ -91,25 +91,3 @@ type DismissibleAlertProps = {
   storage?: StorageType;
 } & Omit<AlertProps, 'color' | 'children'>;
 
-const useStyles = createStyles((theme, { color }: { color: MantineColor }) => ({
-  announcement: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors[color][9] : theme.colors[color][2]
-    }`,
-    backgroundColor:
-      theme.colorScheme === 'dark'
-        ? theme.fn.darken(theme.colors[color][8], 0.5)
-        : theme.colors[color][1],
-  },
-  title: {
-    color: theme.colorScheme === 'dark' ? theme.colors[color][0] : theme.colors[color][7],
-    lineHeight: 1.1,
-  },
-  text: {
-    color: theme.colorScheme === 'dark' ? theme.colors[color][2] : theme.colors[color][9],
-    lineHeight: 1.2,
-    '& > div > a': {
-      color: theme.colorScheme === 'dark' ? theme.colors[color][1] : theme.colors[color][8],
-    },
-  },
-}));

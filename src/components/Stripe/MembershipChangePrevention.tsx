@@ -3,7 +3,6 @@ import {
   Box,
   Button,
   Center,
-  createStyles,
   Group,
   Image,
   Loader,
@@ -13,6 +12,7 @@ import {
   Stack,
   Text,
 } from '@mantine/core';
+import { createStyles } from '@mantine/styles';
 import { IconAlertTriangle } from '@tabler/icons-react';
 import Router from 'next/router';
 import { useState } from 'react';
@@ -32,17 +32,11 @@ import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { showSuccessNotification } from '~/utils/notifications';
 import { formatKBytes } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
+import { styles } from './MembershipChangePrevention.styles';
 
-const downgradeReasons = ['Too expensive', 'I don’t need all the benefits', 'Others'];
+const useStyles = createStyles(styles);
 
-const useStyles = createStyles((theme) => ({
-  card: {
-    height: '100%',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[8] : theme.colors.gray[0],
-    borderRadius: theme.radius.md,
-    padding: theme.spacing.lg,
-  },
-}));
+const downgradeReasons = ['Too expensive', 'I don't need all the benefits', 'Others'];
 
 export const DowngradeFeedbackModal = ({
   priceId,
@@ -249,7 +243,7 @@ export const StripeCancelMembershipButton = ({
       radius="xl"
       loading={connectingToStripe}
     >
-      Proceed to Cancel
+      Cancel membership
     </Button>
   );
 };
@@ -261,92 +255,94 @@ export const PaddleCancelMembershipButton = ({
   onClose: () => void;
   hasUsedVaultStorage: boolean;
 }) => {
-  const { cancelSubscription, cancelingSubscription } = useMutatePaddle();
+  const { mutate: cancelSubscription, isLoading: connectingToPaddle } =
+    useMutatePaddle('cancelSubscription');
+
   const handleCancelSubscription = () => {
-    cancelSubscription({
-      onSuccess: (canceled) => {
-        if (canceled) {
-          onClose();
-          showSuccessNotification({
-            title: 'You have been successfully downgraded to our Free tier.',
-            message: 'You will no longer be billed for your subscription',
-          });
-          window?.location.reload();
-        }
-      },
-    });
+    if (hasUsedVaultStorage) {
+      dialogStore.trigger({
+        component: VaultStorageDowngrade,
+        props: {
+          onContinue: () => {
+            cancelSubscription();
+          },
+        },
+      });
+    } else {
+      cancelSubscription();
+    }
   };
 
   return (
     <Button
       color="gray"
-      onClick={() => {
-        if (hasUsedVaultStorage) {
-          dialogStore.trigger({
-            component: VaultStorageDowngrade,
-            props: {
-              onContinue: () => {
-                handleCancelSubscription();
-              },
-            },
-          });
-        } else {
-          handleCancelSubscription();
-        }
-      }}
+      onClick={handleCancelSubscription}
       radius="xl"
-      loading={cancelingSubscription}
+      loading={connectingToPaddle}
     >
-      Proceed to Cancel
+      Cancel membership
     </Button>
   );
 };
 
 export const CancelMembershipBenefitsModal = () => {
-  const features = useFeatureFlags();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const { vault, isLoading: vaultLoading } = useQueryVault();
-  const { subscription, subscriptionLoading, subscriptionPaymentProvider } =
-    useActiveSubscription();
+  const { subscription } = useActiveSubscription();
+  const featureFlags = useFeatureFlags();
 
-  const product = subscription?.product;
-  const details = product ? getPlanDetails(product, features) : null;
-  const benefits = details?.benefits ?? [];
-  const hasUsedVaultStorage = !!vault && vault.usedStorageKb > 0;
+  const subscriptionMetadata = subscription?.product?.metadata as SubscriptionProductMetadata;
+  const planMeta = subscription?.product
+    ? getPlanDetails(subscription.product, featureFlags)
+    : null;
 
   return (
-    <Modal {...dialog} size="md" title="You will lose the following if you cancel" radius="md">
-      {vaultLoading || subscriptionLoading ? (
-        <Center>
-          <Loader />
-        </Center>
-      ) : (
-        <Stack>
-          {product && (
-            <Paper withBorder radius="lg" p="lg">
-              {benefits && <PlanBenefitList benefits={benefits} />}
-            </Paper>
+    <Modal {...dialog} size="md" title="Cancel membership" radius="md">
+      <Stack>
+        <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
+          <Stack>
+            <Text>
+              Cancellation is immediate and you will be charged instantly. You will lose your tier
+              benefits as soon as you cancel, and will receive the Buzz along the other benefits of
+              the free tier.
+            </Text>
+            <Text>
+              If you have created{' '}
+              <Text component="span" weight="bold">
+                private models
+              </Text>{' '}
+              during your time with your membership, you will have 10 days to make these public or
+              download before the exceeding amount are deleted.
+            </Text>
+          </Stack>
+        </AlertWithIcon>
+        {planMeta && (
+          <Paper className={useStyles().classes.card}>
+            <Stack>
+              <Text size="lg" weight={500}>
+                You will lose these benefits:
+              </Text>
+              <PlanBenefitList benefits={planMeta.benefits} />
+            </Stack>
+          </Paper>
+        )}
+        <Group grow>
+          {subscription?.paymentProvider === PaymentProvider.Stripe ? (
+            <StripeCancelMembershipButton
+              onClose={handleClose}
+              hasUsedVaultStorage={false}
+            />
+          ) : (
+            <PaddleCancelMembershipButton
+              onClose={handleClose}
+              hasUsedVaultStorage={false}
+            />
           )}
-          <Group grow>
-            {subscriptionPaymentProvider === PaymentProvider.Stripe && (
-              <StripeCancelMembershipButton
-                onClose={handleClose}
-                hasUsedVaultStorage={hasUsedVaultStorage}
-              />
-            )}
-            {subscriptionPaymentProvider === PaymentProvider.Paddle && (
-              <PaddleCancelMembershipButton
-                onClose={handleClose}
-                hasUsedVaultStorage={hasUsedVaultStorage}
-              />
-            )}
-            <Button color="blue" onClick={handleClose} radius="xl">
-              Don&rsquo;t cancel plan
-            </Button>
-          </Group>
-        </Stack>
-      )}
+          <Button color="blue" onClick={handleClose} radius="xl">
+            Don&rsquo;t cancel
+          </Button>
+        </Group>
+      </Stack>
     </Modal>
   );
 };
@@ -360,68 +356,64 @@ export const VaultStorageDowngrade = ({
   continueLabel?: string;
   cancelLabel?: string;
 }) => {
-  const features = useFeatureFlags();
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const { vault, isLoading: vaultLoading } = useQueryVault();
-  const { items, isLoading: loadingVaultItems, pagination } = useQueryVaultItems();
-  const { subscription, subscriptionLoading } = useActiveSubscription();
-  const product = subscription?.product;
-  const shownItems = items.filter((i) => !!i.coverImageUrl).slice(0, 3);
+  const { vault, isLoading } = useQueryVault();
+  const { items, isLoading: itemsLoading } = useQueryVaultItems();
 
-  return (
-    <Modal {...dialog} size="md" title="Are you sure?" radius="md">
-      {vaultLoading || subscriptionLoading || loadingVaultItems ? (
+  if (isLoading || itemsLoading || !vault) {
+    return (
+      <Modal {...dialog} size="md" title="Vault storage" radius="md">
         <Center>
           <Loader />
         </Center>
-      ) : (
-        <Stack>
-          <Group noWrap position="center">
-            {shownItems.map((item) => (
-              <Image
-                key={item.id}
-                src={item.coverImageUrl}
-                alt="Model Image"
-                radius="lg"
-                width={100}
-                height={100}
-              />
-            ))}
-          </Group>
-          <Stack spacing={0}>
-            <Text align="center">
-              You have{' '}
-              <Text component="span" weight="bold">
-                {formatKBytes(vault?.usedStorageKb ?? 0)}
-              </Text>{' '}
-              of storage used and{' '}
-              <Text component="span" weight="bold">
-                {pagination?.totalItems ?? 0} models
-              </Text>{' '}
-              stored on your Vault. After downgrading, your Vault will be frozen.
+      </Modal>
+    );
+  }
+
+  const usedStorageKb = vault.usedStorageKb;
+  const totalStorageKb = vault.totalStorageKb;
+  const usedStoragePercent = Math.round((usedStorageKb / totalStorageKb) * 100);
+
+  return (
+    <Modal {...dialog} size="md" title="Vault storage" radius="md">
+      <Stack>
+        <AlertWithIcon color="red" icon={<IconAlertTriangle size={20} />} iconColor="red">
+          <Stack>
+            <Text>
+              You are currently using {formatKBytes(usedStorageKb)} of your{' '}
+              {formatKBytes(totalStorageKb)} vault storage ({usedStoragePercent}%).
             </Text>
-            <Text color="dimmed" align="center">
-              You will have a 7 day grace period to download models from your Vault.
+            <Text>
+              If you continue, you will have 10 days to make your private models public or download
+              them before the exceeding amount are deleted.
             </Text>
           </Stack>
-          <Group grow>
-            <Button
-              color="gray"
-              onClick={() => {
-                onContinue();
-                handleClose();
-              }}
-              radius="xl"
-            >
-              {continueLabel}
-            </Button>
-            <Button color="blue" onClick={handleClose} radius="xl">
-              {cancelLabel}
-            </Button>
-          </Group>
-        </Stack>
-      )}
+        </AlertWithIcon>
+        {items && items.length > 0 && (
+          <Paper className={useStyles().classes.card}>
+            <Stack>
+              <Text size="lg" weight={500}>
+                Your vault items:
+              </Text>
+              {items.map((item) => (
+                <Group key={item.id} position="apart">
+                  <Text>{item.name}</Text>
+                  <Text>{formatKBytes(item.sizeKb)}</Text>
+                </Group>
+              ))}
+            </Stack>
+          </Paper>
+        )}
+        <Group grow>
+          <Button color="gray" onClick={onContinue} radius="xl">
+            {continueLabel}
+          </Button>
+          <Button color="blue" onClick={handleClose} radius="xl">
+            {cancelLabel}
+          </Button>
+        </Group>
+      </Stack>
     </Modal>
   );
 };
@@ -429,59 +421,45 @@ export const VaultStorageDowngrade = ({
 export const MembershipUpgradeModal = ({ priceId, meta }: { priceId: string; meta: PlanMeta }) => {
   const dialog = useDialogContext();
   const handleClose = dialog.onClose;
-  const { name, image, benefits } = meta;
-  const { classes } = useStyles();
+  const { subscription } = useActiveSubscription();
+  const featureFlags = useFeatureFlags();
+
+  const subscriptionMetadata = subscription?.product?.metadata as SubscriptionProductMetadata;
+  const planMeta = subscription?.product
+    ? getPlanDetails(subscription.product, featureFlags)
+    : null;
 
   return (
-    <Modal
-      {...dialog}
-      size="md"
-      title={`You are about to upgrade to the ${name} plan!`}
-      radius="md"
-    >
+    <Modal {...dialog} size="md" title="Upgrade membership" radius="md">
       <Stack>
-        {image && (
-          <Center>
-            <Box w={120}>
-              <EdgeMedia src={image} />
-            </Box>
-          </Center>
-        )}
-        {benefits && (
-          <Paper withBorder className={classes.card}>
-            <PlanBenefitList benefits={benefits} />
-          </Paper>
-        )}
-
-        <Alert color="orange">
+        <AlertWithIcon color="yellow" icon={<IconAlertTriangle size={20} />} iconColor="yellow">
           <Stack>
             <Text>
-              Please note there will be up to{' '}
-              <Text component="span" weight="bold">
-                an hour
-              </Text>{' '}
-              delay from when you upgrade to when you receive your Buzz &amp; get charged. All other
-              membership perks will be immediate.
+              Upgrade is immediate and you will be charged instantly. You will receive the Buzz along
+              the other benefits of the upgraded tier.
             </Text>
           </Stack>
-        </Alert>
+        </AlertWithIcon>
+        {planMeta && (
+          <Paper className={useStyles().classes.card}>
+            <Stack>
+              <Text size="lg" weight={500}>
+                You will get these benefits:
+              </Text>
+              <PlanBenefitList benefits={meta.benefits} />
+            </Stack>
+          </Paper>
+        )}
         <Group grow>
           <SubscribeButton priceId={priceId} onSuccess={handleClose}>
             {({ onClick, ...props }) => (
-              <Button
-                color="blue"
-                onClick={() => {
-                  onClick();
-                }}
-                radius="xl"
-                {...props}
-              >
-                Upgrade now
+              <Button color="blue" onClick={onClick} radius="xl" {...props}>
+                Upgrade
               </Button>
             )}
           </SubscribeButton>
           <Button color="gray" onClick={handleClose} radius="xl">
-            Don&rsquo;t change plan
+            Don&rsquo;t upgrade
           </Button>
         </Group>
       </Stack>

@@ -16,7 +16,6 @@ import {
   ScrollArea,
   SimpleGrid,
   Card,
-  createStyles,
 } from '@mantine/core';
 import {
   IconInfoCircle,
@@ -28,10 +27,9 @@ import {
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { QS } from '~/utils/qs';
 import { trpc } from '~/utils/trpc';
+import styles from './RunPartners.module.scss';
 
 export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
-  const { theme, classes } = useStyles();
-
   const { data: strategies = [], isLoading: strategiesLoading } =
     trpc.modelVersion.getRunStrategies.useQuery({ id: modelVersionId });
   const { data: partners, isLoading: partnersLoading } = trpc.partner.getAll.useQuery();
@@ -51,7 +49,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
   const defaultBadgeProps: BadgeProps = {
     variant: 'outline',
     radius: 'sm',
-    color: theme.colorScheme === 'dark' ? 'gray' : 'dark',
+    color: 'dark',
     styles: {
       root: { textTransform: 'none', userSelect: 'none' },
     },
@@ -70,7 +68,7 @@ export function RunPartners({ modelVersionId }: { modelVersionId: number }) {
     return (
       <SimpleGrid cols={3}>
         {partners.map((partner) => (
-          <Card key={partner.id} withBorder className={classes.premiumPartner}>
+          <Card key={partner.id} withBorder className={styles.premiumPartner}>
             <Card.Section>
               {partner.logo && <EdgeMedia src={partner.logo} alt={partner.name} />}
             </Card.Section>
@@ -303,11 +301,3 @@ const calculateStepsPerSecond = (value: number) => {
 
   return Math.round(parsed);
 };
-
-const useStyles = createStyles((theme) => ({
-  premiumPartner: {
-    '.mantine-Badge-root': {
-      padding: '2px 8px',
-    },
-  },
-}));

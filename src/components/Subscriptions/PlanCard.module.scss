@@ -1,0 +1,37 @@
+.card {
+  height: 100%;
+  background: var(--mantine-color-dark-8);
+  border-radius: var(--mantine-radius-md);
+  padding: var(--mantine-spacing-lg);
+}
+
+.card[data-light] {
+  background: var(--mantine-color-gray-0);
+}
+
+.image {
+  width: 96px;
+  margin-bottom: var(--mantine-spacing-xs);
+}
+
+@media (max-width: 576px) {
+  .image {
+    width: 96px;
+    margin-bottom: var(--mantine-spacing-xs);
+  }
+}
+
+.title {
+  font-size: 32px;
+}
+
+@media (max-width: 576px) {
+  .title {
+    font-size: 20px;
+  }
+}
+
+.price {
+  font-size: 48px;
+  font-weight: bold;
+}

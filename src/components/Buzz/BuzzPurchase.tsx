@@ -37,6 +37,8 @@ import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import AlertDialog from '../Dialog/Common/AlertDialog';
 // import { BuzzPaypalButton } from './BuzzPaypalButton';
 import { dialogStore } from '../Dialog/dialogStore';
+import clsx from 'clsx';
+import { useMantineTheme } from '@mantine/core';
 
 type SelectablePackage = Pick<Price, 'id' | 'unitAmount'> & { buzzAmount?: number | null };
 
@@ -198,7 +200,8 @@ export const BuzzPurchase = ({
   purchaseSuccessMessage,
   ...props
 }: Props) => {
-  const { classes, cx, theme } = useBuzzButtonStyles();
+  const { classes } = useBuzzButtonStyles();
+  const theme = useMantineTheme();
   const canUpgradeMembership = useCanUpgrade();
   const currentUser = useCurrentUser();
   const [selectedPrice, setSelectedPrice] = useState<SelectablePackage | null>(null);
@@ -324,7 +327,7 @@ export const BuzzPurchase = ({
                         value={buzzPackage.id}
                         variant="filled"
                         classNames={{
-                          root: cx(disabled && classes.chipDisabled),
+                          root: clsx(disabled && classes.chipDisabled),
                           label: classes.chipLabel,
                           iconWrapper: classes.chipCheckmark,
                         }}

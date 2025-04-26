@@ -1,0 +1,54 @@
+.downloadButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px 16px;
+  border-radius: 4px;
+  background-color: var(--mantine-color-blue-6);
+  color: var(--mantine-color-white);
+  font-weight: 500;
+  transition: all 0.2s ease;
+  cursor: pointer;
+  overflow: hidden;
+}
+
+.downloadButton:hover {
+  background-color: var(--mantine-color-blue-7);
+  transform: translateY(-1px);
+}
+
+.downloadButton:active {
+  transform: translateY(0);
+}
+
+.downloadButtonLoading {
+  cursor: wait;
+  opacity: 0.8;
+}
+
+.progressBar {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+  background-color: var(--mantine-color-blue-4);
+  transition: width 0.2s ease;
+}
+
+.progressBarContainer {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background-color: var(--mantine-color-blue-2);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .downloadButton {
+    padding: 6px 12px;
+    font-size: 0.875rem;
+  }
+}

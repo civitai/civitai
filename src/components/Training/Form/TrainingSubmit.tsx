@@ -2,7 +2,6 @@ import {
   Accordion,
   Badge,
   Button,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -75,21 +74,11 @@ import {
 } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import styles from './TrainingSubmit.module.scss';
 
 const maxRuns = 5;
 
 const prefersCaptions: TrainingBaseModelType[] = ['flux', 'sd35', 'hunyuan', 'wan'];
-
-const useStyles = createStyles((theme) => ({
-  sticky: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    position: 'sticky',
-    top: 0,
-    zIndex: 5,
-    marginBottom: '-5px',
-    paddingBottom: '5px',
-  },
-}));
 
 export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModelData> }) => {
   const thisModelVersion = model.modelVersions[0];
@@ -120,7 +109,6 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
   const status = useTrainingServiceStatus();
   const blockedModels = status.blockedModels ?? blockedCustomModels;
 
-  const { classes } = useStyles();
   const theme = useMantineTheme();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -562,7 +550,7 @@ export const TrainingFormSubmit = ({ model }: { model: NonNullable<TrainingModel
         onChange={(event) => setMultiMode(event.currentTarget.checked)}
       />
 
-      <Stack className={classes.sticky} sx={!multiMode ? { display: 'none' } : {}}>
+      <Stack className={styles.sticky} sx={!multiMode ? { display: 'none' } : {}}>
         <Group mt="md" position="apart" noWrap>
           <Title order={5}>Training Runs</Title>
           <Group spacing="xs" ml="sm">

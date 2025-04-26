@@ -2,7 +2,6 @@ import {
   Box,
   Button,
   Center,
-  createStyles,
   Group,
   Input,
   InputWrapperProps,
@@ -32,6 +31,7 @@ import {
 import { arrayMove, SortableContext, rectSortingStrategy } from '@dnd-kit/sortable';
 import { SortableItem } from '~/components/ImageUpload/SortableItem';
 import { containerQuery } from '~/utils/mantine-css-helpers';
+import styles from './ShowcaseItemsInput.module.scss';
 
 type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShowcaseItemSchema[];
@@ -40,30 +40,6 @@ type ShowcaseItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> 
   limit?: number;
 };
 
-const useStyles = createStyles((theme) => ({
-  selectedItemsGrid: {
-    display: 'grid',
-    gridTemplateColumns: `repeat(5, 1fr)`,
-    gridGap: 4,
-
-    [containerQuery.smallerThan('sm')]: {
-      gridTemplateColumns: `repeat(3, 1fr)`,
-    },
-  },
-  selectedItemRemove: {
-    position: 'absolute',
-    top: '-10px',
-    left: '-10px',
-    width: '30px',
-    height: '30px',
-    borderRadius: '50%',
-    padding: 0,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-}));
-
 export const ShowcaseItemsInput = ({
   value,
   onChange,
@@ -71,7 +47,6 @@ export const ShowcaseItemsInput = ({
   limit = 15,
   ...props
 }: ShowcaseItemsInputProps) => {
-  const { classes } = useStyles();
   const [showcaseItems, setShowcaseItems] = useState<ShowcaseItemSchema[]>(value || []);
   const [error, setError] = useState('');
   // Sort them so that we don't retrigger a query when the order changes.
@@ -173,7 +148,7 @@ export const ShowcaseItemsInput = ({
               strategy={rectSortingStrategy}
             >
               {showcaseItems.length > 0 ? (
-                <Box className={classes.selectedItemsGrid}>
+                <Box className={styles.selectedItemsGrid}>
                   {showcaseItems.map((item) => {
                     const coverImage = coverImages?.find(
                       (i) => i.entityType === item.entityType && i.entityId === item.entityId
@@ -182,7 +157,7 @@ export const ShowcaseItemsInput = ({
                     const removeBtn = (
                       <Button
                         onClick={() => onRemoveSelectedItem(item)}
-                        className={classes.selectedItemRemove}
+                        className={styles.selectedItemRemove}
                         color="red"
                         variant="filled"
                         radius="xl"
@@ -199,13 +174,7 @@ export const ShowcaseItemsInput = ({
                           <Paper withBorder radius="md" p="md" pos="relative">
                             <Stack w="100%" h="100%">
                               <Center>
-                                {isRefetching || isLoading ? (
-                                  <Loader />
-                                ) : (
-                                  <Text align="center">
-                                    There was a problem loading the cover image.
-                                  </Text>
-                                )}
+                                <Loader size="sm" />
                               </Center>
                             </Stack>
                             {removeBtn}
@@ -216,19 +185,21 @@ export const ShowcaseItemsInput = ({
 
                     return (
                       <SortableItem key={key} id={key}>
-                        <Box pos="relative">
-                          <GenericImageCard {...item} image={coverImage} disabled />
+                        <GenericImageCard
+                          image={coverImage}
+                          aspectRatio={1}
+                          pos="relative"
+                          radius="md"
+                        >
                           {removeBtn}
-                        </Box>
+                        </GenericImageCard>
                       </SortableItem>
                     );
                   })}
                 </Box>
               ) : (
-                <Center>
-                  <Text size="sm" color="dimmed">
-                    You have not selected any items to showcase.
-                  </Text>
+                <Center p="md">
+                  <Text color="dimmed">No items selected</Text>
                 </Center>
               )}
             </SortableContext>
@@ -238,3 +209,4 @@ export const ShowcaseItemsInput = ({
     </Input.Wrapper>
   );
 };
+

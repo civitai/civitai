@@ -1,0 +1,125 @@
+.root {
+  flex-grow: 1;
+}
+
+.wrapper {
+  height: 100%;
+}
+
+.input {
+  border-radius: 0;
+}
+
+.dropdown {
+  margin-top: -7px;
+}
+
+.targetSelectorRoot {
+  width: 110px;
+}
+
+.targetSelectorInput {
+  border-top-right-radius: 0;
+  border-bottom-right-radius: 0;
+  background-color: var(--mantine-color-gray-3);
+  padding-right: 18px;
+}
+
+.targetSelectorInput:not(:focus) {
+  border-right-style: none;
+}
+
+.targetSelectorRightSection {
+  pointer-events: none;
+}
+
+.searchButton {
+  border-top-left-radius: 0;
+  border-bottom-left-radius: 0;
+  background-color: var(--mantine-color-gray-3);
+  color: var(--mantine-color-black);
+}
+
+.searchButton:hover {
+  background-color: var(--mantine-color-gray-4);
+}
+
+.select {
+  flex-shrink: 1;
+}
+
+.searchIcon {
+  width: 24px;
+  height: 24px;
+}
+
+.searchIconButton {
+  border: 1px solid var(--mantine-color-gray-3);
+  border-radius: var(--mantine-radius-sm);
+  background-color: var(--mantine-color-gray-0);
+  color: var(--mantine-color-gray-6);
+  text-align: center;
+  user-select: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .searchIconButton {
+    border-color: var(--mantine-color-dark-4);
+    background-color: var(--mantine-color-dark-7);
+    color: var(--mantine-color-gray-5);
+  }
+}
+
+@media (max-width: 768px) {
+  .root {
+    height: 100%;
+    flex-grow: 1;
+  }
+
+  .wrapper {
+    height: 100%;
+  }
+
+  .input {
+    height: 100%;
+  }
+
+  .targetSelectorRoot {
+    display: none;
+    height: 100%;
+  }
+
+  .targetSelectorRoot > [role="combobox"],
+  .targetSelectorRoot > [role="combobox"] * {
+    height: 100%;
+  }
+
+  .targetSelectorInput {
+    height: 100%;
+  }
+
+  .searchButton {
+    display: none;
+  }
+}
+
+@media (max-width: 576px) {
+  .targetSelectorRoot {
+    width: 25%;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .targetSelectorInput {
+    background-color: var(--mantine-color-gray-8);
+  }
+
+  .searchButton {
+    background-color: var(--mantine-color-gray-8);
+    color: var(--mantine-color-white);
+  }
+
+  .searchButton:hover {
+    background-color: var(--mantine-color-gray-7);
+  }
+}

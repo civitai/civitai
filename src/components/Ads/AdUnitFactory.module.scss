@@ -1,0 +1,9 @@
+.root {
+  min-height: var(--ad-min-height);
+}
+
+@container (min-width: var(--ad-min-width)) and (max-width: var(--ad-max-width)) {
+  .root {
+    min-height: var(--ad-min-height);
+  }
+}

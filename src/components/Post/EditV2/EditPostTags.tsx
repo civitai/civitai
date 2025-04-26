@@ -2,7 +2,6 @@ import {
   ActionIcon,
   Alert,
   Box,
-  createStyles,
   Divider,
   Group,
   Loader,
@@ -20,6 +19,7 @@ import { POST_TAG_LIMIT } from '~/server/common/constants';
 import { PostDetailEditable } from '~/server/services/post.service';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './EditPostTags.module.scss';
 
 type TagProps = {
   id?: number;
@@ -117,8 +117,8 @@ function PostTag({ tag, canRemove }: { tag: TagProps; canRemove?: boolean }) {
 
 function TagPicker() {
   const { postId, tags, setTags, autosuggest } = useEditPostTagsContext();
+  const theme = useMantineTheme();
 
-  const { classes, cx, theme } = useDropdownContentStyles();
   const [active, setActive] = useState<number>();
   const [editing, setEditing] = useState(false);
   const [query, setQuery] = useState<string>('');
@@ -133,16 +133,6 @@ function TagPicker() {
     { keepPreviousData: true }
   );
 
-  // const test = trpc.tag.getAll.useQuery(
-  //   {
-  //     query: debounced,
-  //     entityType: [TagTarget.Post],
-  //     nsfwLevel: browsingLevel,
-  //     sort: TagSort.MostPosts,
-  //     include: ['nsfwLevel'],
-  //   },
-  //   { keepPreviousData: true }
-  // );
   const { mutate } = trpc.post.addTag.useMutation({
     onSuccess: async (response) => {
       setTags((tags) => [...tags.filter((x) => !!x.id && x.id !== response.id), response]);
@@ -249,26 +239,17 @@ function TagPicker() {
           >
             <TextInput
               ref={setControl}
-              variant="unstyled"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onBlur={handleClose}
-              styles={{
-                input: {
-                  fontSize: 16,
-                  padding: 0,
-                  lineHeight: 1,
-                  height: 'auto',
-                  minHeight: 0,
-                  minWidth: 42,
-                  width: !query.length ? '1ch' : `${query.length}ch`,
-                },
-              }}
               onKeyDown={getHotkeyHandler([
-                ['Enter', handleEnter],
                 ['ArrowUp', handleUp],
                 ['ArrowDown', handleDown],
+                ['Enter', handleEnter],
+                ['Escape', handleClose],
               ])}
+              placeholder="Search tags..."
+              variant="unstyled"
+              size="xs"
               autoFocus
             />
           </form>
@@ -278,55 +259,56 @@ function TagPicker() {
     [editing, handleClose, handleDown, handleEnter, handleUp, query, theme.colorScheme]
   );
 
-  if (!autosuggest) return target;
+  const dropdownContent = useMemo(
+    () => (
+      <Box ref={setDropdown} className={classes.dropdownContent}>
+        <div className={classes.dropdownHeader}>
+          <Text size="xs" color="dimmed">
+            {label}
+          </Text>
+        </div>
+        <Stack spacing={0}>
+          {isFetching ? (
+            <Center p="xs">
+              <Loader size="xs" />
+            </Center>
+          ) : filteredData.length > 0 ? (
+            filteredData.map((tag, index) => (
+              <div
+                key={tag.id}
+                className={`${classes.dropdownItem} ${
+                  index === active ? classes.dropdownItemActive : ''
+                }`}
+                onClick={() => handleClick(index)}
+              >
+                <IconStar className={classes.dropdownItemIcon} size={16} />
+                <Text className={classes.dropdownItemText}>{tag.name}</Text>
+                <Text className={classes.dropdownItemCount}>{tag.postCount}</Text>
+              </div>
+            ))
+          ) : (
+            <Center p="xs">
+              <Text size="xs" color="dimmed">
+                No tags found
+              </Text>
+            </Center>
+          )}
+        </Stack>
+      </Box>
+    ),
+    [active, filteredData, handleClick, isFetching, label]
+  );
 
   return (
-    <Popover opened={editing && !!filteredData?.length} position="bottom-start" shadow="lg">
+    <Popover
+      opened={editing && (filteredData.length > 0 || isFetching)}
+      position="bottom-start"
+      width="target"
+      withinPortal
+    >
       <Popover.Target>{target}</Popover.Target>
-      <Popover.Dropdown p={0}>
-        <Box style={{ width: 300 }} ref={setDropdown}>
-          <Group position="apart" px="sm" py="xs">
-            <Text weight={500}>{label} Tags</Text>
-            {isFetching && <Loader variant="dots" />}
-          </Group>
-          <Divider />
-          {!!filteredData?.length && (
-            <Stack spacing={0}>
-              {filteredData.map((tag, index) => (
-                <Group
-                  position="apart"
-                  key={index}
-                  className={cx({ [classes.active]: index === active })}
-                  onMouseOver={() => setActive(index)}
-                  onMouseLeave={() => setActive(undefined)}
-                  onClick={() => handleClick(index)}
-                  p="sm"
-                >
-                  <Group spacing={4}>
-                    <Text size="sm">{tag.name}</Text>
-                    {tag.isCategory && <IconStar className={classes.categoryIcon} size={12} />}
-                  </Group>
-                  <Text size="sm" color="dimmed">
-                    {tag.postCount.toString()} posts
-                  </Text>
-                </Group>
-              ))}
-            </Stack>
-          )}
-        </Box>
-      </Popover.Dropdown>
+      <Popover.Dropdown p={0}>{dropdownContent}</Popover.Dropdown>
     </Popover>
   );
 }
 
-const useDropdownContentStyles = createStyles((theme) => ({
-  active: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-    cursor: 'pointer',
-  },
-  categoryIcon: {
-    strokeWidth: 0,
-    fill: theme.colors.blue[6],
-    marginTop: 1,
-  },
-}));

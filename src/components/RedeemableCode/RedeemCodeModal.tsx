@@ -1,4 +1,4 @@
-import { Modal, Stack, Group, Button, createStyles, Text } from '@mantine/core';
+import { Modal, Stack, Group, Button, Text } from '@mantine/core';
 import dynamic from 'next/dynamic';
 import { useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -7,34 +7,17 @@ import {
   ConsumeRedeemableCodeInput,
   consumeRedeemableCodeSchema,
 } from '~/server/schema/redeemableCode.schema';
-import { containerQuery } from '~/utils/mantine-css-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import classes from './RedeemCodeModal.module.scss';
 
 const SuccessAnimation = dynamic(
   () => import('~/components/Animations/SuccessAnimation').then((mod) => mod.SuccessAnimation),
   { ssr: false }
 );
 
-const useStyles = createStyles(() => ({
-  cancelButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-      order: 2,
-    },
-  },
-
-  submitButton: {
-    [containerQuery.smallerThan('sm')]: {
-      width: '100%',
-      order: 1,
-    },
-  },
-}));
-
 export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; code?: string }) {
   const dialog = useDialogContext();
-  const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
 
   const [playAnimation, setPlayAnimation] = useState(false);
@@ -103,3 +86,4 @@ export function RedeemCodeModal({ onSubmit, code }: { onSubmit?: VoidFunction; c
     </Modal>
   );
 }
+

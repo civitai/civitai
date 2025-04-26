@@ -1,0 +1,16 @@
+.star {
+  cursor: pointer;
+  transition: transform 0.2s ease;
+
+  &:hover {
+    transform: scale(1.1);
+  }
+}
+
+.starFilled {
+  color: var(--mantine-color-yellow-5);
+}
+
+.starEmpty {
+  color: var(--mantine-color-gray-3);
+}

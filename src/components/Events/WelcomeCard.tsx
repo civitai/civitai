@@ -1,4 +1,4 @@
-import { Anchor, Button, Card, Grid, Group, Stack, Text, createStyles } from '@mantine/core';
+import { Anchor, Button, Card, Grid, Group, Stack, Text } from '@mantine/core';
 import {
   IconBolt,
   IconBulb,
@@ -11,22 +11,7 @@ import { useIsMobile } from '~/hooks/useIsMobile';
 import { showErrorNotification } from '~/utils/notifications';
 import { LoginRedirect } from '../LoginRedirect/LoginRedirect';
 import { NextLink as Link, NextLink } from '~/components/NextLink/NextLink';
-
-const useStyles = createStyles((theme) => ({
-  card: {
-    padding: '64px 80px !important',
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[0],
-    [theme.fn.smallerThan('sm')]: {
-      padding: '32px 16px !important',
-    },
-  },
-  title: {
-    fontSize: 40,
-    [theme.fn.smallerThan('sm')]: {
-      fontSize: 28,
-    },
-  },
-}));
+import styles from './WelcomeCard.module.scss';
 
 export function WelcomeCard({
   event,
@@ -37,7 +22,6 @@ export function WelcomeCard({
   about: string;
   learnMore?: string;
 }) {
-  const { classes } = useStyles();
   const mobile = useIsMobile();
 
   const { activateCosmetic, equipping } = useMutateEvent();
@@ -51,10 +35,10 @@ export function WelcomeCard({
   };
 
   return (
-    <Card className={classes.card} radius="lg">
+    <Card className={styles.card} radius="lg">
       <Grid gutter={mobile ? 32 : 64}>
         <Grid.Col span={12}>
-          <Text className={classes.title} weight="bold" lh={1.2}>
+          <Text className={styles.title} weight="bold" lh={1.2}>
             &apos;Tis the season! Spread cheer across the platform by joining the Get Lit & Give
             Back challenge.
           </Text>
@@ -118,3 +102,4 @@ export function WelcomeCard({
     </Card>
   );
 }
+

@@ -11,6 +11,7 @@ import { useBuzz } from '~/components/Buzz/useBuzz';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import type { BuzzAccountType } from '~/server/schema/buzz.schema';
 import { CurrencyConfig } from '~/server/common/constants';
+import styles from './UserBuzz.module.scss';
 
 type Props = TextProps & {
   iconSize?: number;
@@ -36,26 +37,27 @@ export function UserBuzz({
   const Icon = config.icon;
   const theme = useMantineTheme();
 
+  const themeClass =
+    styles[`theme${accountType?.charAt(0).toUpperCase() + accountType?.slice(1) ?? 'Default'}`];
+
   const content = balanceLoading ? (
-    <Group spacing={4} noWrap>
-      <Icon size={iconSize} color={config.color(theme)} fill={config.color(theme)} />
-      <Loader color={config.color(theme)} variant="dots" size="xs" />
-    </Group>
+    <div className={styles.loadingContainer}>
+      <Icon size={iconSize} className={styles.buzzIcon} />
+      <Loader className={styles.loadingDots} variant="dots" size="xs" />
+    </div>
   ) : (
-    <Text color={config.color(theme)} transform="uppercase" {...textProps}>
-      <Group spacing={4} noWrap>
-        <Icon size={iconSize} color="currentColor" fill="currentColor" />
-        <Text size={textSize} weight={600} lh={0} sx={{ fontVariantNumeric: 'tabular-nums' }}>
-          {balance === null ? (
-            <Loader size="sm" variant="dots" color={config.color(theme)} />
-          ) : withAbbreviation ? (
-            abbreviateNumber(balance, { floor: true })
-          ) : (
-            balance.toLocaleString()
-          )}
-        </Text>
-      </Group>
-    </Text>
+    <div className={`${styles.buzzContainer} ${themeClass}`}>
+      <Icon size={iconSize} className={styles.buzzIcon} />
+      <Text size={textSize} className={styles.buzzAmount}>
+        {balance === null ? (
+          <Loader size="sm" variant="dots" />
+        ) : withAbbreviation ? (
+          abbreviateNumber(balance, { floor: true })
+        ) : (
+          balance.toLocaleString()
+        )}
+      </Text>
+    </div>
   );
 
   return withTooltip ? (
@@ -68,3 +70,4 @@ export function UserBuzz({
     content
   );
 }
+

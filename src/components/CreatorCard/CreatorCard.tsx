@@ -6,13 +6,12 @@ import {
   Card,
   Group,
   Stack,
-  createStyles,
   Text,
   CardProps,
   Image,
+  BoxProps,
 } from '@mantine/core';
 import { ChatUserButton } from '~/components/Chat/ChatUserButton';
-
 import { DomainIcon } from '~/components/DomainIcon/DomainIcon';
 import { FollowUserButton } from '~/components/FollowUserButton/FollowUserButton';
 import { RankBadge } from '~/components/Leaderboard/RankBadge';
@@ -35,141 +34,33 @@ import { BadgeDisplay, Username } from '../User/Username';
 import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import classes from './CreatorCard.module.scss';
+import React, { forwardRef } from 'react';
+import styles from './CreatorCard.module.scss';
 
-const useStyles = createStyles((theme) => ({
-  profileDetailsContainer: {
-    background: theme.fn.rgba(theme.colors.dark[9], 0.8),
-    margin: -theme.spacing.md,
-    marginTop: 0,
-    minHeight: 50,
-    display: 'flex',
-    justifyContent: 'center',
-    flexDirection: 'column',
-    color: theme.white,
-    zIndex: 10,
-  },
-
-  profileDetails: {
-    padding: theme.spacing.md,
-    paddingTop: theme.spacing.xs,
-    paddingBottom: theme.spacing.xs,
-    position: 'relative',
-  },
-  avatar: {
-    position: 'absolute',
-    bottom: 4,
-    overflow: 'visible',
-  },
-}));
-
-export function CreatorCard({
-  user,
-  tipBuzzEntityType,
-  tipBuzzEntityId,
-  withActions = true,
-  tipsEnabled = true,
-  subText,
-  ...cardProps
-}: Props) {
-  const { data } = trpc.user.getCreator.useQuery(
-    { id: user.id },
-    { enabled: user.id !== constants.system.user.id }
-  );
-
-  const creator = data || {
-    ...user,
-    createdAt: null,
-    _count: { models: 0 },
-    rank: null,
-    links: [],
-    stats: {
-      downloadCountAllTime: 0,
-      thumbsUpCountAllTime: 0,
-      followerCountAllTime: 0,
-    },
-  };
-
-  const { models: uploads } = creator?._count ?? { models: 0 };
-  const stats = creator?.stats;
-
-  if (!creator || user.id === -1) return null;
-
-  return (
-    <Card p="xs" withBorder {...cardProps}>
-      <Card.Section>
-        <Stack spacing="xs" p="xs">
-          <Group align="center" position="apart">
-            <UserAvatar
-              size="sm"
-              avatarProps={{ size: 32 }}
-              user={creator}
-              subText={
-                subText ??
-                (creator.createdAt ? `Joined ${formatDate(creator.createdAt)}` : undefined)
-              }
-              withUsername
-              linkToProfile
-            />
-            {withActions && (
-              <Group spacing={8} noWrap>
-                {tipsEnabled && (
-                  <TipBuzzButton
-                    toUserId={creator.id}
-                    size="xs"
-                    entityId={tipBuzzEntityId}
-                    label=""
-                    entityType={tipBuzzEntityType}
-                    compact
-                  />
-                )}
-                <ChatUserButton user={creator} size="xs" label="" compact />
-                <FollowUserButton userId={creator.id} size="xs" compact />
-              </Group>
-            )}
-          </Group>
-          <Group spacing={8}>
-            <RankBadge size="md" rank={creator.rank} />
-            {stats && (
-              <UserStatBadges
-                uploads={uploads}
-                followers={stats.followerCountAllTime}
-                favorites={stats.thumbsUpCountAllTime}
-                downloads={stats.downloadCountAllTime}
-              />
-            )}
-          </Group>
-        </Stack>
-      </Card.Section>
-      {creator.links && creator.links.length > 0 ? (
-        <Card.Section
-          withBorder
-          inheritPadding
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          })}
-          py={5}
-        >
-          <Group spacing={4}>
-            {sortDomainLinks(creator.links).map((link, index) => (
-              <ActionIcon
-                key={index}
-                component="a"
-                href={link.url}
-                target="_blank"
-                rel="nofollow noreferrer"
-                size={32}
-              >
-                <DomainIcon domain={link.domain} size={20} />
-              </ActionIcon>
-            ))}
-          </Group>
-        </Card.Section>
-      ) : null}
-    </Card>
-  );
+export interface CreatorCardProps extends BoxProps {
+  hasBackground?: boolean;
+  hasVideo?: boolean;
+  hasDefaultBackground?: boolean;
 }
 
-export const CreatorCardV2 = ({
+export const CreatorCard = forwardRef<HTMLDivElement, CreatorCardProps>((props, ref) => {
+  const { hasBackground, hasVideo, hasDefaultBackground, className, ...others } = props;
+
+  return (
+    <Box
+      className={`${styles.cardSection} ${hasBackground ? styles.backgroundImage : ''} ${
+        hasVideo ? styles.backgroundImageVideo : ''
+      } ${hasDefaultBackground ? styles.defaultBackground : ''} ${className}`}
+      {...others}
+      ref={ref}
+    />
+  );
+});
+
+CreatorCard.displayName = 'CreatorCard';
+
+export function CreatorCardV2({
   user,
   tipBuzzEntityType,
   tipBuzzEntityId,
@@ -180,8 +71,7 @@ export const CreatorCardV2 = ({
   statDisplayOverwrite,
   subText,
   ...cardProps
-}: CreatorCardPropsV2) => {
-  const { classes, theme } = useStyles();
+}: CreatorCardPropsV2) {
   const { data } = trpc.user.getCreator.useQuery(
     { id: user.id },
     { enabled: user.id !== constants.system.user.id }
@@ -241,12 +131,11 @@ export const CreatorCardV2 = ({
       [];
   return (
     <Card p="md" withBorder {...cardProps}>
-      <Card.Section style={{ position: 'relative' }}>
+      <Card.Section className={classes.cardSection}>
         {backgroundImage && backgroundImage.data.url ? (
           <EdgeMedia2
             src={backgroundImage.data.url}
             type={backgroundImage.data.type ?? 'image'}
-            // transcode={isVideo}
             anim={true}
             width={450}
             wrapperProps={{
@@ -259,33 +148,13 @@ export const CreatorCardV2 = ({
               },
             }}
             contain
-            style={
-              isVideo
-                ? { height: '100%', objectFit: 'cover' }
-                : {
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    width: '100%',
-                    height: '100%',
-                    objectFit: 'cover',
-                  }
-            }
+            className={isVideo ? classes.backgroundImageVideo : classes.backgroundImage}
           />
         ) : (
           <Image
             src="/images/civitai-default-account-bg.png"
             alt="default creator card background decoration"
-            pos="absolute"
-            top={0}
-            left={0}
-            w="100%"
-            h="100%"
-            styles={{
-              figure: { height: '100%' },
-              imageWrapper: { height: '100%' },
-              image: { objectFit: 'cover', height: '100% !important' },
-            }}
+            className={classes.defaultBackground}
           />
         )}
         <Stack p="md">
@@ -351,12 +220,7 @@ export const CreatorCardV2 = ({
                       ) : (
                         <>
                           {creator.createdAt && (
-                            <Text
-                              size="xs"
-                              lh={1}
-                              lineClamp={1}
-                              style={{ color: theme.fn.rgba(theme.white, 0.75) }}
-                            >
+                            <Text size="xs" lh={1} lineClamp={1} className={classes.joinedText}>
                               Joined {formatDate(creator.createdAt)}
                             </Text>
                           )}
@@ -406,14 +270,7 @@ export const CreatorCardV2 = ({
         </Stack>
       </Card.Section>
       {creator.links && creator.links.length > 0 ? (
-        <Card.Section
-          withBorder
-          inheritPadding
-          sx={(theme) => ({
-            background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-          })}
-          py={5}
-        >
+        <Card.Section withBorder inheritPadding className={classes.linksSection} py={5}>
           <Group spacing={4}>
             {sortDomainLinks(creator.links).map((link, index) => (
               <ActionIcon
@@ -432,7 +289,7 @@ export const CreatorCardV2 = ({
       ) : null}
     </Card>
   );
-};
+}
 
 type Props = {
   user: { id: number } & Partial<UserWithCosmetics>;
@@ -462,3 +319,5 @@ export const SmartCreatorCard = (props: CreatorCardPropsV2) => {
 
   return <CreatorCard {...props} />;
 };
+
+

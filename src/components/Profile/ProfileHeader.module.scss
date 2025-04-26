@@ -1,0 +1,86 @@
+.message {
+  @media (max-width: 768px) {
+    border-radius: 0;
+    width: auto;
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-top: 2px;
+    padding-bottom: 2px;
+  }
+}
+
+.coverImageNSFWActions {
+  height: 100%;
+  width: 100%;
+}
+
+.coverImageWrapper {
+  overflow: hidden;
+  border-radius: var(--mantine-radius-md);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+@media (max-width: 768px) {
+  .coverImageWrapper {
+    width: auto;
+    margin-left: -16px;
+    margin-right: -16px;
+    max-height: auto;
+    border-radius: 0;
+    display: block;
+  }
+}
+
+.coverImage {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  height: 0;
+  padding-bottom: 25%;
+}
+
+@media (max-width: 768px) {
+  .coverImage {
+    width: auto;
+    border-radius: 0;
+    padding-bottom: 40%;
+  }
+
+  .coverImage > div {
+    border-radius: 0;
+  }
+}
+
+.coverImage > div {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+
+.profileSection {
+  width: auto;
+  margin-left: -16px;
+  margin-right: -16px;
+  padding: 16px;
+  position: relative;
+  background: var(--mantine-color-dark-6);
+}
+
+[data-mantine-color-scheme="light"] .profileSection {
+  background: var(--mantine-color-gray-0);
+}
+
+.profileSectionWithCoverImage {
+  padding: 0 16px;
+}
+
+.profileSectionWithCoverImage > div {
+  position: relative;
+  height: auto;
+  top: -36px;
+  margin-bottom: -18px;
+}

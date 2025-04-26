@@ -1,0 +1,14 @@
+.ctaContainer {
+  width: 100%;
+  flex-wrap: wrap;
+}
+
+.ctaContainer > * {
+  flex-grow: 1;
+}
+
+@media (min-width: 48em) {
+  .ctaContainer > * {
+    flex-grow: 0;
+  }
+}

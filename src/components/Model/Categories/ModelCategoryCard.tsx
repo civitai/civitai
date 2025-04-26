@@ -11,7 +11,6 @@ import {
   Stack,
   Text,
   ThemeIcon,
-  createStyles,
 } from '@mantine/core';
 import { CollectionType, ModelStatus } from '~/shared/utils/prisma/enums';
 import {
@@ -56,6 +55,7 @@ import { isDefined } from '~/utils/type-guards';
 import { useModelCardContextMenu } from '~/components/Model/Actions/ModelCardContextMenu';
 import { openReportModal } from '~/components/Dialog/dialog-registry';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
+import styles from './ModelCategoryCard.module.scss';
 
 const aDayAgo = dayjs().subtract(1, 'day').toDate();
 
@@ -66,7 +66,6 @@ export function ModelCategoryCard({
   data: AssociatedResourceModelCardData;
   height: number;
 }) {
-  const { classes, cx } = useStyles();
   const router = useRouter();
   const modelId = router.query.model ? Number(router.query.model) : undefined;
   const currentUser = useCurrentUser();
@@ -95,25 +94,21 @@ export function ModelCategoryCard({
   const isHidden = hiddenUsers.get(user.id) || hiddenModels.get(id);
   const { setMenuItems } = useModelCardContextMenu();
 
-  const modelText = (
-    <Text size={14} weight={500} color="white" style={{ flex: 1, lineHeight: 1 }}>
-      {name}
-    </Text>
-  );
+  const modelText = <Text className={styles.title}>{name}</Text>;
 
   const modelBadges = (
     <>
-      <Badge className={cx(classes.floatingBadge, classes.typeBadge)} radius="sm" size="sm">
+      <Badge className={`${styles.floatingBadge} ${styles.typeBadge}`} radius="sm" size="sm">
         {getDisplayName(data.type)}
       </Badge>
       {data.status !== ModelStatus.Published && (
-        <Badge className={cx(classes.floatingBadge, classes.statusBadge)} radius="sm" size="sm">
+        <Badge className={`${styles.floatingBadge} ${styles.statusBadge}`} radius="sm" size="sm">
           {data.status}
         </Badge>
       )}
       {data.status === ModelStatus.Published && inEarlyAccess && (
         <Badge
-          className={cx(classes.floatingBadge, classes.earlyAccessBadge)}
+          className={`${styles.floatingBadge} ${styles.earlyAccessBadge}`}
           radius="sm"
           size="sm"
         >
@@ -124,14 +119,14 @@ export function ModelCategoryCard({
   );
 
   const modelDownloads = (
-    <IconBadge className={classes.statBadge} icon={<IconDownload size={14} />}>
+    <IconBadge className={styles.statBadge} icon={<IconDownload size={14} />}>
       <Text size={12}>{abbreviateNumber(rank.downloadCount)}</Text>
     </IconBadge>
   );
 
   const modelLikes = !!rank.thumbsUpCount && (
     <IconBadge
-      className={classes.statBadge}
+      className={styles.statBadge}
       icon={
         <Text color={hasReview ? 'success.5' : undefined} inline>
           <ThumbsUpIcon size={14} filled={hasReview} />
@@ -144,7 +139,7 @@ export function ModelCategoryCard({
   );
 
   const modelComments = !!rank.commentCount && (
-    <IconBadge className={classes.statBadge} icon={<IconMessageCircle2 size={14} />}>
+    <IconBadge className={styles.statBadge} icon={<IconMessageCircle2 size={14} />}>
       <Text size="xs">{abbreviateNumber(rank.commentCount)}</Text>
     </IconBadge>
   );
@@ -269,301 +264,31 @@ export function ModelCategoryCard({
   }, [modelId, data.id]);
 
   return (
-    <MasonryCard shadow="sm" {...props} className={classes.card}>
-      <Indicator
-        disabled={!isNew && !isUpdated}
-        withBorder
-        size={24}
-        radius="sm"
-        label={isUpdated ? 'Updated' : 'New'}
-        color="red"
-        styles={{ indicator: { zIndex: 10, transform: 'translate(5px,-5px) !important' } }}
-        sx={{ opacity: isHidden ? 0.1 : undefined }}
-      >
-        <Link
-          href={`/models/${id}/${slugit(name)}`}
-          className={classes.link}
-          onClick={(e: React.MouseEvent<HTMLAnchorElement>) => {
-            if (!(e.ctrlKey || e.metaKey) && e.button !== 1) setLoading(true);
-          }}
-          // style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 }}
-        >
-          <LoadingOverlay visible={loading} zIndex={9} loaderProps={{ variant: 'dots' }} />
-          {image && (
-            <ImageGuard2 image={image} connectType="model" connectId={id}>
-              {(safe) => (
-                <>
-                  {contextMenuItems.length > 0 && (
-                    <Menu position="left-start" withArrow offset={-5}>
-                      <Menu.Target>
-                        <ActionIcon
-                          variant="transparent"
-                          p={0}
-                          onClick={(e: React.MouseEvent) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                          }}
-                          sx={{
-                            width: 30,
-                            position: 'absolute',
-                            top: 10,
-                            right: 4,
-                            zIndex: 8,
-                          }}
-                        >
-                          <IconDotsVertical
-                            size={24}
-                            color="#fff"
-                            style={{ filter: `drop-shadow(0 0 2px #000)` }}
-                          />
-                        </ActionIcon>
-                      </Menu.Target>
-                      <Menu.Dropdown>
-                        {contextMenuItems.map((el) => (
-                          <React.Fragment key={el.key}>{el.component}</React.Fragment>
-                        ))}
-                      </Menu.Dropdown>
-                    </Menu>
-                  )}
-                  <Group spacing={4} className={classes.cardBadges}>
-                    <ImageGuard2.BlurToggle />
-                    {modelBadges}
-                  </Group>
-                  <AspectRatio ratio={1} sx={{ width: '100%', overflow: 'hidden' }}>
-                    <div className={classes.blur}>
-                      <MediaHash {...image} />
-                    </div>
-                    {safe && (
-                      <EdgeMedia
-                        className={classes.image}
-                        src={image.url}
-                        name={image.name ?? image.id.toString()}
-                        alt={image.name ?? undefined}
-                        type={image.type}
-                        width={450}
-                        placeholder="empty"
-                      />
-                    )}
-                  </AspectRatio>
-                </>
-              )}
-            </ImageGuard2>
-          )}
-
-          <Stack className={classes.info} spacing={8}>
-            <Group
-              mx="xs"
-              position="apart"
-              sx={{
-                zIndex: 10,
-              }}
-            >
-              <Group spacing={8}>
-                <CivitaiLinkManageButton
-                  modelId={id}
-                  modelName={name}
-                  modelType={data.type}
-                  hashes={data.hashes}
-                  tooltipProps={{
-                    position: 'right',
-                    transition: 'slide-right',
-                    variant: 'smallRounded',
-                  }}
-                >
-                  {({ color, onClick, ref, icon }) => (
-                    <ActionIcon
-                      component="button"
-                      className={classes.hoverable}
-                      ref={ref}
-                      radius="lg"
-                      variant="filled"
-                      size="lg"
-                      color={color}
-                      onClick={onClick}
-                    >
-                      {icon}
-                    </ActionIcon>
-                  )}
-                </CivitaiLinkManageButton>
-                {features.imageGeneration && data.canGenerate && (
-                  <HoverCard width={200} withArrow>
-                    <HoverCard.Target>
-                      <ThemeIcon className={classes.hoverable} size={38} radius="xl" color="green">
-                        <IconBrush stroke={2.5} size={22} />
-                      </ThemeIcon>
-                    </HoverCard.Target>
-                    <HoverCard.Dropdown>
-                      <Stack spacing={4}>
-                        <Text size="sm" weight="bold">
-                          Available for generation
-                        </Text>
-                        <Text size="sm" color="dimmed">
-                          This resource has versions available for image generation
-                        </Text>
-                      </Stack>
-                    </HoverCard.Dropdown>
-                  </HoverCard>
-                )}
-              </Group>
-              {data.user.image && (
-                <CivitaiTooltip
-                  position="left"
-                  transition="slide-left"
-                  variant="smallRounded"
-                  label={
-                    <Text size="xs" weight={500}>
-                      {data.user.username}
-                    </Text>
-                  }
-                >
-                  <Box
-                    sx={{ borderRadius: '50%' }}
-                    onClick={(e: React.MouseEvent<HTMLDivElement>) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      router.push(`/user/${data.user.username}`);
-                    }}
-                    ml="auto"
-                  >
-                    <UserAvatar
-                      size="md"
-                      user={data.user}
-                      avatarProps={{ className: classes.userAvatar }}
-                    />
-                  </Box>
-                </CivitaiTooltip>
-              )}
-            </Group>
-
-            <Stack className={classes.content} spacing={6} p="xs">
-              <Group position="left" spacing={4}>
-                {modelText}
-              </Group>
-              <Group position="apart" spacing={4}>
-                <Group spacing={4} align="center">
-                  {modelLikes}
-                  {modelComments}
-                  {modelDownloads}
-                </Group>
-              </Group>
-            </Stack>
-          </Stack>
-        </Link>
-      </Indicator>
+    <MasonryCard
+      {...props}
+      className={styles.root}
+      component={Link}
+      href={`/models/${id}/${slugit(name)}`}
+    >
+      <div className={styles.image}>
+        {image && <EdgeMedia src={image.url} alt={name} width={450} className={styles.image} />}
+        <div className={styles.overlay} />
+        <div className={styles.content}>
+          {modelText}
+          <div className={styles.stats}>
+            {modelDownloads}
+            {modelLikes}
+            {modelComments}
+          </div>
+        </div>
+        {modelBadges}
+        <div className={styles.actions}>
+          <ActionIcon className={styles.actionButton}>
+            <IconDotsVertical size={16} />
+          </ActionIcon>
+        </div>
+      </div>
     </MasonryCard>
   );
 }
 
-const useStyles = createStyles((theme) => {
-  return {
-    card: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-    },
-
-    blur: {
-      position: 'absolute',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-    },
-    image: {
-      width: '100%',
-      objectPosition: 'top',
-    },
-    link: {
-      display: 'block',
-    },
-
-    content: {
-      background: theme.fn.gradient({
-        from: 'rgba(37,38,43,0.8)',
-        to: 'rgba(37,38,43,0)',
-        deg: 0,
-      }),
-      // backdropFilter: 'blur(13px) saturate(160%)',
-      boxShadow: '0 -2px 6px 1px rgba(0,0,0,0.16)',
-    },
-
-    info: {
-      position: 'absolute',
-      bottom: 0,
-      right: 0,
-      left: 0,
-      zIndex: 10,
-    },
-
-    cardBadges: {
-      position: 'absolute',
-      top: theme.spacing.xs,
-      left: theme.spacing.xs,
-      zIndex: 10,
-    },
-
-    typeBadge: {
-      background: 'rgb(30 133 230 / 40%)',
-    },
-
-    floatingBadge: {
-      color: 'white',
-      // backdropFilter: 'blur(7px)',
-      boxShadow: '1px 2px 3px -1px rgba(37,38,43,0.2)',
-    },
-
-    statusBadge: {
-      background: theme.fn.rgba(theme.colors.yellow[theme.fn.primaryShade()], 0.4),
-    },
-
-    earlyAccessBadge: {
-      background: theme.fn.rgba(theme.colors.green[theme.fn.primaryShade()], 0.4),
-    },
-
-    floatingAvatar: {
-      position: 'absolute',
-      bottom: theme.spacing.xs,
-      right: theme.spacing.xs,
-      zIndex: 10,
-    },
-
-    statBadge: {
-      background: 'rgba(212,212,212,0.2)',
-      color: 'white',
-    },
-
-    userAvatar: {
-      opacity: 0.8,
-      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
-      transition: 'opacity .25s ease',
-      position: 'relative',
-
-      '&::before': {
-        content: '""',
-        position: 'absolute',
-        top: 0,
-        left: 0,
-        right: 0,
-        bottom: 0,
-        borderRadius: theme.radius.xl,
-        boxShadow: 'inset 0 0 0px 1px rgba(255,255,255,0.8)',
-      },
-
-      '&:hover': {
-        opacity: 1,
-      },
-    },
-
-    hoverable: {
-      opacity: 0.8,
-      boxShadow: '0 1px 3px rgb(0 0 0 / 50%), rgb(0 0 0 / 50%) 0px 8px 15px -5px',
-      transition: 'opacity .25s ease',
-      position: 'relative',
-      '&:hover': {
-        opacity: 1,
-      },
-    },
-  };
-});

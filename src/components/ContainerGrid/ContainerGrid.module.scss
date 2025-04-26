@@ -1,0 +1,29 @@
+.root {
+  display: flex;
+  flex-wrap: wrap;
+  margin: calc(var(--mantine-spacing-md) * -0.5);
+}
+
+@media (min-width: 576px) {
+  .root {
+    margin: calc(var(--mantine-spacing-sm) * -0.5);
+  }
+}
+
+@media (min-width: 768px) {
+  .root {
+    margin: calc(var(--mantine-spacing-md) * -0.5);
+  }
+}
+
+@media (min-width: 992px) {
+  .root {
+    margin: calc(var(--mantine-spacing-lg) * -0.5);
+  }
+}
+
+@media (min-width: 1200px) {
+  .root {
+    margin: calc(var(--mantine-spacing-xl) * -0.5);
+  }
+}

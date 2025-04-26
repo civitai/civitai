@@ -1,0 +1,14 @@
+.premiumPartner {
+  :global {
+    .mantine-Card-section {
+      &:first-of-type {
+        height: 200px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: var(--mantine-color-dark-6);
+        border-radius: var(--mantine-radius-md) var(--mantine-radius-md) 0 0;
+      }
+    }
+  }
+}

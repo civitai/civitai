@@ -1,6 +1,6 @@
 import OneKeyMap from '@essentials/one-key-map';
 import trieMemoize from 'trie-memoize';
-import { Button, createStyles, useMantineTheme } from '@mantine/core';
+import { Button, useMantineTheme } from '@mantine/core';
 import React, { useMemo } from 'react';
 import { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useCreateAdFeed } from '~/components/Ads/ads.utils';
@@ -15,6 +15,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
+import classes from './MasonryGrid.module.scss';
 
 type Props<TData> = {
   data: TData[];
@@ -33,12 +34,6 @@ export function MasonryGrid<TData>({
 }: Props<TData>) {
   const theme = useMantineTheme();
   const { columnCount, columnWidth, columnGap, rowGap, maxSingleColumnWidth } = useMasonryContext();
-
-  const { classes } = useStyles({
-    columnWidth,
-    columnGap,
-    rowGap,
-  });
 
   const { adsEnabled } = useAdsContext();
   const browsingLevel = useBrowsingLevelDebounced();
@@ -63,12 +58,17 @@ export function MasonryGrid<TData>({
   return items.length ? (
     <div
       className={classes.grid}
-      style={{
-        gridTemplateColumns:
-          columnCount === 1
-            ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
-            : `repeat(${columnCount}, ${columnWidth}px)`,
-      }}
+      style={
+        {
+          gridTemplateColumns:
+            columnCount === 1
+              ? `minmax(${columnWidth}px, ${maxSingleColumnWidth}px)`
+              : `repeat(${columnCount}, ${columnWidth}px)`,
+          '--column-gap': `${columnGap}px`,
+          '--row-gap': `${rowGap}px`,
+          '--column-width': `${columnWidth}px`,
+        } as React.CSSProperties
+      }
     >
       {items.map((item, index) => {
         const key = item.type === 'data' ? itemId?.(item.data) ?? index : `ad_${index}`;
@@ -110,41 +110,6 @@ export function MasonryGrid<TData>({
             </TwCard>
           </AdUnitRenderable>
         );
-        // return (
-        //   <React.Fragment key={key}>
-        //     {item.type === 'data' &&
-        //       createRenderElement(RenderComponent, index, item.data, columnWidth)}
-        //     {item.type === 'ad' && (
-        //       <AdUnitRenderable>
-        //         <TwCard className="mx-auto min-w-80 justify-between gap-2 border p-2 shadow">
-        //           <div className="flex flex-col items-center  gap-2">
-        //             <Image
-        //               src={`/images/logo_${theme.colorScheme}_mode.png`}
-        //               alt="Civitai logo"
-        //               height={30}
-        //               width={142}
-        //             />
-        //             <Text>Become a Member to turn off ads today.</Text>
-        //             <Button
-        //               component={Link}
-        //               href="/pricing"
-        //               compact
-        //               color="green"
-        //               variant="outline"
-        //               className="w-24"
-        //             >
-        //               <Text weight={500}>Do It</Text>
-        //               <IconCaretRightFilled size={16} />
-        //             </Button>
-        //           </div>
-        //           <div>
-        //             <item.data.AdUnit />
-        //           </div>
-        //         </TwCard>
-        //       </AdUnitRenderable>
-        //     )}
-        //   </React.Fragment>
-        // );
       })}
     </div>
   ) : (
@@ -152,33 +117,10 @@ export function MasonryGrid<TData>({
   );
 }
 
-const useStyles = createStyles(
-  (
-    theme,
-    {
-      columnWidth,
-      columnGap,
-      rowGap,
-    }: {
-      columnWidth: number;
-      columnGap: number;
-      rowGap: number;
-    }
-  ) => ({
-    empty: { height: columnWidth },
-    grid: {
-      display: 'grid',
-
-      columnGap,
-      rowGap,
-      justifyContent: 'center',
-    },
-  })
-);
-
 const createRenderElement = trieMemoize(
   [OneKeyMap, {}, WeakMap, OneKeyMap, OneKeyMap],
   (RenderComponent, index, data, columnWidth) => (
     <RenderComponent index={index} data={data} width={columnWidth} height={columnWidth} />
   )
 );
+

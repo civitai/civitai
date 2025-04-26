@@ -1,7 +1,6 @@
 import {
   ActionIcon,
   Button,
-  createStyles,
   Divider,
   Group,
   Input,
@@ -28,7 +27,6 @@ import React from 'react';
 import { z } from 'zod';
 import { BackButton, NavigateBack } from '~/components/BackButton/BackButton';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
-
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
@@ -72,6 +70,7 @@ import { useBuzzTransaction } from '../Buzz/buzz.utils';
 import { CurrencyIcon } from '../Currency/CurrencyIcon';
 import { DaysFromNow } from '../Dates/DaysFromNow';
 import { getMinMaxDates, useMutateBounty } from './bounty.utils';
+import styles from './BountyCreateForm.module.scss';
 
 const tooltipProps: Partial<TooltipProps> = {
   maw: 300,
@@ -109,75 +108,8 @@ const formSchema = createBountyInputSchema
     path: ['expiresAt'],
   });
 
-const useStyles = createStyles((theme) => ({
-  radioItemWrapper: {
-    '& .mantine-Group-root': {
-      alignItems: 'stretch',
-      [containerQuery.smallerThan('sm')]: {
-        flexDirection: 'column',
-      },
-    },
-  },
-
-  radioItem: {
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[4]
-    }`,
-    borderRadius: theme.radius.sm,
-    padding: theme.spacing.xs,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-    display: 'flex',
-    flex: 1,
-
-    '& > .mantine-Radio-body, & .mantine-Radio-label': {
-      width: '100%',
-    },
-
-    '& > .mantine-Switch-body, & .mantine-Switch-labelWrapper, & .mantine-Switch-label': {
-      width: '100%',
-    },
-  },
-
-  root: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.white,
-  },
-  label: {
-    textTransform: 'capitalize',
-  },
-  active: {
-    border: `2px solid ${theme.colors.blue[5]}`,
-    backgroundColor: 'transparent',
-  },
-
-  title: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '24px',
-    },
-  },
-  sectionTitle: {
-    [containerQuery.smallerThan('sm')]: {
-      fontSize: '18px',
-    },
-  },
-  fluid: {
-    [containerQuery.smallerThan('sm')]: {
-      maxWidth: '100% !important',
-    },
-  },
-  stickySidebar: {
-    position: 'sticky',
-    top: `calc(var(--header-height) + ${theme.spacing.md}px)`,
-
-    [containerQuery.smallerThan('md')]: {
-      position: 'relative',
-      top: 0,
-    },
-  },
-}));
-
 export function BountyCreateForm() {
   const router = useRouter();
-  const { classes } = useStyles();
 
   const { files: imageFiles, uploadToCF, removeImage } = useCFImageUpload();
 
@@ -199,17 +131,13 @@ export function BountyCreateForm() {
       currency: Currency.BUZZ,
       type: BountyType.LoraCreation,
       mode: BountyMode.Individual,
-      entryMode: BountyEntryMode.BenefactorsOnly,
-      minBenefactorUnitAmount: constants.bounties.minCreateAmount,
-      entryLimit: 1,
-      files: [],
-      ownRights: false,
-      expiresAt: dayjs().add(7, 'day').endOf('day').toDate(),
-      startsAt: new Date(),
-      details: { baseModel: 'SD 1.5' },
+      entryMode: BountyEntryMode.Open,
+      startsAt: minStartDate,
+      expiresAt: maxExpiresDate,
       nsfw: false,
+      poi: false,
+      baseModel: activeBaseModels[0],
     },
-    shouldUnregister: false,
   });
 
   const bountyEntryModeEnabled = false;
@@ -291,7 +219,7 @@ export function BountyCreateForm() {
       <Stack spacing={32}>
         <Group spacing="md" noWrap>
           <BackButton url="/bounties" />
-          <Title className={classes.title}>Create a new bounty</Title>
+          <Title className={styles.title}>Create a new bounty</Title>
         </Group>
         <ContainerGrid gutter="xl">
           <ContainerGrid.Col xs={12} md={8}>
@@ -305,7 +233,7 @@ export function BountyCreateForm() {
                 />
                 <Group spacing="md" grow>
                   <InputSelect
-                    className={classes.fluid}
+                    className={styles.fluid}
                     name="type"
                     label="Bounty Type"
                     placeholder="Please select a bounty type"
@@ -335,7 +263,7 @@ export function BountyCreateForm() {
                   />
                   {requireBaseModelSelection && (
                     <InputSelect
-                      className={classes.fluid}
+                      className={styles.fluid}
                       name="details.baseModel"
                       label="Base model"
                       placeholder="Please select a base model"
@@ -434,7 +362,7 @@ export function BountyCreateForm() {
                 <Stack>
                   <Group spacing="md" grow>
                     <InputDatePicker
-                      className={classes.fluid}
+                      className={styles.fluid}
                       name="startsAt"
                       label="Start Date"
                       placeholder="Select a start date"
@@ -444,7 +372,7 @@ export function BountyCreateForm() {
                       maxDate={maxStartDate}
                     />
                     <InputDatePicker
-                      className={classes.fluid}
+                      className={styles.fluid}
                       name="expiresAt"
                       label="Deadline"
                       placeholder="Select an end date"
@@ -472,12 +400,12 @@ export function BountyCreateForm() {
                     name="mode"
                     label="Award Mode"
                     withAsterisk
-                    className={classes.radioItemWrapper}
+                    className={styles.radioItemWrapper}
                   >
                     {Object.values(BountyMode).map((value) => (
                       <Radio
                         key={value}
-                        className={classes.radioItem}
+                        className={styles.radioItem}
                         value={value}
                         label={
                           <RadioItem
@@ -491,7 +419,7 @@ export function BountyCreateForm() {
                 )}
                 <Group spacing="md" grow>
                   <InputNumber
-                    className={classes.fluid}
+                    className={styles.fluid}
                     name="unitAmount"
                     label="Bounty Amount"
                     placeholder="How much are you willing to reward for this bounty"
@@ -503,7 +431,7 @@ export function BountyCreateForm() {
                     withAsterisk
                   />
                   <InputNumber
-                    className={classes.fluid}
+                    className={styles.fluid}
                     name="entryLimit"
                     label="Max entries per hunter"
                     placeholder="How many entries can a hunter submit to your bounty"
@@ -513,7 +441,7 @@ export function BountyCreateForm() {
                   />
                   {mode === BountyMode.Split && (
                     <InputNumber
-                      className={classes.fluid}
+                      className={styles.fluid}
                       name="minBenefactorUnitAmount"
                       label="Minimum Benefactor Amount"
                       placeholder="How much does a supporter need to contribute to your bounty to become a supporter"
@@ -530,7 +458,7 @@ export function BountyCreateForm() {
                     {Object.values(BountyEntryMode).map((value) => (
                       <Radio
                         key={value}
-                        className={classes.radioItem}
+                        className={styles.radioItem}
                         value={value}
                         label={
                           <RadioItem
@@ -566,18 +494,18 @@ export function BountyCreateForm() {
             </Stack>
           </ContainerGrid.Col>
           <ContainerGrid.Col xs={12} md={4}>
-            <Stack className={classes.stickySidebar}>
+            <Stack className={styles.stickySidebar}>
               <Divider label="Properties" />
               {type === 'ModelCreation' && (
                 <Stack spacing="xl">
                   <Input.Wrapper
-                    className={classes.fluid}
+                    className={styles.fluid}
                     label="Preferred model format"
                     labelProps={{ w: '100%' }}
                     withAsterisk
                   >
                     <InputSegmentedControl
-                      classNames={classes}
+                      classNames={styles}
                       name="details.modelFormat"
                       radius="sm"
                       data={[...constants.modelFileFormats]}
@@ -586,13 +514,13 @@ export function BountyCreateForm() {
                     />
                   </Input.Wrapper>
                   <Input.Wrapper
-                    className={classes.fluid}
+                    className={styles.fluid}
                     label="Preferred model size"
                     labelProps={{ w: '100%' }}
                     withAsterisk
                   >
                     <InputSegmentedControl
-                      classNames={classes}
+                      classNames={styles}
                       name="details.modelSize"
                       radius="sm"
                       data={[...constants.modelFileSizes]}
@@ -682,3 +610,4 @@ const RadioItem = ({ label, description }: RadioItemProps) => (
     </Text>
   </Stack>
 );
+

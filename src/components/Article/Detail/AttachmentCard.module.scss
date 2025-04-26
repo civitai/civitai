@@ -1,0 +1,19 @@
+.attachment:hover {
+  background-color: var(--mantine-color-gray-0);
+}
+
+@media (prefers-color-scheme: dark) {
+  .attachment:hover {
+    background-color: var(--mantine-color-dark-4);
+  }
+}
+
+.themeIcon {
+  background-color: transparent;
+}
+
+.card {
+  border-radius: 0;
+  padding-top: var(--mantine-spacing-xs);
+  padding-bottom: var(--mantine-spacing-xs);
+}

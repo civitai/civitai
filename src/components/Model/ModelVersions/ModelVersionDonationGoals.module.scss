@@ -1,0 +1,7 @@
+.donationGoalContainer {
+  background: var(--mantine-color-dark-6);
+}
+
+[data-mantine-color-scheme="light"] .donationGoalContainer {
+  background: var(--mantine-color-gray-2);
+}

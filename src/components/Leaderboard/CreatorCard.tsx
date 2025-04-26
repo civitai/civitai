@@ -1,9 +1,10 @@
-import { createStyles, Paper, Stack, Text } from '@mantine/core';
+import { Box, BoxProps, Stack, Text } from '@mantine/core';
+import React, { forwardRef } from 'react';
+import styles from './CreatorCard.module.scss';
 import { IconChevronDown, IconChevronUp, IconCrown } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import { LeaderboardMetrics } from '~/components/Leaderboard/LeaderboardMetrics';
 import { ContainerGrid } from '~/components/ContainerGrid/ContainerGrid';
-
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { LeaderboardGetModel } from '~/types/router';
 import { useInView } from '~/hooks/useInView';
@@ -30,6 +31,26 @@ const linkQuery: Record<string, string> = {
   car: '/models?tag=vehicle',
 };
 
+export interface CreatorCardProps extends BoxProps {
+  active?: boolean;
+}
+
+export const CreatorCard = forwardRef<HTMLDivElement, CreatorCardProps>((props, ref) => {
+  const { active, className, ...others } = props;
+
+  return (
+    <Box
+      className={`${styles.wrapper} ${styles.creatorCard} ${
+        active ? styles.active : ''
+      } ${className}`}
+      {...others}
+      ref={ref}
+    />
+  );
+});
+
+CreatorCard.displayName = 'CreatorCard';
+
 export function CreatorCard({
   data: { position, user, metrics, score, delta },
   index,
@@ -38,7 +59,6 @@ export function CreatorCard({
   index: number;
 }) {
   const { ref, inView } = useInView();
-  const { classes, theme, cx } = useStyles();
   const router = useRouter();
 
   const { position: queryPosition, id: leaderboardId } = router.query as {
@@ -47,11 +67,7 @@ export function CreatorCard({
   };
 
   const isTop3 = position <= 3;
-  const iconColor = [
-    theme.colors.yellow[5], // Gold
-    theme.colors.gray[5], // Silver
-    theme.colors.orange[5], // Bronze
-  ][position - 1];
+  const topClass = isTop3 ? styles[`top${position}`] : '';
 
   let link = `/user/${user.username}`;
   if (leaderboardId && typeof leaderboardId === 'string') link += linkQuery[leaderboardId] ?? '';
@@ -62,11 +78,11 @@ export function CreatorCard({
   }, [queryPosition]);
 
   return (
-    <div className={classes.wrapper} ref={ref} id={position.toString()}>
+    <div className={styles.wrapper} ref={ref} id={position.toString()}>
       {inView && (
         <Link href={link}>
-          <Paper
-            className={cx(classes.creatorCard, Number(queryPosition) === position && 'active')}
+          <Box
+            className={`${styles.creatorCard} ${topClass}`}
             p="sm"
             radius="md"
             shadow="xs"
@@ -75,23 +91,13 @@ export function CreatorCard({
             <ContainerGrid align="center">
               <ContainerGrid.Col span={2}>
                 <Stack align="center" spacing={0} sx={{ position: 'relative' }}>
-                  {isTop3 && (
-                    <IconCrown
-                      size={64}
-                      color={iconColor}
-                      className={classes.crown}
-                      style={{ fill: iconColor }}
-                    />
-                  )}
-                  <Text size="lg" weight="bold">
-                    {position}
-                  </Text>
+                  {isTop3 && <IconCrown size={64} className={styles.crown} />}
+                  <Text className={styles.position}>{position}</Text>
                   {delta && delta.position !== 0 && (
                     <Text
-                      size="xs"
-                      weight="bold"
-                      color={delta.position > 0 ? 'red' : 'green'}
-                      className={classes.delta}
+                      className={`${styles.delta} ${
+                        delta.position > 0 ? styles.deltaPositive : styles.deltaNegative
+                      }`}
                     >
                       {delta.position > 0 ? (
                         <IconChevronDown strokeWidth={4} size={14} />
@@ -110,39 +116,11 @@ export function CreatorCard({
                 </Stack>
               </ContainerGrid.Col>
             </ContainerGrid>
-          </Paper>
+          </Box>
         </Link>
       )}
     </div>
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  wrapper: {
-    minHeight: 98,
-  },
-  creatorCard: {
-    // height: 98,
-    '&.active': {
-      borderColor: theme.colors.blue[8],
-      boxShadow: `0 0 10px ${theme.colors.blue[8]}`,
-    },
-    '&:hover': {
-      backgroundColor:
-        theme.colorScheme === 'dark' ? 'rgba(255,255,255, 0.03)' : 'rgba(0,0,0, 0.01)',
-    },
-  },
-  crown: {
-    position: 'absolute',
-    top: '40%',
-    left: '50%',
-    transform: 'translate(-50%, -50%)',
-    opacity: 0.4,
-  },
-  delta: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: -25,
-  },
-}));
+

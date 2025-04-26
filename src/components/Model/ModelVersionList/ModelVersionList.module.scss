@@ -1,0 +1,46 @@
+.scrollContainer {
+  position: relative;
+}
+
+.arrowButton:active {
+  transform: none;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.leftArrow {
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  padding-right: var(--mantine-spacing-xl);
+  z-index: 12;
+  background-image: linear-gradient(90deg, var(--mantine-color-dark-7), transparent);
+  display: block;
+}
+
+[data-mantine-color-scheme="light"] .leftArrow {
+  background-image: linear-gradient(90deg, white, transparent);
+}
+
+.rightArrow {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  padding-left: var(--mantine-spacing-xl);
+  z-index: 12;
+  background-image: linear-gradient(270deg, var(--mantine-color-dark-7), transparent);
+  display: block;
+}
+
+[data-mantine-color-scheme="light"] .rightArrow {
+  background-image: linear-gradient(270deg, white, transparent);
+}
+
+.viewport {
+  overflow-x: scroll;
+  overflow-y: hidden;
+}

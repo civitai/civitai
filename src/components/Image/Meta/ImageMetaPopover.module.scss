@@ -1,0 +1,105 @@
+.popover {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.popoverPanel {
+  z-index: 500;
+}
+
+.card {
+  display: flex;
+  width: 384px;
+  max-width: 100%;
+  flex-direction: column;
+  gap: 12px;
+  border-radius: 12px;
+  padding: 16px;
+  background-color: var(--mantine-color-gray-0);
+  border: 1px solid var(--mantine-color-gray-3);
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+.skeletonLine {
+  height: 12px;
+  border-radius: 9999px;
+  background-color: var(--mantine-color-gray-2);
+}
+
+.skeletonLineShort {
+  width: 128px;
+}
+
+.skeletonLineLong {
+  width: 224px;
+}
+
+.buttonGroup {
+  display: flex;
+  gap: 8px;
+}
+
+.button {
+  font-size: 0.75rem;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background-color: var(--mantine-color-gray-1);
+  color: var(--mantine-color-gray-7);
+  transition: all 0.2s ease;
+}
+
+.button:hover {
+  background-color: var(--mantine-color-gray-2);
+}
+
+.buttonIcon {
+  margin-right: 4px;
+}
+
+.buttonRemix {
+  flex: 1;
+  background-color: var(--mantine-color-blue-1);
+  color: var(--mantine-color-blue-7);
+}
+
+.buttonRemix:hover {
+  background-color: var(--mantine-color-blue-2);
+}
+
+.buttonCopy {
+  background-color: var(--mantine-color-green-1);
+  color: var(--mantine-color-green-7);
+}
+
+.buttonCopy:hover {
+  background-color: var(--mantine-color-green-2);
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .card {
+    width: 320px;
+    padding: 12px;
+  }
+
+  .button {
+    font-size: 0.7rem;
+    padding: 3px 6px;
+  }
+}

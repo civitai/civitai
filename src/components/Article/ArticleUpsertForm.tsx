@@ -9,7 +9,6 @@ import {
   Title,
   Tooltip,
   TooltipProps,
-  createStyles,
   ActionIcon,
   Paper,
   Input,
@@ -50,7 +49,8 @@ import { browsingLevelLabels, browsingLevels } from '~/shared/constants/browsing
 import { openBrowsingLevelGuide } from '~/components/Dialog/dialog-registry';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider'
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import classes from './ArticleUpsertForm.module.scss';
 
 const schema = upsertArticleInput.omit({ coverImage: true, userNsfwLevel: true }).extend({
   categoryId: z.number().min(0, 'Please select a valid category'),
@@ -70,13 +70,6 @@ const tooltipProps: Partial<TooltipProps> = {
   withinPortal: true,
 };
 
-const useStyles = createStyles((theme) => ({
-  sidebar: {
-    position: 'sticky',
-    top: 70 + theme.spacing.xl,
-  },
-}));
-
 export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
   label: browsingLevelLabels[level],
   value: String(level),
@@ -84,7 +77,6 @@ export const browsingLevelSelectOptions = browsingLevels.map((level) => ({
 
 export function ArticleUpsertForm({ article }: Props) {
   const currentUser = useCurrentUser();
-  const { classes } = useStyles();
   const queryUtils = trpc.useUtils();
   const router = useRouter();
   const features = useFeatureFlags();
@@ -194,7 +186,11 @@ export function ArticleUpsertForm({ article }: Props) {
 
   return (
     <Form form={form} onSubmit={handleSubmit}>
-      <ReadOnlyAlert message={"Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."} />
+      <ReadOnlyAlert
+        message={
+          "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this article."
+        }
+      />
       <ContainerGrid gutter="xl">
         <ContainerGrid.Col xs={12} md={8}>
           <Stack spacing="xl">
@@ -244,129 +240,52 @@ export function ArticleUpsertForm({ article }: Props) {
                 disabled: upsertArticleMutation.isLoading || !features.canWrite,
                 onClick: () => setPublishing(true),
               }}
-              sx={hideMobile}
+              className={classes.hideMobile}
             />
             <InputSelect
               name="userNsfwLevel"
+              label="Content Level"
+              placeholder="Select content level"
               data={browsingLevelSelectOptions}
-              label={
-                <Group spacing={4} noWrap>
-                  Maturity Level
+              disabled={!canEditUserNsfwLevel}
+              rightSection={
+                <Tooltip
+                  {...tooltipProps}
+                  label="Content level determines who can see this article"
+                >
                   <ActionIcon
-                    radius="xl"
-                    size="xs"
-                    variant="outline"
-                    onClick={openBrowsingLevelGuide}
+                    variant="subtle"
+                    color="gray"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      openBrowsingLevelGuide();
+                    }}
                   >
-                    <IconQuestionMark />
+                    <IconQuestionMark size={16} />
                   </ActionIcon>
-                  <ContentPolicyLink size="xs" variant="text" color="dimmed" td="underline" />
-                </Group>
+                </Tooltip>
               }
+            />
+            <InputSelect
+              name="categoryId"
+              label="Category"
+              placeholder="Select a category"
+              data={categories}
+              loading={loadingCategories}
+              withAsterisk
+            />
+            <InputTags
+              name="tags"
+              label="Tags"
+              placeholder="Add tags"
+              maxSelectedValues={10}
+              clearable
             />
             <InputSimpleImageUpload
               name="coverImage"
               label="Cover Image"
-              description={`Suggested resolution: ${constants.article.coverImageWidth} x ${constants.article.coverImageHeight}`}
+              aspectRatio={16 / 9}
               withAsterisk
-            />
-            <InputSelect
-              name="categoryId"
-              label={
-                <Group spacing={4} noWrap>
-                  <Input.Label required>Category</Input.Label>
-                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
-                    <Text>
-                      Categories determine what kind of article you&apos;re making. Selecting a
-                      category that&apos;s the closest match to your subject helps users find your
-                      article
-                    </Text>
-                  </InfoPopover>
-                </Group>
-              }
-              placeholder="Select a category"
-              data={categories}
-              nothingFound="Nothing found"
-              loading={loadingCategories}
-            />
-            <InputTags
-              name="tags"
-              label={
-                <Group spacing={4} noWrap>
-                  <Input.Label>Tags</Input.Label>
-                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
-                    <Text>
-                      Tags are how users filter content on the site. It&apos;s important to
-                      correctly tag your content so it can be found by interested users
-                    </Text>
-                  </InfoPopover>
-                </Group>
-              }
-              target={[TagTarget.Article]}
-              filter={(tag) =>
-                data && tag.name ? !data.items.map((cat) => cat.name).includes(tag.name) : true
-              }
-            />
-            <InputMultiFileUpload
-              name="attachments"
-              label={
-                <Group spacing={4} noWrap>
-                  <Input.Label>Attachments</Input.Label>
-                  <InfoPopover type="hover" size="xs" iconProps={{ size: 14 }}>
-                    <Text>
-                      Attachments may be additional context for your article, training data, or
-                      larger files that don&apos;t make sense to post as a model
-                    </Text>
-                  </InfoPopover>
-                </Group>
-              }
-              dropzoneProps={{
-                maxSize: 30 * 1024 ** 2, // 30MB
-                maxFiles: 10,
-                accept: {
-                  'application/pdf': ['.pdf'],
-                  'application/zip': ['.zip'],
-                  'application/json': ['.json'],
-                  'application/x-yaml': ['.yaml', '.yml'],
-                  'text/plain': ['.txt'],
-                  'text/markdown': ['.md'],
-                  'text/x-python-script': ['.py'],
-                },
-              }}
-              renderItem={(file, onRemove) => (
-                <Paper key={file.id} radius="sm" p={0} w="100%">
-                  <Group position="apart">
-                    {article && file.id ? (
-                      <Anchor href={`/api/download/attachments/${file.id}`} lineClamp={1} download>
-                        {file.name}
-                      </Anchor>
-                    ) : (
-                      <Text size="sm" weight={500} lineClamp={1}>
-                        {file.name}
-                      </Text>
-                    )}
-                    <Tooltip label="Remove">
-                      <ActionIcon size="sm" color="red" variant="transparent" onClick={onRemove}>
-                        <IconTrash />
-                      </ActionIcon>
-                    </Tooltip>
-                  </Group>
-                </Paper>
-              )}
-            />
-            <ActionButtons
-              article={article}
-              saveButtonProps={{
-                loading: upsertArticleMutation.isLoading && !publishing,
-                disabled: upsertArticleMutation.isLoading || !features.canWrite,
-                onClick: () => setPublishing(false),
-              }}
-              publishButtonProps={{
-                loading: upsertArticleMutation.isLoading && publishing,
-                disabled: upsertArticleMutation.isLoading || !features.canWrite,
-                onClick: () => setPublishing(true),
-              }}
-              sx={showMobile}
             />
           </Stack>
         </ContainerGrid.Col>
@@ -434,3 +353,4 @@ type ActionButtonProps = StackProps & {
   publishButtonProps: FormButtonProps;
   article?: ArticleGetById;
 };
+

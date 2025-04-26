@@ -4,6 +4,7 @@ import { IconHorse } from '@tabler/icons-react';
 import { IconNose } from '~/components/SVG/IconNose';
 import { BaseModel } from '~/server/common/constants';
 import { getDisplayName } from '~/utils/string-helpers';
+import styles from './ModelTypeBadge.module.scss';
 
 const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> = {
   'SDXL 1.0': 'XL',
@@ -44,21 +45,19 @@ const BaseModelIndicator: Partial<Record<BaseModel, React.ReactNode | string>> =
 
 export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
   const baseModelIndicator = BaseModelIndicator[baseModel];
+  const typeClass = styles[`type${type}`];
+
   return (
-    <Badge variant="light" radius="xl" {...badgeProps}>
-      <Text size="xs" transform="capitalize">
-        {getDisplayName(type)}
-      </Text>
+    <Badge className={`${styles.badge} ${typeClass}`} {...badgeProps}>
+      <Text className={styles.typeText}>{getDisplayName(type)}</Text>
 
       {baseModelIndicator && (
         <>
-          <Divider orientation="vertical" />
+          <Divider className={styles.divider} orientation="vertical" />
           {typeof baseModelIndicator === 'string' ? (
-            <Text size="xs" inherit>
-              {baseModelIndicator}
-            </Text>
+            <Text className={styles.baseModelIndicator}>{baseModelIndicator}</Text>
           ) : (
-            baseModelIndicator
+            <span className={styles.baseModelIndicator}>{baseModelIndicator}</span>
           )}
         </>
       )}
@@ -67,3 +66,4 @@ export function ModelTypeBadge({ type, baseModel, ...badgeProps }: Props) {
 }
 
 type Props = Omit<BadgeProps, 'children'> & { type: ModelType; baseModel: BaseModel };
+

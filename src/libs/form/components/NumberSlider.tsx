@@ -6,11 +6,10 @@ import {
   NumberInputProps,
   Slider,
   SliderProps,
-  createStyles,
 } from '@mantine/core';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { PresetOptions, Props as PresetOptionsProps } from './PresetOptions';
-import clsx from 'clsx';
+import classes from './NumberSlider.module.scss';
 
 export type NumberSliderProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: number;
@@ -142,13 +141,15 @@ export function NumberSlider({
           label
         )
       }
-      className={clsx('flex flex-col', inputWrapperProps.className)}
+      className={classes.container}
       styles={{ label: hasPresets ? { width: '100%', marginBottom: 5 } : undefined }}
     >
-      <div className={clsx('mt-1 flex items-center gap-2', { ['flex-row-reverse']: reverse })}>
+      <div
+        className={`${classes.sliderContainer} ${reverse ? classes.sliderContainerReverse : ''}`}
+      >
         <Slider
           {...sliderProps}
-          className={clsx('flex-1', sliderProps?.className)}
+          className={classes.slider}
           min={min}
           max={max}
           step={step}
@@ -164,7 +165,7 @@ export function NumberSlider({
         <NumberInput
           ref={numberRef}
           {...numberProps}
-          className={clsx('min-w-[60px] flex-[0]', numberProps?.className)}
+          className={classes.numberInput}
           style={{
             ...numberProps?.style,
             minWidth: numberProps?.style?.minWidth ?? state.computedWidth,
@@ -193,3 +194,4 @@ const getComputedWidth = (elem: HTMLInputElement, min: number, max: number, prec
   const computed = getComputedStyle(elem);
   return `calc(${ch}ch + ${computed.paddingLeft} + ${computed.paddingRight} + ${computed.borderLeftWidth} + ${computed.borderRightWidth} + 6px)`;
 };
+

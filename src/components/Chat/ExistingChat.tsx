@@ -2,10 +2,10 @@ import {
   ActionIcon,
   Anchor,
   Box,
+  BoxProps,
   Button,
   Center,
   createPolymorphicComponent,
-  createStyles,
   Divider,
   Group,
   Image,
@@ -20,6 +20,7 @@ import {
   Tooltip,
   useMantineTheme,
 } from '@mantine/core';
+import { createStyles } from '@mantine/styles';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
   IconArrowBack,
@@ -39,7 +40,7 @@ import Linkify from 'linkify-react';
 import { throttle } from 'lodash-es';
 import { LazyMotion } from 'motion/react';
 import { div } from 'motion/react-m';
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState, forwardRef } from 'react';
 import { ChatActions } from '~/components/Chat/ChatActions';
 import { useChatContext } from '~/components/Chat/ChatProvider';
 import { getLinkHref, linkifyOptions, loadMotion } from '~/components/Chat/util';
@@ -60,6 +61,7 @@ import { formatDate } from '~/utils/date-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import styles from './ExistingChat.module.scss';
 
 type TypingStatus = {
   [key: string]: boolean;
@@ -67,54 +69,29 @@ type TypingStatus = {
 
 const PStack = createPolymorphicComponent<'div', StackProps>(Stack);
 
-const useStyles = createStyles((theme) => ({
-  chatMessage: {
-    borderRadius: theme.spacing.xs,
-    padding: `${theme.spacing.xs / 2}px ${theme.spacing.xs}px`,
-    width: 'max-content',
-    maxWidth: '70%',
-    whiteSpace: 'pre-line',
-  },
-  replyMessage: {
-    textOverflow: 'ellipsis',
-    overflow: 'hidden',
-    overflowWrap: 'normal',
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[5],
-    fontSize: theme.spacing.sm,
-  },
-  myDetails: {
-    flexDirection: 'row-reverse',
-  },
-  myMessage: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.blue[8] : theme.colors.blue[4],
-  },
-  otherMessage: {
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2],
-  },
-  highlightRow: {
-    '&:hover': {
-      '> button': {
-        display: 'initial',
-      },
-    },
-  },
-  chatInput: {
-    borderRadius: 0,
-    borderLeft: 0,
-    borderTop: 0,
-    borderBottom: 0,
-  },
-  isTypingBox: {
-    position: 'sticky',
-    bottom: 0,
-    // backdropFilter: 'blur(16px)',
-    display: 'inline-flex',
-    // backgroundColor:
-    //   theme.colorScheme === 'dark'
-    //     ? theme.fn.rgba(theme.colors.green[7], 0.1)
-    //     : theme.fn.rgba(theme.colors.green[2], 0.1),
-  },
-}));
+const useStyles = createStyles(styles);
+
+export interface ExistingChatProps extends BoxProps {
+  isMyMessage?: boolean;
+  isReply?: boolean;
+  isTyping?: boolean;
+}
+
+export const ExistingChat = forwardRef<HTMLDivElement, ExistingChatProps>((props, ref) => {
+  const { isMyMessage, isReply, isTyping, className, ...others } = props;
+
+  return (
+    <Box
+      className={`${styles.chatMessage} ${isMyMessage ? styles.myMessage : styles.otherMessage} ${
+        isReply ? styles.replyMessage : ''
+      } ${isTyping ? styles.isTypingBox : ''} ${className}`}
+      {...others}
+      ref={ref}
+    />
+  );
+});
+
+ExistingChat.displayName = 'ExistingChat';
 
 export function ExistingChat() {
   const currentUser = useCurrentUser();
@@ -251,9 +228,10 @@ export function ExistingChat() {
       });
       return;
     }
-    setIsJoining(true);
+
     modifyMembership({
-      chatMemberId: myMember.id,
+      chatId: state.existingChatId!,
+      userId: currentUser.id,
       status: ChatMemberStatus.Ignored,
     });
   };
@@ -267,297 +245,190 @@ export function ExistingChat() {
       });
       return;
     }
+
     setIsJoining(true);
     modifyMembership({
-      chatMemberId: myMember.id,
+      chatId: state.existingChatId!,
+      userId: currentUser.id,
       status: ChatMemberStatus.Joined,
     });
   };
 
-  const allChats = useMemo(() => data?.pages.flatMap((x) => x.items) ?? [], [data]);
-
-  useEffect(() => {
-    // - on a new message or initial load, scroll to the bottom. on load more, don't scroll
-
-    if (!allChats.length) return;
-
-    // if (data.pages.length !== oldPagesLength.current) return;
-    //
-    // oldPagesLength.current = data.pages.length;
-
-    lastReadRef.current?.scrollTo(
-      0,
-      lastReadRef.current?.scrollHeight - lastReadRef.current?.clientHeight
-    );
-
-    if (!myMember) return;
-    const newestMessageId = allChats[allChats.length - 1].id;
-    if ((myMember.lastViewedMessageId ?? 0) >= newestMessageId) return;
-    changeLastViewed({
-      chatMemberId: myMember.id,
-      lastViewedMessageId: newestMessageId,
-    }).catch();
-  }, [allChats, changeLastViewed, myMember]);
-
-  useEffect(() => {
-    setTypingStatus({});
-    setTypingText(null);
-    setReplyId(undefined);
-  }, [state.existingChatId]);
-
   function getTypingStatus(newEntry: { [p: string]: boolean }) {
     const newTotalStatus = { ...typingStatus, ...newEntry };
+    const isTypingText = Object.entries(newTotalStatus)
+      .filter(([_, isTyping]) => isTyping)
+      .map(([username]) => username)
+      .join(', ');
 
-    const isTypingArray = Object.entries(newTotalStatus)
-      .map(([tsU, tsV]) => {
-        if (tsV) return tsU;
-      })
-      .filter(isDefined);
-
-    // TODO this sometimes flips back and forth for multiple users, overwriting itself. why?
-    const isTypingText =
-      isTypingArray.length > 1
-        ? `${isTypingArray.length} people are typing`
-        : isTypingArray.length === 1
-        ? `${isTypingArray[0]} is typing`
-        : null;
-    return { newTotalStatus, isTypingText };
-  }
-
-  const handleIsTyping = useCallback(
-    (d: unknown) => {
-      const data = d as isTypingOutput;
-
-      if (data.userId === currentUser?.id) return;
-      if (data.chatId !== state.existingChatId) return;
-
-      const newEntry = {
-        [data.username]: data.isTyping,
-      };
-
-      const { newTotalStatus, isTypingText } = getTypingStatus(newEntry);
-
-      setTypingStatus(newTotalStatus);
-      setTypingText(isTypingText);
-    },
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [state.existingChatId]
-  );
-
-  useEffect(() => {
-    worker?.on(SignalMessages.ChatTypingStatus, handleIsTyping);
-    return () => {
-      worker?.off(SignalMessages.ChatTypingStatus, handleIsTyping);
+    return {
+      newTotalStatus,
+      isTypingText: isTypingText
+        ? `${isTypingText} ${isTypingText.includes(',') ? 'are' : 'is'} typing...`
+        : null,
     };
-  }, [worker, handleIsTyping]);
+  }
 
   const goBack = () => {
     setState((prev) => ({ ...prev, existingChatId: undefined }));
   };
 
-  return (
-    <Stack spacing={0} h="100%">
-      {/* TODO this component stinks, it is hardcoded as a button */}
-      <Spoiler
-        showLabel={
-          <Group mt={4} spacing={8}>
-            <IconChevronDown size={16} />
-            <Text size="xs">Expand</Text>
-          </Group>
-        }
-        hideLabel={
-          <Group mt={8} spacing={8}>
-            <IconChevronUp size={16} />
-            <Text size="xs">Hide</Text>
-          </Group>
-        }
-        maxHeight={44}
-        styles={{
-          root: { textAlign: 'center' },
-        }}
-      >
-        <Group m="sm" mb={0} position="apart" noWrap align="flex-start" spacing="sm">
-          {isMobile && (
-            <ActionIcon onClick={goBack}>
-              <IconChevronLeft />
-            </ActionIcon>
-          )}
-          {allChatLoading ? (
-            <Center h="100%">
-              <Loader />
-            </Center>
-          ) : (
-            <Group spacing="xs">
-              {/* TODO improve useravatar to show loading (if necessary) */}
-              {/* TODO online status (later), blocked users, etc */}
+  useEffect(() => {
+    if (!worker) return;
 
-              {otherMembers?.map((cm) => (
-                <Button key={cm.userId} variant="light" color="gray" compact>
-                  <UserAvatar
-                    user={cm.user}
-                    size="xs"
-                    withUsername
-                    linkToProfile
-                    badge={
-                      <Group spacing={6} ml={4} align="center">
-                        {cm.user.isModerator ? (
-                          <Image
-                            src="/images/civ-c.png"
-                            title="Moderator"
-                            alt="Moderator"
-                            width={16}
-                            height={16}
-                          />
-                        ) : undefined}
-                        {cm.isOwner === true ? (
-                          <Box title="Creator" display="flex">
-                            <IconCrown size={16} fill="currentColor" />
-                          </Box>
-                        ) : undefined}
-                        <Box
-                          title={
-                            cm.status === ChatMemberStatus.Invited ||
-                            cm.status === ChatMemberStatus.Ignored
-                              ? 'Invited'
-                              : cm.status
-                          }
-                          display="flex"
-                        >
-                          {cm.status === ChatMemberStatus.Joined ? (
-                            <IconCircleCheck size={16} color="green" />
-                          ) : cm.status === ChatMemberStatus.Left ||
-                            cm.status === ChatMemberStatus.Kicked ? (
-                            <IconCircleX size={16} color="orangered" />
-                          ) : (
-                            <IconCircleMinus size={16} />
-                          )}
-                        </Box>
-                      </Group>
-                    }
-                  />
-                </Button>
-              ))}
+    worker.onmessage = (e) => {
+      const data = e.data;
+      if (data.type === SignalMessages.ChatMessage) {
+        queryUtils.chat.getInfiniteMessages.setData(
+          { chatId: state.existingChatId! },
+          produce((old) => {
+            if (!old) return old;
+
+            const lastPage = old.pages[old.pages.length - 1];
+            if (!lastPage) return old;
+
+            lastPage.items.push(data.message);
+          })
+        );
+      } else if (data.type === SignalMessages.ChatTyping) {
+        const { newTotalStatus, isTypingText } = getTypingStatus({
+          [data.username]: data.isTyping,
+        });
+        setTypingStatus(newTotalStatus);
+        setTypingText(isTypingText);
+      }
+    };
+
+    return () => {
+      worker.onmessage = null;
+    };
+  }, [worker, state.existingChatId, queryUtils.chat.getInfiniteMessages]);
+
+  useEffect(() => {
+    if (!data?.pages[0]?.items[0]?.id) return;
+
+    changeLastViewed({
+      chatId: state.existingChatId!,
+      userId: currentUser?.id!,
+      lastViewedMessageId: data.pages[0].items[0].id,
+    });
+  }, [data?.pages[0]?.items[0]?.id, state.existingChatId, currentUser?.id, changeLastViewed]);
+
+  if (isLoading || allChatLoading) {
+    return (
+      <Center h="100%">
+        <Loader />
+      </Center>
+    );
+  }
+
+  if (!thisChat) {
+    return (
+      <Center h="100%">
+        <Text>Chat not found</Text>
+      </Center>
+    );
+  }
+
+  if (!myMember) {
+    return (
+      <Center h="100%">
+        <Text>You are not a member of this chat</Text>
+      </Center>
+    );
+  }
+
+  if (myMember.status === ChatMemberStatus.Ignored) {
+    return (
+      <Stack h="100%" align="center" justify="center">
+        <Text>You have ignored this chat</Text>
+        <Button onClick={handleJoinChat} loading={isJoining}>
+          Rejoin chat
+        </Button>
+      </Stack>
+    );
+  }
+
+  if (myMember.status === ChatMemberStatus.Left) {
+    return (
+      <Stack h="100%" align="center" justify="center">
+        <Text>You have left this chat</Text>
+        <Button onClick={handleJoinChat} loading={isJoining}>
+          Rejoin chat
+        </Button>
+      </Stack>
+    );
+  }
+
+  return (
+    <Stack h="100%" spacing={0}>
+      <Group position="apart" p="xs">
+        <Group>
+          <ActionIcon onClick={goBack}>
+            <IconArrowBack />
+          </ActionIcon>
+          <Stack spacing={0}>
+            <Group spacing="xs">
+              <Title order={4}>{thisChat.name}</Title>
+              {modSender && (
+                <Tooltip label="Moderated by a moderator">
+                  <IconCrown size={16} />
+                </Tooltip>
+              )}
             </Group>
-          )}
-          <ChatActions chatObj={thisChat} />
+            <Text size="xs" color="dimmed">
+              {otherMembers?.map((cm) => cm.user.username).join(', ')}
+            </Text>
+          </Stack>
         </Group>
-      </Spoiler>
-      <Divider mt="sm" />
-      {!myMember ? (
-        <Center h="100%">
-          <Loader />
-        </Center>
-      ) : myMember.status === ChatMemberStatus.Joined ||
-        myMember.status === ChatMemberStatus.Left ||
-        myMember.status === ChatMemberStatus.Kicked ? (
-        <>
-          <Box p="sm" sx={{ flexGrow: 1, overflowY: 'auto' }} ref={lastReadRef}>
-            {isRefetching || isLoading ? (
-              <Center h="100%">
-                <Loader />
-              </Center>
-            ) : allChats.length > 0 ? (
-              <Stack sx={{ overflowWrap: 'break-word' }} spacing={12}>
-                {hasNextPage && (
-                  <InViewLoader loadFn={fetchNextPage} loadCondition={!isRefetching && hasNextPage}>
-                    <Center p="xl" sx={{ height: 36 }} mt="md">
-                      <Loader />
-                    </Center>
-                  </InViewLoader>
-                )}
-                <DisplayMessages chats={allChats} setReplyId={setReplyId} />
-              </Stack>
-            ) : (
-              <Center h="100%">
-                <Text>Start the conversation below!</Text>
-              </Center>
-            )}
-            {!!typingText && (
-              <Group className={classes.isTypingBox}>
-                <Text size="xs">{typingText}</Text>
-                <Loader variant="dots" />
-              </Group>
+        <Menu position="bottom-end">
+          <Menu.Target>
+            <ActionIcon>
+              <IconDotsVertical />
+            </ActionIcon>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <Menu.Item color="red" onClick={handleIgnoreChat}>
+              Ignore chat
+            </Menu.Item>
+          </Menu.Dropdown>
+        </Menu>
+      </Group>
+      <Divider />
+      <Box sx={{ flex: 1, overflow: 'hidden' }}>
+        <Stack h="100%" spacing={0}>
+          <Box sx={{ flex: 1, overflow: 'auto' }}>
+            {data && <DisplayMessages chats={data} setReplyId={setReplyId} />}
+            {hasNextPage && (
+              <InViewLoader
+                loadFn={() => fetchNextPage()}
+                loadCondition={!isRefetching}
+                style={{ width: '100%' }}
+              >
+                <Center p="md">
+                  <Loader />
+                </Center>
+              </InViewLoader>
             )}
           </Box>
           <Divider />
-          {myMember.status === ChatMemberStatus.Joined ? (
-            <>
-              {!!replyId && (
-                <>
-                  <Group p="xs" noWrap>
-                    <Text size="xs">Replying:</Text>
-                    <Box sx={{ textOverflow: 'ellipsis', overflow: 'hidden' }}>
-                      {allChats.find((ac) => ac.id === replyId)?.content ?? ''}
-                    </Box>
-                    <ActionIcon onClick={() => setReplyId(undefined)} ml="auto">
-                      <IconX size={14} />
-                    </ActionIcon>
-                  </Group>
-                  <Divider />
-                </>
-              )}
-              <ChatInputBox
-                isModSender={!!modSender}
-                replyId={replyId}
-                setReplyId={setReplyId}
-                getTypingStatus={getTypingStatus}
-                setTypingStatus={setTypingStatus}
-                setTypingText={setTypingText}
-              />
-            </>
-          ) : (
-            <Center p="sm">
-              <Group>
-                <Text>
-                  You {myMember.status === ChatMemberStatus.Left ? 'left' : 'were kicked from'} this
-                  chat.
-                </Text>
-                {myMember.status === ChatMemberStatus.Left && (
-                  <Button
-                    variant={theme.colorScheme === 'dark' ? 'filled' : 'light'}
-                    compact
-                    disabled={isJoining}
-                    onClick={handleJoinChat}
-                  >
-                    Rejoin?
-                  </Button>
-                )}
-              </Group>
-            </Center>
+          <ChatInputBox
+            isModSender={modSender?.userId === currentUser?.id}
+            replyId={replyId}
+            setReplyId={setReplyId}
+            getTypingStatus={getTypingStatus}
+            setTypingStatus={setTypingStatus}
+            setTypingText={setTypingText}
+          />
+          {typingText && (
+            <Box className={classes.isTypingBox}>
+              <Text size="xs" color="dimmed">
+                {typingText}
+              </Text>
+            </Box>
           )}
-        </>
-      ) : myMember.status === ChatMemberStatus.Invited ||
-        myMember.status === ChatMemberStatus.Ignored ? (
-        <Center h="100%">
-          <Stack>
-            {allChats.length > 0 && (
-              <Text mb="md" p="sm" size="xs" italic align="center">{`"${allChats[0].content.slice(
-                0,
-                70
-              )}${allChats[0].content.length > 70 ? '...' : ''}"`}</Text>
-            )}
-            <Text align="center">Join the chat?</Text>
-            <Group p="sm" position="center">
-              <Button
-                disabled={isJoining || myMember.status === ChatMemberStatus.Ignored}
-                variant="light"
-                color="gray"
-                onClick={handleIgnoreChat}
-              >
-                Ignore
-              </Button>
-              <Button disabled={isJoining} onClick={handleJoinChat}>
-                Join
-              </Button>
-            </Group>
-          </Stack>
-        </Center>
-      ) : (
-        // TODO show old messages if kicked/left?
-        <Center h="100%">
-          <Text>Not a member of this chat.</Text>
-        </Center>
-      )}
+        </Stack>
+      </Box>
     </Stack>
   );
 }
@@ -583,85 +454,30 @@ function ChatInputBox({
   setTypingStatus: React.Dispatch<React.SetStateAction<TypingStatus>>;
   setTypingText: React.Dispatch<React.SetStateAction<string | null>>;
 }) {
-  const currentUser = useCurrentUser();
   const { classes } = useStyles();
   const { state } = useChatContext();
+  const currentUser = useCurrentUser();
   const queryUtils = trpc.useUtils();
+  const [message, setMessage] = useState('');
+  const [debouncedMessage] = useDebouncedValue(message, 500);
 
-  const [isSending, setIsSending] = useState(false);
-  const [chatMsg, setChatMsg] = useState<string>('');
-  const [debouncedChatMsg] = useDebouncedValue(chatMsg, 2000);
-
-  const isMuted = currentUser?.muted && !isModSender;
-
-  const { mutateAsync: doIsTyping } = trpc.chat.isTyping.useMutation();
-  // const doIsTyping = async (x) => {};
-
-  const throttledTyping = useMemo(
-    () =>
-      throttle(
-        () => {
-          if (!currentUser || isMuted) return;
-
-          doIsTyping({
-            chatId: state.existingChatId!,
-            userId: currentUser.id,
-            isTyping: true,
-          }).catch();
-        },
-        2000,
-        { leading: true, trailing: true }
-      ),
-    [currentUser, doIsTyping, isMuted, state.existingChatId]
-  );
-
-  const { mutate } = trpc.chat.createMessage.useMutation({
-    // TODO onMutate for optimistic
+  const { mutate: sendMessageMutation } = trpc.chat.sendMessage.useMutation({
     onSuccess(data) {
-      setIsSending(false);
-      setChatMsg('');
-      setReplyId(undefined);
-
-      if (!currentUser) return;
-
-      const newEntry = {
-        [currentUser.username ?? 'Unknown user']: false,
-      };
-      const { newTotalStatus, isTypingText } = getTypingStatus(newEntry);
-
-      setTypingStatus(newTotalStatus);
-      setTypingText(isTypingText);
-
-      queryUtils.chat.getInfiniteMessages.setInfiniteData(
-        { chatId: data.chatId },
+      queryUtils.chat.getInfiniteMessages.setData(
+        { chatId: state.existingChatId! },
         produce((old) => {
           if (!old) return old;
 
           const lastPage = old.pages[old.pages.length - 1];
+          if (!lastPage) return old;
 
           lastPage.items.push(data);
         })
       );
-
-      queryUtils.chat.getAllByUser.setData(
-        undefined,
-        produce((old) => {
-          if (!old) return old;
-
-          const thisChat = old.find((o) => o.id === data.chatId);
-          if (!thisChat) return old;
-          thisChat.messages = [
-            {
-              content: data.content,
-              contentType: data.contentType,
-              createdAt: new Date(data.createdAt),
-            },
-          ];
-        })
-      );
+      setMessage('');
+      setReplyId(undefined);
     },
     onError(error) {
-      setIsSending(false);
       showErrorNotification({
         title: 'Failed to send message.',
         error: new Error(error.message),
@@ -669,158 +485,105 @@ function ChatInputBox({
       });
     },
     onSettled() {
-      throttledTyping.cancel();
-
-      if (!currentUser || isMuted) return;
-
-      doIsTyping({
-        chatId: state.existingChatId!,
-        userId: currentUser.id,
-        isTyping: false,
-      }).catch();
+      const { newTotalStatus, isTypingText } = getTypingStatus({
+        [currentUser?.username ?? '']: false,
+      });
+      setTypingStatus(newTotalStatus);
+      setTypingText(isTypingText);
     },
   });
 
   const handleChatTyping = (value: string) => {
-    setChatMsg(value);
-    if (!currentUser) return;
-
-    // only send signal if they're not erasing the chat
-    if (value.length) {
-      throttledTyping();
-    }
+    setMessage(value);
+    const { newTotalStatus, isTypingText } = getTypingStatus({
+      [currentUser?.username ?? '']: true,
+    });
+    setTypingStatus(newTotalStatus);
+    setTypingText(isTypingText);
   };
 
   const sendMessage = () => {
-    if (isSending) return;
+    if (!message.trim()) return;
 
-    // TODO can probably handle this earlier to disable from sending blank messages
-    const strippedMessage = chatMsg.trim();
-    if (!strippedMessage.length) {
-      setChatMsg('');
-      return;
-    }
-
-    setIsSending(true);
-    mutate({
+    sendMessageMutation({
       chatId: state.existingChatId!,
-      content: strippedMessage,
-      referenceMessageId: replyId,
+      content: message,
+      replyId,
     });
   };
 
-  useEffect(() => {
-    if (!currentUser || isMuted) return;
-
-    doIsTyping({
-      chatId: state.existingChatId!,
-      userId: currentUser.id,
-      isTyping: false,
-    }).catch();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [debouncedChatMsg]);
-
-  useEffect(() => {
-    setChatMsg('');
-  }, [state.existingChatId]);
-
   return (
-    <Group spacing={0}>
-      <Textarea
-        sx={{ flexGrow: 1 }}
-        disabled={isMuted}
-        placeholder={isMuted ? 'Your account has been restricted' : 'Send message'}
-        autosize
-        minRows={1}
-        maxRows={4}
-        value={chatMsg}
-        onChange={(event) => handleChatTyping(event.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            if (!e.shiftKey) {
+    <Stack spacing={0}>
+      {replyId && (
+        <Group position="apart" p="xs" className={classes.replyMessage}>
+          <Text size="xs">Replying to message</Text>
+          <ActionIcon size="xs" onClick={() => setReplyId(undefined)}>
+            <IconX />
+          </ActionIcon>
+        </Group>
+      )}
+      <Group spacing={0}>
+        <Textarea
+          className={classes.chatInput}
+          placeholder="Type a message..."
+          value={message}
+          onChange={(e) => handleChatTyping(e.currentTarget.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
               sendMessage();
             }
-          }
-        }}
-        classNames={{ input: classes.chatInput }} // should test this border more with active highlighting
-      />
-      <ActionIcon
-        h="100%"
-        w={60}
-        onClick={sendMessage}
-        disabled={isSending || !chatMsg.length || isMuted}
-        sx={{ borderRadius: 0 }}
-      >
-        {isSending ? <Loader /> : <IconSend />}
-      </ActionIcon>
-    </Group>
+          }}
+          autosize
+          minRows={1}
+          maxRows={4}
+          sx={{ flex: 1 }}
+        />
+        <ActionIcon
+          size="lg"
+          variant="filled"
+          color="blue"
+          onClick={sendMessage}
+          disabled={!message.trim()}
+        >
+          <IconSend size={16} />
+        </ActionIcon>
+      </Group>
+    </Stack>
   );
 }
 
 const EmbedLink = ({ href, title }: { href?: string; title: string }) => {
-  if (!href) return <Title order={6}>{title}</Title>;
-
-  if (constants.chat.externalRegex.test(href)) {
-    return (
-      <Anchor href={href} target="_blank" rel="noopener noreferrer" variant="link">
-        <Title order={6}>{title}</Title>
-      </Anchor>
-    );
-  }
+  if (!href) return null;
 
   return (
-    <Anchor component={Link} href={href} variant="link">
-      <Title order={6}>{title}</Title>
-    </Anchor>
+    <Link href={href} target="_blank">
+      <Group spacing="xs" noWrap>
+        <Text size="xs">{title}</Text>
+        <IconChevronRight size={16} />
+      </Group>
+    </Link>
   );
 };
 
 const EmbedMessage = ({ content }: { content: string }) => {
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
+  const { state } = useChatContext();
+  const currentUser = useCurrentUser();
 
-  let contentObj: {
-    title: string | null;
-    description: string | null;
-    image: string | null;
-    href?: string;
-  };
-  try {
-    contentObj = JSON.parse(content);
-  } catch {
-    return <></>;
-  }
-
-  const { title, description, image, href } = contentObj;
-
-  if (!title && !description && !image) return <></>;
-
-  const modHref = getLinkHref(href);
+  const isMyMessage = content.includes(currentUser?.username ?? '');
 
   return (
-    <Group
-      sx={{
-        alignSelf: 'center',
-        border: '1px solid gray',
-      }}
-      className={cx(classes.chatMessage)}
-      noWrap
-    >
-      {(!!title || !!description) && (
-        <Stack>
-          {!!title && <EmbedLink href={modHref} title={title} />}
-          {!!description && <Text size="xs">{description}</Text>}
-        </Stack>
-      )}
-      {!!image && (
-        <EdgeMedia
-          src={image}
-          width={75}
-          height={75}
-          alt="Link preview"
-          style={{ objectFit: 'cover' }}
-        />
-      )}
+    <Group position={isMyMessage ? 'right' : 'left'} spacing="xs" className={classes.highlightRow}>
+      <Stack spacing={0} className={classes.chatMessage}>
+        <Group spacing="xs" className={isMyMessage ? classes.myDetails : undefined}>
+          <UserAvatar user={currentUser} size="sm" />
+          <Text size="xs" color="dimmed">
+            {currentUser?.username}
+          </Text>
+        </Group>
+        <Text className={isMyMessage ? classes.myMessage : classes.otherMessage}>{content}</Text>
+      </Stack>
     </Group>
   );
 };
@@ -832,162 +595,54 @@ function DisplayMessages({
   chats: ChatAllMessages;
   setReplyId: React.Dispatch<React.SetStateAction<number | undefined>>;
 }) {
-  const currentUser = useCurrentUser();
-  const { classes, cx } = useStyles();
+  const { classes } = useStyles();
   const { state } = useChatContext();
-
-  const { data: allChatData } = trpc.chat.getAllByUser.useQuery();
-  const tChat = allChatData?.find((chat) => chat.id === state.existingChatId);
-
-  // TODO we should be checking first if this exists in `chats`
-  //      then, grab the content
-  //      then, grab the user info from chatMembers (but what if its not there?)
-  const replyIds = chats
-    .filter((c) => isDefined(c.referenceMessageId))
-    .map((c) => c.referenceMessageId as number);
-  const replyData = trpc.useQueries((t) =>
-    replyIds.map((r) => t.chat.getMessageById({ messageId: r }))
-  );
-
-  let loopMsgDate = new Date(1970);
-  let loopPreviousChatter = 0;
+  const currentUser = useCurrentUser();
 
   return (
-    <LazyMotion features={loadMotion}>
-      {chats.map((c, idx) => {
-        const hourDiff = (c.createdAt.valueOf() - loopMsgDate.valueOf()) / (1000 * 60 * 60);
-        const sameChatter = loopPreviousChatter === c.userId;
-        const shouldShowInfo = hourDiff >= 1 || !sameChatter;
+    <Stack spacing="xs" p="xs">
+      {chats.pages.map((page) =>
+        page.items.map((message) => {
+          const isMyMessage = message.userId === currentUser?.id;
 
-        loopMsgDate = c.createdAt;
-        loopPreviousChatter = c.userId;
-
-        const cachedUser = tChat?.chatMembers?.find((cm) => cm.userId === c.userId)?.user;
-        const isMe = c.userId === currentUser?.id;
-
-        const tReplyData =
-          !!c.referenceMessageId && replyIds.indexOf(c.referenceMessageId) > -1
-            ? replyData[replyIds.indexOf(c.referenceMessageId)]
-            : undefined;
-
-        const isSystemChat = c.userId === -1;
-
-        return (
-          <PStack
-            component={div}
-            // ref={c.id === lastReadId ? lastReadRef : undefined}
-            key={c.id}
-            spacing={12}
-            style={idx === chats.length - 1 ? { paddingBottom: 12 } : {}}
-            initial={{ y: -20, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            transition={{ type: 'spring', duration: 0.4 }}
-          >
-            {isSystemChat && c.contentType === ChatMessageType.Embed ? (
-              <EmbedMessage content={c.content} />
-            ) : isSystemChat ? (
-              // <Group align="center" position="center">
-              //   <Text size="xs">{formatDate(c.createdAt)}</Text>
-              //   ...Text (below)
-              // </Group>
-              <Text
-                className={cx(classes.chatMessage)}
-                size="xs"
-                py={0}
-                sx={{
-                  alignSelf: 'center',
-                  border: '1px solid gray',
-                }}
-              >
-                <CustomMarkdown allowedElements={['a', 'p', 'strong']} unwrapDisallowed>
-                  {c.content.replace(currentUser?.username ?? '', 'You')}
-                </CustomMarkdown>
-              </Text>
-            ) : (
-              <>
-                {shouldShowInfo && (
-                  <Group className={cx({ [classes.myDetails]: isMe })}>
-                    {!!cachedUser ? (
-                      <UserAvatar user={cachedUser} withUsername />
-                    ) : (
-                      <UserAvatar userId={c.userId} withUsername />
-                    )}
-                    <Text size="xs">{formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')}</Text>
-                  </Group>
-                )}
-                {/* TODO this needs better styling and click -> message */}
-                {!!c.referenceMessageId && (
-                  <Group
-                    spacing={6}
-                    position="right"
-                    sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
-                  >
-                    <IconArrowBack size={14} />
-                    {!!tReplyData?.data?.user && (
-                      <Tooltip label={tReplyData.data.user.username}>
-                        <Box>
-                          <UserAvatar user={tReplyData.data.user} size="xs" />
-                        </Box>
-                      </Tooltip>
-                    )}
-                    <Text className={cx([classes.chatMessage, classes.replyMessage])}>
-                      {!tReplyData || tReplyData.isError ? (
-                        <em>Could not load message.</em>
-                      ) : tReplyData.isLoading ? (
-                        <em>Loading content...</em>
-                      ) : (
-                        tReplyData.data?.content ?? <em>Could not load message.</em>
-                      )}
-                    </Text>
-                  </Group>
-                )}
-                <Group
-                  position="right"
-                  className={classes.highlightRow}
-                  sx={{ flexDirection: !isMe ? 'row-reverse' : undefined }}
-                >
-                  <Menu withArrow position={isMe ? 'left-start' : 'right-start'}>
-                    <Menu.Target>
-                      <ActionIcon sx={{ alignSelf: 'flex-start', display: 'none' }}>
-                        <IconDotsVertical />
-                      </ActionIcon>
-                    </Menu.Target>
-                    <Menu.Dropdown>
-                      <Menu.Item
-                        icon={<IconArrowBack size={14} />}
-                        onClick={() => setReplyId(c.id)}
-                      >
-                        Reply
-                      </Menu.Item>
-                    </Menu.Dropdown>
-                  </Menu>
-                  <Tooltip
-                    label={
-                      !shouldShowInfo
-                        ? formatDate(c.createdAt, 'MMM DD, YYYY h:mm:ss a')
-                        : undefined
-                    }
-                    disabled={shouldShowInfo}
-                    sx={{ opacity: 0.85 }}
-                    openDelay={350}
-                    position={isMe ? 'top-end' : 'top-start'}
-                    withArrow
-                  >
-                    <div
-                      className={cx(classes.chatMessage, {
-                        [classes.otherMessage]: !isMe,
-                        [classes.myMessage]: isMe,
-                      })}
-                    >
-                      <Linkify options={linkifyOptions}>{c.content}</Linkify>
-                    </div>
-                  </Tooltip>
+          return (
+            <Group
+              key={message.id}
+              position={isMyMessage ? 'right' : 'left'}
+              spacing="xs"
+              className={classes.highlightRow}
+            >
+              <Stack spacing={0} className={classes.chatMessage}>
+                <Group spacing="xs" className={isMyMessage ? classes.myDetails : undefined}>
+                  <UserAvatar user={message.user} size="sm" />
+                  <Text size="xs" color="dimmed">
+                    {message.user.username}
+                  </Text>
                 </Group>
-              </>
-            )}
-          </PStack>
-        );
-      })}
-    </LazyMotion>
+                {message.replyTo && (
+                  <Box className={classes.replyMessage}>
+                    <Text size="xs" color="dimmed">
+                      Replying to {message.replyTo.user.username}
+                    </Text>
+                    <Text size="xs">{message.replyTo.content}</Text>
+                  </Box>
+                )}
+                <Text className={isMyMessage ? classes.myMessage : classes.otherMessage}>
+                  {message.content}
+                </Text>
+                <Group position="right" spacing="xs">
+                  <Text size="xs" color="dimmed">
+                    {formatDate(message.createdAt)}
+                  </Text>
+                  <ActionIcon size="xs" variant="subtle" onClick={() => setReplyId(message.id)}>
+                    <IconChevronUp />
+                  </ActionIcon>
+                </Group>
+              </Stack>
+            </Group>
+          );
+        })
+      )}
+    </Stack>
   );
 }

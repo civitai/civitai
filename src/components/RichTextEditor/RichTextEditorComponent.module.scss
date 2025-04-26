@@ -1,0 +1,24 @@
+.mention {
+  color: var(--mantine-color-blue-4);
+}
+
+.instagramEmbed {
+  aspect-ratio: 9/16;
+  max-height: 1060px;
+  max-width: 50%;
+  overflow: hidden;
+
+  @container (max-width: 768px) {
+    max-width: 100%;
+  }
+}
+
+.strawPollEmbed {
+  aspect-ratio: 4/3;
+  max-height: 480px;
+  pointer-events: auto !important;
+}
+
+.bubbleTooltip {
+  background-color: var(--mantine-color-dark-6);
+}

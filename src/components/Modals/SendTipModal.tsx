@@ -1,14 +1,4 @@
-import {
-  Badge,
-  Button,
-  Chip,
-  CloseButton,
-  createStyles,
-  Divider,
-  Group,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Badge, Button, Chip, CloseButton, Divider, Group, Stack, Text } from '@mantine/core';
 import { IconBolt } from '@tabler/icons-react';
 import React, { useState } from 'react';
 import { z } from 'zod';
@@ -25,85 +15,7 @@ import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { useTrackEvent } from '../TrackView/track.utils';
 import { UserBuzz } from '../User/UserBuzz';
-
-const useStyles = createStyles((theme) => ({
-  presetCard: {
-    position: 'relative',
-    width: '100%',
-    borderRadius: theme.radius.sm,
-    border: `1px solid ${
-      theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2]
-    }`,
-
-    '&:hover:not([disabled])': {
-      borderColor: theme.colors.blue[6],
-    },
-
-    '&[disabled]': {
-      opacity: 0.5,
-      cursor: 'not-allowed',
-    },
-  },
-
-  sendIcon: {
-    backgroundColor: theme.colors.blue[theme.fn.primaryShade()],
-    color: theme.white,
-    borderTopRightRadius: theme.radius.sm,
-    borderBottomRightRadius: theme.radius.sm,
-  },
-
-  // Chip styling
-  label: {
-    padding: `0 ${theme.spacing.xs}px`,
-
-    '&[data-checked]': {
-      border: `2px solid ${theme.colors.accent[5]}`,
-      color: theme.colors.accent[5],
-
-      '&[data-variant="filled"], &[data-variant="filled"]:hover': {
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-      },
-    },
-  },
-
-  // Chip styling
-  iconWrapper: {
-    display: 'none',
-  },
-
-  chipGroup: {
-    gap: 8,
-
-    [theme.fn.smallerThan('sm')]: {
-      gap: theme.spacing.md,
-    },
-  },
-
-  actions: {
-    [theme.fn.smallerThan('sm')]: {
-      flexDirection: 'column',
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      width: '100%',
-      padding: theme.spacing.md,
-    },
-  },
-
-  cancelButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 2,
-    },
-  },
-
-  submitButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 1,
-    },
-  },
-}));
+import styles from './SendTipModal.module.scss';
 
 const schema = z
   .object({
@@ -139,7 +51,6 @@ const { openModal, Modal } = createContextModal<{
   radius: 'lg',
   withCloseButton: false,
   Element: ({ context, props: { toUserId, entityId, entityType } }) => {
-    const { classes } = useStyles();
     const queryUtils = trpc.useUtils();
 
     const [loading, setLoading] = useState(false);
@@ -241,73 +152,80 @@ const { openModal, Modal } = createContextModal<{
         <Text>How much Buzz do you want to tip?</Text>
         <Form form={form} onSubmit={handleSubmit} style={{ position: 'static' }}>
           <Stack spacing="md">
-            <InputChipGroup className={classes.chipGroup} name="amount" spacing={8}>
+            <InputChipGroup className={styles.chipGroup} name="amount" spacing={8}>
               {presets.map((preset) => (
                 <Chip
-                  classNames={classes}
+                  classNames={{
+                    label: styles.label,
+                    iconWrapper: styles.iconWrapper,
+                  }}
                   variant="filled"
                   key={preset.label}
                   value={preset.amount}
                 >
-                  <Group spacing={4}>
-                    {preset.amount === amount && <IconBolt size={16} fill="currentColor" />}
-                    {preset.amount}
+                  <Group spacing={4} noWrap>
+                    <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                    <Text size="sm" weight={500}>
+                      {numberWithCommas(Number(preset.amount))}
+                    </Text>
                   </Group>
                 </Chip>
               ))}
-              <Chip classNames={classes} variant="filled" value="-1">
-                <Group spacing={4}>
-                  {amount === '-1' && <IconBolt size={16} fill="currentColor" />}
-                  Other
+              <Chip
+                classNames={{
+                  label: styles.label,
+                  iconWrapper: styles.iconWrapper,
+                }}
+                variant="filled"
+                value="-1"
+              >
+                <Group spacing={4} noWrap>
+                  <CurrencyIcon currency={Currency.BUZZ} size={16} />
+                  <Text size="sm" weight={500}>
+                    Custom
+                  </Text>
                 </Group>
               </Chip>
             </InputChipGroup>
             {amount === '-1' && (
               <InputNumber
                 name="customAmount"
-                placeholder="Your tip. Minimum 50 Buzz"
-                variant="filled"
-                rightSectionWidth="10%"
-                min={1}
+                label="Custom amount"
+                placeholder="Enter amount"
+                min={constants.buzz.minTipAmount}
                 max={constants.buzz.maxTipAmount}
-                disabled={sending}
-                icon={<CurrencyIcon currency="BUZZ" size={16} />}
-                parser={(value) => value?.replace(/\$\s?|(,*)/g, '')}
-                formatter={(value) =>
-                  value && !Number.isNaN(parseFloat(value))
-                    ? value.replace(/\B(?<!\.\d*)(?=(\d{3})+(?!\d))/g, ',')
-                    : ''
-                }
-                hideControls
+                step={1}
+                precision={0}
+                rightSection={<CurrencyIcon currency={Currency.BUZZ} size={16} />}
               />
             )}
             <InputTextArea
               name="description"
-              inputWrapperOrder={['input', 'description']}
-              placeholder="Leave a note"
-              variant="filled"
-              minRows={2}
+              label="Message (optional)"
+              placeholder="Add a message to your tip"
               maxLength={100}
-              description={`${description?.length ?? 0}/100 characters`}
+              autosize
+              minRows={2}
+              maxRows={4}
             />
-            <Group className={classes.actions} position="right" mt="xl">
+            <Group className={styles.actions}>
               <Button
-                className={classes.cancelButton}
-                variant="light"
-                color="gray"
+                className={styles.cancelButton}
+                variant="default"
                 onClick={handleClose}
+                disabled={sending}
               >
                 Cancel
               </Button>
               <BuzzTransactionButton
-                label="Tip"
-                className={classes.submitButton}
-                buzzAmount={amountToSend ?? 0}
-                disabled={(amountToSend ?? 0) === 0}
-                loading={sending}
-                color="yellow.7"
+                className={styles.submitButton}
                 type="submit"
-              />
+                loading={sending}
+                disabled={!amountToSend}
+                buzzAmount={amountToSend}
+              >
+                Send Tip
+              </BuzzTransactionButton>
             </Group>
           </Stack>
         </Form>
@@ -316,5 +234,5 @@ const { openModal, Modal } = createContextModal<{
   },
 });
 
-export const openSendTipModal = openModal;
-export default Modal;
+export { openModal, Modal };
+

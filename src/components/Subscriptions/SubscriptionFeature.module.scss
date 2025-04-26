@@ -1,0 +1,57 @@
+.card {
+  background-color: var(--mantine-color-yellow-6);
+  opacity: 0.2;
+  border: 1px solid var(--mantine-color-yellow-6);
+  opacity: 0.3;
+  width: 100%;
+  max-height: 100%;
+  margin: 0;
+  padding: var(--mantine-spacing-md);
+  border-radius: var(--mantine-radius-md);
+  display: flex;
+}
+
+.title {
+  color: var(--mantine-color-dark-0);
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.subtitle {
+  font-size: 14px;
+  line-height: 1.2;
+}
+
+.feature {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--mantine-spacing-sm);
+  padding: var(--mantine-spacing-xs);
+  border-radius: var(--mantine-radius-sm);
+  transition: background-color 0.2s ease;
+
+  &:hover {
+    background-color: var(--mantine-color-dark-6);
+  }
+}
+
+.icon {
+  color: var(--mantine-color-blue-5);
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+}
+
+.content {
+  flex: 1;
+}
+
+.featureTitle {
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.description {
+  color: var(--mantine-color-dimmed);
+  font-size: var(--mantine-font-size-sm);
+}

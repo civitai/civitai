@@ -8,7 +8,6 @@ import {
   Select,
   Stack,
   Text,
-  createStyles,
 } from '@mantine/core';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import {
@@ -45,6 +44,7 @@ import { isDefined } from '~/utils/type-guards';
 import { closeAllModals, openModal } from '@mantine/modals';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
+import classes from './AddToCollectionModal.module.scss';
 
 type Props = Partial<AddCollectionItemInput> & { createNew?: boolean };
 
@@ -74,12 +74,6 @@ const { openModal: openAddToCollectionModal, Modal } = createContextModal<Props>
 export { openAddToCollectionModal };
 export default Modal;
 
-const useCollectionListStyles = createStyles((theme) => ({
-  body: { alignItems: 'center' },
-  labelWrapper: { flex: 1 },
-  contentWrap: { paddingTop: theme.spacing.xs, paddingBottom: theme.spacing.xs },
-}));
-
 type SelectedCollection = {
   collectionId: number;
   tagId?: number | null;
@@ -93,7 +87,6 @@ function CollectionListForm({
   ...props
 }: Props & { onNewClick: VoidFunction; onSubmit: VoidFunction }) {
   const { note, ...target } = props;
-  const { classes } = useCollectionListStyles();
   const queryUtils = trpc.useUtils();
   const [selectedCollections, setSelectedCollections] = useState<SelectedCollection[]>([]);
 
@@ -205,208 +198,67 @@ function CollectionListForm({
       <ReadOnlyAlert />
       <Stack spacing="xl">
         <Stack spacing={4}>
-          <Group spacing="xs" position="apart" noWrap>
-            <Text size="sm" weight="bold">
-              Your collections
+          <Group position="apart">
+            <Text size="sm" weight={500}>
+              Your Collections
             </Text>
             <Button
               variant="subtle"
               size="xs"
               leftIcon={<IconPlus size={16} />}
               onClick={onNewClick}
-              compact
             >
-              New collection
+              New Collection
             </Button>
           </Group>
           {isLoading ? (
-            <Center py="xl">
-              <Loader variant="bars" />
+            <Center p="xl">
+              <Loader />
             </Center>
           ) : (
-            <>
-              <ScrollArea.Autosize maxHeight={200}>
-                {ownedCollections.length > 0 ? (
-                  <Stack spacing={4}>
-                    {ownedCollections.map((collection) => {
-                      const Icon = collectionReadPrivacyData[collection.read].icon;
-                      const selectedItem = selectedCollections.find(
-                        (c) => c.collectionId === collection.id
-                      );
-
-                      const availableTags = (collection?.tags ?? []).filter(
-                        (t) => !t.filterableOnly || t.id === selectedItem?.tagId
-                      );
-
-                      return (
-                        <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
-                          <Checkbox
-                            classNames={classes}
-                            key={selectedItem?.collectionId}
-                            checked={!!selectedItem}
-                            onChange={(e) => {
-                              e.preventDefault();
-                              if (selectedItem) {
-                                setSelectedCollections((curr) =>
-                                  curr.filter((c) => c.collectionId !== collection.id)
-                                );
-                              } else {
-                                setSelectedCollections((curr) => [
-                                  ...curr,
-                                  {
-                                    collectionId: collection.id,
-                                    userId: collection.userId,
-                                    read: collection.read,
-                                  },
-                                ]);
-                              }
-                            }}
-                            label={
-                              <Group spacing="xs" position="apart" w="100%" noWrap>
-                                <Text lineClamp={1} inherit>
-                                  {collection.name}
-                                </Text>
-                                <Icon size={18} />
-                              </Group>
-                            }
-                          />
-                          {selectedItem && availableTags?.length > 0 && (
-                            <Select
-                              withinPortal
-                              withAsterisk
-                              placeholder="Select a tag for your entry in the contest"
-                              size="xs"
-                              label="Tag your entry"
-                              value={selectedItem.tagId?.toString() ?? null}
-                              onChange={(value) => {
-                                setSelectedCollections((curr) =>
-                                  curr.map((c) => {
-                                    if (c.collectionId === collection.id) {
-                                      return { ...c, tagId: value ? parseInt(value, 10) : null };
-                                    }
-                                    return c;
-                                  })
-                                );
-                              }}
-                              clearable
-                              autoFocus
-                              data={availableTags.map((tag) => ({
-                                value: tag.id.toString(),
-                                label: tag.name,
-                              }))}
-                              zIndex={400}
-                            />
-                          )}
-                        </Stack>
-                      );
-                    })}
-                  </Stack>
-                ) : (
-                  <Center py="xl">
-                    <Text color="dimmed">{`You don't have any ${
-                      props.type?.toLowerCase() || ''
-                    } collections yet.`}</Text>
-                  </Center>
-                )}
-              </ScrollArea.Autosize>
-              {contributingCollections.length > 0 && (
-                <>
-                  <Text size="sm" weight="bold" mt="md">
-                    Collections you contribute to
-                  </Text>
-                  <ScrollArea.Autosize maxHeight={200}>
-                    <Stack spacing={4}>
-                      {contributingCollections.map((collection) => {
-                        const Icon = collectionReadPrivacyData[collection.read].icon;
-                        const selectedItem = selectedCollections.find(
-                          (c) => c.collectionId === collection.id
+            <ScrollArea.Autosize maxHeight={300}>
+              <Stack spacing={4}>
+                {ownedCollections.map((collection) => (
+                  <Checkbox
+                    key={collection.id}
+                    label={
+                      <Group spacing={4} noWrap>
+                        <Text size="sm" weight={500}>
+                          {collection.name}
+                        </Text>
+                        <Text size="xs" className={classes.description}>
+                          {collection.description}
+                        </Text>
+                      </Group>
+                    }
+                    checked={selectedCollections.some((c) => c.collectionId === collection.id)}
+                    onChange={(e) => {
+                      if (e.currentTarget.checked) {
+                        setSelectedCollections([
+                          ...selectedCollections,
+                          {
+                            collectionId: collection.id,
+                            userId: collection.userId,
+                            read: collection.read,
+                          },
+                        ]);
+                      } else {
+                        setSelectedCollections(
+                          selectedCollections.filter((c) => c.collectionId !== collection.id)
                         );
-
-                        const availableTags = (collection?.tags ?? []).filter(
-                          (t) => !t.filterableOnly || t.id === selectedItem?.tagId
-                        );
-
-                        return (
-                          <Stack key={collection.id} className={classes.contentWrap} spacing={0}>
-                            <Checkbox
-                              classNames={classes}
-                              key={selectedItem?.collectionId}
-                              checked={!!selectedItem}
-                              onChange={(e) => {
-                                e.preventDefault();
-                                if (selectedItem) {
-                                  setSelectedCollections((curr) =>
-                                    curr.filter((c) => c.collectionId !== collection.id)
-                                  );
-                                } else {
-                                  setSelectedCollections((curr) => [
-                                    ...curr,
-                                    {
-                                      collectionId: collection.id,
-                                      tagId:
-                                        collection.tags?.length > 0 ? collection.tags[0].id : null,
-                                      userId: collection.userId,
-                                      read: collection.read,
-                                    },
-                                  ]);
-                                }
-                              }}
-                              label={
-                                <Group spacing="xs" position="apart" w="100%" noWrap>
-                                  <Text lineClamp={1} inherit>
-                                    {collection.name}
-                                  </Text>
-                                  <Icon className="shrink-0 grow-0" size={18} />
-                                </Group>
-                              }
-                            />
-                            {selectedItem && availableTags?.length > 0 && (
-                              <Select
-                                withinPortal
-                                withAsterisk
-                                placeholder="Select a tag for your entry in the contest"
-                                size="xs"
-                                label="Tag your entry"
-                                value={selectedItem.tagId?.toString() ?? null}
-                                zIndex={400}
-                                onChange={(value) => {
-                                  setSelectedCollections((curr) =>
-                                    curr.map((c) => {
-                                      if (c.collectionId === collection.id) {
-                                        return {
-                                          ...c,
-                                          tagId: value ? parseInt(value, 10) : null,
-                                        };
-                                      }
-                                      return c;
-                                    })
-                                  );
-                                }}
-                                clearable
-                                autoFocus
-                                data={availableTags.map((tag) => ({
-                                  value: tag.id.toString(),
-                                  label: tag.name,
-                                }))}
-                              />
-                            )}
-                          </Stack>
-                        );
-                      })}
-                    </Stack>
-                  </ScrollArea.Autosize>
-                </>
-              )}
-            </>
+                      }
+                    }}
+                  />
+                ))}
+              </Stack>
+            </ScrollArea.Autosize>
           )}
         </Stack>
-
         <Group position="right">
-          <Button
-            disabled={!features.canWrite}
-            loading={addCollectionItemMutation.isLoading}
-            onClick={handleSubmit}
-          >
+          <Button variant="default" leftIcon={<IconArrowLeft size={16} />} onClick={onSubmit}>
+            Cancel
+          </Button>
+          <Button loading={addCollectionItemMutation.isLoading} onClick={handleSubmit}>
             Save
           </Button>
         </Group>
@@ -621,3 +473,4 @@ function ConfirmSetShowcaseCollection({
     </div>
   );
 }
+

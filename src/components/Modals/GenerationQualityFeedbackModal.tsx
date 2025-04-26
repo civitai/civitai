@@ -1,40 +1,11 @@
-import {
-  Button,
-  CloseButton,
-  createStyles,
-  Divider,
-  Group,
-  Stack,
-  Text,
-  ThemeIcon,
-  Modal,
-} from '@mantine/core';
+import { Button, CloseButton, Divider, Group, Stack, Text, ThemeIcon, Modal } from '@mantine/core';
 import { IconThumbDown } from '@tabler/icons-react';
 import React from 'react';
 import { z } from 'zod';
 import { Form, InputTextArea, useForm } from '~/libs/form';
 import { useUpdateImageStepMetadata } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
-
-const useStyles = createStyles((theme) => ({
-  actions: {
-    [theme.fn.smallerThan('sm')]: {
-      flexDirection: 'column',
-      position: 'absolute',
-      bottom: 0,
-      left: 0,
-      width: '100%',
-      padding: theme.spacing.md,
-    },
-  },
-
-  submitButton: {
-    [theme.fn.smallerThan('sm')]: {
-      width: '100%',
-      order: 1,
-    },
-  },
-}));
+import classes from './GenerationQualityFeedbackModal.module.scss';
 
 const schema = z.object({
   message: z.string().trim().optional(),
@@ -53,7 +24,6 @@ export function TextToImageQualityFeedbackModal({
   comments?: string;
 }) {
   const dialog = useDialogContext();
-  const { classes } = useStyles();
   const { updateImages, isLoading } = useUpdateImageStepMetadata();
   const form = useForm({ schema, defaultValues: { message: comments } });
   const handleSubmit = async (data: z.infer<typeof schema>) => {
@@ -119,3 +89,4 @@ export function TextToImageQualityFeedbackModal({
     </Modal>
   );
 }
+

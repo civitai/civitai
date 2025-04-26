@@ -1,4 +1,4 @@
-import { Box, createStyles, Group, Text, Center, Loader } from '@mantine/core';
+import { Box, Group, Text, Center, Loader } from '@mantine/core';
 import {
   CommentsProvider,
   CreateComment,
@@ -6,12 +6,14 @@ import {
   RootThreadProvider,
 } from '~/components/CommentsV2';
 import { CommentConnectorInput } from '~/server/schema/commentv2.schema';
+import styles from './QuestionAnswerComments.module.scss';
 
 type Props = CommentConnectorInput & {
   initialCount?: number;
   limit?: number;
   userId: number;
 };
+
 export function QuestionAnswerComments({
   limit,
   userId,
@@ -19,8 +21,6 @@ export function QuestionAnswerComments({
   entityType,
   initialCount,
 }: Props) {
-  const { classes } = useStyles();
-
   return (
     <RootThreadProvider
       limit={limit}
@@ -35,9 +35,9 @@ export function QuestionAnswerComments({
             <Loader variant="bars" />
           </Center>
         ) : (
-          <Box className={classes.list}>
+          <Box className={styles.list}>
             {data?.map((comment) => (
-              <Comment key={comment.id} comment={comment} className={classes.listItem} />
+              <Comment key={comment.id} comment={comment} className={styles.listItem} />
             ))}
 
             {!!remaining && !showMore && (
@@ -48,7 +48,7 @@ export function QuestionAnswerComments({
               </Group>
             )}
             {created.map((comment) => (
-              <Comment key={comment.id} comment={comment} className={classes.listItem} />
+              <Comment key={comment.id} comment={comment} className={styles.listItem} />
             ))}
             {!remaining && (
               <Box p="sm" pb={0}>
@@ -61,16 +61,3 @@ export function QuestionAnswerComments({
     </RootThreadProvider>
   );
 }
-
-const useStyles = createStyles((theme) => {
-  const borderColor = theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[3];
-  return {
-    list: {
-      borderTop: `1px solid ${borderColor}`,
-    },
-    listItem: {
-      padding: theme.spacing.sm,
-      borderBottom: `1px solid ${borderColor}`,
-    },
-  };
-});

@@ -1,0 +1,11 @@
+.title {
+  @container (max-width: 768px) {
+    font-size: 24px;
+  }
+}
+
+.containerGrid {
+  @container (max-width: 768px) {
+    flex-direction: column-reverse;
+  }
+}

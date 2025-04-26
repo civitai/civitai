@@ -1,0 +1,24 @@
+.sidebar {
+  position: sticky;
+  top: calc(70px + var(--mantine-spacing-xl));
+}
+
+.hideMobile {
+  display: none;
+}
+
+@media (min-width: 768px) {
+  .hideMobile {
+    display: block;
+  }
+}
+
+.showMobile {
+  display: block;
+}
+
+@media (min-width: 768px) {
+  .showMobile {
+    display: none;
+  }
+}

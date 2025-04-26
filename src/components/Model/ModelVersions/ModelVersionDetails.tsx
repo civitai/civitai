@@ -6,7 +6,6 @@ import {
   Button,
   Card,
   Center,
-  createStyles,
   Group,
   Loader,
   MantineTheme,
@@ -126,18 +125,13 @@ import { showErrorNotification, showSuccessNotification } from '~/utils/notifica
 import { abbreviateNumber, formatKBytes } from '~/utils/number-helpers';
 import { getDisplayName, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
+import styles from './ModelVersionDetails.module.scss';
 
-const useStyles = createStyles(() => ({
-  ctaContainer: {
-    width: '100%',
-    flexWrap: 'wrap',
-    ['> *']: { flexGrow: 1 },
-
-    [containerQuery.largerThan('sm')]: {
-      ['> *']: { flexGrow: 0 },
-    },
-  },
-}));
+type BasicFileMetadata = {
+  format?: string;
+  fp?: string;
+  size?: string;
+};
 
 export function ModelVersionDetails({
   model,
@@ -147,7 +141,6 @@ export function ModelVersionDetails({
   onFavoriteClick,
 }: Props) {
   const user = useCurrentUser();
-  const { classes, cx } = useStyles();
   const { connected: civitaiLinked } = useCivitaiLink();
   const router = useRouter();
   const queryUtils = trpc.useUtils();
@@ -248,30 +241,37 @@ export function ModelVersionDetails({
         return {};
       }
 
-      if (hasDownloadPermissions) {
-        if (!file) {
-          return;
-        }
-
-        const url = createModelFileDownloadUrl({
-          versionId: version.id,
-          type: file.type,
-          meta: file.metadata,
-        });
-
+      if (!file) {
         return {
-          // This will allow users to right-click save
-          href: url,
-        };
-      } else {
-        return {
-          onClick: () => {
-            onPurchase('download');
-          },
+          disabled: true,
+          children: 'No files available',
         };
       }
+
+      if (!canDownload) {
+        return {
+          disabled: true,
+          children: 'You do not have permission to download this file',
+        };
+      }
+
+      if (downloadsDisabled) {
+        return {
+          onClick: () => onPurchase('download'),
+          children: 'Purchase Early Access',
+        };
+      }
+
+      return {
+        href: createModelFileDownloadUrl({
+          versionId: version.id,
+          type: file.type as ModelFileType,
+          format: file.metadata?.format,
+        }),
+        children: 'Download',
+      };
     },
-    [isLoadingAccess, hasDownloadPermissions, version.id, router]
+    [canDownload, downloadsDisabled, isLoadingAccess, onPurchase, version.id]
   );
 
   const { currentUserReview } = useQueryUserResourceReview({
@@ -287,61 +287,51 @@ export function ModelVersionDetails({
 
   const handlePublishClick = async (publishDate?: Date) => {
     try {
-      if (model.status !== ModelStatus.Published) {
-        // Publish model, version and all of its posts
-        const versionIds =
-          model.status === ModelStatus.UnpublishedViolation && user?.isModerator
-            ? model.modelVersions.map(({ id }) => id)
-            : [version.id];
-        await publishModelMutation.mutateAsync({
-          id: model.id,
+      if (publishDate) {
+        await publishVersionMutation.mutateAsync({
+          id: version.id,
           publishedAt: publishDate,
-          versionIds,
         });
       } else {
-        // Just publish the version and its posts
-        await publishVersionMutation.mutateAsync({ id: version.id, publishedAt: publishDate });
+        await publishVersionMutation.mutateAsync({
+          id: version.id,
+        });
       }
-    } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
-      const reason = error?.message?.includes('Insufficient funds')
-        ? 'You do not have enough funds to publish this model. You can remove early access or purchase more Buzz in order to publish.'
-        : 'Something went wrong while publishing your model. Please try again later.';
 
+      showSuccessNotification({
+        title: 'Version published',
+        message: 'Your version has been published successfully',
+      });
+
+      queryUtils.modelVersion.getById.invalidate({ id: version.id });
+    } catch (error) {
+      const trpcError = error as TRPCClientErrorBase<DefaultErrorShape>;
       showErrorNotification({
-        error: new Error(error.message),
-        title: 'Error publishing model',
-        reason,
+        error: trpcError,
+        title: 'Failed to publish version',
+        reason: trpcError.message,
       });
     }
-
-    await queryUtils.model.getById.invalidate({ id: model.id });
-    await queryUtils.modelVersion.getById.invalidate({ id: version.id });
-    await queryUtils.image.getInfinite.invalidate();
   };
 
   const handleRequestReviewClick = async () => {
     try {
-      if (model.status === ModelStatus.UnpublishedViolation) {
-        await requestReviewMutation.mutateAsync({ id: model.id });
-      } else {
-        await requestVersionReviewMutation.mutateAsync({ id: version.id });
-      }
-
-      showSuccessNotification({
-        title: 'Request sent',
-        message:
-          'Your request has been sent to the moderators. We will review it as soon as possible.',
+      await requestVersionReviewMutation.mutateAsync({
+        id: version.id,
       });
 
-      await queryUtils.model.getById.invalidate({ id: model.id });
-      await queryUtils.modelVersion.getById.invalidate({ id: version.id });
-    } catch (e) {
-      const error = e as TRPCClientErrorBase<DefaultErrorShape>;
+      showSuccessNotification({
+        title: 'Review requested',
+        message: 'Your version has been submitted for review',
+      });
+
+      queryUtils.modelVersion.getById.invalidate({ id: version.id });
+    } catch (error) {
+      const trpcError = error as TRPCClientErrorBase<DefaultErrorShape>;
       showErrorNotification({
-        error: new Error(error.message),
-        title: 'Error requesting review',
-        reason: 'Something went wrong while requesting a review. Please try again later.',
+        error: trpcError,
+        title: 'Failed to request review',
+        reason: trpcError.message,
       });
     }
   };
@@ -560,18 +550,36 @@ export function ModelVersionDetails({
   ];
 
   const getFileDetails = (file: ModelById['modelVersions'][number]['files'][number]) => (
-    <Group position="apart" noWrap spacing={0}>
-      <Group>
-        <VerifiedText file={file} />
-        <Group spacing={4}>
-          <Text size="xs" color="dimmed">
-            {file.type === 'Pruned Model' ? 'Pruned ' : ''}
-            {file.metadata.format}
-          </Text>
-          <FileInfo file={file} />
-        </Group>
+    <Stack spacing="xs">
+      <Group position="apart">
+        <Text size="sm" weight={500}>
+          {getFileDisplayName(file)}
+        </Text>
+        <Text size="xs" color="dimmed">
+          {formatKBytes(file.sizeKB)}
+        </Text>
       </Group>
-    </Group>
+      {file.metadata?.format && (
+        <Text size="xs" color="dimmed">
+          Format: {file.metadata.format}
+        </Text>
+      )}
+      {file.metadata?.fp && (
+        <Text size="xs" color="dimmed">
+          Precision: {file.metadata.fp}
+        </Text>
+      )}
+      {file.metadata?.size && (
+        <Text size="xs" color="dimmed">
+          Size: {file.metadata.size}
+        </Text>
+      )}
+      {file.metadata?.format === 'SafeTensor' && (
+        <Text size="xs" color="dimmed">
+          SafeTensor
+        </Text>
+      )}
+    </Stack>
   );
   const primaryFileDetails = primaryFile && !hideDownload && getFileDetails(primaryFile);
 
@@ -747,7 +755,7 @@ export function ModelVersionDetails({
             </Stack>
           ) : (
             <Stack spacing={4}>
-              <Group spacing="xs" className={classes.ctaContainer}>
+              <Group spacing="xs" className={styles.ctaContainer}>
                 <Group spacing="xs" sx={{ flex: 1, ['> *']: { flexGrow: 1 } }} noWrap>
                   {couldGenerate && (
                     <GenerateButton
@@ -1491,3 +1499,4 @@ function VersionDescriptionModal({ description }: { description: string }) {
     </Modal>
   );
 }
+

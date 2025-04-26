@@ -6,7 +6,7 @@ import { constants } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/server/common/mime-types';
 import { fetchBlob } from '~/utils/file-utils';
 import { formatBytes } from '~/utils/number-helpers';
-import clsx from 'clsx';
+import styles from './ImageDropzone.module.scss';
 import { isOrchestratorUrl } from '~/server/common/constants';
 
 export function ImageDropzone({
@@ -69,56 +69,44 @@ export function ImageDropzone({
       <Dropzone
         {...props}
         accept={accept}
-        className={clsx({
-          ['bg-gray-0 dark:bg-dark-6 border-gray-2 dark:border-dark-5 cursor-not-allowed [&_*]:text-gray-5 [&_*]:dark:text-dark-3']:
-            disabled,
-        })}
-        classNames={{
-          root: clsx({ ['border-red-6 mb-1']: hasError || !!error }),
-        }}
-        disabled={!canAddFiles || disabled}
+        className={`${styles.dropzone} ${disabled ? styles.dropzoneDisabled : ''} ${
+          hasError || error ? styles.dropzoneError : ''
+        }`}
+        disabled={disabled}
         onDrop={handleDrop}
         onDropCapture={handleDropCapture}
       >
-        <div className="pointer-events-none flex min-h-28 flex-col items-center justify-center gap-2">
+        <div className={styles.dropzoneContent}>
           <Dropzone.Accept>
-            <IconUpload
-              size={50}
-              stroke={1.5}
-              color={theme.colors[theme.primaryColor][theme.colorScheme === 'dark' ? 4 : 6]}
-            />
+            <IconUpload size={50} className={`${styles.icon} ${styles.iconAccept}`} />
           </Dropzone.Accept>
           <Dropzone.Reject>
-            <IconX
-              size={50}
-              stroke={1.5}
-              color={theme.colors.red[theme.colorScheme === 'dark' ? 4 : 6]}
-            />
+            <IconX size={50} className={`${styles.icon} ${styles.iconReject}`} />
           </Dropzone.Reject>
           <Dropzone.Idle>
-            <IconPhoto size={50} stroke={1.5} />
+            <IconPhoto size={50} className={`${styles.icon} ${styles.iconIdle}`} />
           </Dropzone.Idle>
 
-          <div className="flex flex-col items-center gap-1">
-            <Text size="xl" inline align="center">
+          <div className={styles.textContainer}>
+            <Text className={styles.title}>
               {label ?? 'Drag images here or click to select files'}
             </Text>
             {description}
             {(!max || max > 1) && (
-              <Text size="sm" color="dimmed" mt={7} inline>
+              <Text className={styles.description}>
                 {max ? `Attach up to ${max} files` : 'Attach as many files as you like'}
               </Text>
             )}
             {fileExtensions.length > 0 && (
-              <Text size="sm" color="dimmed" inline>
+              <Text className={styles.description}>
                 {`Accepted file types: ${fileExtensions.join(', ')}`}
               </Text>
             )}
-            <Text size="sm" color="dimmed" inline>
+            <Text className={styles.description}>
               {`Images cannot exceed ${formatBytes(maxSize)} `}
             </Text>
             {allowsVideo && (
-              <Text size="sm" color="dimmed" inline>
+              <Text className={styles.description}>
                 {`Videos cannot exceed ${formatBytes(
                   constants.mediaUpload.maxVideoFileSize
                 )}, 4K resolution, or ${
@@ -129,7 +117,7 @@ export function ImageDropzone({
           </div>
         </div>
       </Dropzone>
-      {error && <Input.Error className="mt-1">{error}</Input.Error>}
+      {error && <Input.Error className={styles.error}>{error}</Input.Error>}
     </>
   );
 }
@@ -145,3 +133,4 @@ type Props = Omit<DropzoneProps, 'children' | 'onDropCapture'> & {
   allowExternalImageDrop?: boolean;
   onDropCapture?: (url: string) => void;
 };
+

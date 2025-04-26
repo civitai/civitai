@@ -1,0 +1,29 @@
+.wrapper {
+  min-height: 98px;
+}
+
+.creatorCard {
+  &.active {
+    border-color: var(--mantine-color-blue-8);
+    box-shadow: 0 0 10px var(--mantine-color-blue-8);
+  }
+
+  &:hover {
+    background-color: var(--mantine-color-dark-6);
+  }
+}
+
+.crown {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.4;
+}
+
+.delta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: -25px;
+}

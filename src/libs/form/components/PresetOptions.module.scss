@@ -1,0 +1,32 @@
+.label {
+  padding: 8px;
+  font-weight: 590;
+  line-height: 1;
+  font-size: 12px;
+}
+
+.label[data-checked] {
+  color: var(--mantine-color-black);
+  border: 1px solid var(--mantine-color-blue-6);
+}
+
+[data-mantine-color-scheme='dark'] .label[data-checked] {
+  color: var(--mantine-color-white);
+}
+
+.label[data-checked]:hover {
+  color: var(--mantine-color-black);
+  border: 1px solid var(--mantine-color-blue-6);
+}
+
+[data-mantine-color-scheme='dark'] .label[data-checked]:hover {
+  color: var(--mantine-color-white);
+}
+
+.label[data-checked][data-variant="filled"] {
+  background-color: color-mix(in srgb, var(--mantine-color-blue-6) 20%, transparent);
+}
+
+.iconWrapper {
+  display: none;
+}

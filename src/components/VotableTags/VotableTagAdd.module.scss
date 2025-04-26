@@ -1,0 +1,34 @@
+.badge {
+  cursor: pointer;
+  background-color: var(--mantine-color-blue-1);
+  border-color: var(--mantine-color-blue-2);
+  color: var(--mantine-color-blue-7);
+}
+
+.inner {
+  display: flex;
+}
+
+.createOption {
+  font-size: var(--mantine-font-size-sm);
+  padding: var(--mantine-spacing-xs);
+  border-radius: var(--mantine-radius-sm);
+
+  &:hover {
+    background-color: var(--mantine-color-gray-1);
+  }
+}
+
+[data-mantine-color-scheme='dark'] .createOption:hover {
+  background-color: var(--mantine-color-dark-4);
+}
+
+.input {
+  text-transform: uppercase;
+  font-weight: bold;
+  font-size: 11px;
+}
+
+.dropdown {
+  max-width: 300px !important;
+}

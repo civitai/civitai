@@ -1,0 +1,35 @@
+.verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--mantine-color-blue-5);
+  font-weight: 500;
+}
+
+.icon {
+  color: var(--mantine-color-blue-5);
+  width: 16px;
+  height: 16px;
+}
+
+.hideSm {
+  @container (max-width: 992px) {
+    display: none;
+  }
+}
+
+.success {
+  color: var(--mantine-color-green-5);
+}
+
+.warning {
+  color: var(--mantine-color-yellow-5);
+}
+
+.error {
+  color: var(--mantine-color-red-5);
+}
+
+.neutral {
+  color: var(--mantine-color-gray-5);
+}

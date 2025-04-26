@@ -1,0 +1,44 @@
+.sidebar {
+  height: 100%;
+  margin-left: -377px;
+  width: 377px;
+  transition: margin 200ms ease;
+  border-right: 1px solid var(--mantine-color-dark-5);
+  background: var(--mantine-color-dark-7);
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar[data-light] {
+  border-color: var(--mantine-color-gray-1);
+  background: var(--mantine-color-gray-0);
+}
+
+@media (max-width: 576px) {
+  .sidebar {
+    top: 0;
+    left: 0;
+    z-index: 200;
+    height: 100%;
+    width: 100%;
+    margin-left: -100%;
+    position: absolute;
+    border: none;
+  }
+}
+
+.scrollable {
+  padding: var(--mantine-spacing-md);
+  overflow-y: auto;
+  flex: 1;
+}
+
+.root {
+  height: 100%;
+  width: 100%;
+  display: flex;
+}
+
+.active {
+  margin-left: 0 !important;
+}

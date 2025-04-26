@@ -1,14 +1,4 @@
-import {
-  createStyles,
-  Divider,
-  Group,
-  Stack,
-  Text,
-  ThemeIcon,
-  Tooltip,
-  UnstyledButton,
-} from '@mantine/core';
-
+import { Divider, Group, Stack, Text, ThemeIcon, Tooltip, UnstyledButton } from '@mantine/core';
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconChevronsLeft } from '@tabler/icons-react';
@@ -30,6 +20,7 @@ import { constants } from '~/server/common/constants';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useLocalStorage } from '@mantine/hooks';
 import { UiState } from 'instantsearch.js';
+import styles from './SearchLayout.module.scss';
 
 const SIDEBAR_SIZE = 377;
 
@@ -58,46 +49,6 @@ export const useSearchLayout = () => {
   if (!context) throw new Error('useSearchLayoutIdx can only be used inside SearchLayoutCtx');
   return context;
 };
-
-const useStyles = createStyles((theme) => {
-  return {
-    sidebar: {
-      height: '100%',
-      marginLeft: `-${SIDEBAR_SIZE}px`,
-      width: `${SIDEBAR_SIZE}px`,
-
-      transition: 'margin 200ms ease',
-      borderRight: '1px solid',
-      borderColor: theme.colorScheme === 'dark' ? theme.colors.dark[5] : theme.colors.gray[1],
-      background: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.colors.gray[0],
-      display: 'flex',
-      flexDirection: 'column',
-
-      [containerQuery.smallerThan('sm')]: {
-        top: 0,
-        left: 0,
-        zIndex: 200,
-        height: '100%',
-        width: '100%',
-        marginLeft: `-100%`,
-        position: 'absolute',
-        border: 'none',
-      },
-    },
-
-    scrollable: {
-      padding: theme.spacing.md,
-      overflowY: 'auto',
-      flex: 1,
-    },
-
-    root: { height: '100%', width: '100%', display: 'flex' },
-
-    active: {
-      marginLeft: '0 !important',
-    },
-  };
-});
 
 function renderSearchComponent(props: RenderSearchComponentProps) {
   return <CustomSearchBox {...props} />;
@@ -171,18 +122,15 @@ export function SearchLayout({
 }
 
 SearchLayout.Root = function Root({ children }: { children: React.ReactNode }) {
-  const { classes } = useStyles();
-
-  return <div className={classes.root}>{children}</div>;
+  return <div className={styles.root}>{children}</div>;
 };
 
 SearchLayout.Filters = function Filters({ children }: { children: React.ReactNode }) {
-  const { classes, cx } = useStyles();
   const { sidebarOpen, setSidebarOpen } = useSearchLayout();
   const { classes: searchLayoutClasses } = useSearchLayoutStyles();
 
   return (
-    <aside className={cx(classes.sidebar, { [classes.active]: sidebarOpen })}>
+    <aside className={`${styles.sidebar} ${sidebarOpen ? styles.active : ''}`}>
       <Group px="md" py="xs">
         <Tooltip label="Filters & sorting" position="bottom" withArrow>
           <UnstyledButton onClick={() => setSidebarOpen(!sidebarOpen)}>
@@ -200,7 +148,7 @@ SearchLayout.Filters = function Filters({ children }: { children: React.ReactNod
         <Text size="lg">Filters &amp; sorting</Text>
       </Group>
       <Divider />
-      <ScrollArea className="h-full p-4">{children}</ScrollArea>
+      <div className={styles.scrollable}>{children}</div>
     </aside>
   );
 };
@@ -221,24 +169,20 @@ SearchLayout.Content = function Content({ children }: { children: React.ReactNod
   );
 };
 
-export const useSearchLayoutStyles = createStyles((theme) => ({
+export const useSearchLayoutStyles = {
   grid: {
     display: 'grid',
     gridTemplateColumns: `repeat(auto-fill, minmax(250px, 1fr))`,
-    gap: theme.spacing.md,
+    gap: '1rem',
     gridTemplateRows: `auto 1fr`,
     overflow: 'hidden',
-    // marginTop: -theme.spacing.md,
-
-    // '& > *': {
-    //   marginTop: theme.spacing.md,
-    // },
   },
 
   filterButton: {
-    background: theme.colorScheme === 'dark' ? theme.colors.dark[6] : theme.colors.gray[2],
+    background: 'var(--mantine-color-dark-6)',
     svg: {
-      color: theme.colorScheme === 'dark' ? undefined : theme.colors.dark[6],
+      color: 'var(--mantine-color-dark-6)',
     },
   },
-}));
+};
+

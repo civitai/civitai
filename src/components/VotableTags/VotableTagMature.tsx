@@ -1,4 +1,4 @@
-import { Badge, createStyles, Divider, Chip, Group, Text, Popover, Stack } from '@mantine/core';
+import { Badge, Divider, Chip, Group, Text, Popover, Stack } from '@mantine/core';
 import { TagType } from '~/shared/utils/prisma/enums';
 import { IconPlus } from '@tabler/icons-react';
 import React, { useMemo } from 'react';
@@ -6,6 +6,7 @@ import { moderationCategories } from '~/libs/moderation';
 import { NsfwLevel } from '~/server/common/enums';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { getDisplayName } from '~/utils/string-helpers';
+import classes from './VotableTagMature.module.scss';
 
 export function VotableTagMature({ tags, addTag }: VotableTagMatureProps) {
   // State
@@ -18,12 +19,15 @@ export function VotableTagMature({ tags, addTag }: VotableTagMatureProps) {
 
   // Style
   const hasMature = Object.keys(matureTags).length > 0;
-  const { classes } = useStyles({ hasMature });
 
   return (
     <Popover width={400} withArrow withinPortal zIndex={1000}>
       <Popover.Target>
-        <Badge radius="xs" className={classes.badge} px={5}>
+        <Badge
+          radius="xs"
+          className={`${classes.badge} ${hasMature ? classes.badgeHasMature : ''}`}
+          px={5}
+        >
           <Group spacing={4} noWrap>
             <IconPlus size={14} strokeWidth={2.5} />
             Moderated Content
@@ -72,40 +76,3 @@ type VotableTagMatureProps = {
   tags: { id: number; name: string; type: TagType; nsfwLevel: NsfwLevel }[];
 };
 
-const useStyles = createStyles((theme, { hasMature }: { hasMature: boolean }) => {
-  const badgeColor = theme.fn.variant({
-    color: hasMature ? 'red' : 'gray',
-    variant: hasMature ? 'light' : 'filled',
-  });
-  const badgeBorder = theme.fn.lighten(badgeColor.background ?? theme.colors.gray[4], 0.05);
-  return {
-    badge: {
-      cursor: 'pointer',
-      backgroundColor: badgeColor.background,
-      borderColor: badgeBorder,
-      color: badgeColor.color,
-      userSelect: 'none',
-    },
-    inner: {
-      display: 'flex',
-    },
-    createOption: {
-      fontSize: theme.fontSizes.sm,
-      padding: theme.spacing.xs,
-      borderRadius: theme.radius.sm,
-
-      '&:hover': {
-        backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
-      },
-    },
-    input: {
-      textTransform: 'uppercase',
-      fontWeight: 'bold',
-      fontSize: 11,
-    },
-    dropdown: {
-      marginTop: -12,
-      maxWidth: '300px !important',
-    },
-  };
-});

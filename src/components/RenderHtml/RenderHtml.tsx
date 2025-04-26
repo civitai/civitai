@@ -1,87 +1,11 @@
-import {
-  createStyles,
-  TypographyStylesProvider,
-  TypographyStylesProviderProps,
-} from '@mantine/core';
+import { TypographyStylesProvider, TypographyStylesProviderProps } from '@mantine/core';
+import { createStyles } from '@mantine/styles';
 import { useMemo } from 'react';
 
 import { DEFAULT_ALLOWED_ATTRIBUTES, needsColorSwap, sanitizeHtml } from '~/utils/html-helpers';
-import { containerQuery } from '~/utils/mantine-css-helpers';
+import { styles } from './RenderHtml.styles';
 
-const useStyles = createStyles((theme) => ({
-  htmlRenderer: {
-    '& p:last-of-type': {
-      marginBottom: 0,
-    },
-    p: {
-      wordBreak: 'break-word',
-    },
-    iframe: {
-      border: 'none',
-    },
-    // pre: {
-    //   whiteSpace: 'pre',
-    //   wordWrap: 'normal',
-    //   overflowX: 'auto',
-    // },
-    code: {
-      // whiteSpace: 'pre-line',
-      whiteSpace: 'break-spaces',
-    },
-    'div[data-type="instagram"]': {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      height: 769,
-
-      '& > iframe': {
-        width: '50%',
-        overflow: 'hidden',
-        flexGrow: 1,
-      },
-
-      [containerQuery.smallerThan('md')]: {
-        height: 649,
-      },
-
-      [containerQuery.smallerThan('sm')]: {
-        height: 681,
-
-        '& > iframe': {
-          width: '100%',
-        },
-      },
-    },
-    'div[data-type="strawPoll"]': {
-      display: 'flex',
-      flexDirection: 'column',
-      alignItems: 'center',
-      height: 480,
-
-      '& > iframe': {
-        flexGrow: 1,
-      },
-    },
-    // Prevent heading to be hidden by the fixed navbar
-    'h1, h2, h3': {
-      '&:before': {
-        display: 'block',
-        content: '""',
-        // Navbar height + margin
-        marginTop: theme.spacing.xs * -7,
-        height: theme.spacing.xs * 7 + theme.spacing.xs,
-        visibility: 'hidden',
-      },
-    },
-    hr: {
-      height: '4px',
-      padding: 0,
-      margin: '24px 0',
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[2],
-      border: 0,
-    },
-  },
-}));
+const useStyles = createStyles(styles);
 
 export function RenderHtml({
   html,
@@ -89,7 +13,7 @@ export function RenderHtml({
   allowCustomStyles = true,
   ...props
 }: Props) {
-  const { classes, theme } = useStyles();
+  const { classes } = useStyles();
 
   html = useMemo(
     () =>
@@ -129,7 +53,7 @@ export function RenderHtml({
             if (rgbColors.length === 3) hexColor = rgbColors.join('');
 
             const needsSwap = hexColor
-              ? needsColorSwap({ hexColor, colorScheme: theme.colorScheme, threshold: 0.2 })
+              ? needsColorSwap({ hexColor, colorScheme: 'dark', threshold: 0.2 })
               : false;
 
             return withMentions && isMention
@@ -145,14 +69,7 @@ export function RenderHtml({
                   attribs: {
                     ...attribs,
                     style:
-                      needsSwap && hexColor
-                        ? style +
-                          `;color:${
-                            theme.colorScheme === 'dark'
-                              ? theme.fn.lighten(hexColor, 0.5)
-                              : theme.fn.darken(hexColor, 0.3)
-                          }`
-                        : style,
+                      needsSwap && hexColor ? style + `;color:var(--mantine-color-dark-4)` : style,
                   },
                 };
           },
@@ -168,7 +85,7 @@ export function RenderHtml({
         },
       }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [html, withMentions, theme.colorScheme]
+    [html, withMentions]
   );
 
   return (

@@ -1,0 +1,8 @@
+.sticky {
+  background-color: var(--mantine-color-dark-7);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  margin-bottom: -5px;
+  padding-bottom: 5px;
+}

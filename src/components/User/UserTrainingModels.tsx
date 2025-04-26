@@ -5,7 +5,6 @@ import {
   Badge,
   Button,
   Center,
-  createStyles,
   Divider,
   Group,
   HoverCard,
@@ -18,6 +17,8 @@ import {
   Stack,
   Table,
   Text,
+  Box,
+  BoxProps,
 } from '@mantine/core';
 import { useClipboard, useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
@@ -33,7 +34,7 @@ import {
   IconX,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import React, { useState } from 'react';
+import React, { useState, forwardRef } from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
@@ -58,32 +59,7 @@ import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
 import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-
-// TODO make this an importable var
-const useStyles = createStyles((theme) => ({
-  header: {
-    position: 'sticky',
-    top: 0,
-    backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[7] : theme.white,
-    transition: 'box-shadow 150ms ease',
-    zIndex: 10,
-
-    '&::after': {
-      content: '""',
-      position: 'absolute',
-      left: 0,
-      right: 0,
-      bottom: 0,
-      borderBottom: `1px solid ${
-        theme.colorScheme === 'dark' ? theme.colors.dark[3] : theme.colors.gray[2]
-      }`,
-    },
-  },
-
-  scrolled: {
-    boxShadow: theme.shadows.sm,
-  },
-}));
+import styles from './UserTrainingModels.module.scss';
 
 type TrainingFileData = {
   type: string;
@@ -146,9 +122,25 @@ export const trainingStatusFields: {
 
 const modelsLimit = 10;
 
+export interface UserTrainingModelsProps extends BoxProps {
+  scrolled?: boolean;
+}
+
+export const UserTrainingModels = forwardRef<HTMLDivElement, UserTrainingModelsProps>((props, ref) => {
+  const { scrolled, className, ...others } = props;
+
+  return (
+    <Box
+      className={`${styles.header} ${scrolled ? styles.scrolled : ''} ${className}`}
+      {...others}
+      ref={ref}
+    />
+  );
+});
+
+UserTrainingModels.displayName = 'UserTrainingModels';
+
 export default function UserTrainingModels() {
-  const { classes, cx } = useStyles();
-  const queryUtils = trpc.useUtils();
   const router = useRouter();
   const { copied, copy } = useClipboard();
 
@@ -248,265 +240,105 @@ export default function UserTrainingModels() {
         color="yellow"
         size="sm"
       >
-        Due to high load, LoRA Trainings are not always successful - they may fail or get stuck in
-        processing. Not to worry though, if your LoRA training fails your Buzz will be refunded
-        within 24 hours. If your training has been processing for more than 24 hours it will be auto
-        failed and a refund will be issued to you. If your training fails it&apos;s recommended that
-        you try again.
+        <Text>
+          Training is currently in beta. Please report any issues you encounter to our{' '}
+          <Link href="/feedback" target="_blank">
+            feedback page
+          </Link>
+          .
+        </Text>
       </AlertWithIcon>
       <ScrollArea
         // TODO [bw] this 600px here should be autocalced via a css var, to capture the top nav, user info section, and bottom bar
         style={{ height: 'max(400px, calc(100vh - 600px))' }}
         onScrollPositionChange={({ y }) => setScrolled(y !== 0)}
       >
-        {/* TODO [bw] this should probably be transitioned to a filterable/sortable table, like in reports.tsx */}
-        <Table
-          verticalSpacing="md"
-          fontSize="md"
-          striped={hasTraining}
-          highlightOnHover={hasTraining}
-        >
-          <thead className={cx(classes.header, { [classes.scrolled]: scrolled })}>
+        <Table verticalSpacing="md" fontSize="md" striped={hasTraining}>
+          <thead className={styles.header}>
             <tr>
               <th>Name</th>
               <th>Type</th>
-              <th>Model</th>
-              <th>Training Status</th>
+              <th>Status</th>
               <th>Created</th>
-              <th>Start</th>
+              <th>Last Updated</th>
               <th>Missing Info</th>
-              <th>Actions</th>
+              <th />
             </tr>
           </thead>
           <tbody>
             {isLoading && (
               <tr>
                 <td colSpan={7}>
-                  <LoadingOverlay visible={true} />
+                  <LoadingOverlay visible />
                 </td>
               </tr>
             )}
             {hasTraining ? (
-              items.map((mv) => {
-                const isSubmitted = mv.trainingStatus === TrainingStatus.Submitted;
-                const isProcessing = mv.trainingStatus === TrainingStatus.Processing;
-                const isPaused = mv.trainingStatus === TrainingStatus.Paused;
-                const isRunning = isSubmitted || isProcessing;
-                const isNotDeletable = isRunning || isPaused;
-
-                const thisTrainingDetails = mv.trainingDetails as TrainingDetailsObj | undefined;
-                const thisFile = mv.files[0];
-                const thisFileMetadata = thisFile?.metadata as FileMetadata | null;
-
-                const hasFiles = !!thisFile;
-                const trainingParams = thisTrainingDetails?.params;
-                const hasTrainingParams = !!trainingParams;
-
-                const numEpochs = trainingParams?.maxTrainEpochs;
-                const epochsDone =
-                  (thisFileMetadata?.trainingResults?.version === 2
-                    ? thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epochNumber
-                    : thisFileMetadata?.trainingResults?.epochs?.slice(-1)[0]?.epoch_number) ?? 0;
-                // const epochsPct = Math.round((numEpochs ? epochsDone / numEpochs : 0) * 10);
-
-                const startDate = thisFileMetadata?.trainingResults?.submittedAt;
-                const startStr = !!startDate
-                  ? formatDate(startDate, 'MMM D, YYYY hh:mm:ss A')
-                  : '-';
+              items.map((model) => {
+                const hasVersion = model._count.modelVersions > 0;
+                const hasFiles = model.modelVersions.some((version) => version._count.files > 0);
+                const hasPosts = model.modelVersions.some((version) => version._count.posts > 0);
 
                 return (
-                  // nb:
-                  // Cannot use <Link> here as it doesn't properly wrap rows, handle middle clicks, etc.
-                  // onClick doesn't handle middle clicks
-                  // onAuxClick should work, but for some reason doesn't handle middle clicks
-                  // onMouseUp is not perfect, but it's the closest thing we've got
-                  // which means all click events inside that need to also be mouseUp, so they can be properly de-propagated
-                  <tr
-                    key={mv.id}
-                    style={{ cursor: 'pointer' }}
-                    onMouseUp={(e) => {
-                      goToModel(e, getModelTrainingWizardUrl(mv));
-                    }}
-                    onMouseDown={(e) => {
-                      if (e.button == 1) {
-                        e.preventDefault();
-                        return false;
-                      }
-                    }}
-                  >
+                  <tr key={model.id}>
                     <td>
-                      <Group spacing={4}>
-                        <Text>{mv.model.name}</Text>
-                        {mv.name !== mv.model.name && <Text>({mv.name})</Text>}
-                      </Group>
+                      <Stack spacing={0}>
+                        <Text lineClamp={2}> {model.name}</Text>
+                        <Divider my={4} />
+                        <Link legacyBehavior href={getModelTrainingWizardUrl(model)} passHref>
+                          <Anchor target="_blank" lineClamp={2}>
+                            <Group spacing="xs" noWrap>
+                              <Text size="xs">Continue Wizard</Text>{' '}
+                              <IconExternalLink size={16} stroke={1.5} />
+                            </Group>
+                          </Anchor>
+                        </Link>
+                        <Link legacyBehavior href={`/models/${model.id}`} passHref>
+                          <Anchor target="_blank" lineClamp={2}>
+                            <Group spacing="xs" noWrap>
+                              <Text size="xs">Go to model page</Text>
+                              <IconExternalLink size={16} stroke={1.5} />
+                            </Group>
+                          </Anchor>
+                        </Link>
+                      </Stack>
                     </td>
                     <td>
-                      <Badge>{splitUppercase(thisTrainingDetails?.type ?? '-')}</Badge>
+                      <Badge>{splitUppercase(model.type)}</Badge>
                     </td>
                     <td>
-                      <Text>
-                        {isDefined(thisTrainingDetails?.baseModel)
-                          ? thisTrainingDetails.baseModel in trainingModelInfo
-                            ? trainingModelInfo[
-                                thisTrainingDetails.baseModel as TrainingDetailsBaseModelList
-                              ].pretty
-                            : 'Custom'
-                          : '-'}
-                      </Text>
+                      <Badge color="yellow">{splitUppercase(model.status)}</Badge>
                     </td>
+                    <td>{formatDate(model.createdAt)}</td>
+                    <td>{model.updatedAt ? formatDate(model.updatedAt) : 'N/A'}</td>
                     <td>
-                      {mv.trainingStatus ? (
-                        <Group spacing="sm">
-                          <HoverCard shadow="md" width={300} zIndex={100} withArrow>
-                            <HoverCard.Target>
-                              <Badge
-                                color={trainingStatusFields[mv.trainingStatus]?.color ?? 'gray'}
-                              >
-                                <Group spacing={6} noWrap>
-                                  {splitUppercase(
-                                    mv.trainingStatus === TrainingStatus.InReview
-                                      ? 'Ready'
-                                      : mv.trainingStatus
-                                  )}
-                                  {isRunning && <Loader size={12} />}
-                                </Group>
-                              </Badge>
-                            </HoverCard.Target>
-                            <HoverCard.Dropdown>
-                              <Text>
-                                {trainingStatusFields[mv.trainingStatus]?.description ?? 'N/A'}
-                              </Text>
-                            </HoverCard.Dropdown>
-                          </HoverCard>
-                          {isProcessing && (
-                            <>
-                              <Divider size="sm" orientation="vertical" />
-                              <HoverCard shadow="md" width={250} zIndex={100} withArrow>
-                                <HoverCard.Target>
-                                  <Badge
-                                    variant="filled"
-                                    // color={`gray.${Math.max(Math.min(epochsPct, 9), 0)}`}
-                                    color={'gray'}
-                                  >
-                                    {`Progress: ${epochsDone}/${numEpochs}`}
-                                  </Badge>
-                                </HoverCard.Target>
-                                <HoverCard.Dropdown>
-                                  <Text>Number of Epochs remaining</Text>
-                                </HoverCard.Dropdown>
-                              </HoverCard>
-                            </>
-                          )}
-                          {(mv.trainingStatus === TrainingStatus.Failed ||
-                            mv.trainingStatus === TrainingStatus.Denied) && (
-                            <Button
-                              size="xs"
-                              color="gray"
-                              py={0}
-                              sx={{ fontSize: 12, fontWeight: 600, height: 20 }}
-                              component="a"
-                              href="/support-portal"
-                              target="_blank"
-                              onMouseUp={(e) => {
-                                e.preventDefault();
-                                e.stopPropagation();
-                              }}
-                            >
-                              <Group noWrap spacing={6}>
-                                Open Support Ticket <IconExternalLink size={12} />
-                              </Group>
-                            </Button>
-                          )}
-                        </Group>
-                      ) : (
-                        <Badge color="gray">N/A</Badge>
-                      )}
-                    </td>
-                    <td>
-                      <HoverCard openDelay={400} shadow="md" zIndex={100} withArrow>
-                        <HoverCard.Target>
-                          <Text>{formatDate(mv.createdAt)}</Text>
-                        </HoverCard.Target>
-                        {new Date(mv.createdAt).getTime() !== new Date(mv.updatedAt).getTime() && (
-                          <HoverCard.Dropdown>
-                            <Text>Updated: {formatDate(mv.updatedAt)}</Text>
-                          </HoverCard.Dropdown>
-                        )}
-                      </HoverCard>
-                    </td>
-                    <td>
-                      <Text>{startStr}</Text>
-                    </td>
-                    <td>
-                      <Group spacing={8} noWrap>
-                        {!hasFiles || !hasTrainingParams ? (
-                          <IconAlertCircle color="orange" />
-                        ) : (
-                          <IconCircleCheck color="green" />
+                      <Group>
+                        {(!hasVersion || !hasFiles || !hasPosts) && (
+                          <IconAlertCircle size={16} color="orange" />
                         )}
                         <Stack spacing={4}>
-                          {/* technically this step 1 alert should never happen */}
-                          {/*{!hasVersion && <Text inherit>Needs basic model data (Step 1)</Text>}*/}
-                          {!hasFiles && <Text inherit>Needs training files (Step 2)</Text>}
-                          {!hasTrainingParams && (
-                            <Text inherit>Needs training parameters (Step 3)</Text>
-                          )}
-                          {/* TODO [bw] we should probably include the model related fields here after training is done */}
-                          {hasFiles && hasTrainingParams && <Text inherit>All good!</Text>}
+                          {!hasVersion && <Text inherit>Needs model version</Text>}
+                          {!hasFiles && <Text inherit>Needs model files</Text>}
+                          {!hasPosts && <Text inherit>Needs model post</Text>}
                         </Stack>
                       </Group>
                     </td>
                     <td>
-                      <Group position="right" spacing={8} pr="xs" noWrap>
-                        {mv.trainingStatus === TrainingStatus.InReview && (
-                          <Link legacyBehavior href={getModelTrainingWizardUrl(mv)} passHref>
-                            <Button
-                              component="a"
-                              radius="xl"
-                              size="sm"
-                              onClick={(e) => e.stopPropagation()}
-                              compact
-                            >
-                              Review
-                            </Button>
-                          </Link>
-                        )}
-                        <ActionIcon
-                          variant="filled"
-                          radius="xl"
-                          size="md"
-                          onMouseUp={(e) => {
-                            e.preventDefault();
-                            e.stopPropagation();
-                            if (e.button !== 0) return;
-                            setModalData({
-                              id: mv.id,
-                              file: thisFile as TrainingFileData,
-                              baseModel: thisTrainingDetails?.baseModel,
-                              params: thisTrainingDetails?.params,
-                            });
-                            open();
-                          }}
-                        >
-                          <IconFileDescription size={16} />
-                        </ActionIcon>
+                      <Group position="right" pr="xs">
                         <ActionIcon
                           color="red"
-                          variant="light"
-                          size="md"
-                          radius="xl"
-                          onMouseUp={(e) => !isNotDeletable && handleDelete(e, mv)}
-                          disabled={isNotDeletable}
+                          variant="subtle"
+                          size="sm"
+                          onClick={() => handleDeleteModel(model)}
                         >
-                          <IconTrash size={16} />
+                          <IconTrash />
                         </ActionIcon>
                       </Group>
                     </td>
                   </tr>
-                  // </Link>
                 );
               })
-            ) : !isLoading ? (
+            ) : (
               <tr>
                 <td colSpan={7}>
                   <Center py="md">
@@ -514,8 +346,6 @@ export default function UserTrainingModels() {
                   </Center>
                 </td>
               </tr>
-            ) : (
-              <></>
             )}
           </tbody>
         </Table>
@@ -526,184 +356,6 @@ export default function UserTrainingModels() {
           <Pagination page={page} onChange={setPage} total={pagination.totalPages} />
         </Group>
       )}
-      <Modal
-        opened={opened}
-        title="Training Details"
-        overflow="inside"
-        onClose={close}
-        size="lg"
-        centered
-      >
-        <DescriptionTable
-          labelWidth="150px"
-          items={[
-            {
-              label: 'Training Start',
-              value: (
-                modalData.file?.metadata?.trainingResults?.version === 2
-                  ? modalData.file?.metadata?.trainingResults?.startedAt
-                  : modalData.file?.metadata?.trainingResults?.start_time
-              )
-                ? formatDate(
-                    (modalData.file?.metadata?.trainingResults?.version === 2
-                      ? modalData.file?.metadata?.trainingResults?.startedAt
-                      : modalData.file?.metadata?.trainingResults?.start_time) as unknown as Date,
-                    'MMM D, YYYY hh:mm:ss A'
-                  )
-                : 'Unknown',
-            },
-            {
-              label: 'Job ID',
-              value: (
-                <Group spacing="xs">
-                  <Text>{jobId ?? 'Unknown'}</Text>
-                  {!!jobId && (
-                    <ButtonTooltip withinPortal withArrow label="Copy - send this to support!">
-                      <ActionIcon size={18} p={0} onClick={() => copy(jobId)}>
-                        {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-                      </ActionIcon>
-                    </ButtonTooltip>
-                  )}
-                </Group>
-              ),
-            },
-            {
-              label: 'History',
-              value: (
-                <Stack spacing={5}>
-                  {modalData.file?.metadata?.trainingResults?.history
-                    ? (modalData.file?.metadata?.trainingResults?.history || []).map((h) => (
-                        <Group key={h.time}>
-                          <Text inline>
-                            {formatDate(h.time as unknown as Date, 'MM/DD/YYYY hh:mm:ss A')}
-                          </Text>
-                          <Text inline>
-                            <Badge color={trainingStatusFields[h.status]?.color ?? 'gray'}>
-                              {splitUppercase(
-                                h.status === TrainingStatus.InReview ? 'Ready' : h.status
-                              )}
-                            </Badge>
-                          </Text>
-                        </Group>
-                      ))
-                    : 'No history found'}
-                </Stack>
-              ),
-            },
-            {
-              label: 'Images',
-              value: modalData.file?.metadata?.numImages || 0,
-            },
-            {
-              label: 'Labels',
-              value: modalData.file?.metadata?.numCaptions || 0,
-            },
-            {
-              label: 'Label Type',
-              value: modalData.file?.metadata?.labelType ?? 'tag',
-            },
-            // TODO could get the name of the custom model
-            {
-              label: 'Base Model',
-              value: isDefined(modalData.baseModel) ? (
-                modalData.baseModel in trainingModelInfo ? (
-                  trainingModelInfo[modalData.baseModel as TrainingDetailsBaseModelList].pretty
-                ) : isAir(modalData.baseModel) ? (
-                  <Link href={getAirModelLink(modalData.baseModel)} passHref legacyBehavior>
-                    <Anchor>Custom</Anchor>
-                  </Link>
-                ) : (
-                  modalData.baseModel
-                )
-              ) : (
-                '-'
-              ),
-            },
-            {
-              label: 'Privacy',
-              value: (
-                <Group>
-                  <Badge
-                    color={modalData.file?.metadata?.ownRights === true ? 'green' : 'red'}
-                    leftSection={
-                      modalData.file?.metadata?.ownRights === true ? (
-                        <IconCheck size={14} />
-                      ) : (
-                        <IconX size={14} />
-                      )
-                    }
-                  >
-                    Own Rights
-                  </Badge>
-                  <Badge
-                    color={modalData.file?.metadata?.shareDataset === true ? 'green' : 'red'}
-                    leftSection={
-                      modalData.file?.metadata?.shareDataset === true ? (
-                        <IconCheck size={14} />
-                      ) : (
-                        <IconX size={14} />
-                      )
-                    }
-                  >
-                    Share Dataset
-                  </Badge>
-                </Group>
-              ),
-            },
-            {
-              label: 'Dataset',
-              value: modalData.file?.url ? (
-                <DownloadButton
-                  component="a"
-                  canDownload
-                  href={createModelFileDownloadUrl({
-                    versionId: modalData.id as number,
-                    type: 'Training Data',
-                  })}
-                  sx={{ flex: 1 }}
-                >
-                  <Text align="center">{`Download (${formatKBytes(modalData.file?.sizeKB)})`}</Text>
-                </DownloadButton>
-              ) : (
-                'None'
-              ),
-            },
-            {
-              label: 'Training Params',
-              value: modalData.params ? (
-                <Accordion
-                  styles={(theme) => ({
-                    content: {
-                      padding: theme.spacing.xs,
-                    },
-                    item: {
-                      // overflow: 'hidden',
-                      border: 'none',
-                      background: 'transparent',
-                    },
-                    control: {
-                      padding: theme.spacing.xs,
-                    },
-                  })}
-                >
-                  <Accordion.Item value="params">
-                    <Accordion.Control>Expand</Accordion.Control>
-                    <Accordion.Panel>
-                      <pre style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
-                        {modalData.params.engine === 'rapid'
-                          ? JSON.stringify({ engine: modalData.params.engine }, null, 2)
-                          : JSON.stringify(modalData.params, null, 2)}
-                      </pre>
-                    </Accordion.Panel>
-                  </Accordion.Item>
-                </Accordion>
-              ) : (
-                'No training params set'
-              ),
-            },
-          ]}
-        />
-      </Modal>
     </Stack>
   );
 }

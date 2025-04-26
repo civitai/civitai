@@ -1,0 +1,76 @@
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  border-radius: 16px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+}
+
+.badge:hover {
+  transform: translateY(-1px);
+}
+
+.typeText {
+  text-transform: capitalize;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.divider {
+  margin: 0 4px;
+  height: 12px;
+  border-color: currentColor;
+  opacity: 0.5;
+}
+
+.baseModelIndicator {
+  font-size: 0.75rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+}
+
+/* Model type specific colors */
+.typeCheckpoint {
+  background-color: var(--mantine-color-blue-1);
+  color: var(--mantine-color-blue-7);
+}
+
+.typeTextualInversion {
+  background-color: var(--mantine-color-green-1);
+  color: var(--mantine-color-green-7);
+}
+
+.typeHypernetwork {
+  background-color: var(--mantine-color-yellow-1);
+  color: var(--mantine-color-yellow-7);
+}
+
+.typeAestheticGradient {
+  background-color: var(--mantine-color-purple-1);
+  color: var(--mantine-color-purple-7);
+}
+
+.typeLora {
+  background-color: var(--mantine-color-red-1);
+  color: var(--mantine-color-red-7);
+}
+
+.typeControlnet {
+  background-color: var(--mantine-color-orange-1);
+  color: var(--mantine-color-orange-7);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .badge {
+    padding: 2px 6px;
+  }
+
+  .typeText,
+  .baseModelIndicator {
+    font-size: 0.7rem;
+  }
+}

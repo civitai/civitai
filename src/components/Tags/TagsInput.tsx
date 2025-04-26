@@ -3,7 +3,6 @@ import {
   Autocomplete,
   Badge,
   Center,
-  createStyles,
   Group,
   Input,
   InputWrapperProps,
@@ -15,6 +14,7 @@ import { TagTarget } from '~/shared/utils/prisma/enums';
 import { IconPlus, IconX } from '@tabler/icons-react';
 import { useCallback, useMemo, useState } from 'react';
 import { trpc } from '~/utils/trpc';
+import styles from './TagsInput.module.scss';
 
 type TagProps = {
   id?: number;
@@ -38,7 +38,6 @@ export function TagsInput({
   ...props
 }: TagsInputProps) {
   value = Array.isArray(value) ? value : value ? [value] : [];
-  const { classes } = useStyles();
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedState(search, 300);
   const [adding, { open, close }] = useDisclosure(false);
@@ -117,10 +116,8 @@ export function TagsInput({
           </Badge>
         ))}
         <Badge
-          // size="lg"
-          // radius="xs"
-          className={classes.badge}
-          classNames={{ inner: classes.inner }}
+          className={styles.badge}
+          classNames={{ inner: styles.inner }}
           onClick={!adding ? open : undefined}
           tabIndex={0}
           onKeyDown={
@@ -143,7 +140,7 @@ export function TagsInput({
             autosuggest ? (
               <Autocomplete
                 variant="unstyled"
-                classNames={{ dropdown: classes.dropdown }}
+                classNames={{ dropdown: styles.dropdown }}
                 data={
                   filteredItems
                     .filter((tag) => !selectedTags.includes(tag.name))
@@ -169,7 +166,7 @@ export function TagsInput({
                     'Searching...'
                   ) : isNewTag ? (
                     <UnstyledButton
-                      className={classes.createOption}
+                      className={styles.createOption}
                       onClick={() => handleAddTag({ value: search })}
                     >
                       {`+ Create tag "${search}"`}
@@ -203,24 +200,3 @@ export function TagsInput({
   );
 }
 
-const useStyles = createStyles((theme) => ({
-  badge: {
-    textTransform: 'none',
-    cursor: 'pointer',
-  },
-  inner: {
-    display: 'flex',
-  },
-  createOption: {
-    fontSize: theme.fontSizes.sm,
-    padding: theme.spacing.xs,
-    borderRadius: theme.radius.sm,
-
-    '&:hover': {
-      backgroundColor: theme.colorScheme === 'dark' ? theme.colors.dark[4] : theme.colors.gray[1],
-    },
-  },
-  dropdown: {
-    maxWidth: '300px !important',
-  },
-}));

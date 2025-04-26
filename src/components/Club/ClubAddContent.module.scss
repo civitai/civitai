@@ -1,0 +1,10 @@
+.button {
+  background: var(--mantine-color-dark-6);
+  border-radius: var(--mantine-radius-lg);
+  padding: var(--mantine-spacing-md);
+  width: 150px;
+}
+
+[data-mantine-color-scheme="light"] .button {
+  background: var(--mantine-color-gray-0);
+}

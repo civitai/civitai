@@ -1,0 +1,50 @@
+.buzzContainer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.buzzIcon {
+  flex-shrink: 0;
+}
+
+.buzzAmount {
+  line-height: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.loadingContainer {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.loadingDots {
+  margin-left: 4px;
+}
+
+/* Theme-specific colors */
+.themeDefault {
+  color: var(--mantine-color-yellow-5);
+}
+
+.themePremium {
+  color: var(--mantine-color-blue-5);
+}
+
+.themeCreator {
+  color: var(--mantine-color-green-5);
+}
+
+.themeModerator {
+  color: var(--mantine-color-red-5);
+}
+
+/* Hover effects */
+.buzzContainer:hover {
+  transform: translateY(-1px);
+  transition: transform 0.2s ease;
+}

@@ -1,0 +1,10 @@
+.chatList {
+  border-right: 1px solid var(--mantine-color-dark-4);
+  height: 100%;
+}
+
+@media (max-width: 699px) {
+  .chatList {
+    height: 200px;
+  }
+}

@@ -2,6 +2,7 @@ import {
   ActionIcon,
   ActionIconProps,
   Box,
+  BoxProps,
   Center,
   createStyles,
   Divider,
@@ -14,7 +15,7 @@ import {
   Text,
   Title,
 } from '@mantine/core';
-import React, { useMemo } from 'react';
+import React, { useMemo, forwardRef } from 'react';
 import { ClubPostGetAll, ClubPostResource } from '~/types/router';
 import { ImageCSSAspectRatioWrap } from '~/components/Profile/ImageCSSAspectRatioWrap';
 import { constants } from '~/server/common/constants';
@@ -49,6 +50,7 @@ import { useIsMobile } from '../../../hooks/useIsMobile';
 import { triggerRoutedDialog } from '../../Dialog/RoutedDialogProvider';
 import { ContentClamp } from '../../ContentClamp/ContentClamp';
 import { Reactions } from '../../Reaction/Reactions';
+import styles from './ClubFeed.module.scss';
 
 export const useClubFeedStyles = createStyles((theme) => ({
   feedContainer: {
@@ -353,3 +355,23 @@ export const ClubPostResourceCard = ({ resourceData }: { resourceData: ClubPostR
 
   return null;
 };
+
+export interface ClubFeedProps extends BoxProps {
+  withCover?: boolean;
+}
+
+export const ClubFeed = forwardRef<HTMLDivElement, ClubFeedProps>((props, ref) => {
+  const { withCover, className, ...others } = props;
+
+  return (
+    <Box
+      className={`${styles.feedContainer} ${
+        withCover ? styles.feedContainerWithCover : ''
+      } ${className}`}
+      {...others}
+      ref={ref}
+    />
+  );
+});
+
+ClubFeed.displayName = 'ClubFeed';

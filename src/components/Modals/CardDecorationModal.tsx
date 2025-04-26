@@ -1,14 +1,4 @@
-import {
-  Button,
-  Center,
-  Grid,
-  Group,
-  Loader,
-  Modal,
-  Paper,
-  Stack,
-  createStyles,
-} from '@mantine/core';
+import { Button, Center, Grid, Group, Loader, Modal, Paper, Stack } from '@mantine/core';
 import { openConfirmModal } from '@mantine/modals';
 import { CosmeticEntity } from '~/shared/utils/prisma/enums';
 import { IconArrowRight } from '@tabler/icons-react';
@@ -28,36 +18,7 @@ import { DEFAULT_EDGE_IMAGE_WIDTH, constants } from '~/server/common/constants';
 import { ContentDecorationCosmetic, WithClaimKey } from '~/server/selectors/cosmetic.selector';
 import { containerQuery } from '~/utils/mantine-css-helpers';
 import { cosmeticInputSchema } from '~/server/schema/cosmetic.schema';
-
-const useStyles = createStyles((theme) => ({
-  preview: {
-    order: 1,
-
-    [containerQuery.largerThan('xs')]: {
-      order: 2,
-    },
-  },
-
-  decorations: {
-    order: 2,
-
-    [theme.fn.largerThan('xs')]: {
-      order: 1,
-    },
-  },
-
-  hideMobile: {
-    [theme.fn.smallerThan('xs')]: {
-      display: 'none',
-    },
-  },
-
-  showMobile: {
-    [theme.fn.largerThan('xs')]: {
-      display: 'none',
-    },
-  },
-}));
+import styles from './CardDecorationModal.module.scss';
 
 const schema = z.object({
   cosmetic: cosmeticInputSchema.nullish(),
@@ -66,7 +27,6 @@ const schema = z.object({
 export function CardDecorationModal({ entityType, entityId, image, currentCosmetic }: Props) {
   const dialog = useDialogContext();
   const form = useForm({ schema, defaultValues: { cosmetic: currentCosmetic } });
-  const { classes } = useStyles();
 
   const { data: userCosmetics, isInitialLoading } = useQueryUserCosmetics();
 
@@ -141,7 +101,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
     >
       <Form form={form} onSubmit={handleSubmit}>
         <Grid gutter="xl">
-          <Grid.Col xs={12} sm={6} className={classes.decorations}>
+          <Grid.Col xs={12} sm={6} className={styles.decorations}>
             {isInitialLoading ? (
               <Center>
                 <Loader />
@@ -161,7 +121,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                   type="submit"
                   w="80%"
                   mx="auto"
-                  className={classes.showMobile}
+                  className={styles.showMobile}
                   disabled={isInitialLoading || !isDirty}
                 >
                   Apply
@@ -169,7 +129,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
               </Stack>
             )}
           </Grid.Col>
-          <Grid.Col xs={12} sm={6} className={classes.preview}>
+          <Grid.Col xs={12} sm={6} className={styles.preview}>
             <Stack align="center" spacing="xl">
               {selectedItem &&
                 selectedItem.entityImage &&
@@ -210,7 +170,7 @@ export function CardDecorationModal({ entityType, entityId, image, currentCosmet
                 type="submit"
                 w="80%"
                 mx="auto"
-                className={classes.hideMobile}
+                className={styles.hideMobile}
                 disabled={isInitialLoading || !isDirty}
                 loading={isLoading}
               >

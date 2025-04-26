@@ -1,0 +1,75 @@
+.label {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.label[data-checked] {
+  color: var(--mantine-color-dark-0);
+  border: 1px solid var(--mantine-color-blue-6);
+}
+
+.label[data-checked]:hover {
+  color: var(--mantine-color-dark-0);
+  border: 1px solid var(--mantine-color-blue-6);
+}
+
+.label[data-checked][data-variant="filled"] {
+  background-color: transparent;
+}
+
+.opened {
+  transform: rotate(180deg);
+  transition: transform 200ms ease;
+}
+
+.actionButton {
+  width: 100%;
+}
+
+.indicatorRoot {
+  line-height: 1;
+}
+
+.indicatorIndicator {
+  line-height: 1.6;
+}
+
+.drawer {
+  height: auto;
+  max-height: calc(100dvh - var(--header-height));
+  overflow-y: auto;
+}
+
+.drawerBody {
+  padding: 16px;
+  padding-top: 0;
+  overflow-y: auto;
+}
+
+.drawerHeader {
+  padding: 4px 8px;
+}
+
+.closeButton {
+  height: 32px;
+  width: 32px;
+}
+
+.closeButton svg {
+  width: 24px;
+  height: 24px;
+}
+
+.popoverDropdown {
+  width: 100%;
+}
+
+.scrollArea {
+  max-height: calc(90vh - var(--header-height) - 56px);
+}
+
+@media (min-width: 768px) {
+  .actionButton {
+    width: auto;
+  }
+}
