@@ -72,6 +72,7 @@ export const generationResourceSchema = generationResourceSchemaBase.extend({
     nsfw: z.boolean().optional(),
     poi: z.boolean().optional(),
     minor: z.boolean().optional(),
+    sfwOnly: z.boolean().optional(),
   }),
   substitute: generationResourceSchemaBase.optional(),
 });

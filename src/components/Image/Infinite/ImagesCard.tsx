@@ -1,5 +1,6 @@
 import {
   Alert,
+  Anchor,
   Badge,
   Box,
   createStyles,
@@ -48,7 +49,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const image = useImageStore(data);
   const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
 
-  const isBlocked = image.ingestion === ImageIngestionStatus.Blocked;
+  const isBlocked = image.ingestion === ImageIngestionStatus.Blocked || !!image.blockedFor;
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
 
@@ -226,9 +227,9 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                   ) : isBlockedForAiVerification ? (
                     <Alert
                       color="yellow"
-                      variant="filled"
+                      // variant="filled"
                       radius={0}
-                      className="absolute bottom-0 left-0 w-full p-1"
+                      className="absolute bottom-0 left-0 w-full p-2"
                       title={
                         <Group spacing={4}>
                           <IconInfoCircle />
@@ -240,8 +241,8 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         <Text size="sm" inline>
                           This image has been blocked because it is has received a NSFW rating and
                           we could not verify that it was generated using AI. To restore the image,
-                          please update your post with metadata detailing the generation process
-                          &ndash; such as the prompt, tools, and resources used.
+                          please <Anchor color="yellow.8" href={`/posts/${image.postId}/edit`}>update your post</Anchor> with metadata detailing the generation process
+                          &ndash; minimally the prompt used.
                         </Text>
                       </div>
                     </Alert>

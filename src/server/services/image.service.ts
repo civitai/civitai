@@ -150,6 +150,7 @@ import { withRetries } from '~/utils/errorHandling';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import { RuleDefinition } from '~/server/utils/mod-rules';
+import { IconChevronsDownLeft } from '@tabler/icons-react';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -825,7 +826,9 @@ export const getAllImages = async (
   } else if (!pending) AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
   if (!isModerator) {
-    AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+    AND.push(
+      Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
+    );
   }
 
   if (disablePoi) {
@@ -1930,7 +1933,7 @@ async function getImagesFromSearch(input: ImageSearchInput) {
       // check for good data
       if (!hit.url) return false;
       // filter out items flagged with minor unless it's the owner or moderator
-      if (hit.minor) return hit.userId === currentUserId || isModerator;
+      if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
       // filter out non-scanned unless it's the owner or moderator
       if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
 
@@ -3566,8 +3569,11 @@ export const getImageModerationReviewQueue = async ({
   tagReview,
   reportReview,
   tagIds,
+  browsingLevel,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
+
+  AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
 
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
@@ -4260,7 +4266,7 @@ export async function addImageTools({
   await authorizeImagesAction({ imageIds: data.map((x) => x.imageId), user });
   await dbWrite.imageTool.createMany({ data, skipDuplicates: true });
   // Update these images if blocked:
-  const updated = await dbRead.image.updateManyAndReturn({
+  const updated = await dbWrite.image.updateManyAndReturn({
     where: { id: { in: data.map((x) => x.imageId) }, blockedFor: BlockedReason.AiNotVerified },
     data: {
       blockedFor: null,

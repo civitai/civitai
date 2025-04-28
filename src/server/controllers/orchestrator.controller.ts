@@ -8,7 +8,6 @@ import { logToAxiom } from '~/server/logging/client';
 import {
   GenerationSchema,
   getGenerationTags,
-  getGenerationTagsForType,
 } from '~/server/orchestrator/generation/generation.schema';
 import { REDIS_KEYS, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { formatGenerationResponse } from '~/server/services/orchestrator/common';
@@ -16,7 +15,6 @@ import { createWorkflowStep } from '~/server/services/orchestrator/orchestrator.
 import { submitWorkflow } from '~/server/services/orchestrator/workflows';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { createLimiter } from '~/server/utils/rate-limiting';
-import { WORKFLOW_TAGS } from '~/shared/constants/generation.constants';
 import { auditPrompt } from '~/utils/metadata/audit';
 import { getRandomInt } from '~/utils/number-helpers';
 import { isDefined } from '~/utils/type-guards';
@@ -50,7 +48,9 @@ export async function generate({
   // throw throwBadRequestError(`Your prompt was flagged for: `);
   if ('prompt' in args.data) {
     try {
-      const { blockedFor, success } = auditPrompt(args.data.prompt);
+      const negativePrompt =
+        'negativePrompt' in args.data ? (args.data.negativePrompt as string) : undefined;
+      const { blockedFor, success } = auditPrompt(args.data.prompt, negativePrompt);
       if (!success) throw { blockedFor, type: 'regex' };
 
       const { flagged, categories } = await extModeration

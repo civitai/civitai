@@ -1,13 +1,14 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
 import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
-import { NsfwLevel } from '~/server/common/enums';
+import { NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { metricsSearchClient as client, updateDocs } from '~/server/meilisearch/client';
 import { onSearchIndexDocumentsCleanup } from '~/server/meilisearch/util';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createJob, getJobDate } from './job';
+import { imagesMetricsSearchIndex } from '~/server/search-index';
 
 const jobName = 'check-image-existence';
 const queryBatch = 2000;
@@ -42,21 +43,22 @@ export const checkImageExistence = createJob(jobName, '*/1 * * * *', async () =>
         );
 
         // TODO regular index too
-
-        // we could pull this outside the batch if we need
         if (deleteIds.length) {
-          await onSearchIndexDocumentsCleanup({
-            indexName: METRICS_IMAGES_SEARCH_INDEX,
-            ids: deleteIds,
-            client,
-          });
+          await imagesMetricsSearchIndex.queueUpdate(
+            deleteIds.map((id) => ({
+              id,
+              action: SearchIndexUpdateQueueAction.Delete,
+            }))
+          );
         }
+
         if (updateData.length) {
-          await updateDocs({
-            indexName: METRICS_IMAGES_SEARCH_INDEX,
-            documents: updateData,
-            client,
-          });
+          await imagesMetricsSearchIndex.queueUpdate(
+            updateData.map((i) => ({
+              id: i.id,
+              action: SearchIndexUpdateQueueAction.Update,
+            }))
+          );
         }
       }
     }

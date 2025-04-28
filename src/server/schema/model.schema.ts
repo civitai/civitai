@@ -189,6 +189,7 @@ export const modelUpsertSchema = licensingSchema.extend({
   nsfw: z.boolean().optional(),
   lockedProperties: z.string().array().optional(),
   minor: z.boolean().default(false).optional(),
+  sfwOnly: z.boolean().default(false).optional(),
   meta: z
     .object({
       showcaseCollectionId: z.number().nullish(),
@@ -362,6 +363,7 @@ export const ingestModelSchema = z.object({
   poi: z.coerce.boolean(),
   nsfw: z.coerce.boolean(),
   minor: z.coerce.boolean(),
+  sfwOnly: z.coerce.boolean(),
 });
 
 export type LimitOnly = z.input<typeof limitOnly>;

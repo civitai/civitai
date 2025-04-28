@@ -170,7 +170,7 @@ function ThumbnailImageButton({
           onLoad={() => setStatus('loaded')}
           onError={() => setStatus('error')}
           transcode
-          fadeIn
+          // fadeIn
         />
       </UnstyledButton>
     </div>

@@ -26,7 +26,7 @@ export const bountyWebhooks = createWebhookProcessor({
           entityType: 'bounty',
           entityId: { in: bounties.map((b) => b.id) },
         },
-        select: { image: { select: { url: true, nsfw: true, index: true } }, entityId: true },
+        select: { image: { select: { url: true, index: true } }, entityId: true },
       });
 
       return bounties

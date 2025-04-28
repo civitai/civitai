@@ -140,9 +140,6 @@ function ImageContent({
     defaultValue: true,
   });
 
-  // We'll be using the client to avoid mis-reading te defaultMuted settings on videos.
-  const isClient = useIsClient();
-
   const imageHeight = image?.height ?? 1200;
   const imageWidth = image?.width ?? 1200;
 
@@ -179,12 +176,14 @@ function ImageContent({
                 className: `flex items-center justify-center max-h-full w-auto max-w-full ${
                   !safe ? 'invisible' : ''
                 }`,
-                style: { aspectRatio: (image?.width ?? 0) / (image?.height ?? 0) },
+                style: {
+                  aspectRatio: (image?.width ?? 0) / (image?.height ?? 0),
+                },
               }}
-              width={!isVideo || isClient ? undefined : 450} // Leave as undefined to get original size
-              anim={isClient}
+              // width={!isVideo ? undefined : 450} // Leave as undefined to get original size
+              anim
               quality={90}
-              original={isVideo && isClient ? true : undefined}
+              original={isVideo ? true : undefined}
               html5Controls={shouldDisplayHtmlControls(image)}
               muted={defaultMuted}
               onMutedChange={(isMuted) => {
@@ -202,6 +201,9 @@ function ImageContent({
                   : undefined
               }
               controls
+              videoProps={{
+                autoPlay: true,
+              }}
             />
           )}
         </div>

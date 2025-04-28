@@ -25,7 +25,8 @@ export type EdgeMediaProps = EdgeUrlProps &
     thumbnailUrl?: string | null;
     disableWebm?: boolean;
     disablePoster?: boolean;
-    videoProps?: React.HTMLAttributes<HTMLVideoElement>;
+    videoProps?: React.HTMLAttributes<HTMLVideoElement> &
+      React.MediaHTMLAttributes<HTMLVideoElement>;
     imageProps?: React.HTMLAttributes<HTMLImageElement>;
   };
 

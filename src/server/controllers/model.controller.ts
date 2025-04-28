@@ -419,13 +419,16 @@ export const upsertModelHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi, minor } = input;
+    const { nsfw, poi, minor, sfwOnly } = input;
 
     if (nsfw && poi)
       throw throwBadRequestError('Mature content depicting actual people is not permitted.');
 
     if (nsfw && minor)
       throw throwBadRequestError('Mature content depicting minors is not permitted.');
+
+    if (nsfw && sfwOnly)
+      throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;
@@ -450,7 +453,7 @@ export const upsertModelHandler = async ({
       isModerator: ctx.user.isModerator,
       gallerySettings: {
         ...gallerySettings,
-        level: input.minor ? sfwBrowsingLevelsFlag : gallerySettings?.level,
+        level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : gallerySettings?.level,
       },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
@@ -1727,7 +1730,7 @@ export const privateModelFromTrainingHandler = async ({
 }) => {
   try {
     const { id: userId } = ctx.user;
-    const { nsfw, poi, minor } = input;
+    const { nsfw, poi, minor, sfwOnly } = input;
 
     const membership = await getUserSubscription({ userId });
     if (!membership && !ctx.user.isModerator)
@@ -1756,6 +1759,9 @@ export const privateModelFromTrainingHandler = async ({
 
     if (nsfw && minor)
       throw throwBadRequestError('Mature content depicting minors is not permitted.');
+
+    if (nsfw && sfwOnly)
+      throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
 
     // Check tags for multiple categories
     const { tagsOnModels } = input;

@@ -34,7 +34,7 @@ import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { BadgeDisplay, Username } from '../User/Username';
 import { UserPublicSettingsSchema } from '~/server/schema/user.schema';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { EdgeMedia, EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
 
 const useStyles = createStyles((theme) => ({
   profileDetailsContainer: {
@@ -243,11 +243,12 @@ export const CreatorCardV2 = ({
     <Card p="md" withBorder {...cardProps}>
       <Card.Section style={{ position: 'relative' }}>
         {backgroundImage && backgroundImage.data.url ? (
-          <EdgeMedia
+          <EdgeMedia2
             src={backgroundImage.data.url}
             type={backgroundImage.data.type ?? 'image'}
-            transcode={isVideo}
+            // transcode={isVideo}
             anim={true}
+            width={450}
             wrapperProps={{
               style: {
                 position: 'absolute',

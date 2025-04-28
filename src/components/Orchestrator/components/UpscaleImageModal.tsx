@@ -15,6 +15,7 @@ import { getBaseModelSetType, whatIfQueryOverrides } from '~/shared/constants/ge
 import { numberWithCommas } from '~/utils/number-helpers';
 import { trpc } from '~/utils/trpc';
 import { WhatIfAlert } from '~/components/Generation/Alerts/WhatIfAlert';
+import { showErrorNotification } from '~/utils/notifications';
 
 const schema = z.object({
   sourceImage: sourceImageSchema,
@@ -86,14 +87,22 @@ function UpscalImageForm({
 
   function handleSubmit(formData: z.infer<typeof schema>) {
     async function performTransaction() {
-      await generateImage.mutateAsync({
-        resources,
-        params: {
-          ...params,
-          quantity: 1,
-          ...formData,
-        },
-      });
+      await generateImage
+        .mutateAsync({
+          resources,
+          params: {
+            ...params,
+            quantity: 1,
+            ...formData,
+          },
+        })
+        .catch((error: any) => {
+          showErrorNotification({
+            title: 'Failed to generate',
+            error: new Error(error.message),
+            reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+          });
+        });
       dialog.onClose();
     }
     conditionalPerformTransaction(whatIf.data?.cost?.total ?? 0, performTransaction);

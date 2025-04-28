@@ -20,6 +20,7 @@ export async function upsertModelFlag({
     minor: boolean;
     triggerWords: boolean;
     poiName: boolean;
+    sfwOnly: boolean;
   };
   details?: MixedObject;
 }) {
@@ -32,12 +33,13 @@ export async function upsertModelFlag({
       poi: boolean;
       nsfw: boolean;
       minor: boolean;
+      sfwOnly: boolean;
       triggerWords: boolean;
       poiName: string | null;
       status: ModelFlagStatus;
     }[]
   >`
-    INSERT INTO "ModelFlag" ("modelId", "poi", "nsfw", "minor", "triggerWords", "poiName", "status", "details")
+    INSERT INTO "ModelFlag" ("modelId", "poi", "nsfw", "minor", "triggerWords", "poiName", "status", "details", "sfwOnly")
     VALUES (
       ${modelId},
       ${scanResult?.poi ?? false},
@@ -47,6 +49,7 @@ export async function upsertModelFlag({
       ${scanResult?.poiName ?? false},
       ${Prisma.sql`${ModelFlagStatus.Pending}::"ModelFlagStatus"`},
       ${details ? Prisma.sql`${JSON.stringify(details)}::jsonb` : Prisma.JsonNull}
+      ${scanResult?.sfwOnly ?? false}
     )
     ON CONFLICT ("modelId") DO UPDATE
       SET "poi" = EXCLUDED."poi",
@@ -56,6 +59,7 @@ export async function upsertModelFlag({
         "poiName" = EXCLUDED."poiName",
         "status" = EXCLUDED."status",
         "details" = EXCLUDED."details"
+        "sfwOnly" = EXCLUDED."sfwOnly",
     RETURNING *;
   `;
 
@@ -75,6 +79,7 @@ export function getFlaggedModels(input: GetFlaggedModelsInput) {
           nsfw: true,
           triggerWords: true,
           minor: true,
+          sfwOnly: true,
           details: true,
           poiName: true,
           createdAt: true,
@@ -86,6 +91,7 @@ export function getFlaggedModels(input: GetFlaggedModelsInput) {
               nsfw: true,
               poi: true,
               minor: true,
+              sfwOnly: true,
               // These are needed to comply with upsert schema
               status: true,
               uploadType: true,

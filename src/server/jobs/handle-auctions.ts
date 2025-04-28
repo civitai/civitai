@@ -337,32 +337,29 @@ const _handleWinnersForAuction = async (auctionRow: AuctionRow, winners: WinnerT
         );
 
       try {
-        await dbWrite.$transaction(async (tx) => {
-          await tx.$queryRaw`
+        // Add top earning checkpoints
+        const topEarners = await getTopWeeklyEarners(true);
+        checkpoints.push(
+          ...topEarners.slice(0, TOP_EARNER_LIMIT).map((e) => ({
+            model_id: e.modelId,
+            version_id: e.modelVersionId,
+            type: 'Checkpoint' as const,
+          }))
+        );
+
+        if (checkpoints.length) {
+          await dbWrite.$queryRaw`
             TRUNCATE TABLE "CoveredCheckpoint"
           `;
 
-          // Add top earning checkpoints
-          const topEarners = await getTopWeeklyEarners(true);
-          checkpoints.push(
-            ...topEarners.slice(0, TOP_EARNER_LIMIT).map((e) => ({
-              model_id: e.modelId,
-              version_id: e.modelVersionId,
-              type: 'Checkpoint' as const,
-            }))
-          );
-
-          // Add winning checkpoints
-          if (checkpoints.length) {
-            await tx.coveredCheckpoint.createMany({
-              data: checkpoints.map((c) => ({
-                model_id: c.model_id,
-                version_id: c.version_id,
-              })),
-              skipDuplicates: true,
-            });
-          }
-        });
+          await dbWrite.coveredCheckpoint.createMany({
+            data: checkpoints.map((c) => ({
+              model_id: c.model_id,
+              version_id: c.version_id,
+            })),
+            skipDuplicates: true,
+          });
+        }
       } catch (error) {
         const err = error as Error;
         logToAxiom({

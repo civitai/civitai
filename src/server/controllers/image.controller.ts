@@ -225,7 +225,7 @@ export const setTosViolationHandler = async ({
       data: {
         needsReview: null,
         ingestion: 'Blocked',
-        nsfw: 'Blocked',
+        // nsfw: 'Blocked',
         nsfwLevel: NsfwLevel.Blocked,
         blockedFor: BlockedReason.Moderated,
         updatedAt: new Date(),

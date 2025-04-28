@@ -380,15 +380,16 @@ async function handleSuccess({
         SELECT bool_or(poi) "poi", bool_or(minor) "minor", bool_or("hasResource") "hasResource" FROM to_check;
       `;
 
-    if (minor) {
-      reviewKey = 'minor';
-      // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
-      data.minor = true;
-    }
     if (poi) {
-      reviewKey = 'poi';
+      if (!reviewKey && nsfw) reviewKey = 'poi';
       // Makes this image tied to POI.
       data.poi = true;
+    }
+
+    if (minor) {
+      if (!reviewKey && nsfw) reviewKey = 'minor';
+      // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
+      data.minor = true;
     }
 
     if (!reviewKey && hasMinorTag && !hasAdultTag && (!hasCartoonTag || nsfw)) {
@@ -472,7 +473,7 @@ async function handleSuccess({
           WHERE id = ${id}
           GROUP BY id
         )
-        UPDATE "Image" i SET "scannedAt" = NOW(), "updatedAt" = NOW(), "createdAt" = NOW(), "ingestion" ='Scanned'
+        UPDATE "Image" i SET "scannedAt" = NOW(), "updatedAt" = NOW(), "ingestion" ='Scanned'
         FROM scan_count s
         WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS}
         RETURNING "ingestion";

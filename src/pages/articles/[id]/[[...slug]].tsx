@@ -366,7 +366,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                       cryCount: article.stats?.cryCountAllTime,
                     }}
                     targetUserId={article.user.id}
-                    
                   />
                   {actionButtons}
                 </Group>
