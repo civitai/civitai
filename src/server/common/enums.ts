@@ -369,3 +369,9 @@ export enum NewOrderDamnedReason {
   Bestiality = 'Bestiality',
   GraphicViolence = 'GraphicViolence',
 }
+
+export enum NewOrderActions {
+  UpdateStats = 'update-stats',
+  RankUp = 'rank-up',
+  Reset = 'reset',
+}

@@ -14,14 +14,9 @@ import { createJob } from '~/server/jobs/job';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { TransactionType } from '~/server/schema/buzz.schema';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
-import {
-  calculateFervor,
-  cleanseSmite,
-  updatePlayerStats,
-} from '~/server/services/games/new-order.service';
+import { calculateFervor, cleanseSmite } from '~/server/services/games/new-order.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NewOrderRankType } from '~/shared/utils/prisma/enums';
-import { removeDuplicates } from '~/utils/array-helpers';
 import { createLogger } from '~/utils/logging';
 
 const log = createLogger('new-order-jobs');

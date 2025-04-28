@@ -240,7 +240,6 @@ export async function getBrowsingSettingAddons() {
   const cached = await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.BROWSING_SETTING_ADDONS);
   if (cached) {
     const data = JSON.parse(cached) as BrowsingSettingsAddon[];
-    console.log('DEV', data);
     return data;
   }
 

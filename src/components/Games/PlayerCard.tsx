@@ -1,5 +1,5 @@
 import { clsx, MantineSize, Paper, PaperProps, ThemeIcon, Tooltip } from '@mantine/core';
-import { IconCoin, IconCrown, IconFlame, IconHeart, IconSword } from '@tabler/icons-react';
+import { IconCoin, IconFlame, IconHeart, IconSword } from '@tabler/icons-react';
 import React from 'react';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -8,7 +8,7 @@ import { IconBadge } from '~/components/IconBadge/IconBadge';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { SimpleUser } from '~/server/selectors/user.selector';
-import { calculateLevelProgression } from '~/server/utils/research-utils';
+import { getLevelProgression } from '~/server/utils/research-utils';
 import { Currency, NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { GetPlayer } from '~/types/router';
 import { abbreviateNumber, numberWithCommas } from '~/utils/number-helpers';
@@ -57,18 +57,17 @@ export function PlayerCard({
   className,
   ...paperProps
 }: Props) {
-  // TODO.newOrder: update this to calculate level progression based on the new order game
-  const progression = calculateLevelProgression(exp);
+  const progression = getLevelProgression(exp);
   const rankExplanation = ranksExplanation[rank.type];
 
   const remainingSmites = MAX_SMITE_COUNT - smites;
 
   return (
-    <Paper className={clsx('flex items-center gap-4', className)} {...paperProps}>
-      <UserAvatar user={user} size="xl" radius={999} />
+    <Paper className={clsx('flex items-center gap-4 py-2 md:p-4', className)} {...paperProps}>
       <div className="flex w-full flex-col gap-2">
         <div className="flex justify-between gap-2">
           <div className="flex items-center gap-1">
+            <UserAvatar user={user} size="md" radius={999} />
             {rank.iconUrl && (
               <EdgeMedia2 src={rank.iconUrl} className="size-8" type="image" width={32} />
             )}
@@ -82,7 +81,9 @@ export function PlayerCard({
 
           {smites < MAX_SMITE_COUNT && (
             <Tooltip
-              label={`Receive ${remainingSmites} more ${remainingSmites === 1 ? 'smite' : 'smites'} and it's game over!`}
+              label={`Receive ${remainingSmites} more ${
+                remainingSmites === 1 ? 'smite' : 'smites'
+              } and it's game over!`}
               withinPortal
             >
               <div className="flex flex-nowrap items-center">
@@ -105,9 +106,9 @@ export function PlayerCard({
         <LevelProgress
           className="w-full"
           level={progression.level}
-          progress={progression.progress}
-          currentExp={exp}
-          nextLevelExp={progression.ratingsForNextLevel}
+          progress={progression.progressPercent}
+          currentExp={progression.xpIntoLevel}
+          nextLevelExp={progression.xpForNextLevel}
           icon={<IconSword size={18} stroke={1.5} />}
         />
         {showStats && <PlayerStats stats={{ exp, fervor, blessedBuzz, smites }} />}
@@ -155,15 +156,15 @@ export function PlayerStats({
         {abbreviateNumber(stats.blessedBuzz)}
       </IconBadge>
       <IconBadge
-        tooltip={`Total Buzz: ${numberWithCommas(stats.blessedBuzz / 1000)}`}
+        tooltip={`Total Buzz: ${numberWithCommas(Math.floor(stats.blessedBuzz / 1000))}`}
         size={size}
         color="yellow.7"
         icon={<CurrencyIcon type={Currency.BUZZ} size={iconSize} stroke={1.5} />}
       >
-        {abbreviateNumber(stats.blessedBuzz / 1000)}
+        {abbreviateNumber(Math.floor(stats.blessedBuzz / 1000))}
       </IconBadge>
       <IconBadge
-        tooltip={`Total Fervor: ${numberWithCommas(stats.fervor, { decimals: 2 })}`}
+        tooltip={`Total Fervor: ${numberWithCommas(stats.fervor)}`}
         size={size}
         color="orange"
         icon={<IconFlame size={iconSize} fill="currentColor" />}

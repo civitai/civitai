@@ -2,10 +2,10 @@ import { clickhouse, Tracker } from '~/server/clickhouse/client';
 import { CacheTTL } from '~/server/common/constants';
 import {
   NewOrderImageRatingStatus,
-  ImageSort,
   NsfwLevel,
   SignalTopic,
   SignalMessages,
+  NewOrderActions,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -19,7 +19,7 @@ import {
   smitesCounter,
 } from '~/server/games/new-order/utils';
 import { logToAxiom } from '~/server/logging/client';
-import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { REDIS_KEYS } from '~/server/redis/client';
 import { InfiniteQueryInput } from '~/server/schema/base.schema';
 import {
   AddImageRatingInput,
@@ -29,12 +29,8 @@ import {
 } from '~/server/schema/games/new-order.schema';
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
-import { getAllImagesIndex, updateImageNsfwLevel } from '~/server/services/image.service';
-import {
-  bustFetchThroughCache,
-  cachedCounter,
-  fetchThroughCache,
-} from '~/server/utils/cache-helpers';
+import { updateImageNsfwLevel } from '~/server/services/image.service';
+import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
   throwBadRequestError,
@@ -42,7 +38,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { Flags } from '~/shared/utils';
-import { MetricTimeframe, NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
 import { shuffle } from '~/utils/array-helpers';
 import { signalClient } from '~/utils/signal-client';
 import { isDefined } from '~/utils/type-guards';
@@ -123,7 +119,7 @@ export async function smitePlayer({
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
-    data: { stats: { smites: newSmiteCount } },
+    data: { action: 'updateStats', stats: { smites: newSmiteCount } },
   });
 
   // TODO.newOrder: send notification
@@ -141,7 +137,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
-    data: { stats: { smites: smiteCount } },
+    data: { action: 'updateStats', stats: { smites: smiteCount } },
   });
 
   // TODO.newOrder: send notification
@@ -195,7 +191,6 @@ export async function addImageRating({
     return false;
   }
 
-  // TODO.newOrder: adjust status based on rating distance
   const status =
     player.rankType === NewOrderRankType.Acolyte
       ? image.nsfwLevel === rating
@@ -276,13 +271,27 @@ export async function addImageRating({
   }
 
   // Increase all counters
-  const stats = await updatePlayerStats({ playerId, status, exp: grantedExp * multiplier });
-
-  signalClient.topicSend({
-    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
-    target: SignalMessages.NewOrderPlayerUpdate,
-    data: { stats },
+  const stats = await updatePlayerStats({
+    playerId,
+    status,
+    exp: grantedExp * multiplier,
+    updateAll: player.rankType !== NewOrderRankType.Acolyte,
   });
+
+  // Check if player should be promoted
+  const knightRank = await getNewOrderRanks({ name: 'Knight' });
+  if (knightRank && knightRank.minExp <= stats.exp) {
+    await dbWrite.newOrderPlayer.update({
+      where: { userId: playerId },
+      data: { rankType: knightRank.type },
+    });
+
+    signalClient.topicSend({
+      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+      target: SignalMessages.NewOrderPlayerUpdate,
+      data: { action: NewOrderActions.RankUp, rankType: knightRank.type, rank: { ...knightRank } },
+    });
+  }
 
   // Now, process what to do with the image:
   if (valueInQueue.rank === NewOrderRankType.Knight && ++valueInQueue.value >= 5) {
@@ -297,7 +306,6 @@ export async function addImageRating({
 
     // Check if they all voted damned:
     if (keys.length === 1 && keys[0].endsWith(`${NsfwLevel.Blocked}`)) {
-      // TODO.newOrder: Handle damned image. Send to mods.
       processed = true;
       await addImageToQueue({
         imageIds: imageId,
@@ -337,15 +345,17 @@ export async function addImageRating({
         });
       } else {
         // Else, we're good :)
-        await dbWrite.image.update({
-          where: { id: imageId },
-          data: { nsfwLevel: rating },
-        });
+        await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId });
       }
 
       // Clear image from the pool:
       valueInQueue.pool.reset({ id: imageId });
-      // TODO.newOrder: Send signal.
+
+      signalClient.topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:Knight`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { imageId, action: 'remove' },
+      });
     }
   }
 
@@ -380,16 +390,18 @@ export async function addImageRating({
 
     if (rating !== currentNsfwLevel && !processed) {
       // Else, we're good :)
-      await dbWrite.image.update({
-        where: { id: imageId },
-        data: { nsfwLevel: rating },
-      });
+      await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId });
       // TODO.newOrder: Update knights ratings as failure/success.
     }
 
     // Clear image from the pool:
     valueInQueue.pool.reset({ id: imageId });
-    // TODO.newOrder: Send signal.
+
+    signalClient.topicSend({
+      topic: `${SignalTopic.NewOrderQueue}:Templar`,
+      target: SignalMessages.NewOrderQueueUpdate,
+      data: { imageId, action: 'remove' },
+    });
   }
 
   // TODO.newOrder: what else can we return here?
@@ -400,37 +412,41 @@ export async function updatePlayerStats({
   playerId,
   status,
   exp,
+  updateAll,
 }: {
   playerId: number;
   status: NewOrderImageRatingStatus;
   exp: number;
+  updateAll?: boolean;
 }) {
-  // TODO.newOrder: check math for fervor
-  const allJudgments = await allJudmentsCounter.increment({ id: playerId });
-  const correctJudgments =
-    status === NewOrderImageRatingStatus.Correct
-      ? await correctJudgmentsCounter.increment({ id: playerId })
-      : await correctJudgmentsCounter.getCount(playerId);
-
-  const correctPercentage = correctJudgments / (allJudgments || 1);
-  const fervor = correctJudgments * correctPercentage * Math.E ** (allJudgments * -1);
-
-  const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
   const newExp = await expCounter.increment({ id: playerId, value: exp });
-  // TODO.newOrder: adjust buzz based on conversion rate
-  const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
+  let stats = { exp: newExp, fervor: 0, blessedBuzz: 0 };
 
-  const stats = { exp: newExp, fervor: newFervor, blessedBuzz };
+  if (updateAll) {
+    const allJudgments = await allJudmentsCounter.increment({ id: playerId });
+    const correctJudgments =
+      status === NewOrderImageRatingStatus.Correct
+        ? await correctJudgmentsCounter.increment({ id: playerId })
+        : await correctJudgmentsCounter.getCount(playerId);
+
+    const fervor = calculateFervor({ correctJudgments, allJudgments });
+
+    const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
+    // TODO.newOrder: adjust buzz based on conversion rate
+    const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
+
+    stats = { ...stats, fervor: newFervor, blessedBuzz };
+  }
 
   signalClient
     .topicSend({
       topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
       target: SignalMessages.NewOrderPlayerUpdate,
-      data: { stats },
+      data: { action: 'updateStats', stats },
     })
     .catch(handleLogError);
 
-  return { ...stats };
+  return stats;
 }
 
 export function calculateFervor({
@@ -441,7 +457,9 @@ export function calculateFervor({
   allJudgments: number;
 }) {
   const correctPercentage = correctJudgments / (allJudgments || 1);
-  return correctJudgments * correctPercentage * Math.E ** (allJudgments * FERVOR_COEFFICIENT);
+  return Math.round(
+    correctJudgments * correctPercentage * Math.pow(Math.E, allJudgments * FERVOR_COEFFICIENT)
+  );
 }
 
 export async function resetPlayer({ playerId }: { playerId: number }) {
@@ -468,10 +486,13 @@ export async function resetPlayer({ playerId }: { playerId: number }) {
     blessedBuzzCounter.reset({ id: playerId }),
   ]);
 
+  bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
+
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
     data: {
+      action: 'reset',
       rankType: NewOrderRankType.Acolyte,
       stats: {
         exp: 0,
@@ -482,7 +503,6 @@ export async function resetPlayer({ playerId }: { playerId: number }) {
     },
   });
 
-  // TODO.newOrder: Cleanup clickhouse data?
   // TODO.newOrder: send notification to player
 }
 
@@ -497,7 +517,7 @@ export async function getNewOrderRanks({ name }: { name: string }) {
 
       return ranks;
     },
-    { ttl: 0 } // TODO.newOrder: set a proper TTL
+    { ttl: CacheTTL.month }
   );
 
   const rank = ranks.find((r) => r.name === name);
@@ -506,7 +526,7 @@ export async function getNewOrderRanks({ name }: { name: string }) {
   return rank;
 }
 
-async function getRatedImages(userId: number) {
+async function getRatedImages({ userId, startAt }: { userId: number; startAt: Date }) {
   const images = await fetchThroughCache(
     REDIS_KEYS.NEW_ORDER.RATED,
     async () => {
@@ -514,7 +534,7 @@ async function getRatedImages(userId: number) {
         SELECT 
           DISTINCT "imageId"
         FROM knights_new_order_image_rating
-        WHERE "userId" = ${userId}
+        WHERE "userId" = ${userId} AND "createdAt" >= ${startAt}
     `;
       return results.map((r) => r.imageId);
     },
@@ -539,7 +559,7 @@ export async function addImageToQueue({
 
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
-    select: { id: true },
+    select: { id: true, url: true, nsfwLevel: true, metadata: true },
   });
   if (images.length === 0) return false;
 
@@ -550,6 +570,28 @@ export async function addImageToQueue({
       return pool.getCount(image.id);
     })
   );
+
+  if (rankType === 'Inquisitor') {
+    const imageRaters = await getImageRaters({ imageIds });
+    const imagesWithRaters = images.map((image) => ({
+      ...image,
+      ratings: imageRaters[image.id],
+    }));
+
+    signalClient.topicSend({
+      topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
+      target: SignalMessages.NewOrderQueueUpdate,
+      data: { images: imagesWithRaters, action: 'add' },
+    });
+
+    return true;
+  }
+
+  signalClient.topicSend({
+    topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
+    target: SignalMessages.NewOrderQueueUpdate,
+    data: { images, action: 'add' },
+  });
 
   return true;
 }
@@ -572,7 +614,7 @@ export async function getImagesQueue({
     ? [...poolCounters.Templar, ...poolCounters.Knight]
     : poolCounters[player.rankType];
 
-  const ratedImages = await getRatedImages(playerId);
+  const ratedImages = await getRatedImages({ userId: playerId, startAt: player.startAt });
 
   for (const pool of rankPools) {
     // We multiply by 10 to ensure we get enough images in case some are already rated.
@@ -580,6 +622,7 @@ export async function getImagesQueue({
     if (images.length === 0) continue;
 
     // Allow mods to see all images regardless of rating.
+    // imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
     if (!isModerator) imageIds.push(...images.filter((i) => !ratedImages.includes(i)));
     else imageIds.push(...images);
 
@@ -610,9 +653,10 @@ async function getImageRaters({ imageIds }: { imageIds: number[] }) {
     imageId: number;
     rating: NsfwLevel;
   }>`
-    SELECT DISTINCT("userId"), "imageId", "rating"
+    SELECT "userId", "imageId", any("rating") as "rating"
     FROM knights_new_order_image_rating
     WHERE "imageId" IN (${imageIds})
+    GROUP BY "userId", "imageId"
   `;
 
   const raters: Record<
@@ -675,8 +719,14 @@ export async function getPlayerHistory({
 }: GetHistorySchema & { playerId: number }) {
   if (!clickhouse) throw throwInternalServerError('Not supported');
 
-  const AND = [`userId = ${playerId}`];
-  if (cursor) AND.push(`createdAt < '${cursor}'`);
+  const player = await getPlayerById({ playerId });
+  if (!player) throw throwNotFoundError(`No player with id ${playerId}`);
+
+  const AND = [
+    `"userId" = ${playerId}`,
+    `"createdAt" >= parseDateTimeBestEffort('${player.startAt.toISOString()}')`,
+  ];
+  if (cursor) AND.push(`"createdAt" < '${cursor}'`);
   if (status?.length) AND.push(`status IN ('${status.join("','")}')`);
 
   const judgments = await clickhouse.$query<{
@@ -687,7 +737,7 @@ export async function getPlayerHistory({
     multiplier: number;
     createdAt: Date;
   }>`
-    SELECT imageId, rating, status, grantedExp, multiplier, createdAt
+    SELECT imageId, rating, status, grantedExp, multiplier, "createdAt"
     FROM knights_new_order_image_rating
     WHERE ${AND.join(' AND ')}
     ORDER BY createdAt DESC

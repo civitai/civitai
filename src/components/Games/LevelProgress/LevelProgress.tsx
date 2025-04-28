@@ -3,6 +3,7 @@ import { IconStarFilled } from '@tabler/icons-react';
 import clsx from 'clsx';
 
 import styles from './LevelProgress.module.scss';
+import { numberWithCommas } from '~/utils/number-helpers';
 
 export function LevelProgress({
   level,
@@ -27,7 +28,7 @@ export function LevelProgress({
           <div className="flex flex-nowrap gap-1">
             <p className="text-xs font-bold uppercase text-blue-4">Next level</p>
             <p className="text-xs font-medium">
-              {currentExp} / {nextLevelExp}
+              {numberWithCommas(currentExp)} / {numberWithCommas(nextLevelExp)}
             </p>
           </div>
           {total ? (

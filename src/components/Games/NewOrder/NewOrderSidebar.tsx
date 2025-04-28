@@ -107,11 +107,12 @@ export function NewOrderSidebar() {
         transition="scale-y"
         width="calc(100% - 32px)"
         onChange={setOpened}
+        zIndex={40}
       >
         <Popover.Target>
           <button
             className={clsx(
-              'w-full justify-items-center border border-t-0 p-1 dark:border-dark-4',
+              'z-10 w-full justify-items-center border border-t-0 p-1 dark:border-dark-4',
               opened ? 'bg-gray-1 dark:bg-dark-5' : 'dark:bg-dark-6'
             )}
           >

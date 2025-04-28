@@ -21,3 +21,30 @@ export function calculateLevelProgression(totalRatings: number) {
 
   return { level, ratingsForNextLevel, ratingsInLevel, ratingsRemaining, progress };
 }
+
+export function getLevelProgression(totalXp: number, baseXp = 200, xpGrowthRate = 1.5) {
+  let level = 1;
+  let xpForCurrentLevel = 0;
+  let xpForNextLevel = baseXp;
+
+  while (totalXp >= xpForNextLevel) {
+    totalXp -= xpForNextLevel;
+    level++;
+    xpForCurrentLevel = xpForNextLevel;
+    xpForNextLevel = Math.floor(xpForNextLevel * xpGrowthRate);
+  }
+
+  const xpIntoLevel = totalXp;
+  const xpToNextLevel = xpForNextLevel - xpIntoLevel;
+  const progressPercent = Math.min((xpIntoLevel / xpForNextLevel) * 100, 100);
+
+  return {
+    level,
+    totalXp: xpIntoLevel,
+    xpForCurrentLevel,
+    xpForNextLevel,
+    xpIntoLevel,
+    xpToNextLevel,
+    progressPercent: Math.round(progressPercent * 100) / 100,
+  };
+}

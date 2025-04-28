@@ -7,6 +7,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useStorage } from '~/hooks/useStorage';
 import {
+  NewOrderActions,
   NewOrderDamnedReason,
   NsfwLevel,
   SignalMessages,
@@ -18,14 +19,38 @@ import {
   GetPlayersInfiniteSchema,
 } from '~/server/schema/games/new-order.schema';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
-import { GetPlayersItem } from '~/types/router';
+import { NewOrderRankType } from '~/shared/utils/prisma/enums';
+import { GetImagesQueueItem, GetPlayersItem } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { queryClient, trpc } from '~/utils/trpc';
 
 const JudgmentHistoryModal = dynamic(() => import('./NewOrder/JudgmentHistory'));
 const PlayersDirectoryModal = dynamic(() => import('./NewOrder/PlayersDirectoryModal'));
 
-export const useKnightsNewOrderListener = () => {
+type PlayerUpdateStatsPayload = {
+  action: NewOrderActions.UpdateStats | NewOrderActions.Reset;
+  stats: { exp: number; fervor: number; blessedBuzz: number; smites: number };
+};
+
+type PlayerRankUpPayload = {
+  action: NewOrderActions.RankUp;
+  rankType: NewOrderRankType;
+  rank: { type: NewOrderRankType; name: string };
+};
+
+type PlayerUpdatePayload = PlayerUpdateStatsPayload | PlayerRankUpPayload;
+
+type QueueUpdateAddPayload = { action: 'add'; images: GetImagesQueueItem[] };
+type QueueUpdateRemovePayload = { action: 'remove'; imageId: number };
+type QueueUpdatePayload = QueueUpdateAddPayload | QueueUpdateRemovePayload;
+
+export const useKnightsNewOrderListener = ({
+  onRankUp,
+  onReset,
+}: {
+  onRankUp?: (rank: { type: NewOrderRankType; name: string }) => void;
+  onReset?: VoidFunction;
+} = {}) => {
   const queryUtils = trpc.useUtils();
 
   const { playerData } = useJoinKnightsNewOrder();
@@ -36,25 +61,62 @@ export const useKnightsNewOrderListener = () => {
   useSignalTopic(playerData ? `${SignalTopic.NewOrderQueue}:${playerData.rankType}` : undefined);
 
   // Used to update player stats (exp, fervor, blessed buzz, rank, etc.)
-  useSignalConnection(SignalMessages.NewOrderPlayerUpdate, (data) => {
-    console.log('update player from signal', data);
-    queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
-      if (!old) return old;
+  useSignalConnection(SignalMessages.NewOrderPlayerUpdate, async (data: PlayerUpdatePayload) => {
+    switch (data.action) {
+      case NewOrderActions.UpdateStats:
+        queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
+          if (!old) return old;
+          return { ...old, stats: { ...old.stats, ...data.stats } };
+        });
+        break;
+      case 'reset':
+        onReset?.();
+        queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
+          if (!old) return old;
+          return { ...old, stats: { ...old.stats, exp: 0, fervor: 0, blessedBuzz: 0, smites: 0 } };
+        });
 
-      const { stats, ...rest } = data;
-      return { ...old, ...rest, stats: { ...old.stats, ...stats } };
-    });
+        await Promise.all([
+          queryUtils.games.newOrder.getImagesQueue.invalidate(),
+          queryUtils.games.newOrder.getPlayer.invalidate(),
+          queryUtils.games.newOrder.getHistory.invalidate(),
+        ]);
+        break;
+      case NewOrderActions.RankUp:
+        onRankUp?.(data.rank);
+        queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
+          if (!old) return old;
+          return { ...old, rankType: data.rankType, rank: data.rank };
+        });
+
+        await Promise.all([
+          queryUtils.games.newOrder.getImagesQueue.invalidate(),
+          queryUtils.games.newOrder.getPlayer.invalidate(),
+        ]);
+        break;
+      default:
+        break;
+    }
   });
 
   // Used to update the current image queue
-  useSignalConnection(SignalMessages.NewOrderQueueUpdate, (data) => {
-    console.log('update queue from signal', data);
-    queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
-      // TODO.newOrder: Handle removing from queue
-      if (!old) return old;
-
-      return [...old, ...data];
-    });
+  useSignalConnection(SignalMessages.NewOrderQueueUpdate, (data: QueueUpdatePayload) => {
+    switch (data.action) {
+      case 'add':
+        queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
+          if (!old) return old;
+          return [...old, data.image];
+        });
+        break;
+      case 'remove':
+        queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
+          if (!old) return old;
+          return old.filter((image) => image.id !== data.imageId);
+        });
+        break;
+      default:
+        break;
+    }
   });
 };
 
@@ -88,9 +150,11 @@ export const useJoinKnightsNewOrder = () => {
 
   const resetCareerMutation = trpc.games.newOrder.resetCareer.useMutation({
     onSuccess: async () => {
-      await queryUtils.games.newOrder.getPlayer.invalidate();
-      await queryUtils.games.newOrder.getImagesQueue.invalidate();
-      await queryUtils.games.newOrder.getHistory.invalidate();
+      await Promise.all([
+        queryUtils.games.newOrder.getPlayer.invalidate(),
+        queryUtils.games.newOrder.getImagesQueue.invalidate(),
+        queryUtils.games.newOrder.getHistory.invalidate(),
+      ]);
     },
   });
 

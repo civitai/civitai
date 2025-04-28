@@ -21,6 +21,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
       }
       timeoutRef = setTimeout(() => {
         onRatingClick(data);
+        setShowReasons(false);
       }, 500);
     },
     [onRatingClick]
@@ -32,6 +33,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
     }
     timeoutRef = setTimeout(() => {
       onSkipClick();
+      setShowReasons(false);
     }, 500);
   }, [onSkipClick]);
 
@@ -153,6 +155,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
                   >
                     <Button
                       key={rating}
+                      size={mobile ? 'xs' : undefined}
                       variant={isBlocked ? 'filled' : 'default'}
                       color={isBlocked ? 'red' : undefined}
                       onClick={() =>
@@ -165,7 +168,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
                 );
               })}
             </Button.Group>
-            <Button variant="default" onClick={debouncedSkipClick}>
+            <Button variant="default" size={mobile ? 'xs' : undefined} onClick={debouncedSkipClick}>
               Skip
             </Button>
           </>
@@ -173,11 +176,13 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
       </div>
       <div className="flex w-full justify-between gap-2">
         <Text className="hidden md:block" size="xs">
-          Use the numbers <Kbd>1-6</Kbd> to rate, <Kbd>Space</Kbd> to skip.
-          {showReasons && (
+          {showReasons ? (
             <>
-              {' '}
-              <Kbd>Esc</Kbd> to cancel
+              Use the numbers <Kbd>1-5</Kbd> to rate, <Kbd>Esc</Kbd> to cancel
+            </>
+          ) : (
+            <>
+              Use the numbers <Kbd>1-6</Kbd> to rate, <Kbd>Space</Kbd> to skip.
             </>
           )}
         </Text>

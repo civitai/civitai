@@ -1,8 +1,8 @@
-import { ActionIcon, Button, Skeleton, ThemeIcon } from '@mantine/core';
+import { useState } from 'react';
+import { ActionIcon, Button, Loader, ThemeIcon } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
-import { useState } from 'react';
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -26,13 +26,15 @@ import { getLoginLink } from '~/utils/login-helpers';
 import { NewOrderSidebar } from '~/components/Games/NewOrder/NewOrderSidebar';
 import { Meta } from '~/components/Meta/Meta';
 import { IsClient } from '~/components/IsClient/IsClient';
-import { calculateLevelProgression } from '~/server/utils/research-utils';
+import { getLevelProgression } from '~/server/utils/research-utils';
 import { LevelUp } from '~/components/Games/LevelProgress/LevelUp';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { NewOrderImageRatings } from '~/components/Games/NewOrder/NewOrderImageRatings';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
+import { RankUp } from '~/components/Games/LevelProgress/RankUp';
 
 let levelUpTimer: NodeJS.Timeout | null = null;
+let rankUpTimer: NodeJS.Timeout | null = null;
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
@@ -55,14 +57,15 @@ export const getServerSideProps = createServerSideProps({
 export default Page(
   function KnightsNewOrderPage() {
     const currentUser = useCurrentUser();
-
     const [muted, setMuted] = useStorage({
       key: 'knights-new-order-muted',
       type: 'localStorage',
       defaultValue: false,
       getInitialValueInEffect: false,
     });
+
     const [isLevelingUp, setIsLevelingUp] = useState(false);
+    const [isRankingUp, setIsRankingUp] = useState(false);
 
     const playSound = useGameSounds({ volume: muted ? 0 : 0.5 });
     const { playerData, isLoading, joined } = useJoinKnightsNewOrder();
@@ -74,7 +77,14 @@ export default Page(
       isRefetching,
     } = useQueryKnightsNewOrderImageQueue();
 
-    useKnightsNewOrderListener();
+    useKnightsNewOrderListener({
+      onRankUp: () => {
+        setIsRankingUp(true);
+        if (!muted) playSound('levelUp');
+        rankUpTimer && clearTimeout(rankUpTimer);
+        rankUpTimer = setTimeout(() => setIsRankingUp(false), 2500);
+      },
+    });
 
     const handleAddRating = async ({
       rating,
@@ -87,10 +97,11 @@ export default Page(
         await addRating({ imageId: currentImage.id, rating, damnedReason });
 
         // Check for level up
-        const progression = playerData ? calculateLevelProgression(playerData.stats.exp) : null;
-        const shouldLevelUp =
-          progression && progression.ratingsInLevel + 100 >= progression.ratingsForNextLevel;
+        const progression = playerData ? getLevelProgression(playerData.stats.exp) : null;
+        const shouldLevelUp = progression && progression.xpToNextLevel - 100 === 0;
         if (shouldLevelUp) levelUp();
+
+        handleFetchNextBatch();
       } catch {
         playSound('challengeFail');
       }
@@ -100,11 +111,25 @@ export default Page(
       await handleAddRating({ rating: NsfwLevel.Blocked, damnedReason: reason });
     };
 
+    const handleFetchNextBatch = () => {
+      if (data.length <= 1 && !isRefetching) {
+        refetch();
+      }
+    };
+
+    const handleSkipRating = async () => {
+      if (!currentImage) return;
+
+      playSound('undo');
+      await skipRating({ imageId: currentImage.id });
+      handleFetchNextBatch();
+    };
+
     const levelUp = () => {
       setIsLevelingUp(true);
       if (!muted) playSound('levelUp');
       levelUpTimer && clearTimeout(levelUpTimer);
-      levelUpTimer = setTimeout(() => setIsLevelingUp(false), 2500);
+      levelUpTimer = setTimeout(() => setIsLevelingUp(false), 1000);
     };
 
     const currentImage = data[0];
@@ -112,7 +137,7 @@ export default Page(
     return (
       <GameErrorBoundary>
         <Meta
-          title="Knights New Order"
+          title="Knights of New Order"
           description="Join the Knights of the New Order and rate images to earn rewards."
           links={[{ rel: 'canonical', href: '/games/kono' }]}
         />
@@ -122,19 +147,20 @@ export default Page(
           ) : isLoading ? (
             <PageLoader />
           ) : playerData ? (
-            <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-dark-9 p-4 md:flex-row md:p-0">
-              {isLevelingUp && <LevelUp />}
+            <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-dark-9 p-4 @md:flex-row @md:p-0">
+              {isLevelingUp && <LevelUp className="absolute" />}
+              {isRankingUp && <RankUp className="absolute" />}
               <NewOrderSidebar />
-              <div className="flex size-full items-center justify-center gap-4 overflow-hidden p-0 md:h-auto md:p-4">
-                {loadingImagesQueue ? (
-                  <Skeleton className="h-1/2 w-full max-w-sm p-4" visible animate />
+              <div className="flex size-full items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
+                {loadingImagesQueue || isRefetching ? (
+                  <Loader variant="bars" size="xl" />
                 ) : currentImage ? (
                   <div className="flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
                     <ImageGuard2 image={currentImage} explain={false}>
                       {() => (
                         <div
                           className={clsx(
-                            'relative my-auto flex max-h-[75%] max-w-full items-center justify-center md:my-0'
+                            'relative my-auto flex max-h-[85%] max-w-full items-center justify-center @md:my-0'
                           )}
                         >
                           {currentUser?.isModerator && (
@@ -168,7 +194,7 @@ export default Page(
                     <NewOrderImageRater
                       muted={muted}
                       onVolumeClick={() => setMuted((prev) => !prev)}
-                      onSkipClick={() => skipRating({ imageId: currentImage.id })}
+                      onSkipClick={() => handleSkipRating()}
                       onRatingClick={({ rating, damnedReason }) =>
                         damnedReason
                           ? handleAddDamnedReason({ reason: damnedReason })
