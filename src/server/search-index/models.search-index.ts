@@ -204,6 +204,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
           allowDerivatives,
           allowDifferentLicense,
           minor: modelRecord.minor,
+          sfwOnly: modelRecord.sfwOnly,
         },
         version: {
           ...restVersion,

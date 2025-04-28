@@ -149,6 +149,7 @@ type ModelRaw = {
   type: ModelType;
   poi?: boolean;
   minor?: boolean;
+  sfwOnly?: boolean;
   nsfw: boolean;
   nsfwLevel: number;
   allowNoCredit?: boolean;
@@ -630,7 +631,9 @@ export const getModelsRaw = async ({
         m."allowCommercialUse",
         m."allowDerivatives",
         m."allowDifferentLicense",
-      `} m."type", m."minor",
+      `} m."type",
+      m."minor",
+      m."sfwOnly",
       m."poi",
       m."nsfw",
       m."nsfwLevel",
@@ -1452,6 +1455,7 @@ export const upsertModel = async (
         poi: true,
         userId: true,
         minor: true,
+        sfwOnly: true,
         nsfw: true,
         gallerySettings: true,
         meta: true,
@@ -1472,6 +1476,7 @@ export const upsertModel = async (
         nsfwLevel: true,
         poi: true,
         minor: true,
+        sfwOnly: true,
         nsfw: true,
         gallerySettings: true,
         status: true,
@@ -1484,7 +1489,7 @@ export const upsertModel = async (
         meta: isEmpty(meta) ? Prisma.JsonNull : meta,
         gallerySettings: {
           ...prevGallerySettings,
-          level: input.minor ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+          level: input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
         },
         tagsOnModels: tagsOnModels
           ? {
@@ -1516,7 +1521,8 @@ export const upsertModel = async (
 
     // Check any changes that would require a search index update
     const poiChanged = result.poi !== beforeUpdate.poi;
-    const minorChanged = result.minor !== beforeUpdate.minor;
+    const minorChanged =
+      result.minor !== beforeUpdate.minor || result.sfwOnly !== beforeUpdate.sfwOnly;
     const nsfwChanged = result.nsfw !== beforeUpdate.nsfw;
     const nameChanged = input.name !== beforeUpdate.name;
     const descriptionChanged = input.description !== beforeUpdate.description;
@@ -1626,6 +1632,7 @@ export const publishModelById = async ({
           poi: true,
           nsfw: true,
           minor: true,
+          sfwOnly: true,
           type: true,
           userId: true,
           modelVersions: { select: { id: true, baseModel: true } },
@@ -2716,7 +2723,15 @@ export async function migrateResourceToCollection({
 export async function ingestModelById({ id }: GetByIdInput) {
   const model = await dbRead.model.findUnique({
     where: { id },
-    select: { id: true, name: true, description: true, poi: true, nsfw: true, minor: true },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      poi: true,
+      nsfw: true,
+      minor: true,
+      sfwOnly: true,
+    },
   });
   if (!model) throw new TRPCError({ code: 'NOT_FOUND' });
 
@@ -2757,6 +2772,7 @@ export async function ingestModel(data: IngestModelInput) {
         POI: data.poi,
         NSFW: data.nsfw,
         minor: data.minor,
+        sfwOnly: data.sfwOnly,
         triggerwords: triggerWords,
       },
     },
@@ -2944,6 +2960,7 @@ export const privateModelFromTraining = async ({
         nsfwLevel: true,
         poi: true,
         minor: true,
+        sfwOnly: true,
         nsfw: true,
         gallerySettings: true,
         status: true,

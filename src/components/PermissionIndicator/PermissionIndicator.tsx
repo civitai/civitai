@@ -25,7 +25,7 @@ export const PermissionIndicator = ({
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
 
-  const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense, minor } =
+  const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense, sfwOnly } =
     permissions;
   const canSellImages = allowCommercialUse.includes(CommercialUse.Image);
   const canRentCivit = allowCommercialUse.includes(CommercialUse.RentCivit);
@@ -40,13 +40,16 @@ export const PermissionIndicator = ({
     'Share merges using this model': allowDerivatives,
     'Sell this model or merges using this model': canSell,
     'Have different permissions when sharing merges': allowDifferentLicense,
-    ...(isModerator && { 'Create NSFW generations': !minor }),
+    ...(isModerator && { 'Create NSFW generations': !sfwOnly }),
   };
   const iconProps = { size, stroke: 1.5 };
   const icons = [
-    isModerator && minor && { label: 'No mature content', icon: <IconSpyOff {...iconProps} /> },
+    isModerator && sfwOnly && { label: 'No mature content', icon: <IconSpyOff {...iconProps} /> },
     !allowNoCredit && { label: 'Creator credit required', icon: <IconUserCheck {...iconProps} /> },
-    !canSellImages && { label: 'No selling generated content', icon: <IconPhotoOff {...iconProps} /> },
+    !canSellImages && {
+      label: 'No selling generated content',
+      icon: <IconPhotoOff {...iconProps} />,
+    },
     !canRentCivit && { label: 'No Civitai generation', icon: <IconBrushOff {...iconProps} /> },
     !canRent && { label: 'No generation services', icon: <IconWorldOff {...iconProps} /> },
     !canSell && { label: 'No selling models', icon: <IconShoppingCartOff {...iconProps} /> },
@@ -115,5 +118,5 @@ type Permissions = {
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
   allowDifferentLicense: boolean;
-  minor: boolean;
+  sfwOnly: boolean;
 };

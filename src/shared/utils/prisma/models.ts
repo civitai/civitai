@@ -562,6 +562,7 @@ export interface Model {
   nsfwLevel: number;
   lockedProperties: string[];
   scannedAt: Date | null;
+  sfwOnly: boolean;
   allowNoCredit: boolean;
   allowCommercialUse: CommercialUse[];
   allowDerivatives: boolean;
@@ -595,6 +596,7 @@ export interface ModelFlag {
   model?: Model;
   poi: boolean;
   minor: boolean;
+  sfwOnly: boolean;
   nsfw: boolean;
   triggerWords: boolean;
   poiName: boolean;

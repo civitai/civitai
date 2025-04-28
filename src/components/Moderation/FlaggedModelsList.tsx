@@ -88,7 +88,8 @@ export function FlaggedModelsList() {
           const items = Object.entries(original)
             .filter(
               ([key, value]) =>
-                ['poi', 'nsfw', 'minor', 'triggerWords', 'poiName'].includes(key) && !!value
+                ['poi', 'nsfw', 'minor', 'sfwOnly', 'triggerWords', 'poiName'].includes(key) &&
+                !!value
             )
             .map(([key, value]) => ({ name: key, value }));
 
@@ -215,12 +216,17 @@ const schema = modelUpsertSchema.pick({
   type: true,
   uploadType: true,
   status: true,
+  sfwOnly: true,
 });
 
 function DetailsModal({ model, details }: { model: z.infer<typeof schema>; details: MixedObject }) {
   const context = useDialogContext();
   const queryUtils = trpc.useUtils();
-  const form = useForm({ schema, defaultValues: { ...model }, shouldUnregister: false });
+  const form = useForm({
+    schema,
+    defaultValues: { ...model, sfwOnly: model.poi || model.minor || model.sfwOnly },
+    shouldUnregister: false,
+  });
   const isDirty = form.formState.isDirty;
 
   const upsertModelMutation = trpc.model.upsert.useMutation({
@@ -260,7 +266,7 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
     }
   };
 
-  const [poi, nsfw] = form.watch(['poi', 'nsfw']);
+  const [poi, nsfw, minor] = form.watch(['poi', 'nsfw', 'minor']);
 
   return (
     <Modal {...context} title="Resolve Model" size="75%" centered>
@@ -296,19 +302,31 @@ function DetailsModal({ model, details }: { model: z.infer<typeof schema>; detai
                   label="Depicts an actual person (Resource cannot be used on Civitai on-site Generator)"
                   onChange={(e) => {
                     form.setValue('nsfw', e.target.checked ? false : undefined);
+                    if (e.target.checked) {
+                      form.setValue('sfwOnly', true);
+                    }
                   }}
                 />
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
                   disabled={poi}
-                  onChange={(event) =>
-                    event.target.checked ? form.setValue('minor', false) : null
-                  }
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      form.setValue('minor', false);
+                      form.setValue('sfwOnly', false);
+                    }
+                  }}
+                />
+                <InputCheckbox
+                  name="sfwOnly"
+                  label="Cannot be used for NSFW generation"
+                  disabled={nsfw || poi || minor}
                 />
                 <InputCheckbox
                   name="minor"
-                  label="Cannot be used for NSFW generation"
+                  label="Depicts a minor"
+                  onChange={(e) => (e.target.checked ? form.setValue('sfwOnly', true) : undefined)}
                   disabled={nsfw}
                 />
               </Stack>

@@ -322,7 +322,9 @@ export function GenerationFormContent() {
   useEffect(() => {
     const subscription = form.watch(({ model, resources = [], vae, fluxMode }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
-        setHasMinorResources([model, ...resources, vae].filter((x) => x?.model?.minor).length > 0);
+        setHasMinorResources(
+          [model, ...resources, vae].filter((x) => x?.model?.sfwOnly || x?.model?.minor).length > 0
+        );
       }
 
       setRunsOnFalAI(model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir);
@@ -483,7 +485,9 @@ export function GenerationFormContent() {
                 <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
                   {({ model, resources = [], vae, fluxMode }) => {
                     const selectedResources = [...resources, vae, model].filter(isDefined);
-                    const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
+                    const minorFlaggedResources = selectedResources.filter(
+                      (x) => x.model.minor || x.model.sfwOnly
+                    );
                     const unstableResources = selectedResources.filter((x) =>
                       allUnstableResources.includes(x.id)
                     );

@@ -66,6 +66,7 @@ type GenerationResourceSimple = {
   minStrength: number;
   maxStrength: number;
   minor: boolean;
+  sfwOnly: boolean;
   fileSizeKB: number;
   available: boolean;
 };
@@ -531,6 +532,7 @@ export type GenerationResource = GenerationResourceBase & {
     nsfw?: boolean;
     poi?: boolean;
     minor?: boolean;
+    sfwOnly?: boolean;
     // userId: number;
   };
   epochDetails?: {

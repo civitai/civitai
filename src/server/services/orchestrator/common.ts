@@ -259,7 +259,9 @@ export async function parseGenerateImageInput({
     }
   }
 
-  const hasMinorResource = availableResources.some((resource) => resource.model.minor);
+  const hasMinorResource = availableResources.some(
+    (resource) => resource.model.minor || resource.model.sfwOnly
+  );
   if (hasMinorResource) params.nsfw = false;
 
   // Disable nsfw if the prompt contains poi/minor words
