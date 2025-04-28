@@ -597,7 +597,6 @@ function HunyuanTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="hunyuan">
       <InputResourceSelectMultipleStandalone
-        label="Loras"
         name="resources"
         options={{ resources: baseModelResourceTypes.HyV1 }}
         buttonLabel="Add additional resource"
@@ -691,7 +690,6 @@ function WanTxt2VidGenerationForm() {
   return (
     <FormWrapper engine="wan">
       <InputResourceSelectMultipleStandalone
-        label="Loras"
         name="resources"
         options={{ resources: baseModelResourceTypes.WanVideo }}
         buttonLabel="Add additional resource"
@@ -785,7 +783,6 @@ function WanImg2VidGenerationForm() {
   return (
     <FormWrapper engine="wan">
       <InputResourceSelectMultipleStandalone
-        label="Loras"
         name="resources"
         options={{ resources: baseModelResourceTypes.WanVideo }}
         buttonLabel="Add additional resource"

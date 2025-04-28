@@ -48,6 +48,12 @@ export const auditPrompt = (prompt: string, negativePrompt?: string) => {
   const { found, age } = includesMinorAge(prompt);
   if (found) return { blockedFor: [`${age} year old`], success: false };
 
+  if (includesPoi(prompt)) {
+    return { blockedFor: ['Prompt cannot include celebrity names'], success: false };
+  } else if (includesPoi(negativePrompt)) {
+    return { blockedFor: ['Negative prompt cannot include celebrity names'], success: false };
+  }
+
   const inappropriate = includesInappropriate({ prompt, negativePrompt });
   if (inappropriate === 'minor')
     return { blockedFor: ['Inappropriate minor content'], success: false };

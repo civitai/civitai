@@ -1996,7 +1996,6 @@ export const getCollectionCoverImages = async ({
         'postId', i."postId",
         'name', i."name",
         'url', i."url",
-        'nsfw', i."nsfw",
         'nsfwLevel', i."nsfwLevel",
         'width', i."width",
         'height', i."height",

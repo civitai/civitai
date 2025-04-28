@@ -18,9 +18,10 @@ interface BaseGeneratedMedia {
   url: string;
   width: number;
   height: number;
-  reason?: string;
+  reason?: string | null;
   queuePosition?: WorkflowStepJobQueuePosition;
   aspectRatio?: number;
+  blockedReason?: string | null;
 }
 
 export interface GeneratedVideo extends BaseGeneratedMedia {

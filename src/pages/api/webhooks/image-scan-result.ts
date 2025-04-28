@@ -386,7 +386,6 @@ async function handleSuccess({
 
     if (minor) {
       if (!reviewKey && nsfw) reviewKey = 'minor';
-      reviewKey = 'minor';
       // Marks this image as using a minor resource / tags. Will block it from NSFW searches.
       data.minor = true;
     }

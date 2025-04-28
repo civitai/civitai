@@ -582,6 +582,7 @@ function formatVideoGenStep({ step, workflowId }: { step: WorkflowStep; workflow
             height: height ?? 1080,
             queuePosition: job.queuePosition,
             aspectRatio,
+            blockedReason: image.blockedReason,
           })) ?? [],
     }),
     {}
@@ -690,6 +691,7 @@ function formatTextToImageStep({
             url: image.url as string,
             width: input.width,
             height: input.height,
+            blockedReason: image.blockedReason,
           })) ?? [],
     }),
     {}
@@ -798,6 +800,7 @@ export function formatComfyStep({
             url: image.url as string,
             width,
             height,
+            blockedReason: image.blockedReason,
           })) ?? [],
     }),
     {}

@@ -12,6 +12,7 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { zc } from '~/utils/schema-helpers';
 import { ImageSort, NsfwLevel } from './../common/enums';
+import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 
 const stringToNumber = z.coerce.number().optional();
 
@@ -376,6 +377,7 @@ export const imageReviewQueueInputSchema = z.object({
   tagReview: z.boolean().optional(),
   reportReview: z.boolean().optional(),
   tagIds: z.array(z.number()).optional(),
+  browsingLevel: z.number().default(allBrowsingLevelsFlag),
 });
 
 export type ScanJobsOutput = z.output<typeof scanJobsSchema>;

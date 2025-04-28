@@ -3569,8 +3569,11 @@ export const getImageModerationReviewQueue = async ({
   tagReview,
   reportReview,
   tagIds,
+  browsingLevel,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
+
+  AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
 
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
