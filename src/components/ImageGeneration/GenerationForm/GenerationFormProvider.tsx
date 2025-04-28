@@ -99,7 +99,7 @@ const formSchema = baseSchema
     }
 
     if (data.prompt.length > 0) {
-      const { blockedFor, success } = auditPrompt(data.prompt);
+      const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
       if (!success) {
         let message = `Blocked for: ${blockedFor.join(', ')}`;
         const count = blockedRequest.increment();
