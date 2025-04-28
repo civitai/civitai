@@ -6,7 +6,8 @@ export default async function enums(req: NextApiRequest, res: NextApiResponse) {
   return res.status(200).json({
     ModelType: Object.values(ModelType),
     ModelFileType: constants.modelFileTypes,
-    BaseModel: activeBaseModels,
+    ActiveBaseModel: activeBaseModels,
+    BaseModel: constants.baseModels,
     BaseModelType: constants.baseModelTypes,
   });
 }
