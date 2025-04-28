@@ -18,6 +18,7 @@ import {
   IconArrowsShuffle,
   IconBan,
   IconCheck,
+  IconFlagExclamation,
   IconInfoHexagon,
   IconTrash,
 } from '@tabler/icons-react';
@@ -222,6 +223,7 @@ export function QueueItem({
               )}
             </div>
             <div className="flex gap-1">
+              {/* <SubmitBlockedImagesForReviewButton step={step} /> */}
               <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
@@ -511,5 +513,31 @@ function CancelOrDeleteWorkflow({
         </ActionIcon>
       </ButtonTooltip>
     </PopConfirm>
+  );
+}
+
+function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGeneratedImageStep }) {
+  const blockedImages = step.images.filter((x) => !!x.blockedReason);
+  const currentUser = useCurrentUser();
+  if (!blockedImages.length || !currentUser) return null;
+
+  return (
+    <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
+      <ActionIcon
+        component="a"
+        target="_blank"
+        size="md"
+        p={4}
+        radius={0}
+        color="yellow"
+        href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?${encodeURIComponent(
+          `Civitai%20Username=${currentUser.username}&Job%20IDs=${blockedImages
+            .map((x) => x.jobId)
+            .join(',')}`
+        )}`.toString()}
+      >
+        <IconFlagExclamation />
+      </ActionIcon>
+    </ButtonTooltip>
   );
 }
