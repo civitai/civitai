@@ -63,6 +63,7 @@ export function HunyuanInput({
     ...args,
     width,
     height,
+    steps: 20,
     model: 'urn:air:hyv1:checkpoint:civitai:1167575@1314512',
     loras: resources.map(({ air, strength }) => ({ air, strength })),
   };
