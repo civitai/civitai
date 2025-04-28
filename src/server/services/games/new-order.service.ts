@@ -168,6 +168,18 @@ export async function addImageRating({
 
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
 
+  // Update image nsfw level if the player is a mod
+  if (isModerator) {
+    await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
+    signalClient.topicSend({
+      topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
+      target: SignalMessages.NewOrderQueueUpdate,
+      data: { imageId, action: 'remove' },
+    });
+
+    return true;
+  }
+
   const valueInQueue = await isImageInQueue({
     imageId,
     rankType:
@@ -237,10 +249,6 @@ export async function addImageRating({
       ).catch();
     }
   }
-
-  // Update image nsfw level if the player is a mod
-  if (isModerator)
-    await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
 
   // Increase rating count
   await getImageRatingsCounter(imageId).increment({ id: `${player.rank.name}-${rating}` });
@@ -404,7 +412,6 @@ export async function addImageRating({
     });
   }
 
-  // TODO.newOrder: what else can we return here?
   return { stats };
 }
 

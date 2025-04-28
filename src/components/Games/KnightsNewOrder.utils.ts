@@ -105,7 +105,7 @@ export const useKnightsNewOrderListener = ({
       case 'add':
         queryUtils.games.newOrder.getImagesQueue.setData(undefined, (old) => {
           if (!old) return old;
-          return [...old, data.image];
+          return [...old, ...data.images];
         });
         break;
       case 'remove':
@@ -171,7 +171,6 @@ export const useJoinKnightsNewOrder = () => {
 export const useQueryKnightsNewOrderImageQueue = (opts?: { enabled?: boolean }) => {
   const { playerData } = useJoinKnightsNewOrder();
 
-  // TODO.newOrder: Change this to be infinite query
   const { data = [], ...rest } = trpc.games.newOrder.getImagesQueue.useQuery(undefined, {
     ...opts,
     enabled: !!playerData && opts?.enabled !== false,

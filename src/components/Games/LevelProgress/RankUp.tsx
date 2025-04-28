@@ -3,7 +3,6 @@ import clsx from 'clsx';
 import { LevelAnimation } from '~/components/Animations/LevelAnimation';
 import styles from './LevelProgress.module.scss';
 
-// TODO.newOrder: Add a knight animation
 export function RankUp({ className }: { className?: string }) {
   return (
     <Card className={clsx(styles.levelUp, className)} p="md" radius="lg" shadow="xl" withBorder>
