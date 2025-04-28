@@ -74,7 +74,7 @@ export default MixedAuthEndpoint(async function handler(
       mv."publishedAt",
       m.type,
       m.minor,
-      m.sfwOnly,
+      m."sfwOnly",
       mv."earlyAccessEndsAt",
       mv."requireAuth",
       mv."usageControl",
