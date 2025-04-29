@@ -638,11 +638,9 @@ export function GenerationFormContent() {
                         )}
                         {minorFlaggedResources.length > 0 && (
                           <Card.Section>
-                            <Alert color="yellow" title="Mature Content Restricted" radius={0}>
+                            <Alert color="yellow" title="Content Restricted" radius={0}>
                               <Text size="xs">
-                                {`A resource you selected does not allow the generation of Mature Content.
-                    If you attempt to generate mature content with this resource,
-                    the image will not be returned but you `}
+                                {`A resource you selected does not allow the generation of sexualized content (X, XXX). If you attempt to generate sexualized content with this resource, the image will not be returned, but you `}
                                 <Text span italic inherit>
                                   will
                                 </Text>
