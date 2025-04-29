@@ -285,6 +285,14 @@ export function combineSqlWithParams(sql: string, params: readonly unknown[]) {
   return query;
 }
 
+export function getExplainSql(value: Prisma.sql) {
+  const obj = Prisma.sql`
+    EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON)
+    ${value}
+  `;
+  return combineSqlWithParams(obj.text, obj.values);
+}
+
 export const dbKV = {
   get: async function <T>(key: string, defaultValue?: T) {
     const stored = await dbWrite.keyValue.findUnique({ where: { key } });
