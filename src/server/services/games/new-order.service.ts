@@ -171,6 +171,8 @@ export async function addImageRating({
   // Update image nsfw level if the player is a mod
   if (isModerator) {
     await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
+    await updatePendingImageRatings({ imageId, rating });
+
     signalClient.topicSend({
       topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
       target: SignalMessages.NewOrderQueueUpdate,
@@ -222,7 +224,7 @@ export async function addImageRating({
         imageId,
         rating,
         status:
-          player.rank.name === 'Acolyte'
+          player.rankType === NewOrderRankType.Acolyte
             ? status === NewOrderImageRatingStatus.Correct
               ? NewOrderImageRatingStatus.AcolyteCorrect
               : NewOrderImageRatingStatus.AcolyteFailed
@@ -233,11 +235,10 @@ export async function addImageRating({
       });
     } catch (e) {
       const error = e as Error;
-      console.log(error);
       logToAxiom(
         {
           type: 'error',
-          name: 'Failed to track new order image rating',
+          name: 'new-order-image-rating',
           details: {
             data: { playerId, imageId, rating, status, damnedReason, grantedExp, multiplier },
           },
@@ -399,7 +400,7 @@ export async function addImageRating({
     if (rating !== currentNsfwLevel && !processed) {
       // Else, we're good :)
       await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId });
-      // TODO.newOrder: Update knights ratings as failure/success.
+      await updatePendingImageRatings({ imageId, rating });
     }
 
     // Clear image from the pool:
@@ -413,6 +414,29 @@ export async function addImageRating({
   }
 
   return { stats };
+}
+
+async function updatePendingImageRatings({
+  imageId,
+  rating,
+}: {
+  imageId: number;
+  rating: NsfwLevel;
+}) {
+  if (!clickhouse) throw throwInternalServerError('Not supported');
+
+  await clickhouse.exec({
+    query: `
+      ALTER TABLE knights_new_order_image_rating
+      UPDATE status = CASE
+        WHEN rating = ${rating} THEN ${NewOrderImageRatingStatus.Correct}
+        ELSE ${NewOrderImageRatingStatus.Failed}
+      END
+      WHERE "imageId" = ${imageId}
+        AND status = ${NewOrderImageRatingStatus.Pending}
+        AND rank != '${NewOrderRankType.Acolyte}'
+    `,
+  });
 }
 
 export async function updatePlayerStats({
@@ -625,7 +649,7 @@ export async function getImagesQueue({
 
   for (const pool of rankPools) {
     // We multiply by 10 to ensure we get enough images in case some are already rated.
-    const images = (await pool.getAll(imageCount * 10)).map(Number);
+    const images = (await pool.getAll({ limit: imageCount * 10 })).map(Number);
     if (images.length === 0) continue;
 
     // Allow mods to see all images regardless of rating.

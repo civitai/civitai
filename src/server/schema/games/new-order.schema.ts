@@ -20,7 +20,7 @@ export const smitePlayerSchema = z.object({
   playerId: z.number(),
   imageId: z.number(),
   reason: z.string().optional(),
-  size: z.number().optional().default(10),
+  size: z.number().optional().default(1000),
 });
 
 export type CleanseSmiteInput = z.infer<typeof cleanseSmiteSchema>;
