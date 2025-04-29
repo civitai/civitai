@@ -274,7 +274,6 @@ export const CustomSearchBox = forwardRef<
   SearchBoxProps & RenderSearchComponentProps
 >(({ isMobile, onSearchDone, ...props }, ref) => {
   const { query, refine } = useSearchBox({ ...props });
-  const config = useConfigure({ ...props });
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const { classes } = useSearchInputStyles();
