@@ -60,7 +60,7 @@ import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tool
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { includesPoi } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords, includesPoi } from '~/utils/metadata/audit';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -408,6 +408,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
     : true;
 
+  const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
+
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
@@ -470,7 +472,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           }
           defaultValue={query}
           value={search}
-          data={canPerformQuery ? items : []}
+          data={canPerformQuery && !hasBlockedWords ? items : []}
           onChange={setSearch}
           onBlur={handleClear}
           onClear={handleClear}

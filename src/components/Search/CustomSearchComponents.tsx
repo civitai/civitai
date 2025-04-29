@@ -39,6 +39,7 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';
+import { getBlockedNsfwWords, getPossibleBlockedNsfwWords } from '~/utils/metadata/audit';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -273,6 +274,7 @@ export const CustomSearchBox = forwardRef<
   SearchBoxProps & RenderSearchComponentProps
 >(({ isMobile, onSearchDone, ...props }, ref) => {
   const { query, refine } = useSearchBox({ ...props });
+  const config = useConfigure({ ...props });
   const [search, setSearch] = useState(query);
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const { classes } = useSearchInputStyles();
@@ -286,7 +288,9 @@ export const CustomSearchBox = forwardRef<
   }));
 
   useEffect(() => {
-    if (debouncedSearch !== query) {
+    if (debouncedSearch !== query && !getBlockedNsfwWords(debouncedSearch).length) {
+      // const possibleMatches = getPossibleBlockedNsfwWords();
+      // console.log({ possibleMatches });
       refine(debouncedSearch);
     }
   }, [debouncedSearch]);
