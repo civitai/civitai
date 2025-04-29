@@ -40,6 +40,7 @@ import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';
 import { getBlockedNsfwWords, getPossibleBlockedNsfwWords } from '~/utils/metadata/audit';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -278,6 +279,7 @@ export const CustomSearchBox = forwardRef<
   { focus: () => void },
   SearchBoxProps & RenderSearchComponentProps
 >(({ isMobile, onSearchDone, ...props }, ref) => {
+  const currentUser = useCurrentUser();
   const { query, refine } = useSearchBox({ ...props });
   const [search, setSearch] = useState(query);
   // const config = useConfigure(getBlockedPromptFilters(query));
@@ -293,7 +295,10 @@ export const CustomSearchBox = forwardRef<
   }));
 
   useEffect(() => {
-    if (debouncedSearch !== query && !getBlockedNsfwWords(debouncedSearch).length) {
+    const canSearch = !currentUser?.isModerator
+      ? !getBlockedNsfwWords(debouncedSearch).length
+      : true;
+    if (debouncedSearch !== query && canSearch) {
       refine(debouncedSearch);
       // config.refine(getBlockedPromptFilters(debouncedSearch));
     }

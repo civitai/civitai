@@ -830,9 +830,9 @@ function handleAuxClick(url: string) {
 const imageBlockedReasonMap: Record<string, string> = {
   ChildReference: 'An inappropriate child reference was detected.',
   Bestiality: 'Detected bestiality in the image.',
-  'Child Sexual - Anime': 'Inappropriate minor content detected',
-  'Child Sexual - Realistic': 'Inappropriate minor content detected',
-  NSFWLevel: 'Mature content restriction',
+  'Child Sexual - Anime': 'Inappropriate minor content detected.',
+  'Child Sexual - Realistic': 'Inappropriate minor content detected.',
+  NSFWLevel: 'Mature content restriction.',
 };
 
 function getImageBlockedReason(reason?: string | null) {
