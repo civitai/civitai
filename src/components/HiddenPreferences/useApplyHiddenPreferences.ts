@@ -294,7 +294,7 @@ function filterPreferences<
             return false;
           }
 
-        if (!!getBlockedNsfwWords(image.prompt).length) return false;
+        if (!currentUser?.isModerator && !!getBlockedNsfwWords(image.prompt).length) return false;
 
         return true;
       });

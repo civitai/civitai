@@ -27,8 +27,8 @@ const blockedNSFWRegex = blockedNSFW.map((word) => ({
 
 export function getPossibleBlockedNsfwWords(value?: string | null) {
   if (!value) return [];
-  const regex = new RegExp(`/${value}/`, 'i');
-  return blockedNSFWRegex.filter(({ word }) => regex.test(word)).map((x) => x.word);
+  const regex = new RegExp(value, 'i');
+  return blockedNSFW.filter((word) => regex.test(word));
 }
 
 export function getBlockedNsfwWords(value?: string | null) {
