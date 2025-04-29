@@ -502,7 +502,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
-                  disabled={isLocked('nsfw') || poi === 'true'}
+                  disabled={isLocked('nsfw') || poi === 'true' || minor}
                   description={isLockedDescription('category')}
                   onChange={(event) => {
                     if (event.target.checked) {
