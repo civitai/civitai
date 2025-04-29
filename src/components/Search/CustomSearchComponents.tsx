@@ -269,12 +269,18 @@ export const BrowsingLevelFilter = ({
   return null;
 };
 
+function getBlockedPromptFilters(search: string) {
+  const matches = getPossibleBlockedNsfwWords(search);
+  return { filters: matches.map((w) => `NOT prompt CONTAINS ${w}`).join(' AND ') };
+}
+
 export const CustomSearchBox = forwardRef<
   { focus: () => void },
   SearchBoxProps & RenderSearchComponentProps
 >(({ isMobile, onSearchDone, ...props }, ref) => {
   const { query, refine } = useSearchBox({ ...props });
   const [search, setSearch] = useState(query);
+  // const config = useConfigure(getBlockedPromptFilters(query));
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const { classes } = useSearchInputStyles();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -288,9 +294,8 @@ export const CustomSearchBox = forwardRef<
 
   useEffect(() => {
     if (debouncedSearch !== query && !getBlockedNsfwWords(debouncedSearch).length) {
-      // const possibleMatches = getPossibleBlockedNsfwWords();
-      // console.log({ possibleMatches });
       refine(debouncedSearch);
+      // config.refine(getBlockedPromptFilters(debouncedSearch));
     }
   }, [debouncedSearch]);
 

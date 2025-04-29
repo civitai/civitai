@@ -13,7 +13,7 @@ const nsfwWords = [...new Set([...nsfwPromptWords, ...nsfwWordsSoft, ...nsfwWord
 
 // #region [audit]
 const escapeRegex = (str: string) => str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-const blockedBoth = '\\%|\\~|\\\\$|\\.|-|\\(|\\)|\\[|\\]|\\{|\\}|:|\\|';
+const blockedBoth = '\\%|\\~|\\\\$|\\.|-|\\(|\\)|\\[|\\]|\\{|\\}|:|\\|+|';
 const tokenRegex = (word: string) =>
   new RegExp(`(^|\\s|,|${blockedBoth})${escapeRegex(word)}(\\s|,|$|${blockedBoth})`, 'mi');
 const blockedRegex = blocked.map((word) => ({
@@ -27,8 +27,8 @@ const blockedNSFWRegex = blockedNSFW.map((word) => ({
 
 export function getPossibleBlockedNsfwWords(value?: string | null) {
   if (!value) return [];
-  const regex = new RegExp(`/${value}/`, 'i');
-  return blockedNSFWRegex.filter(({ word }) => regex.test(word)).map((x) => x.word);
+  const regex = new RegExp(value, 'i');
+  return blockedNSFW.filter((word) => regex.test(word));
 }
 
 export function getBlockedNsfwWords(value?: string | null) {
