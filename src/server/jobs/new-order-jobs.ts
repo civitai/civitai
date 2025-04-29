@@ -21,13 +21,6 @@ import { createLogger } from '~/utils/logging';
 
 const log = createLogger('new-order-jobs');
 
-type BlessedBuzzQueryResult = {
-  userId: number;
-  imageId: number;
-  grantedExp: number;
-  multiplier: number;
-};
-
 const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * * *', async () => {
   if (!clickhouse) return;
   log('BlessedBuzz :: Granting Blessed Buzz');
@@ -41,15 +34,15 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
     `BlessedBuzz :: Getting correct judgments from ${startDate.toISOString()} to ${endDate.toISOString()}`
   );
   const judgments = await clickhouse.$query<{ userId: number; balance: number }>`
-        SELECT
-          userId,
-          SUM(grantedExp * multiplier) as balance
-        FROM knights_new_order_image_rating
-        WHERE createdAt BETWEEN ${startDate} AND ${endDate}
-          AND (status = 'Correct' OR status = 'Failed')
-        GROUP BY userId
-        HAVING balance > 0
-      `;
+    SELECT
+      userId,
+      SUM(grantedExp * multiplier) as balance
+    FROM knights_new_order_image_rating
+    WHERE createdAt BETWEEN ${startDate} AND ${endDate}
+      AND (status = 'Correct' OR status = 'Failed')
+    GROUP BY userId
+    HAVING balance > 0
+  `;
 
   const positiveBalanceJudgments = judgments.filter((j) => j.balance > 0);
 
