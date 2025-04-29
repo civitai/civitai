@@ -485,9 +485,8 @@ export function GenerationFormContent() {
                 <Watch {...form} fields={['model', 'resources', 'vae', 'fluxMode']}>
                   {({ model, resources = [], vae, fluxMode }) => {
                     const selectedResources = [...resources, vae, model].filter(isDefined);
-                    const minorFlaggedResources = selectedResources.filter(
-                      (x) => x.model.minor || x.model.sfwOnly
-                    );
+                    const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
+                    const sfwFlaggedResources = selectedResources.filter((x) => x.model.sfwOnly);
                     const unstableResources = selectedResources.filter((x) =>
                       allUnstableResources.includes(x.id)
                     );
@@ -518,7 +517,9 @@ export function GenerationFormContent() {
                           }}
                           hideVersion={isFlux}
                           pb={
-                            unstableResources.length || minorFlaggedResources.length
+                            unstableResources.length ||
+                            minorFlaggedResources.length ||
+                            sfwFlaggedResources.length
                               ? 'sm'
                               : undefined
                           }
@@ -636,11 +637,14 @@ export function GenerationFormContent() {
                             </Alert>
                           </Card.Section>
                         )}
-                        {minorFlaggedResources.length > 0 && (
+                        {(!!minorFlaggedResources.length || !!sfwFlaggedResources.length) && (
                           <Card.Section>
                             <Alert color="yellow" title="Content Restricted" radius={0}>
                               <Text size="xs">
-                                {`A resource you selected does not allow the generation of sexualized content (X, XXX). If you attempt to generate sexualized content with this resource, the image will not be returned, but you `}
+                                {!!minorFlaggedResources.length
+                                  ? `A resource you selected does not allow the generation of non-PG level content. If you attempt to generate non-PG`
+                                  : `A resource you selected does not allow the generation of sexualized content (X, XXX). If you attempt to generate sexualized `}
+                                content with this resource the image will not be returned, but you
                                 <Text span italic inherit>
                                   will
                                 </Text>
