@@ -3626,8 +3626,11 @@ export const getImageModerationReviewQueue = async ({
         ? `WITH tags_review AS (
             SELECT
               toi."imageId"
-            FROM "TagsOnImageDetails" toi  JOIN "Image" i ON toi."imageId" = i.id
-            WHERE toi."needsReview" AND NOT toi."disabled" AND i."nsfwLevel" < 32
+            FROM "TagsOnImageNew" toi  JOIN "Image" i ON toi."imageId" = i.id
+            WHERE
+            (toi."attributes" >> 9) & 1 = 1
+            AND (toi."attributes" >> 10) & 1 != 1
+            AND i."nsfwLevel" < 32
             ${cursor ? `AND "imageId" <= ${cursor}` : ''}
             ORDER BY (toi."imageId", toi."tagId") DESC
           )`
