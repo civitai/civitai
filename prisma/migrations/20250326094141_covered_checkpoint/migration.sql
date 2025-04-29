@@ -28,7 +28,6 @@ alter table "CoveredCheckpoint"
       on update cascade;
 
 -- driveby
--- Cannot have concurrently running transactions when doing migrations with prisma
 CREATE INDEX IF NOT EXISTS "ChatMember_chatId_idx" ON "ChatMember" ("chatId");
 
 -- make ecosystem checkpoints separate
