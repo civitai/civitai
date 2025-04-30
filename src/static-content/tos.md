@@ -185,7 +185,7 @@ In addition to the categories of explicitly prohibited content above, certain ty
 
 - 12.1 **Respect of Third Party Rights.** Civitai respects the intellectual property rights of others, takes the protection of intellectual property rights very seriously, and asks Users to do the same. Infringing activity will not be tolerated on or through the Service.
 
-- 12.2 **DMCA Notification.** We comply with the provisions of the Digital Millennium Copyright Act applicable to Internet service providers (17 U.S.C. § 512, as amended). If you have an intellectual property rights-related complaint about any material on the Service, you may complete our [DMCA Report Form](https://forms.clickup.com/8459928/f/825mr-5904/HX69YZMDH2N3JJA1R4) or contact our Designated Agent at the following address:
+- 12.2 **DMCA Notification.** We comply with the provisions of the Digital Millennium Copyright Act applicable to Internet service providers (17 U.S.C. § 512, as amended). If you have an intellectual property rights-related complaint about any material on the Service, you may complete our [DMCA Report Form](/content/dmca-notice) or contact our Designated Agent at the following address:
 
   ```
   Civit AI, Inc.

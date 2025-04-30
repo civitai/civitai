@@ -82,9 +82,7 @@ const footerLinks: (React.ComponentProps<typeof Button<typeof Link>> & {
   },
   {
     key: 'content-removal',
-    href: 'https://forms.clickup.com/8459928/f/825mr-12991/XBL6ZA0U3G740F86VW',
-    target: '_blank',
-    rel: 'nofollow noreferrer',
+    href: '/content/content-removal-request',
     children: 'Content Removal',
   },
 ];
