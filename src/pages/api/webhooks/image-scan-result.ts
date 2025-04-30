@@ -320,6 +320,14 @@ async function handleSuccess({
       else if (['adult'].includes(name)) hasAdultTag = true;
     }
 
+    // check incoming tags clavata level and check for minor tags
+    if (tags.some((x) => clavataNsfwTags.includes(x.tag))) {
+      const minorReviewTags = [['realistic', 'child - 15'], ['child - 10']];
+      for (const mTags of minorReviewTags) {
+        if (tags.some((x) => mTags.includes(x.tag))) hasMinorTag = true;
+      }
+    }
+
     const prompt = normalizeText(
       (image.meta as Prisma.JsonObject)?.['prompt'] as string | undefined
     );
@@ -549,7 +557,8 @@ const clavataTagConfidenceRequirements: Record<string, number> = {
   minimum: 51,
   minimumNsfw: 51,
 };
-const clavataNsfwTags = ['pg', 'pg-13', 'r', 'x', 'xxx'];
+const clavataNsfwTags = ['r', 'x', 'xxx'];
+const clavataNsfwLevelTags = ['pg', 'pg-13', ...clavataNsfwTags];
 function processClavataTags(tags: IncomingTag[]) {
   // Map tags to lowercase
   tags = tags.map((tag) => ({
@@ -561,7 +570,7 @@ function processClavataTags(tags: IncomingTag[]) {
   // Filter out tags
   let highestNsfwTag: IncomingTag = { tag: 'pg', confidence: 100 };
   tags = tags.filter((tag) => {
-    const nsfwLevelIndex = clavataNsfwTags.indexOf(tag.tag);
+    const nsfwLevelIndex = clavataNsfwLevelTags.indexOf(tag.tag);
     const isNsfwLevel = nsfwLevelIndex !== -1;
 
     // Remove tags below confidence threshold
@@ -573,7 +582,7 @@ function processClavataTags(tags: IncomingTag[]) {
 
     // Remove nsfw tags
     if (isNsfwLevel) {
-      if (nsfwLevelIndex > clavataNsfwTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
+      if (nsfwLevelIndex > clavataNsfwLevelTags.indexOf(highestNsfwTag.tag)) highestNsfwTag = tag;
       return false;
     }
 
