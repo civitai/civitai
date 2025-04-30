@@ -25,7 +25,10 @@ import {
 import { createNotification } from '~/server/services/notification.service';
 import { updatePostNsfwLevel } from '~/server/services/post.service';
 import { getTagRules } from '~/server/services/system-cache';
-import { insertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
+import {
+  insertTagsOnImageNew,
+  upsertTagsOnImageNew,
+} from '~/server/services/tagsOnImageNew.service';
 import { deleteUserProfilePictureCache } from '~/server/services/user.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { evaluateRules } from '~/server/utils/mod-rules';
@@ -291,7 +294,11 @@ async function handleSuccess({
           disabled: shouldIgnore(x.tag, x.source ?? source),
         }));
 
-      await insertTagsOnImageNew(toInsert);
+      if (source === 'Clavata') {
+        await upsertTagsOnImageNew(toInsert);
+      } else {
+        await insertTagsOnImageNew(toInsert);
+      }
     } else {
       await logToAxiom({
         type: 'image-scan-result',
