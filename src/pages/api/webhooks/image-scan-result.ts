@@ -293,12 +293,7 @@ async function handleSuccess({
           confidence: x.confidence,
           disabled: shouldIgnore(x.tag, x.source ?? source),
         }));
-
-      if (source === 'Clavata') {
-        await upsertTagsOnImageNew(toInsert);
-      } else {
-        await insertTagsOnImageNew(toInsert);
-      }
+      await insertTagsOnImageNew(toInsert);
     } else {
       await logToAxiom({
         type: 'image-scan-result',
