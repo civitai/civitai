@@ -366,16 +366,21 @@ export const moderateImages = async ({
         WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
       `;
 
-    await upsertTagsOnImageNew(
-      toUpdate.map(({ imageId, tagId }) => ({
-        imageId,
-        tagId,
-        disabled: true,
-        needsReview: false,
-      }))
-    );
-
-    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
+    if (toUpdate.length) {
+      await upsertTagsOnImageNew(
+        toUpdate.map(({ imageId, tagId }) => ({
+          imageId,
+          tagId,
+          disabled: true,
+          needsReview: false,
+        }))
+      );
+    } else {
+      await dbWrite.$executeRawUnsafe(
+        `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
+      );
+      await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
+    }
   }
   return null;
 };

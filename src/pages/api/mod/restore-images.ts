@@ -12,6 +12,7 @@ const schema = z.object({
   userId: z.number().optional(),
 });
 
+// after an image has been deleted, it can be restored which should remove blocking properties and update the nsfwLevel
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   try {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method Not Allowed' });
