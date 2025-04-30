@@ -13,6 +13,7 @@ import {
   SignalMessages,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { getExplainSql } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
 import { scanJobsSchema } from '~/server/schema/image.schema';
@@ -481,7 +482,7 @@ async function handleSuccess({
           WHERE id = ${id}
           GROUP BY id
         )
-        UPDATE "Image" i SET "scannedAt" = CASE i.metadata->'wasBlocked' IS NOT NULL ? "scannedAt" : NOW(), "updatedAt" = NOW(), "ingestion" ='Scanned'
+        UPDATE "Image" i SET "scannedAt" = CASE WHEN i.metadata->'wasBlocked' IS NOT NULL THEN "scannedAt" ELSE NOW() END, "updatedAt" = NOW(), "ingestion" ='Scanned'
         FROM scan_count s
         WHERE s.id = i.id AND s.count >= ${REQUIRED_SCANS}
         RETURNING "ingestion";
