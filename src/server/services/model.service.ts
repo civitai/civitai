@@ -1555,7 +1555,7 @@ export const upsertModel = async (
       );
     }
 
-    if (minorChanged) {
+    if (minorChanged || poiChanged) {
       // Update all images:
       const modelVersions = await dbWrite.modelVersion.findMany({
         where: { modelId: id },
@@ -1575,7 +1575,8 @@ export const upsertModel = async (
         if (imageIds.length !== 0) {
           await dbWrite.$executeRaw`
             UPDATE "Image"
-              SET minor = ${result.minor}
+              SET minor = ${result.minor},
+                  poi = ${result.poi}
             WHERE id IN (${Prisma.join(
               imageIds.map(({ id }) => id),
               ','
