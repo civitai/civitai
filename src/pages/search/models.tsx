@@ -27,6 +27,7 @@ import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { isDefined } from '~/utils/type-guards';
 
 export default function ModelsSearch() {
   return (
@@ -43,18 +44,14 @@ const RenderFilters = () => {
   const currentUser = useCurrentUser();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
 
+  const filters = [
+    browsingSettingsAddons.settings.disablePoi ? 'poi != true' : null,
+    `availability != ${Availability.Private} OR user.id = ${currentUser?.id}`,
+  ].filter(isDefined);
+
   return (
     <>
-      <ApplyCustomFilter
-        filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}
-      />
-      {browsingSettingsAddons.settings.disablePoi && (
-        <ApplyCustomFilter filters={`(poi != true)`} />
-      )}
-      {browsingSettingsAddons.settings.disableMinor && (
-        <ApplyCustomFilter filters={`(minor != true)`} />
-      )}
-      <BrowsingLevelFilter attributeName="nsfwLevel" />
+      <BrowsingLevelFilter filters={filters} attributeName="nsfwLevel" />
       <SortBy
         title="Sort models by"
         items={[

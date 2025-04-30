@@ -24,6 +24,7 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { isDefined } from '~/utils/type-guards';
 
 export default function ImageSearch() {
   return (
@@ -53,15 +54,17 @@ function RenderFilters() {
     { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
   ];
 
+  const filters = [
+    browsingSettingsAddons.settings.disablePoi ? 'poi != true' : null,
+    browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+  ].filter(isDefined);
+
   return (
     <>
-      {browsingSettingsAddons.settings.disablePoi && (
-        <ApplyCustomFilter filters={`(poi != true)`} />
-      )}
-      {browsingSettingsAddons.settings.disableMinor && (
-        <ApplyCustomFilter filters={`(minor != true)`} />
-      )}
-      <BrowsingLevelFilter attributeName={!canViewNsfw ? 'combinedNsfwLevel' : 'nsfwLevel'} />
+      <BrowsingLevelFilter
+        filters={filters}
+        attributeName={!canViewNsfw ? 'combinedNsfwLevel' : 'nsfwLevel'}
+      />
       <SortBy
         title="Sort images by"
         items={!canViewNsfw ? items.filter((x) => x.label !== 'Newest') : items}

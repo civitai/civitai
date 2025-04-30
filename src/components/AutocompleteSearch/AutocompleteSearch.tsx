@@ -53,7 +53,7 @@ import {
   reverseSearchIndexMap,
   searchIndexMap,
 } from '~/components/Search/search.types';
-import { paired } from '~/utils/type-guards';
+import { isDefined, paired } from '~/utils/type-guards';
 import { ApplyCustomFilter, BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
@@ -214,6 +214,13 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   const isModels = targetIndex === 'models';
   const supportsPoi = ['models', 'images'].includes(targetIndex);
   const supportsMinor = ['models', 'images'].includes(targetIndex);
+  const filters = [
+    supportsPoi && browsingSettingsAddons.settings.disablePoi ? 'poi != true' : null,
+    supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+    isModels && !currentUser?.isModerator
+      ? `availability != ${Availability.Private} OR user.id = ${currentUser?.id}`
+      : null,
+  ].filter(isDefined);
 
   return (
     <InstantSearch
@@ -221,20 +228,14 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      {supportsPoi && browsingSettingsAddons.settings.disablePoi && (
-        <ApplyCustomFilter filters={`(poi != true)`} />
-      )}
-      {supportsMinor && browsingSettingsAddons.settings.disableMinor && (
-        <ApplyCustomFilter filters={`(minor != true)`} />
-      )}
-      {isModels && !currentUser?.isModerator && (
-        <ApplyCustomFilter
-          filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}
+      {indexSupportsNsfwLevel ? (
+        <BrowsingLevelFilter
+          attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''}
+          filters={filters}
         />
-      )}
-      {indexSupportsNsfwLevel && (
-        <BrowsingLevelFilter attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''} />
-      )}
+      ) : filters.length > 0 ? (
+        <ApplyCustomFilter filters={filters} />
+      ) : null}
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}

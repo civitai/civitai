@@ -41,6 +41,7 @@ import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvide
 import { Flags } from '~/shared/utils';
 import { getBlockedNsfwWords, getPossibleBlockedNsfwWords } from '~/utils/metadata/audit';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -256,18 +257,19 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 
 export const BrowsingLevelFilter = ({
   attributeName,
+  filters: _filters,
   ...props
-}: { attributeName: string } & ConfigureProps) => {
+}: { attributeName: string; filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const browsingLevel = useBrowsingLevelDebounced();
   const browsingLevelArray = Flags.instanceToArray(browsingLevel);
-  const { refine } = useConfigure({
-    ...props,
-    filters: attributeName
-      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
-      : undefined,
-  });
+  const browsingLevelFilter = attributeName
+    ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
+    : null;
+  const filters = (_filters ? [..._filters, browsingLevelFilter] : [browsingLevelFilter]).filter(
+    isDefined
+  );
 
-  return null;
+  return <ApplyCustomFilter filters={filters} {...props} />;
 };
 
 function getBlockedPromptFilters(search: string) {
@@ -432,14 +434,18 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
   );
 }
 
-export const ApplyCustomFilter = ({ filters, ...props }: { filters: string } & ConfigureProps) => {
+export const ApplyCustomFilter = ({
+  filters: _filters,
+  ...props
+}: { filters: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
+  const filters = Array.isArray(_filters) ? _filters : [_filters];
   const { refine } = useConfigure({
     ...props,
-    filters: filters,
+    filters: filters.map((f) => `(${f})`).join(' AND '),
   });
 
   useEffect(() => {
-    refine(filters);
+    refine(filters.map((f) => `(${f})`).join(' AND '));
   }, [filters]);
 
   return null;
