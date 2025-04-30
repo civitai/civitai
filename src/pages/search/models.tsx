@@ -51,6 +51,9 @@ const RenderFilters = () => {
       {browsingSettingsAddons.settings.disablePoi && (
         <ApplyCustomFilter filters={`(poi != true)`} />
       )}
+      {browsingSettingsAddons.settings.disableMinor && (
+        <ApplyCustomFilter filters={`(minor != true)`} />
+      )}
       <BrowsingLevelFilter attributeName="nsfwLevel" />
       <SortBy
         title="Sort models by"
