@@ -209,16 +209,6 @@ export default defineNextConfig(
           permanent: true,
         },
         {
-          source: '/forms/press-inquiry',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-9351/RZXWRNLV9Q1D32ACNP',
-          permanent: true,
-        },
-        {
-          source: '/forms/matching-partner',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-9431/IQOAS1RXWHI1E2I1S3',
-          permanent: true,
-        },
-        {
           source: '/air/confirm',
           destination: '/studio/confirm',
           permanent: true,
@@ -231,16 +221,6 @@ export default defineNextConfig(
         {
           source: '/education',
           destination: 'https://education.civitai.com',
-          permanent: true,
-        },
-        {
-          source: '/advertise-with-us',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-10211/MIN35AIDXBZ7BTD5MG',
-          permanent: true,
-        },
-        {
-          source: '/ad-feedback',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-9711/WIMNO6V738T4ZBTPXP',
           permanent: true,
         },
         {
