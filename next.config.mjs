@@ -171,11 +171,6 @@ export default defineNextConfig(
           permanent: true,
         },
         {
-          source: '/appeal',
-          destination: 'https://forms.clickup.com/8459928/f/825mr-5844/5NXSA2EIT3YOS2JSF7',
-          permanent: true,
-        },
-        {
           source: '/canny/feedback',
           destination: 'https://feedback.civitai.com/?b=feature-request',
           permanent: true,
@@ -224,23 +219,8 @@ export default defineNextConfig(
           permanent: true,
         },
         {
-          source: '/holiday2023',
-          destination: '/events/holiday2023',
-          permanent: true,
-        },
-        {
           source: '/air/confirm',
           destination: '/studio/confirm',
-          permanent: true,
-        },
-        {
-          source: '/blocked-by-octoml',
-          destination: '/articles/3307',
-          permanent: true,
-        },
-        {
-          source: '/blocked-by-provider',
-          destination: '/articles/3307',
           permanent: true,
         },
         {
