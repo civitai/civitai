@@ -324,7 +324,7 @@ async function handleSuccess({
     if (tags.some((x) => clavataNsfwTags.includes(x.tag))) {
       const minorReviewTags = [['realistic', 'child - 15'], ['child - 10']];
       for (const mTags of minorReviewTags) {
-        if (tags.some((x) => mTags.includes(x.tag))) hasMinorTag = true;
+        if (mTags.every((tag) => tags.find((x) => x.tag === tag))) hasMinorTag = true;
       }
     }
 
