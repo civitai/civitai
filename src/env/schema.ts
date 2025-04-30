@@ -94,7 +94,6 @@ export const serverSchema = z.object({
   ORCHESTRATOR_ENDPOINT: isProd ? z.string().url() : z.string().url().optional(),
   ORCHESTRATOR_MODE: z.string().default('dev'),
   ORCHESTRATOR_ACCESS_TOKEN: z.string().default(''),
-  ORCHESTRATOR_EXPERIMENTAL: booleanString().default(false),
   AXIOM_TOKEN: z.string().optional(),
   AXIOM_ORG_ID: z.string().optional(),
   AXIOM_DATASTREAM: z.string().optional(),
