@@ -483,10 +483,11 @@ async function handleSuccess({
           GROUP BY id
         )
         UPDATE "Image" i SET 
-          "scannedAt" = CASE 
-            WHEN i.metadata->'skipScannedAtReassignment' IS NOT NULL 
+          "scannedAt" = 
+            CASE 
+              WHEN i.metadata->'skipScannedAtReassignment' IS NOT NULL 
               THEN "scannedAt" 
-              ELSE NOW() 
+              ELSE NOW()
             END,
           "updatedAt" = NOW(),
           "ingestion" ='Scanned'
