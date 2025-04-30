@@ -212,6 +212,8 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   );
 
   const isModels = targetIndex === 'models';
+  const supportsPoi = ['models', 'images'].includes(targetIndex);
+  const supportsMinor = ['models', 'images'].includes(targetIndex);
 
   return (
     <InstantSearch
@@ -219,10 +221,10 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      {isModels && browsingSettingsAddons.settings.disablePoi && (
+      {supportsPoi && browsingSettingsAddons.settings.disablePoi && (
         <ApplyCustomFilter filters={`(poi != true)`} />
       )}
-      {isModels && browsingSettingsAddons.settings.disableMinor && (
+      {supportsMinor && browsingSettingsAddons.settings.disableMinor && (
         <ApplyCustomFilter filters={`(minor != true)`} />
       )}
       {isModels && !currentUser?.isModerator && (
