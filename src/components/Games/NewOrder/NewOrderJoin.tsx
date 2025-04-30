@@ -2,18 +2,21 @@ import { Button, Modal, Text, ThemeIcon } from '@mantine/core';
 import { IconShieldStar } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
+import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 export function NewOrderJoin() {
-  const { join } = useJoinKnightsNewOrder();
+  const { join, isLoading } = useJoinKnightsNewOrder();
   const [opened, setOpened] = useState(false);
 
   const joinButton = useMemo(
     () => (
-      <Button color="orange.5" size="lg" onClick={() => join()} fullWidth>
-        Join Game
-      </Button>
+      <LoginRedirect reason="knights-new-order">
+        <Button color="orange.5" size="lg" onClick={() => join()} loading={isLoading} fullWidth>
+          Join Game
+        </Button>
+      </LoginRedirect>
     ),
-    [join]
+    [join, isLoading]
   );
 
   return (

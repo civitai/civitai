@@ -370,8 +370,10 @@ export enum NewOrderDamnedReason {
   GraphicViolence = 'GraphicViolence',
 }
 
-export enum NewOrderActions {
+export enum NewOrderSignalActions {
   UpdateStats = 'update-stats',
   RankUp = 'rank-up',
   Reset = 'reset',
+  AddImage = 'add-image',
+  RemoveImage = 'remove-image',
 }

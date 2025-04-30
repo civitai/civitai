@@ -31,12 +31,10 @@ export function LevelProgress({
               {numberWithCommas(currentExp)} / {numberWithCommas(nextLevelExp)}
             </p>
           </div>
-          {total ? (
-            <div className="flex flex-nowrap gap-1">
-              <p className="text-xs font-bold uppercase text-blue-4">Total ratings</p>
-              <p className="text-xs font-medium">{total}</p>
-            </div>
-          ) : null}
+          <div className="flex flex-nowrap gap-1">
+            <p className="text-xs font-bold uppercase text-blue-4">Total exp</p>
+            <p className="text-xs font-medium">{numberWithCommas(total)}</p>
+          </div>
         </div>
       </HoverCard.Dropdown>
     </HoverCard>
@@ -48,7 +46,7 @@ type Props = {
   progress: number;
   currentExp: number;
   nextLevelExp: number;
-  total?: number;
+  total: number;
   icon?: React.ReactNode;
   className?: string;
 };

@@ -109,9 +109,10 @@ export function PlayerCard({
           progress={progression.progressPercent}
           currentExp={progression.xpIntoLevel}
           nextLevelExp={progression.xpForNextLevel}
+          total={exp}
           icon={<IconSword size={18} stroke={1.5} />}
         />
-        {showStats && <PlayerStats stats={{ exp, fervor, blessedBuzz, smites }} />}
+        {showStats && <PlayerStats stats={{ fervor, blessedBuzz, smites }} />}
       </div>
     </Paper>
   );
@@ -139,7 +140,7 @@ export function PlayerStats({
   size = 'lg',
   showSmiteCount,
 }: {
-  stats: GetPlayer['stats'];
+  stats: Omit<GetPlayer['stats'], 'exp'>;
   size?: MantineSize;
   showSmiteCount?: boolean;
 }) {

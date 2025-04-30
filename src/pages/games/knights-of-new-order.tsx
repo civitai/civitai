@@ -22,7 +22,6 @@ import { useStorage } from '~/hooks/useStorage';
 import { NewOrderDamnedReason, NsfwLevel } from '~/server/common/enums';
 import { AddImageRatingInput } from '~/server/schema/games/new-order.schema';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { getLoginLink } from '~/utils/login-helpers';
 import { NewOrderSidebar } from '~/components/Games/NewOrder/NewOrderSidebar';
 import { Meta } from '~/components/Meta/Meta';
 import { IsClient } from '~/components/IsClient/IsClient';
@@ -38,15 +37,7 @@ let rankUpTimer: NodeJS.Timeout | null = null;
 
 export const getServerSideProps = createServerSideProps({
   useSession: true,
-  resolver: async ({ session, features, ctx }) => {
-    if (!session)
-      return {
-        redirect: {
-          destination: getLoginLink({ returnUrl: ctx.req.url, reason: 'knights-new-order' }),
-          permanent: false,
-        },
-      };
-
+  resolver: async ({ features }) => {
     if (!features?.newOrderGame)
       return {
         redirect: { destination: '/', permanent: false },
@@ -80,9 +71,9 @@ export default Page(
     useKnightsNewOrderListener({
       onRankUp: () => {
         setIsRankingUp(true);
-        if (!muted) playSound('levelUp');
+        if (!muted) playSound('challengePass');
         rankUpTimer && clearTimeout(rankUpTimer);
-        rankUpTimer = setTimeout(() => setIsRankingUp(false), 2500);
+        rankUpTimer = setTimeout(() => setIsRankingUp(false), 2000);
       },
     });
 
@@ -113,6 +104,7 @@ export default Page(
 
     const handleFetchNextBatch = () => {
       if (data.length <= 1 && !isRefetching) {
+        playSound('challenge');
         refetch();
       }
     };
@@ -139,7 +131,7 @@ export default Page(
         <Meta
           title="Knights of New Order"
           description="Join the Knights of the New Order and rate images to earn rewards."
-          links={[{ rel: 'canonical', href: '/games/kono' }]}
+          links={[{ rel: 'canonical', href: '/games/knights-of-new-order' }]}
         />
         <IsClient>
           {(!isLoading && !playerData) || !joined ? (

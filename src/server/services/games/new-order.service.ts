@@ -5,7 +5,8 @@ import {
   NsfwLevel,
   SignalTopic,
   SignalMessages,
-  NewOrderActions,
+  NewOrderSignalActions,
+  NotificationCategory,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -30,6 +31,7 @@ import {
 import { ImageMetadata } from '~/server/schema/media.schema';
 import { playerInfoSelect, userWithPlayerInfoSelect } from '~/server/selectors/user.selector';
 import { updateImageNsfwLevel } from '~/server/services/image.service';
+import { createNotification } from '~/server/services/notification.service';
 import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
 import {
   handleLogError,
@@ -113,16 +115,22 @@ export async function smitePlayer({
   const activeSmiteCount = await dbWrite.newOrderSmite.count({
     where: { targetPlayerId: playerId, cleansedAt: null },
   });
-  if (activeSmiteCount >= 3) return resetPlayer({ playerId });
+  if (activeSmiteCount >= 3) return resetPlayer({ playerId, withNotification: true });
 
   const newSmiteCount = await smitesCounter.increment({ id: playerId });
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
-    data: { action: 'updateStats', stats: { smites: newSmiteCount } },
+    data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: newSmiteCount } },
   });
 
-  // TODO.newOrder: send notification
+  createNotification({
+    category: NotificationCategory.Other,
+    type: 'new-order-smite-received',
+    key: `new-order-smite-received:${playerId}`,
+    userId: playerId,
+    details: {},
+  });
 
   return smite;
 }
@@ -137,10 +145,16 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
-    data: { action: 'updateStats', stats: { smites: smiteCount } },
+    data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: smiteCount } },
   });
 
-  // TODO.newOrder: send notification
+  createNotification({
+    category: NotificationCategory.Other,
+    type: 'new-order-smite-cleansed',
+    key: `new-order-smite-cleansed:${playerId}`,
+    userId: playerId,
+    details: { cleansedReason },
+  });
 
   return smite;
 }
@@ -176,7 +190,7 @@ export async function addImageRating({
     signalClient.topicSend({
       topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
       target: SignalMessages.NewOrderQueueUpdate,
-      data: { imageId, action: 'remove' },
+      data: { imageId, action: NewOrderSignalActions.RemoveImage },
     });
 
     return true;
@@ -298,7 +312,11 @@ export async function addImageRating({
     signalClient.topicSend({
       topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
       target: SignalMessages.NewOrderPlayerUpdate,
-      data: { action: NewOrderActions.RankUp, rankType: knightRank.type, rank: { ...knightRank } },
+      data: {
+        action: NewOrderSignalActions.RankUp,
+        rankType: knightRank.type,
+        rank: { ...knightRank },
+      },
     });
   }
 
@@ -363,7 +381,7 @@ export async function addImageRating({
       signalClient.topicSend({
         topic: `${SignalTopic.NewOrderQueue}:Knight`,
         target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: 'remove' },
+        data: { imageId, action: NewOrderSignalActions.RemoveImage },
       });
     }
   }
@@ -409,7 +427,7 @@ export async function addImageRating({
     signalClient.topicSend({
       topic: `${SignalTopic.NewOrderQueue}:Templar`,
       target: SignalMessages.NewOrderQueueUpdate,
-      data: { imageId, action: 'remove' },
+      data: { imageId, action: NewOrderSignalActions.RemoveImage },
     });
   }
 
@@ -473,7 +491,7 @@ export async function updatePlayerStats({
     .topicSend({
       topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
       target: SignalMessages.NewOrderPlayerUpdate,
-      data: { action: 'updateStats', stats },
+      data: { action: NewOrderSignalActions.UpdateStats, stats },
     })
     .catch(handleLogError);
 
@@ -493,7 +511,13 @@ export function calculateFervor({
   );
 }
 
-export async function resetPlayer({ playerId }: { playerId: number }) {
+export async function resetPlayer({
+  playerId,
+  withNotification,
+}: {
+  playerId: number;
+  withNotification?: boolean;
+}) {
   await dbWrite.$transaction([
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
@@ -523,7 +547,7 @@ export async function resetPlayer({ playerId }: { playerId: number }) {
     topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
     target: SignalMessages.NewOrderPlayerUpdate,
     data: {
-      action: 'reset',
+      action: NewOrderSignalActions.Reset,
       rankType: NewOrderRankType.Acolyte,
       stats: {
         exp: 0,
@@ -534,7 +558,14 @@ export async function resetPlayer({ playerId }: { playerId: number }) {
     },
   });
 
-  // TODO.newOrder: send notification to player
+  if (withNotification)
+    createNotification({
+      category: NotificationCategory.Other,
+      type: 'new-order-game-over',
+      key: `new-order-fame-over:${playerId}`,
+      userId: playerId,
+      details: {},
+    }).catch(handleLogError);
 }
 
 export async function getNewOrderRanks({ name }: { name: string }) {
@@ -612,7 +643,7 @@ export async function addImageToQueue({
     signalClient.topicSend({
       topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
       target: SignalMessages.NewOrderQueueUpdate,
-      data: { images: imagesWithRaters, action: 'add' },
+      data: { images: imagesWithRaters, action: NewOrderSignalActions.AddImage },
     });
 
     return true;
@@ -621,7 +652,7 @@ export async function addImageToQueue({
   signalClient.topicSend({
     topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
     target: SignalMessages.NewOrderQueueUpdate,
-    data: { images, action: 'add' },
+    data: { images, action: NewOrderSignalActions.AddImage },
   });
 
   return true;

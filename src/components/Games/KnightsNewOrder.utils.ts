@@ -7,7 +7,7 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useSignalConnection, useSignalTopic } from '~/components/Signals/SignalsProvider';
 import { useStorage } from '~/hooks/useStorage';
 import {
-  NewOrderActions,
+  NewOrderSignalActions,
   NewOrderDamnedReason,
   NsfwLevel,
   SignalMessages,
@@ -28,12 +28,12 @@ const JudgmentHistoryModal = dynamic(() => import('./NewOrder/JudgmentHistory'))
 const PlayersDirectoryModal = dynamic(() => import('./NewOrder/PlayersDirectoryModal'));
 
 type PlayerUpdateStatsPayload = {
-  action: NewOrderActions.UpdateStats | NewOrderActions.Reset;
+  action: NewOrderSignalActions.UpdateStats | NewOrderSignalActions.Reset;
   stats: { exp: number; fervor: number; blessedBuzz: number; smites: number };
 };
 
 type PlayerRankUpPayload = {
-  action: NewOrderActions.RankUp;
+  action: NewOrderSignalActions.RankUp;
   rankType: NewOrderRankType;
   rank: { type: NewOrderRankType; name: string };
 };
@@ -63,7 +63,7 @@ export const useKnightsNewOrderListener = ({
   // Used to update player stats (exp, fervor, blessed buzz, rank, etc.)
   useSignalConnection(SignalMessages.NewOrderPlayerUpdate, async (data: PlayerUpdatePayload) => {
     switch (data.action) {
-      case NewOrderActions.UpdateStats:
+      case NewOrderSignalActions.UpdateStats:
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
           return { ...old, stats: { ...old.stats, ...data.stats } };
@@ -82,7 +82,7 @@ export const useKnightsNewOrderListener = ({
           queryUtils.games.newOrder.getHistory.invalidate(),
         ]);
         break;
-      case NewOrderActions.RankUp:
+      case NewOrderSignalActions.RankUp:
         onRankUp?.(data.rank);
         queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
           if (!old) return old;
