@@ -24,7 +24,6 @@ export function ImageCard({ data }: Props) {
       routedDialog={{ name: 'imageDetail', state: { imageId: data.id, ...context } }}
       header={
         <div className="flex w-full items-start justify-between">
-          dd
           {data.type === 'video' && data.metadata && 'duration' in data.metadata && (
             <DurationBadge duration={data.metadata.duration ?? 0} className={sharedClasses.chip} />
           )}
