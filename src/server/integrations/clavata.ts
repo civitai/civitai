@@ -15,6 +15,7 @@ export interface ClavataApiClientOptions {
 export interface ImageTag {
   tag: string;
   confidence: number; // 0-100
+  outcome: 'OUTCOME_FALSE' | 'OUTCOME_TRUE' | 'OUTCOME_UNSPECIFIED';
 }
 
 export class ClavataApiClient {
@@ -96,10 +97,13 @@ export class ClavataApiClient {
 
     const sectionReports = json.result.policyEvaluationReport?.sectionEvaluationReports ?? [];
 
+    console.log(sectionReports);
+
     const tags: ImageTag[] = sectionReports
       .map((r: any) => ({
         tag: r.name as string,
         confidence: Math.round((r.reviewResult?.score ?? 0) * 100),
+        outcome: r.reviewResult?.outcome,
       }))
       .filter((t: ImageTag) => t.tag && t.confidence > this.opts.confidenceThreshold * 100)
       .sort((a: ImageTag, b: ImageTag) => b.confidence - a.confidence);
