@@ -328,6 +328,7 @@ export const moderateImages = async ({
     });
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else {
+    const isMinor = reviewType === 'minor';
     // Approve
     await dbWrite.$queryRaw`
         UPDATE "Image" SET
@@ -335,12 +336,18 @@ export const moderateImages = async ({
           "blockedFor" = NULL,
           -- Remove ruleId and ruleReason from metadata
           "metadata" = "metadata" - 'ruleId' - 'ruleReason',
-          "ingestion" = 'Scanned',
+          "ingestion" = 'Scanned', 
+
+          ${
+            isMinor
+              ? Prisma.sql`"minor" = CASE WHEN "nsfwLevel" >= 4 THEN FALSE ELSE TRUE END,`
+              : Prisma.sql``
+          }
           -- if image was created within 72 hrs, set scannedAt to now
           "scannedAt" = CASE
-            WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
-            ELSE "scannedAt"
-          END
+              WHEN "createdAt" > NOW() - INTERVAL '3 day' THEN NOW()
+              ELSE "scannedAt"
+            END
         WHERE id IN (${Prisma.join(ids)});
       `;
 
