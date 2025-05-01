@@ -1,11 +1,15 @@
 import { ViduVideoGenInput, ViduVideoGenStyle } from '@civitai/client';
 import z from 'zod';
-import { VideoGenerationConfig } from '~/server/orchestrator/infrastructure/GenerationConfig';
+import {
+  VideoGenerationConfig,
+  VideoGenerationConfig2,
+} from '~/server/orchestrator/infrastructure/GenerationConfig';
 import {
   imageEnhancementSchema,
   negativePromptSchema,
   promptSchema,
   seedSchema,
+  sourceImageSchema,
   textEnhancementSchema,
 } from '~/server/orchestrator/infrastructure/base.schema';
 import { numberEnum } from '~/utils/zod-helpers';
@@ -27,7 +31,7 @@ const viduTxt2VidSchema = textEnhancementSchema.merge(baseKlingSchema).extend({
 
 const viduImg2VidSchema = imageEnhancementSchema
   .merge(baseKlingSchema)
-  .extend({ prompt: promptSchema });
+  .extend({ prompt: promptSchema, endSourceImage: sourceImageSchema.optional() });
 
 const viduTxt2ImgConfig = new VideoGenerationConfig({
   subType: 'txt2vid',
@@ -49,5 +53,42 @@ export function ViduInput({
   ...args
 }: z.infer<(typeof viduVideoGenerationConfig)[number]['schema']>): ViduVideoGenInput {
   const sourceImage = 'sourceImage' in args ? args.sourceImage.url : undefined;
-  return { ...args, sourceImage };
+  const endSourceImage = 'endSourceImage' in args ? args.endSourceImage?.url : undefined;
+  return { ...args, sourceImage, endSourceImage };
 }
+
+const viduSchema = z
+  .object({
+    engine: z.literal('vidu').catch('vidu'),
+    sourceImage: sourceImageSchema.optional(),
+    endSourceImage: sourceImageSchema.optional(),
+    prompt: promptSchema,
+    enablePromptEnhancer: z.boolean().default(true),
+    style: z.nativeEnum(ViduVideoGenStyle).catch(ViduVideoGenStyle.GENERAL),
+    duration: numberEnum(viduDuration).default(4).catch(4),
+    seed: seedSchema,
+  })
+  .superRefine((data, ctx) => {
+    if (!data.sourceImage && !data.endSourceImage && !data.prompt?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Prompt is required',
+        path: ['prompt'],
+      });
+    }
+  });
+
+export const viduGenerationConfig = VideoGenerationConfig2({
+  label: 'Vidu',
+  whatIfProps: ['duration'],
+  metadataDisplayProps: ['style', 'duration', 'seed'],
+  schema: viduSchema,
+  defaultValues: {},
+  inputFn: ({ sourceImage, endSourceImage, ...args }): ViduVideoGenInput => {
+    return {
+      ...args,
+      sourceImage: sourceImage?.url ?? endSourceImage?.url,
+      endSourceImage: endSourceImage?.url,
+    };
+  },
+});

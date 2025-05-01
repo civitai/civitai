@@ -4,7 +4,6 @@ import { immer } from 'zustand/middleware/immer';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { SourceImageProps } from '~/server/orchestrator/infrastructure/base.schema';
 import { GetGenerationDataInput } from '~/server/schema/generation.schema';
-import { TextToImageParams } from '~/server/schema/orchestrator/textToImage.schema';
 import {
   GenerationData,
   GenerationResource,

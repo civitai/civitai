@@ -46,7 +46,7 @@ const wanImg2VidConfig = new VideoGenerationConfig({
   subType: 'img2vid',
   engine: 'wan',
   schema: wanImg2VidSchema,
-  metadataDisplayProps: ['cfgScale', 'steps', 'duration', 'seed', 'sourceImage'],
+  metadataDisplayProps: ['cfgScale', 'steps', 'duration', 'seed'],
 });
 
 export const wanVideoGenerationConfig = [wanTxt2ImgConfig, wanImg2VidConfig];

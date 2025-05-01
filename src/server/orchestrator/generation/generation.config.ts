@@ -18,7 +18,11 @@ import {
   minimaxVideoGenerationConfig,
 } from '~/server/orchestrator/minimax/minimax.schema';
 import { MochiInput, mochiVideoGenerationConfig } from '~/server/orchestrator/mochi/mochi.schema';
-import { ViduInput, viduVideoGenerationConfig } from '~/server/orchestrator/vidu/vidu.schema';
+import {
+  ViduInput,
+  viduGenerationConfig,
+  viduVideoGenerationConfig,
+} from '~/server/orchestrator/vidu/vidu.schema';
 import { WanInput, wanVideoGenerationConfig } from '~/server/orchestrator/wan/wan.schema';
 
 export type VideoGenerationSchema = z.infer<(typeof videoGenerationConfig)[number]['schema']>;
@@ -48,4 +52,11 @@ export const videoGenerationInput = {
 export const baseModelEngineMap: Partial<Record<BaseModelSetType, VideoGenerationEngine>> = {
   WanVideo: 'wan',
   HyV1: 'hunyuan',
+};
+
+export type OrchestratorEngine2 = keyof typeof videoGenerationConfig2;
+type VideoGenerationConfig = (typeof videoGenerationConfig2)[keyof typeof videoGenerationConfig2];
+export type VideoGenerationSchema2 = z.infer<VideoGenerationConfig['schema']>;
+export const videoGenerationConfig2 = {
+  vidu: viduGenerationConfig,
 };

@@ -1,3 +1,4 @@
+import { VideoGenInput } from '@civitai/client';
 import { z } from 'zod';
 import {
   GenerationType,
@@ -37,3 +38,29 @@ export class VideoGenerationConfig<TSchema extends z.AnyZodObject = z.AnyZodObje
 //   schema: TSchema;
 //   key: string;
 // }
+
+export function VideoGenerationConfig2<
+  TSchema extends z.ZodTypeAny = z.ZodTypeAny,
+  TOutput extends VideoGenInput = VideoGenInput
+>({
+  defaultValues,
+  ...args
+}: {
+  label: string;
+  description?: string;
+  whatIfProps: string[];
+  metadataDisplayProps: string[];
+  schema: TSchema;
+  inputFn: (args: z.infer<TSchema>) => TOutput;
+  defaultValues?: z.input<TSchema>;
+}) {
+  function validate(data: any) {
+    return args.schema.parse(data);
+  }
+
+  function getDefaultValues() {
+    return validate(defaultValues);
+  }
+
+  return { ...args, getDefaultValues, validate };
+}
