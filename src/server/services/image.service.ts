@@ -324,7 +324,12 @@ export const moderateImages = async ({
     // Remove needsReview status
     await dbWrite.image.updateMany({
       where: { id: { in: ids } },
-      data: { needsReview: null, ingestion: 'Scanned' },
+      data: {
+        needsReview: null,
+        ingestion: 'Scanned',
+        poi: reviewType === 'poi' ? false : undefined,
+        minor: reviewType === 'minor' ? false : undefined,
+      },
     });
     await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
   } else {
