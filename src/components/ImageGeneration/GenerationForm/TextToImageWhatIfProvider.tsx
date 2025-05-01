@@ -59,6 +59,10 @@ export function TextToImageWhatIfProvider({ children }: { children: React.ReactN
       if (watched.fluxMode !== fluxStandardAir) params.priority = 'low';
     }
 
+    if (params.fluxUltraRaw) params.engine = 'flux-pro-raw';
+    else if (model?.id === generationConfig.OpenAI.checkpoint.id) params.engine = 'openai';
+    else params.engine = undefined;
+
     const additionalResources = resources
       .filter((x) => isDefined(x.id))
       .map((x) => ({ id: x.id as number, epochNumber: x.epochDetails?.epochNumber }));

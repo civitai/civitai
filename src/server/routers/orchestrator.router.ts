@@ -1,4 +1,4 @@
-import { ComfyStepTemplate, TextToImageStepTemplate } from '@civitai/client';
+import { ComfyStepTemplate, ImageGenStepTemplate, TextToImageStepTemplate } from '@civitai/client';
 import { TRPCError } from '@trpc/server';
 import dayjs from 'dayjs';
 import { z } from 'zod';
@@ -32,6 +32,10 @@ import {
   createTextToImage,
   createTextToImageStep,
 } from '~/server/services/orchestrator/textToImage/textToImage';
+import {
+  createImageGen,
+  createImageGenStep,
+} from '~/server/services/orchestrator/imageGen/imageGen';
 import {
   createTrainingWhatIfWorkflow,
   createTrainingWorkflow,
@@ -173,7 +177,9 @@ export const orchestratorRouter = router({
         //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
         //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
         // }
-        console.log({ experimental: ctx.experimental });
+        // TODO - handle createImageGen
+        if (input.params.engine && input.params.engine !== 'flux-pro-raw')
+          return await createImageGen(args);
         if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
         else return await createComfy({ ...args });
       } catch (e) {
@@ -203,10 +209,11 @@ export const orchestratorRouter = router({
           token: ctx.token,
         };
 
-        console.log({ experimental: ctx.experimental });
-
-        let step: TextToImageStepTemplate | ComfyStepTemplate;
-        if (args.params.workflow === 'txt2img')
+        let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
+        // TODO - handle createImageGenStep
+        if (args.params.engine && args.params.engine !== 'flux-pro-raw')
+          step = await createImageGenStep(args);
+        else if (args.params.workflow === 'txt2img')
           step = await createTextToImageStep({ ...args, whatIf: true });
         else step = await createComfyStep({ ...args, whatIf: true });
 
