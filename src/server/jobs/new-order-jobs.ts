@@ -39,7 +39,7 @@ const newOrderGrantBlessedBuzz = createJob('new-order-grant-bless-buzz', '0 0 * 
       SUM(grantedExp * multiplier) as balance
     FROM knights_new_order_image_rating
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
-      AND (status = 'Correct' OR status = 'Failed')
+      AND (status = '${NewOrderImageRatingStatus.Correct}' OR status = '${NewOrderImageRatingStatus.Failed}')
     GROUP BY userId
     HAVING balance > 0
   `;
@@ -140,11 +140,11 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
       ) as exp,
       SUM(
         -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" = 'Correct', 1, 0)
+        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" = '${NewOrderImageRatingStatus.Correct}', 1, 0)
       ) as correctJudgments,
       SUM(
         -- Make it so we ignore elements before a reset.
-        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" = 'Failed', 1, 0)
+        if (knoir."createdAt" > parseDateTimeBestEffort(u.startAt) AND knoir."status" = '${NewOrderImageRatingStatus.Failed}', 1, 0)
       ) as failedJudgments,
       SUM(
         -- Make it so we ignore elements before a reset.
@@ -153,7 +153,7 @@ const newOrderDailyReset = createJob('new-order-daily-reset', '0 0 * * *', async
     FROM knights_new_order_image_rating knoir
     JOIN u ON knoir."userId" = CAST(u.userId as Int32)
     WHERE knoir."createdAt" BETWEEN ${startDate} AND ${endDate}
-      AND knoir."status" NOT IN ('AcolyteCorrect', 'AcolyteFailed')
+      AND knoir."status" NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}')
     GROUP BY knoir."userId"
   `;
 
@@ -216,7 +216,7 @@ const newOrderPickTemplars = createJob('new-order-pick-templars', '0 0 * * 0', a
     SELECT userId, status
     FROM knights_new_order_image_rating
     WHERE createdAt BETWEEN ${startDate} AND ${endDate}
-      AND status NOT IN ('AcolyteCorrect', 'AcolyteFailed')
+      AND status NOT IN ('${NewOrderImageRatingStatus.AcolyteCorrect}', '${NewOrderImageRatingStatus.AcolyteFailed}')
   `;
 
   if (!judgments.length) {

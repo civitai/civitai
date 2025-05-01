@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { ActionIcon, Button, Loader, ThemeIcon } from '@mantine/core';
+import { useRef, useState } from 'react';
+import { ActionIcon, Button, Card, Loader, ThemeIcon } from '@mantine/core';
 import { IconExternalLink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import Link from 'next/link';
@@ -55,6 +55,7 @@ export default Page(
       getInitialValueInEffect: false,
     });
 
+    const levelNoticeRef = useRef<HTMLDivElement>(null);
     const [isLevelingUp, setIsLevelingUp] = useState(false);
     const [isRankingUp, setIsRankingUp] = useState(false);
 
@@ -85,14 +86,24 @@ export default Page(
 
       try {
         playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
-        await addRating({
-          "imageId": 3396707,
-          "rating": 8,
-      });
+
+        // Update level notice
+        if (levelNoticeRef.current && rating !== NsfwLevel.Blocked) {
+          const innerText = NsfwLevel[rating] ?? '';
+
+          levelNoticeRef.current.innerText = innerText;
+          levelNoticeRef.current.style.display = 'block';
+          setTimeout(() => {
+            levelNoticeRef.current!.style.display = 'none';
+          }, 200);
+        }
+
+        await addRating({ imageId: currentImage.id, rating, damnedReason });
 
         // Check for level up
         const progression = playerData ? getLevelProgression(playerData.stats.exp) : null;
-        const shouldLevelUp = progression && progression.xpIntoLevel + 100 >= progression.xpForNextLevel;
+        const shouldLevelUp =
+          progression && progression.xpIntoLevel + 100 >= progression.xpForNextLevel;
         if (shouldLevelUp) levelUp();
 
         handleFetchNextBatch();
@@ -150,7 +161,7 @@ export default Page(
                 {loadingImagesQueue || isRefetching ? (
                   <Loader variant="bars" size="xl" />
                 ) : currentImage ? (
-                  <div className="flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
+                  <div className="relative flex size-full max-w-sm flex-col items-center justify-center gap-4 overflow-hidden">
                     <ImageGuard2 image={currentImage} explain={false}>
                       {() => (
                         <div
@@ -186,6 +197,17 @@ export default Page(
                         </div>
                       )}
                     </ImageGuard2>
+                    <Card
+                      ref={levelNoticeRef}
+                      id="rating"
+                      shadow="sm"
+                      radius="sm"
+                      className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 p-4 text-5xl font-medium text-white"
+                      style={{ display: 'none' }}
+                      withBorder
+                    >
+                      PG
+                    </Card>
                     <NewOrderImageRater
                       muted={muted}
                       onVolumeClick={() => setMuted((prev) => !prev)}

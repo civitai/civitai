@@ -559,6 +559,7 @@ export async function resetPlayer({
 
   bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
 
+  const acolyteRank = await getNewOrderRanks({ name: 'Acolyte' });
   signalClient
     .topicSend({
       topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
@@ -566,6 +567,7 @@ export async function resetPlayer({
       data: {
         action: NewOrderSignalActions.Reset,
         rankType: NewOrderRankType.Acolyte,
+        rank: acolyteRank,
         stats: {
           exp: 0,
           fervor: 0,

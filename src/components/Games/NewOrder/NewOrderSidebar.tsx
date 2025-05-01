@@ -35,17 +35,29 @@ export function NewOrderSidebar() {
 
   const header =
     playerData && currentUser ? (
-      <PlayerCard
-        {...playerData.stats}
-        user={currentUser}
-        rank={playerData.rank}
-        showStats={playerData.rank.type !== NewOrderRankType.Acolyte}
-        className={clsx(
-          'w-full rounded-b-none p-4 @md:rounded-sm',
-          opened ? 'bg-gray-1 dark:bg-dark-5' : 'dark:bg-dark-6'
-        )}
-        withBorder
-      />
+      <div className="flex flex-col">
+        <SignalStatusNotification icon={<IconWifiOff size={20} stroke={2} />} radius={0}>
+          {(status) => (
+            <p className="leading-4">
+              <span className="font-medium">
+                {status === 'reconnecting' ? 'Reconnecting' : 'Disconnected'}
+              </span>
+              : Service disrupted
+            </p>
+          )}
+        </SignalStatusNotification>
+        <PlayerCard
+          {...playerData.stats}
+          user={currentUser}
+          rank={playerData.rank}
+          showStats={playerData.rank.type !== NewOrderRankType.Acolyte}
+          className={clsx(
+            'w-full rounded-b-none p-4 @md:rounded-sm',
+            opened ? 'bg-gray-1 dark:bg-dark-5' : 'dark:bg-dark-6'
+          )}
+          withBorder
+        />
+      </div>
     ) : null;
 
   const content = (
@@ -153,16 +165,6 @@ export function NewOrderSidebar() {
   ) : (
     <Navbar p="md" h="100%" width={{ xs: 300, sm: 360 }} zIndex={1} withBorder>
       <Navbar.Section className="border-b border-gray-200 pb-4 dark:border-b-dark-4">
-        <SignalStatusNotification icon={<IconWifiOff size={20} stroke={2} />} radius={0}>
-          {(status) => (
-            <p className="leading-4">
-              <span className="font-medium">
-                {status === 'reconnecting' ? 'Reconnecting' : 'Disconnected'}
-              </span>
-              : image generation results paused
-            </p>
-          )}
-        </SignalStatusNotification>
         {header}
       </Navbar.Section>
       <Navbar.Section mt="md" grow>

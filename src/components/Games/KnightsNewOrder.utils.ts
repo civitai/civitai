@@ -146,6 +146,14 @@ export const useJoinKnightsNewOrder = () => {
 
   const { data: playerData, isInitialLoading } = trpc.games.newOrder.getPlayer.useQuery(undefined, {
     enabled: joined,
+    retry: 1,
+    onError: (error) => {
+      setJoined(false);
+      showErrorNotification({
+        title: 'Failed to load player data',
+        error: new Error(error.message),
+      });
+    },
   });
 
   const resetCareerMutation = trpc.games.newOrder.resetCareer.useMutation({
