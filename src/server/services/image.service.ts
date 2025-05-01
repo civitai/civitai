@@ -140,7 +140,6 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import { IconChevronsDownLeft } from '@tabler/icons-react';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
