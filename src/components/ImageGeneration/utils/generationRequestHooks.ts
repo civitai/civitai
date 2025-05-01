@@ -193,13 +193,13 @@ export function useSubmitCreateImage() {
       });
       updateFromEvents();
     },
-    onError: (error) => {
-      showErrorNotification({
-        title: 'Failed to generate',
-        error: new Error(error.message),
-        reason: error.message ?? 'An unexpected error occurred. Please try again later.',
-      });
-    },
+    // onError: (error) => {
+    //   showErrorNotification({
+    //     title: 'Failed to generate',
+    //     error: new Error(error.message),
+    //     reason: error.message ?? 'An unexpected error occurred. Please try again later.',
+    //   });
+    // },
   });
 }
 
@@ -445,7 +445,6 @@ export function usePatchTags() {
 type CustomJobEvent = Omit<WorkflowStepJobEvent, '$type'> & {
   $type: 'job';
   completed?: Date;
-  reason?: string;
 };
 type CustomWorkflowEvent = Omit<WorkflowEvent, '$type'> & { $type: 'workflow' };
 const debouncer = createDebouncer(100);
@@ -502,6 +501,7 @@ function updateFromEvents() {
               for (const image of images) {
                 image.status = signalEvent.status!;
                 image.completed = signalEvent.completed;
+                image.blockedReason = image.blockedReason ?? signalEvent.blockedReason;
                 if (image.type === 'video') {
                   image.progress = signalEvent.progress ?? 0;
                   image.reason = image.reason ?? signalEvent.reason;

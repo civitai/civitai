@@ -53,14 +53,14 @@ import {
   reverseSearchIndexMap,
   searchIndexMap,
 } from '~/components/Search/search.types';
-import { paired } from '~/utils/type-guards';
+import { isDefined, paired } from '~/utils/type-guards';
 import { ApplyCustomFilter, BrowsingLevelFilter } from '../Search/CustomSearchComponents';
 import { QS } from '~/utils/qs';
 import { ToolSearchItem } from '~/components/AutocompleteSearch/renderItems/tools';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
-import { includesPoi } from '~/utils/metadata/audit';
+import { getBlockedNsfwWords, includesPoi } from '~/utils/metadata/audit';
 
 const meilisearch = instantMeiliSearch(
   env.NEXT_PUBLIC_SEARCH_HOST as string,
@@ -212,6 +212,15 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
   );
 
   const isModels = targetIndex === 'models';
+  const supportsPoi = ['models', 'images'].includes(targetIndex);
+  const supportsMinor = ['models', 'images'].includes(targetIndex);
+  const filters = [
+    supportsPoi && browsingSettingsAddons.settings.disablePoi ? 'poi != true' : null,
+    supportsMinor && browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+    isModels && !currentUser?.isModerator
+      ? `availability != ${Availability.Private} OR user.id = ${currentUser?.id}`
+      : null,
+  ].filter(isDefined);
 
   return (
     <InstantSearch
@@ -219,20 +228,14 @@ export const AutocompleteSearch = forwardRef<{ focus: () => void }, Props>(({ ..
       indexName={searchIndexMap[targetIndex as keyof typeof searchIndexMap]}
       future={{ preserveSharedStateOnUnmount: false }}
     >
-      {isModels && browsingSettingsAddons.settings.disablePoi && (
-        <ApplyCustomFilter filters={`(poi != true)`} />
-      )}
-      {isModels && browsingSettingsAddons.settings.disableMinor && (
-        <ApplyCustomFilter filters={`(minor != true)`} />
-      )}
-      {isModels && !currentUser?.isModerator && (
-        <ApplyCustomFilter
-          filters={`(availability != ${Availability.Private} OR user.id = ${currentUser?.id})`}
+      {indexSupportsNsfwLevel ? (
+        <BrowsingLevelFilter
+          attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''}
+          filters={filters}
         />
-      )}
-      {indexSupportsNsfwLevel && (
-        <BrowsingLevelFilter attributeName={indexSupportsNsfwLevel ? 'nsfwLevel' : ''} />
-      )}
+      ) : filters.length > 0 ? (
+        <ApplyCustomFilter filters={filters} />
+      ) : null}
       <AutocompleteSearchContent
         {...props}
         indexName={targetIndex}
@@ -408,6 +411,8 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
     ? !browsingSettingsAddons.settings.disablePoi || !includesPoi(debouncedSearch)
     : true;
 
+  const hasBlockedWords = !!getBlockedNsfwWords(debouncedSearch).length;
+
   return (
     <>
       <Configure hitsPerPage={DEFAULT_DROPDOWN_ITEM_LIMIT} filters={filters} />
@@ -470,7 +475,7 @@ function AutocompleteSearchContentInner<TKey extends SearchIndexKey>(
           }
           defaultValue={query}
           value={search}
-          data={canPerformQuery ? items : []}
+          data={canPerformQuery && !hasBlockedWords ? items : []}
           onChange={setSearch}
           onBlur={handleClear}
           onClear={handleClear}

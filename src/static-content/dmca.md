@@ -5,7 +5,7 @@ description: We will respond to legitimate requests under the Digital Millennium
 
 We will respond to legitimate requests under the Digital Millennium Copyright Act ("DMCA"), and we retain the right to remove user content on Civitai that we deem to be infringing the copyright of others. If you become aware of user content on Civitai that infringes your copyright rights, you may submit a properly formatted DMCA request (see 17 U.S.C. § 512) to Civitai.
 
-Misrepresentations of infringement can result in liability for monetary damages. You may want to consult an attorney before taking any action pursuant to the DMCA. A DMCA request can be sent to us via the contact information below, or by completing our [DMCA Report Form](/dmca/notice):
+Misrepresentations of infringement can result in liability for monetary damages. You may want to consult an attorney before taking any action pursuant to the DMCA. A DMCA request can be sent to us via the contact information below, or by completing our [DMCA Notice Form](/content/dmca-notice):
 
 ## Contact Information
 ```
@@ -24,12 +24,12 @@ You must include:
 5. A statement by you that you have a good faith belief that the disputed use of the material is not authorized by the copyright owner, its agent, or the law; and
 6. A statement by you, made under penalty of perjury, that the above information in your notice is accurate and that you are the copyright owner or are authorized to act on the copyright owner's behalf.
 
-Submissions under this DMCA Policy should be sent to dmca@civitai.com or by completing our [DMCA Report Form](/dmca/notice).
+Submissions under this DMCA Policy should be sent to dmca@civitai.com or by completing our [DMCA Notice Form](/content/dmca-notice).
 
 We will review your submission and take whatever action we deem appropriate under the DMCA, including the removal of the challenged content from the website.
 
 ## DMCA Counter Notice requirements
-The owner of the allegedly-infringing content may submit a DMCA Counter-Notice to dmca@civitai.com or by completing our [DMCA Counter Notice Form](/dmca/counter-notice). The Counter-Notice must comply with the requirements of the DMCA, and must include the following:
+The owner of the allegedly-infringing content may submit a DMCA Counter-Notice to dmca@civitai.com or by completing our [DMCA Counter Notice Form](/content/dmca-counter-notice). The Counter-Notice must comply with the requirements of the DMCA, and must include the following:
 
 1. Your physical or electronic signature;
 2. Identification of the material that has been removed or to which access has been disabled and where the material was located online before it was removed or access to it was disabled;

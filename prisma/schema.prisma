@@ -629,6 +629,7 @@ model Model {
   nsfwLevel           Int             @default(0)
   lockedProperties    String[]        @default([])
   scannedAt           DateTime?
+  sfwOnly             Boolean         @default(false)
 
   // Licensing
   allowNoCredit         Boolean         @default(true)
@@ -673,6 +674,7 @@ model ModelFlag {
   model        Model           @relation(fields: [modelId], references: [id], onDelete: Cascade)
   poi          Boolean         @default(false)
   minor        Boolean         @default(false)
+  sfwOnly      Boolean         @default(false)
   nsfw         Boolean         @default(false)
   triggerWords Boolean         @default(false)
   poiName      Boolean         @default(false)
@@ -2872,6 +2874,10 @@ model EntityCollaborator {
 model EcosystemCheckpoints {
   id   Int    @id
   name String
+}
+
+model GenerationBaseModel {
+  baseModel String @id
 }
 
 model Club {

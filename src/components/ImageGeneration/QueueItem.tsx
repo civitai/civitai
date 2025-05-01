@@ -18,6 +18,7 @@ import {
   IconArrowsShuffle,
   IconBan,
   IconCheck,
+  IconFlagQuestion,
   IconInfoHexagon,
   IconTrash,
 } from '@tabler/icons-react';
@@ -27,7 +28,6 @@ import dayjs from 'dayjs';
 import { useEffect, useState } from 'react';
 import { Collection } from '~/components/Collection/Collection';
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
-import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { GeneratedImage } from '~/components/ImageGeneration/GeneratedImage';
 import { GenerationDetails } from '~/components/ImageGeneration/GenerationDetails';
 import {
@@ -40,7 +40,6 @@ import {
   useDeleteTextToImageRequest,
 } from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { constants } from '~/server/common/constants';
-import { Currency } from '~/shared/utils/prisma/enums';
 
 import { TimeSpan, WorkflowStatus } from '@civitai/client';
 import { ButtonTooltip } from '~/components/CivitaiWrapped/ButtonTooltip';
@@ -222,6 +221,7 @@ export function QueueItem({
               )}
             </div>
             <div className="flex gap-1">
+              <SubmitBlockedImagesForReviewButton step={step} />
               <ButtonTooltip {...tooltipProps} label="Copy Job IDs">
                 <ActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
                   {copied ? <IconCheck /> : <IconInfoHexagon />}
@@ -511,5 +511,33 @@ function CancelOrDeleteWorkflow({
         </ActionIcon>
       </ButtonTooltip>
     </PopConfirm>
+  );
+}
+
+function SubmitBlockedImagesForReviewButton({ step }: { step: NormalizedGeneratedImageStep }) {
+  const blockedImages = step.images.filter((x) => !!x.blockedReason);
+  const currentUser = useCurrentUser();
+  if (!blockedImages.length || !currentUser?.username) return null;
+
+  return (
+    <ButtonTooltip {...tooltipProps} label="Submit blocked images for review">
+      <ActionIcon
+        component="a"
+        target="_blank"
+        size="md"
+        p={4}
+        radius={0}
+        color="orange"
+        href={`https://forms.clickup.com/8459928/f/825mr-9671/KRFFR2BFKJCROV3B8Q?Civitai%20Username=${encodeURIComponent(
+          currentUser.username
+        )}&Prompt=${encodeURIComponent(
+          (step.params as any).prompt
+        )}&Negative%20Prompt=${encodeURIComponent(
+          (step.params as any).negativePrompt
+        )}&Job%20IDs=${encodeURIComponent(blockedImages.map((x) => x.jobId).join(','))}`}
+      >
+        <IconFlagQuestion size={20} />
+      </ActionIcon>
+    </ButtonTooltip>
   );
 }

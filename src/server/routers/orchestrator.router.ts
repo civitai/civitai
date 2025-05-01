@@ -24,9 +24,9 @@ import {
   workflowQuerySchema,
 } from '~/server/schema/orchestrator/workflows.schema';
 import { getTemporaryUserApiKey } from '~/server/services/api-key.service';
-import { getBlobData, nsfwNsfwLevels } from '~/server/services/orchestrator/blob';
 import { createComfy, createComfyStep } from '~/server/services/orchestrator/comfy/comfy';
 import { queryGeneratedImageWorkflows } from '~/server/services/orchestrator/common';
+import { getExperimentalFlag } from '~/server/services/orchestrator/experimental';
 import { imageUpload } from '~/server/services/orchestrator/imageUpload';
 import {
   createTextToImage,
@@ -81,7 +81,12 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
         value: token,
       });
   }
-  return next({ ctx: { ...ctx, user, token } });
+  const experimental = await getExperimentalFlag({
+    userId: user.id,
+    isModerator: user.isModerator,
+  });
+
+  return next({ ctx: { ...ctx, user, token, experimental } });
 });
 
 const orchestratorProcedure = protectedProcedure.use(orchestratorMiddleware);
@@ -161,12 +166,13 @@ export const orchestratorRouter = router({
     .input(generateImageSchema)
     .mutation(async ({ ctx, input }) => {
       try {
-        const args = { ...input, user: ctx.user, token: ctx.token };
+        const args = { ...input, user: ctx.user, token: ctx.token, experimental: ctx.experimental };
         // if ('sourceImage' in args.params && args.params.sourceImage) {
         //   const blobId = args.params.sourceImage.url.split('/').reverse()[0];
         //   const { nsfwLevel } = await getBlobData({ token: ctx.token, blobId });
         //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
         // }
+        console.log({ experimental: ctx.experimental });
         if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
         else return await createComfy({ ...args });
       } catch (e) {
@@ -196,6 +202,8 @@ export const orchestratorRouter = router({
           token: ctx.token,
         };
 
+        console.log({ experimental: ctx.experimental });
+
         let step: TextToImageStepTemplate | ComfyStepTemplate;
         if (args.params.workflow === 'txt2img')
           step = await createTextToImageStep({ ...args, whatIf: true });
@@ -206,7 +214,7 @@ export const orchestratorRouter = router({
           body: {
             steps: [step],
             tips: args.tips,
-            experimental: env.ORCHESTRATOR_EXPERIMENTAL,
+            experimental: ctx.experimental,
           },
           query: {
             whatif: true,
@@ -250,10 +258,14 @@ export const orchestratorRouter = router({
   whatIf: orchestratorGuardedProcedure
     .input(generationSchema)
     .use(edgeCacheIt({ ttl: 60 }))
-    .query(({ ctx, input }) => whatIf({ ...input, userId: ctx.user.id, token: ctx.token })),
+    .query(({ ctx, input }) =>
+      whatIf({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
+    ),
   generate: orchestratorGuardedProcedure
     .input(z.any())
-    .mutation(({ ctx, input }) => generate({ ...input, userId: ctx.user.id, token: ctx.token })),
+    .mutation(({ ctx, input }) =>
+      generate({ ...input, userId: ctx.user.id, token: ctx.token, experimental: ctx.experimental })
+    ),
   // #endregion
 
   // #region [Image upload]

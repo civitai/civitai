@@ -700,7 +700,7 @@ export const getSessionUser = async ({ userId, token }: { userId?: number; token
         select: {
           id: true,
           url: true,
-          nsfw: true,
+          // nsfw: true,
           hash: true,
           userId: true,
         },

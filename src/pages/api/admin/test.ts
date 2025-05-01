@@ -21,6 +21,7 @@ import {
 import { WorkflowDefinition } from '~/server/services/orchestrator/types';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { tagIdsForImagesCache } from '~/server/redis/caches';
+import { setExperimentalConfig } from '~/server/services/orchestrator/experimental';
 
 type Row = {
   userId: number;
@@ -93,6 +94,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     // for (const workflow of workflows) {
     //   setWorkflowDefinition(workflow.key, workflow);
     // }
+
+    await setExperimentalConfig({ userIds: [5] });
 
     res.status(200).send({ ok: true });
   } catch (e) {

@@ -99,7 +99,7 @@ const formSchema = baseSchema
     }
 
     if (data.prompt.length > 0) {
-      const { blockedFor, success } = auditPrompt(data.prompt);
+      const { blockedFor, success } = auditPrompt(data.prompt, data.negativePrompt);
       if (!success) {
         let message = `Blocked for: ${blockedFor.join(', ')}`;
         const count = blockedRequest.increment();
@@ -241,7 +241,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
   const currentUser = useCurrentUser();
   const status = useGenerationStatus();
   const type = useGenerationFormStore((state) => state.type);
-  const browsingSettingsAddons = useBrowsingSettingsAddons();
+  // const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const getValues = useCallback(
     (storageValues: any): any => {
@@ -252,7 +252,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
 
       return getDefaultValues(storageValues);
     },
-    [currentUser, status, browsingSettingsAddons] // eslint-disable-line
+    [currentUser, status] // eslint-disable-line
   );
 
   const prevBaseModelRef = useRef<BaseModelSetType | null>();
@@ -378,18 +378,18 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     };
   }, []);
 
-  useEffect(() => {
-    if (browsingSettingsAddons.settings.generationDefaultValues) {
-      const { generationDefaultValues } = browsingSettingsAddons.settings;
-      Object.keys(generationDefaultValues ?? {}).forEach((key) => {
-        // @ts-ignore
-        const value = generationDefaultValues[key as keyof generationDefaultValues];
-        if (value !== undefined) {
-          form.setValue(key as keyof PartialFormData, value);
-        }
-      });
-    }
-  }, [browsingSettingsAddons, form]);
+  // useEffect(() => {
+  //   if (browsingSettingsAddons.settings.generationDefaultValues) {
+  //     const { generationDefaultValues } = browsingSettingsAddons.settings;
+  //     Object.keys(generationDefaultValues ?? {}).forEach((key) => {
+  //       // @ts-ignore
+  //       const value = generationDefaultValues[key as keyof generationDefaultValues];
+  //       if (value !== undefined) {
+  //         form.setValue(key as keyof PartialFormData, value);
+  //       }
+  //     });
+  //   }
+  // }, [browsingSettingsAddons, form]);
   // #endregion
 
   // #region [handlers]
@@ -407,7 +407,7 @@ export function GenerationFormProvider({ children }: { children: React.ReactNode
     return sanitizeTextToImageParams(
       {
         ...defaultValues,
-        ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
+        // ...(browsingSettingsAddons.settings.generationDefaultValues ?? {}),
         fluxMode: fluxModeOptions[1].value,
         nsfw: overrides.nsfw ?? false,
         quantity: overrides.quantity ?? defaultValues.quantity,

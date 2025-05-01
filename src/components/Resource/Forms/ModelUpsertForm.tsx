@@ -77,9 +77,13 @@ const schema = modelUpsertSchema
   .refine((data) => !(data.nsfw && data.poi === 'true'), {
     message: 'Mature content depicting actual people is not permitted.',
   })
-  .refine((data) => !(data.nsfw && data.minor), {
+  .refine((data) => !(data.nsfw && data.sfwOnly), {
     message:
       'This resource is intended to produce mature themes and cannot be used for NSFW generation',
+  })
+  .refine((data) => !(data.nsfw && data.minor), {
+    message:
+      'Minor resources cannot be used for NSFW generation. Please revise the content of this listing.',
   });
 
 type ModelUpsertSchema = z.infer<typeof schema>;
@@ -97,7 +101,7 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Sell, label: 'Sell this model or merges' },
 ];
 
-const lockableProperties = ['nsfw', 'poi', 'minor', 'category', 'tags'];
+const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category', 'tags'];
 
 const availabilityDetails = {
   [Availability.Public]: {
@@ -149,10 +153,10 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
   const queryUtils = trpc.useUtils();
 
   const [type, allowDerivatives] = form.watch(['type', 'allowDerivatives']);
-  const [nsfw, poi, minor] = form.watch(['nsfw', 'poi', 'minor']);
+  const [nsfw, poi, sfwOnly, minor] = form.watch(['nsfw', 'poi', 'sfwOnly', 'minor']);
   const allowCommercialUse = form.watch('allowCommercialUse');
   const hasPoiInNsfw = nsfw && poi === 'true';
-  const hasMinorInNsfw = nsfw && minor;
+  const hasSfwOnlyNsfw = nsfw && sfwOnly;
   const { isDirty, errors } = form.formState;
   const features = useFeatureFlags();
 
@@ -489,7 +493,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                   )}
                   onChange={(value) => {
                     form.setValue('nsfw', value === 'true' ? false : undefined);
-                    form.setValue('minor', value === 'true');
+                    form.setValue('sfwOnly', minor ? true : value === 'true');
                   }}
                 >
                   <Radio value="true" label="Yes" disabled={isLocked('poi')} />
@@ -498,17 +502,32 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 <InputCheckbox
                   name="nsfw"
                   label="Is intended to produce mature themes"
-                  disabled={isLocked('nsfw') || poi === 'true'}
+                  disabled={isLocked('nsfw') || poi === 'true' || minor}
                   description={isLockedDescription('category')}
-                  onChange={(event) =>
-                    event.target.checked ? form.setValue('minor', false) : null
-                  }
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      form.setValue('poi', 'false');
+                      form.setValue('sfwOnly', false);
+                    }
+                  }}
                 />
                 <InputCheckbox
                   name="minor"
-                  label="Cannot be used for NSFW generation"
+                  label="Intended to depict a minor character"
                   disabled={isLocked('minor') || nsfw}
                   description={isLockedDescription('minor')}
+                  onChange={(event) => {
+                    if (event.target.checked) {
+                      form.setValue('nsfw', false);
+                      form.setValue('sfwOnly', true);
+                    }
+                  }}
+                />
+                <InputCheckbox
+                  name="sfwOnly"
+                  label="Cannot be used for NSFW generation"
+                  disabled={isLocked('sfwOnly') || nsfw || minor || poi === 'true'}
+                  description={isLockedDescription('sfwOnly')}
                 />
               </Stack>
             </Paper>
@@ -539,7 +558,7 @@ export function ModelUpsertForm({ model, children, onSubmit, modelVersionId }: P
                 </Text>
               </>
             )}
-            {hasMinorInNsfw && (
+            {hasSfwOnlyNsfw && (
               <>
                 <Alert color="red" pl={10}>
                   <Group noWrap spacing={10}>
@@ -662,7 +681,6 @@ export const PrivateModelAutomaticSetup = ({
 }: ModelUpsertSchema & { modelVersionId?: number }) => {
   const dialog = useDialogContext();
   const utils = trpc.useContext();
-  const currentUser = useCurrentUser();
   const handleClose = dialog.onClose;
   const router = useRouter();
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();

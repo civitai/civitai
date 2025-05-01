@@ -66,6 +66,8 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
     'toolNames',
     'techniqueNames',
     'flags.promptNsfw',
+    'poi',
+    'minor',
   ];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {

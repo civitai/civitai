@@ -79,6 +79,7 @@ import {
   UpdatePostCollectionTagIdInput,
   UpdatePostImageInput,
 } from './../schema/post.schema';
+import { isValidAIGeneration } from '~/utils/image-utils';
 
 type GetAllPostsRaw = {
   id: number;
@@ -952,10 +953,17 @@ export async function bustCachesForPost(postId: number) {
 export const updatePostImage = async (image: UpdatePostImageInput) => {
   const currentImage = await dbWrite.image.findUniqueOrThrow({
     where: { id: image.id },
-    select: { hideMeta: true, ingestion: true, blockedFor: true },
+    select: { hideMeta: true, ingestion: true, blockedFor: true, metadata: true, nsfwLevel: true },
   });
 
-  const isBlockedForAiValidation = currentImage.blockedFor === BlockedReason.AiNotVerified;
+  const blockedForVerification = currentImage.blockedFor === BlockedReason.AiNotVerified;
+  const updatedIsVerifiable = isValidAIGeneration({
+    id: image.id,
+    nsfwLevel: currentImage.nsfwLevel,
+    meta: image.meta,
+  });
+
+  const shouldIngest = blockedForVerification && updatedIsVerifiable;
 
   const result = await dbWrite.image.update({
     where: { id: image.id },
@@ -963,13 +971,17 @@ export const updatePostImage = async (image: UpdatePostImageInput) => {
       ...image,
       meta: image.meta !== null ? (image.meta as Prisma.JsonObject) : Prisma.JsonNull,
       // If this image was blocked due to missing metadata, we need to set it back to pending
-      ingestion: isBlockedForAiValidation ? 'Pending' : undefined,
-      blockedFor: isBlockedForAiValidation ? null : undefined,
+      ingestion: shouldIngest ? 'Pending' : undefined,
+      blockedFor: shouldIngest ? null : undefined,
+      metadata: {
+        ...((currentImage.metadata as MixedObject) ?? {}),
+        ...(shouldIngest ? { skipScannedAtReassignment: true } : {}),
+      } as Prisma.JsonObject,
     },
     select: { id: true, url: true, userId: true },
   });
 
-  if (isBlockedForAiValidation) {
+  if (shouldIngest) {
     // Ensures a proper rescan of this image.
     await ingestImage({ image: result });
   }

@@ -1,6 +1,7 @@
 import { Box, Center, Loader, Stack, Text, ThemeIcon, Title } from '@mantine/core';
 import { RefinementListProps, useInstantSearch } from 'react-instantsearch';
 import {
+  ApplyCustomFilter,
   BrowsingLevelFilter,
   ChipRefinementList,
   DateRangeRefinement,
@@ -22,6 +23,8 @@ import { useInfiniteHitsTransformed } from '~/components/Search/search.utils2';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
+import { isDefined } from '~/utils/type-guards';
 
 export default function ImageSearch() {
   return (
@@ -40,6 +43,7 @@ const filterMediaTypesOptions: RefinementListProps['transformItems'] = (items) =
 
 function RenderFilters() {
   const { canViewNsfw } = useFeatureFlags();
+  const browsingSettingsAddons = useBrowsingSettingsAddons();
 
   const items = [
     { label: 'Relevancy', value: ImagesSearchIndexSortBy[0] as string },
@@ -50,9 +54,17 @@ function RenderFilters() {
     { label: 'Newest', value: ImagesSearchIndexSortBy[5] as string },
   ];
 
+  const filters = [
+    browsingSettingsAddons.settings.disablePoi ? 'poi != true' : null,
+    browsingSettingsAddons.settings.disableMinor ? 'minor != true' : null,
+  ].filter(isDefined);
+
   return (
     <>
-      <BrowsingLevelFilter attributeName={!canViewNsfw ? 'combinedNsfwLevel' : 'nsfwLevel'} />
+      <BrowsingLevelFilter
+        filters={filters}
+        attributeName={!canViewNsfw ? 'combinedNsfwLevel' : 'nsfwLevel'}
+      />
       <SortBy
         title="Sort images by"
         items={!canViewNsfw ? items.filter((x) => x.label !== 'Newest') : items}

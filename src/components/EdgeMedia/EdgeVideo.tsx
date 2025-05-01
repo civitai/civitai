@@ -38,7 +38,7 @@ type VideoProps = Omit<
   youtubeVideoId?: string;
   vimeoVideoId?: string;
   options?: Omit<EdgeUrlProps, 'src'>;
-  threshold?: number | null;
+  threshold?: number;
   disableWebm?: boolean;
   disablePoster?: boolean;
 };
@@ -179,27 +179,24 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     });
 
     const node = useScrollAreaRef();
-    const observerRef = useRef<IntersectionObserver>();
 
     useEffect(() => {
       const videoElem = ref.current;
-      if (!videoElem || threshold === null || !options?.anim || !loaded) return;
-      if (!observerRef.current) {
-        observerRef.current = new IntersectionObserver(
-          ([{ isIntersecting, intersectionRatio, target }]) => {
-            const elem = target as HTMLVideoElement;
-            if (isIntersecting && intersectionRatio >= threshold) {
-              elem.play();
-            } else if (!isIntersecting || (isIntersecting && intersectionRatio < threshold)) {
-              elem.pause();
-            }
-          },
-          { root: node?.current, threshold: [threshold, 1 - threshold] }
-        );
-      }
-      observerRef.current.observe(videoElem);
+      if (!videoElem || !options?.anim || props.autoPlay) return;
+      const observer = new IntersectionObserver(
+        ([{ intersectionRatio, target }]) => {
+          const elem = target as HTMLVideoElement;
+          if (intersectionRatio >= threshold && elem.paused) {
+            elem.play().catch(() => elem.play());
+          } else if (intersectionRatio < threshold && !elem.paused) {
+            elem.pause();
+          }
+        },
+        { root: node?.current, threshold: [threshold, 1 - threshold] }
+      );
+      observer.observe(videoElem);
       return () => {
-        observerRef.current?.unobserve(videoElem);
+        observer.unobserve(videoElem);
       };
     }, [threshold, options?.anim, loaded]);
 
@@ -207,7 +204,6 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
         const [event] = e;
         (event.target as HTMLVideoElement).play();
-        // setMouseOver(true);
       },
       1000
     );
@@ -215,7 +211,6 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const handleMouseLeave: MouseEventHandler<HTMLVideoElement> = (e) => {
       e.currentTarget.pause();
       clear();
-      // setMouseOver(false);
     };
 
     const defaultPlayer = (
@@ -251,7 +246,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           loop
           poster={!disablePoster ? coverUrl : undefined}
           disablePictureInPicture
-          preload="metadata"
+          preload="none"
           onError={onError}
           {...props}
         >

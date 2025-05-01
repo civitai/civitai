@@ -46,7 +46,7 @@ const trainingModelTypesMap: {
   Character: {
     allowedTypes: ['image', 'video'],
     description: 'A specific person or character, realistic or anime',
-    src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/c42020cf-ca49-4b4d-b0e6-1807463f90ad/width=1024/00834-2746643195.jpeg',
+    src: 'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/84918ac0-e5de-4ee5-be94-1fc32ee9a7c4/width=1024/67085860.jpeg',
     type: 'img',
   },
   Style: {

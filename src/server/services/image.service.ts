@@ -140,6 +140,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { baseS3Client, imageS3Client } from '~/utils/s3-client';
 import { serverUploadImage } from '~/utils/s3-utils';
 import { isDefined, isNumber } from '~/utils/type-guards';
+import { IconChevronsDownLeft } from '@tabler/icons-react';
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -355,16 +356,21 @@ export const moderateImages = async ({
         WHERE "imageId" IN (${Prisma.join(ids)}) AND "tagId" IN (${Prisma.join(tagIds)})
       `;
 
-    await upsertTagsOnImageNew(
-      toUpdate.map(({ imageId, tagId }) => ({
-        imageId,
-        tagId,
-        disabled: true,
-        needsReview: false,
-      }))
-    );
-
-    await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
+    if (toUpdate.length) {
+      await upsertTagsOnImageNew(
+        toUpdate.map(({ imageId, tagId }) => ({
+          imageId,
+          tagId,
+          disabled: true,
+          needsReview: false,
+        }))
+      );
+    } else {
+      await dbWrite.$executeRawUnsafe(
+        `SELECT update_nsfw_levels_new(ARRAY[${ids.join(',')}]::integer[])`
+      );
+      await queueImageSearchIndexUpdate({ ids, action: SearchIndexUpdateQueueAction.Update });
+    }
   }
   return null;
 };
@@ -815,7 +821,9 @@ export const getAllImages = async (
   } else if (!pending) AND.push(Prisma.sql`(p."publishedAt" < now())`);
 
   if (!isModerator) {
-    AND.push(Prisma.sql`(p."availability" != ${Availability.Private} OR p."userId" = ${userId})`);
+    AND.push(
+      Prisma.sql`((p."availability" != ${Availability.Private} AND i."ingestion" != 'Blocked') OR p."userId" = ${userId})`
+    );
   }
 
   if (disablePoi) {
@@ -3556,8 +3564,11 @@ export const getImageModerationReviewQueue = async ({
   tagReview,
   reportReview,
   tagIds,
+  browsingLevel,
 }: ImageReviewQueueInput) => {
   const AND: Prisma.Sql[] = [];
+
+  AND.push(Prisma.sql`(i."nsfwLevel" & ${browsingLevel}) != 0`);
 
   if (needsReview) {
     AND.push(Prisma.sql`i."needsReview" = ${needsReview}`);
@@ -3610,8 +3621,11 @@ export const getImageModerationReviewQueue = async ({
         ? `WITH tags_review AS (
             SELECT
               toi."imageId"
-            FROM "TagsOnImageDetails" toi  JOIN "Image" i ON toi."imageId" = i.id
-            WHERE toi."needsReview" AND NOT toi."disabled" AND i."nsfwLevel" < 32
+            FROM "TagsOnImageNew" toi  JOIN "Image" i ON toi."imageId" = i.id
+            WHERE
+            (toi."attributes" >> 9) & 1 = 1
+            AND (toi."attributes" >> 10) & 1 != 1
+            AND i."nsfwLevel" < 32
             ${cursor ? `AND "imageId" <= ${cursor}` : ''}
             ORDER BY (toi."imageId", toi."tagId") DESC
           )`

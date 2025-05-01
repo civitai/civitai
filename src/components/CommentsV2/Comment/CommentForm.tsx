@@ -162,7 +162,6 @@ export const CommentForm = ({
           disabled={isLoading}
           includeControls={['formatting', 'link', 'mentions']}
           defaultSuggestions={suggestedMentions}
-          hideToolbar
           placeholder={
             !data?.length ? 'Be the first to leave a comment...' : 'Type your comment...'
           }
@@ -175,6 +174,7 @@ export const CommentForm = ({
           }}
           data-testid="comment-form"
           inputClasses="break-all"
+          hideToolbar
         />
         {focused && (
           <Group position="right">

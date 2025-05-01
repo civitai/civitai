@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { BrowsingSettingsAddon, DEFAULT_BROWSING_SETTINGS_ADDONS } from '~/server/common/constants';
 import { Flags } from '~/shared/utils';
 import { trpc } from '~/utils/trpc';
@@ -30,10 +31,22 @@ export const BrowsingSettingsAddonsProvider = ({ children }: { children: React.R
       cacheTime: Infinity,
       staleTime: Infinity,
     });
-
+  const currentUser = useCurrentUser();
   const browsingLevel = useBrowsingLevelDebounced();
 
   const settings = useMemo(() => {
+    if (currentUser?.isModerator) {
+      // Mods will always see the default values
+      return {
+        disableMinor: false,
+        disablePoi: false,
+        excludedTagIds: [],
+        excludedFooterLinks: [],
+        generationDefaultValues: {},
+        generationMinValues: {},
+      };
+    }
+
     return data.reduce(
       (acc, elem) => {
         try {

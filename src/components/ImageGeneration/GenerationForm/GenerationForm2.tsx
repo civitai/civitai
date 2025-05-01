@@ -16,6 +16,7 @@ import {
   SliderProps,
   Stack,
   Text,
+  Notification,
 } from '@mantine/core';
 import { useLocalStorage } from '@mantine/hooks';
 import {
@@ -103,7 +104,8 @@ import {
 import { ModelType } from '~/shared/utils/prisma/enums';
 import { useGenerationStore, useRemixStore } from '~/store/generation.store';
 import { useTipStore } from '~/store/tip.store';
-import { parsePromptMetadata } from '~/utils/metadata';
+import { fetchBlobAsFile } from '~/utils/file-utils';
+import { getParsedExifData, parsePromptMetadata } from '~/utils/metadata';
 import { showErrorNotification } from '~/utils/notifications';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { getDisplayName, hashify, parseAIR } from '~/utils/string-helpers';
@@ -152,6 +154,7 @@ export function GenerationFormContent() {
     trpc.generation.getWorkflowDefinitions.useQuery();
 
   const [workflow] = form.watch(['workflow']) ?? 'txt2img';
+  const [sourceImage] = form.watch(['sourceImage']);
   const workflowDefinition = workflowDefinitions?.find((x) => x.key === workflow);
 
   const features = getWorkflowDefinitionFeatures(workflowDefinition);
@@ -182,6 +185,7 @@ export function GenerationFormContent() {
 
   // #region [handle parse prompt]
   const [showFillForm, setShowFillForm] = useState(false);
+  const [submitError, setSubmitError] = useState<string>();
 
   async function handleParsePrompt() {
     const prompt = form.getValues('prompt');
@@ -258,6 +262,7 @@ export function GenerationFormContent() {
       if (!params.baseModel) throw new Error('could not find base model');
       try {
         const hasEarlyAccess = resources.some((x) => x.earlyAccessEndsAt);
+        setSubmitError(undefined);
         await mutateAsync({
           resources,
           params: {
@@ -267,6 +272,8 @@ export function GenerationFormContent() {
           },
           tips,
           remixOfId: remixSimilarity && remixSimilarity > 0.75 ? remixOfId : undefined,
+        }).catch((error: any) => {
+          setSubmitError(error.message ?? 'An unexpected error occurred. Please try again later.');
         });
 
         if (hasEarlyAccess) {
@@ -315,7 +322,9 @@ export function GenerationFormContent() {
   useEffect(() => {
     const subscription = form.watch(({ model, resources = [], vae, fluxMode }, { name }) => {
       if (name === 'model' || name === 'resources' || name === 'vae') {
-        setHasMinorResources([model, ...resources, vae].filter((x) => x?.model?.minor).length > 0);
+        setHasMinorResources(
+          [model, ...resources, vae].filter((x) => x?.model?.sfwOnly || x?.model?.minor).length > 0
+        );
       }
 
       setRunsOnFalAI(model?.model?.id === fluxModelId && fluxMode !== fluxStandardAir);
@@ -366,6 +375,21 @@ export function GenerationFormContent() {
     activeTour,
     loadingGeneratorData,
   ]); // These are the dependencies that make it work, please only update if you know what you're doing
+
+  const [minDenoise, setMinDenoise] = useState(0);
+  useEffect(() => {
+    if (sourceImage)
+      fetchBlobAsFile(sourceImage.url).then((file) => {
+        if (file)
+          getParsedExifData(file).then((data) => {
+            const min = data ? 0 : 0.5;
+            const denoise = form.getValues('denoise') ?? 0.4;
+            if (min > denoise) form.setValue('denoise', 0.65);
+            setMinDenoise(min);
+          });
+      });
+    else setMinDenoise(0);
+  }, [sourceImage, form]);
 
   return (
     <Form
@@ -462,6 +486,7 @@ export function GenerationFormContent() {
                   {({ model, resources = [], vae, fluxMode }) => {
                     const selectedResources = [...resources, vae, model].filter(isDefined);
                     const minorFlaggedResources = selectedResources.filter((x) => x.model.minor);
+                    const sfwFlaggedResources = selectedResources.filter((x) => x.model.sfwOnly);
                     const unstableResources = selectedResources.filter((x) =>
                       allUnstableResources.includes(x.id)
                     );
@@ -492,7 +517,9 @@ export function GenerationFormContent() {
                           }}
                           hideVersion={isFlux}
                           pb={
-                            unstableResources.length || minorFlaggedResources.length
+                            unstableResources.length ||
+                            minorFlaggedResources.length ||
+                            sfwFlaggedResources.length
                               ? 'sm'
                               : undefined
                           }
@@ -610,13 +637,14 @@ export function GenerationFormContent() {
                             </Alert>
                           </Card.Section>
                         )}
-                        {minorFlaggedResources.length > 0 && (
+                        {(!!minorFlaggedResources.length || !!sfwFlaggedResources.length) && (
                           <Card.Section>
-                            <Alert color="yellow" title="Mature Content Restricted" radius={0}>
+                            <Alert color="yellow" title="Content Restricted" radius={0}>
                               <Text size="xs">
-                                {`A resource you selected does not allow the generation of Mature Content.
-                    If you attempt to generate mature content with this resource,
-                    the image will not be returned but you `}
+                                {!!minorFlaggedResources.length
+                                  ? `A resource you selected does not allow the generation of non-PG level content. If you attempt to generate non-PG`
+                                  : `A resource you selected does not allow the generation of sexualized content (X, XXX). If you attempt to generate sexualized `}
+                                content with this resource the image will not be returned, but you
                                 <Text span italic inherit>
                                   will
                                 </Text>
@@ -1152,13 +1180,7 @@ export function GenerationFormContent() {
                             <InputNumberSlider
                               name="denoise"
                               label="Denoise"
-                              min={0}
-                              // min={
-                              //   !remixOfId
-                              //     ? browsingSettingsAddons.settings.generationMinValues?.denoise ??
-                              //       0
-                              //     : 0
-                              // }
+                              min={minDenoise}
                               max={isTxt2Img ? 0.75 : 1}
                               step={0.05}
                             />
@@ -1287,7 +1309,18 @@ export function GenerationFormContent() {
                     )}
                     {reviewed && (
                       <>
-                        <QueueSnackbar />
+                        {!submitError ? (
+                          <QueueSnackbar />
+                        ) : (
+                          <Notification
+                            icon={<IconX size={18} />}
+                            color="red"
+                            onClose={() => setSubmitError(undefined)}
+                            className="rounded-md bg-red-8/20"
+                          >
+                            {submitError}
+                          </Notification>
+                        )}
                         <WhatIfAlert />
                         <div className="flex gap-2">
                           <Card withBorder className="flex max-w-24 flex-1 flex-col p-0">

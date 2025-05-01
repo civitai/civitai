@@ -308,6 +308,7 @@ export const constants = {
           return 5;
       }
     },
+    maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
   system: {

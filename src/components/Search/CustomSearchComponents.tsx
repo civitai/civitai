@@ -39,6 +39,9 @@ import { containerQuery } from '~/utils/mantine-css-helpers';
 import { TimeoutLoader } from './TimeoutLoader';
 import { useBrowsingLevelDebounced } from '../BrowsingLevel/BrowsingLevelProvider';
 import { Flags } from '~/shared/utils';
+import { getBlockedNsfwWords, getPossibleBlockedNsfwWords } from '~/utils/metadata/audit';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { isDefined } from '~/utils/type-guards';
 
 const useStyles = createStyles((theme) => ({
   divider: {
@@ -254,26 +257,34 @@ export const ClearRefinements = ({ ...props }: ButtonProps) => {
 
 export const BrowsingLevelFilter = ({
   attributeName,
+  filters: _filters,
   ...props
-}: { attributeName: string } & ConfigureProps) => {
+}: { attributeName: string; filters?: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
   const browsingLevel = useBrowsingLevelDebounced();
   const browsingLevelArray = Flags.instanceToArray(browsingLevel);
-  const { refine } = useConfigure({
-    ...props,
-    filters: attributeName
-      ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
-      : undefined,
-  });
+  const browsingLevelFilter = attributeName
+    ? browsingLevelArray.map((value) => `${attributeName}=${value}`).join(' OR ')
+    : null;
+  const filters = (_filters ? [..._filters, browsingLevelFilter] : [browsingLevelFilter]).filter(
+    isDefined
+  );
 
-  return null;
+  return <ApplyCustomFilter filters={filters} {...props} />;
 };
+
+function getBlockedPromptFilters(search: string) {
+  const matches = getPossibleBlockedNsfwWords(search);
+  return { filters: matches.map((w) => `NOT prompt CONTAINS ${w}`).join(' AND ') };
+}
 
 export const CustomSearchBox = forwardRef<
   { focus: () => void },
   SearchBoxProps & RenderSearchComponentProps
 >(({ isMobile, onSearchDone, ...props }, ref) => {
+  const currentUser = useCurrentUser();
   const { query, refine } = useSearchBox({ ...props });
   const [search, setSearch] = useState(query);
+  // const config = useConfigure(getBlockedPromptFilters(query));
   const [debouncedSearch] = useDebouncedValue(search, 300);
   const { classes } = useSearchInputStyles();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -286,8 +297,12 @@ export const CustomSearchBox = forwardRef<
   }));
 
   useEffect(() => {
-    if (debouncedSearch !== query) {
+    const canSearch = !currentUser?.isModerator
+      ? !getBlockedNsfwWords(debouncedSearch).length
+      : true;
+    if (debouncedSearch !== query && canSearch) {
       refine(debouncedSearch);
+      // config.refine(getBlockedPromptFilters(debouncedSearch));
     }
   }, [debouncedSearch]);
 
@@ -419,14 +434,18 @@ export function DateRangeRefinement({ title, ...props }: RangeInputProps & { tit
   );
 }
 
-export const ApplyCustomFilter = ({ filters, ...props }: { filters: string } & ConfigureProps) => {
+export const ApplyCustomFilter = ({
+  filters: _filters,
+  ...props
+}: { filters: string[] | string } & Omit<ConfigureProps, 'filters'>) => {
+  const filters = Array.isArray(_filters) ? _filters : [_filters];
   const { refine } = useConfigure({
     ...props,
-    filters: filters,
+    filters: filters.map((f) => `(${f})`).join(' AND '),
   });
 
   useEffect(() => {
-    refine(filters);
+    refine(filters.map((f) => `(${f})`).join(' AND '));
   }, [filters]);
 
   return null;

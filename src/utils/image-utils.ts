@@ -123,22 +123,23 @@ type ImageForAiVerification = {
 
 export function isValidAIGeneration(image: ImageForAiVerification) {
   if (image.meta?.prompt) return true;
-  if (image.tools?.length) return true;
-  if (image.resources?.length) return true;
-  if (image.meta?.comfy) return true;
-  if (image.meta?.extra) return true;
+  // Updated to only allow prompt.
+  // if (image.meta?.comfy) return true;
+  // if (image.meta?.extra) return true;
+  // if (image.tools?.length) return true;
+  // if (image.resources?.length) return true;
 
   // PG images are alright for us anyway.
-  if (image.nsfwLevel !== 0 && image.nsfwLevel < NsfwLevel.R) return true;
+  if (image.nsfwLevel !== 0 && image.nsfwLevel <= NsfwLevel.R) return true;
 
-  if (image.nsfwLevel >= NsfwLevel.R) {
+  if (image.nsfwLevel > NsfwLevel.R) {
     // We need some of the above.
     return false;
   }
 
   // If NSFW level is 0 or something else, we can go ahead and check tags:.
   const hasNsfwTag = image.tags?.some((tag) => {
-    return tag.nsfwLevel >= NsfwLevel.R && tag.type === TagType.Moderation;
+    return tag.nsfwLevel > NsfwLevel.R && tag.type === TagType.Moderation;
   });
 
   return !hasNsfwTag;

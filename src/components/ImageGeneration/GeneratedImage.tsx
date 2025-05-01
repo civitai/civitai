@@ -214,14 +214,14 @@ export function GeneratedImage({
     const meta = getStepMeta(step);
     if (meta) mediaDropzoneData.setData(url, meta);
     e.dataTransfer.setData('text/uri-list', url);
-    // const encoded = meta ? encodeURIComponent(JSON.stringify(meta)) : undefined;
-    // console.log(encoded ? `${url}?data=${encoded}` : url);
-    // e.dataTransfer.setData('text/uri-list', encoded ? `${url}?data=${encoded}` : url);
   }
 
   function handleDragVideo(e: DragEvent<HTMLVideoElement>) {
     handleDataTransfer(e);
   }
+
+  const blockedReason = getImageBlockedReason(image.blockedReason);
+  const isBlocked = !!nsfwLevelError || !!blockedReason;
 
   return (
     <TwCard
@@ -233,48 +233,49 @@ export function GeneratedImage({
     >
       {(isLightbox || inView) && (
         <>
-          <div
-            className={clsx('relative flex flex-1 flex-col items-center justify-center', {
-              ['cursor-pointer']: !isLightbox,
-              // ['pointer-events-none']: running,
-            })}
-            onClick={handleImageClick}
-            onMouseDown={(e) => {
-              if (e.button === 1) return handleAuxClick(image.url);
-            }}
-          >
-            {nsfwLevelError && (
-              <Center px="md">
-                <Stack spacing="xs">
-                  <Text color="red" weight="bold" align="center" size="sm">
-                    Blocked for Adult Content
-                  </Text>
-                  <Text align="center" size="sm">
-                    Private Generation is limited to PG, PG-13 only. Please adjust your prompt and
-                    try again.
-                  </Text>
-                </Stack>
-              </Center>
+          <div className={clsx('relative flex flex-1 flex-col items-center justify-center')}>
+            {nsfwLevelError ? (
+              <BlockedBlock
+                title="Blocked for Adult Content"
+                message="Private generation is limited to PG, PG-13 only."
+              />
+            ) : blockedReason ? (
+              <BlockedBlock title="Blocked Image" message={blockedReason} />
+            ) : (
+              <EdgeMedia2
+                src={image.url}
+                type={image.type}
+                alt=""
+                className={clsx('max-h-full w-auto max-w-full', {
+                  ['cursor-pointer']: !isLightbox,
+                  // ['pointer-events-none']: running,
+                })}
+                onClick={handleImageClick}
+                onMouseDown={(e) => {
+                  if (e.button === 1) return handleAuxClick(image.url);
+                }}
+                wrapperProps={{
+                  onClick: handleImageClick,
+                  onMouseDown: (e) => {
+                    if (e.button === 1) return handleAuxClick(image.url);
+                  },
+                }}
+                disableWebm
+                disablePoster
+                onLoad={handleLoad}
+                onError={handleError}
+                videoProps={{
+                  onLoadedData: handleLoad,
+                  onError: handleError,
+                  onDragStart: handleDragVideo,
+                  draggable: true,
+                  autoPlay: true,
+                }}
+              />
             )}
-            <EdgeMedia2
-              src={image.url}
-              type={image.type}
-              alt=""
-              className="max-h-full w-auto max-w-full"
-              disableWebm
-              disablePoster
-              onLoad={handleLoad}
-              onError={handleError}
-              videoProps={{
-                onLoadedData: handleLoad,
-                onError: handleError,
-                onDragStart: handleDragVideo,
-                draggable: true,
-              }}
-            />
             <div className="pointer-events-none absolute size-full rounded-md shadow-[inset_0_0_2px_1px_rgba(255,255,255,0.2)]" />
           </div>
-          {!isLightbox && !nsfwLevelError && (
+          {!isLightbox && !isBlocked && (
             <label className="absolute left-3 top-3" data-tour="gen:select">
               <Checkbox
                 className={classes.checkbox}
@@ -299,11 +300,16 @@ export function GeneratedImage({
               </div>
             </Menu.Target>
             <Menu.Dropdown>
-              <GeneratedImageWorkflowMenuItems step={step} image={image} workflowId={request.id} />
+              <GeneratedImageWorkflowMenuItems
+                step={step}
+                image={image}
+                workflowId={request.id}
+                isBlocked={isBlocked}
+              />
             </Menu.Dropdown>
           </Menu>
 
-          {!nsfwLevelError && (
+          {!isBlocked && (
             <div
               className={clsx(
                 classes.actionsWrapper,
@@ -443,6 +449,21 @@ const useStyles = createStyles((theme, _params, getRef) => {
   };
 });
 
+function BlockedBlock({ title, message }: { title: string; message: string }) {
+  return (
+    <Center px="md">
+      <Stack spacing="xs">
+        <Text color="red" weight="bold" align="center" size="sm">
+          {title}
+        </Text>
+        <Text align="center" size="sm">
+          {message} Please adjust your prompt and try again.
+        </Text>
+      </Stack>
+    </Center>
+  );
+}
+
 export function GeneratedImageLightbox({
   image,
   request,
@@ -539,11 +560,13 @@ function GeneratedImageWorkflowMenuItems({
   step,
   workflowsOnly,
   workflowId,
+  isBlocked,
 }: {
   image: NormalizedGeneratedImage;
   step: NormalizedGeneratedImageStep;
   workflowId: string;
   workflowsOnly?: boolean;
+  isBlocked?: boolean;
 }) {
   const { updateImages } = useUpdateImageStepMetadata();
   const { data: workflowDefinitions = [] } = trpc.generation.getWorkflowDefinitions.useQuery();
@@ -683,12 +706,14 @@ function GeneratedImageWorkflowMenuItems({
           >
             Remix
           </Menu.Item>
-          <Menu.Item
-            onClick={() => handleGenerate({ seed: image.seed })}
-            icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
-          >
-            Remix (with seed)
-          </Menu.Item>
+          {!isBlocked && (
+            <Menu.Item
+              onClick={() => handleGenerate({ seed: image.seed })}
+              icon={<IconPlayerTrackNextFilled size={14} stroke={1.5} />}
+            >
+              Remix (with seed)
+            </Menu.Item>
+          )}
         </>
       )}
       {!workflowsOnly && (
@@ -700,19 +725,24 @@ function GeneratedImageWorkflowMenuItems({
           Delete
         </Menu.Item>
       )}
-      {!workflowsOnly && <Menu.Divider />}
-      {img2imgWorkflows.map((workflow) => {
-        const handleMappedClick = notSelectableMap[workflow.key];
-        const handleDefault = () => handleSelectWorkflow(workflow.key);
-        const onClick = handleMappedClick ?? handleDefault;
-        return (
-          <WithMemberMenuItem key={workflow.key} onClick={onClick} memberOnly={workflow.memberOnly}>
-            {workflow.name}
-          </WithMemberMenuItem>
-        );
-      })}
-      {!!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
-      {!!img2vidConfigs.length && (
+      {!isBlocked && !workflowsOnly && <Menu.Divider />}
+      {!isBlocked &&
+        img2imgWorkflows.map((workflow) => {
+          const handleMappedClick = notSelectableMap[workflow.key];
+          const handleDefault = () => handleSelectWorkflow(workflow.key);
+          const onClick = handleMappedClick ?? handleDefault;
+          return (
+            <WithMemberMenuItem
+              key={workflow.key}
+              onClick={onClick}
+              memberOnly={workflow.memberOnly}
+            >
+              {workflow.name}
+            </WithMemberMenuItem>
+          );
+        })}
+      {!isBlocked && !!img2imgWorkflows.length && !!img2vidConfigs.length && <Menu.Divider />}
+      {!isBlocked && !!img2vidConfigs.length && (
         <>
           <Menu.Item
             onClick={() =>
@@ -730,7 +760,7 @@ function GeneratedImageWorkflowMenuItems({
           </Menu.Item>
         </>
       )}
-      {/* {image.type === 'video' && (
+      {/* {!isBlocked && image.type === 'video' && (
         <>
           <Menu.Item onClick={handleEnhanceVideo}>Upscale Video</Menu.Item>
         </>
@@ -751,12 +781,14 @@ function GeneratedImageWorkflowMenuItems({
           >
             Copy Job ID
           </Menu.Item>
-          <Menu.Item
-            icon={<IconExternalLink size={14} stroke={1.5} />}
-            onClick={() => handleAuxClick(image.url)}
-          >
-            Open in New Tab
-          </Menu.Item>
+          {!isBlocked && (
+            <Menu.Item
+              icon={<IconExternalLink size={14} stroke={1.5} />}
+              onClick={() => handleAuxClick(image.url)}
+            >
+              Open in New Tab
+            </Menu.Item>
+          )}
         </>
       )}
     </>
@@ -794,3 +826,24 @@ function handleCloseImageLightbox() {
 function handleAuxClick(url: string) {
   window.open(url, '_blank');
 }
+
+const imageBlockedReasonMap: Record<string, string> = {
+  ChildReference: 'An inappropriate child reference was detected.',
+  Bestiality: 'Detected bestiality in the image.',
+  'Child Sexual - Anime': 'Inappropriate minor content detected.',
+  'Child Sexual - Realistic': 'Inappropriate minor content detected.',
+  NSFWLevel: 'Mature content restriction.',
+};
+
+function getImageBlockedReason(reason?: string | null) {
+  if (!reason || reason === 'none') return;
+  return imageBlockedReasonMap[reason] ?? reason;
+}
+
+// {
+//   "ChildReference": "An inappropriate child reference was detected.",
+//   "Bestiality": "Detected bestiality in the image.",
+//   "Child Sexual - Anime": "An inappropriate child reference was detected.",
+//   "Child Sexual - Realistic": "An inappropriate child reference was detected.",
+//   "NSFWLevel": "Mature content restriction"
+// }

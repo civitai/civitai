@@ -14,3 +14,22 @@ export default WebhookEndpoint(async (req, res) => {
 
   res.status(200).json({ imageIds });
 });
+
+// const images = await dbRead.$queryRaw<
+// { id: number }[]
+// >`select id from "Image" where "createdAt" > now()::date - interval '4 hours' and "ingestion" = 'Pending'`;
+
+// await Limiter().process(images, async (images) => {
+// console.log(`processing ${images.length} images`);
+// await dbWrite.image.updateMany({
+//   where: { id: { in: images.map((x) => x.id) } },
+//   data: {
+//     ingestion: ImageIngestionStatus.Pending,
+//     scannedAt: null,
+//     needsReview: null,
+//     minor: false,
+//     poi: false,
+//     blockedFor: null,
+//   },
+// });
+// });

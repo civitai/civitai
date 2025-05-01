@@ -8,7 +8,10 @@ export async function fetchBlob(src: string | Blob | File) {
   return blob;
 }
 
-export async function fetchBlobAsFile(src: string | Blob | File, fileName: string) {
+export async function fetchBlobAsFile(
+  src: string | Blob | File,
+  fileName = new Date().getTime().toString()
+) {
   const blob = await fetchBlob(src);
   if (!blob) return null;
   return new File([blob], fileName, { type: blob.type });
