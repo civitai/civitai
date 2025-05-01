@@ -84,6 +84,7 @@ const orchestratorMiddleware = middleware(async ({ ctx, next }) => {
   const experimental = await getExperimentalFlag({
     userId: user.id,
     isModerator: user.isModerator,
+    isMember: user.tier != null && user.tier !== 'free',
   });
 
   return next({ ctx: { ...ctx, user, token, experimental } });
