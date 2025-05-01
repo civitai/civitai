@@ -97,8 +97,6 @@ export class ClavataApiClient {
 
     const sectionReports = json.result.policyEvaluationReport?.sectionEvaluationReports ?? [];
 
-    console.log(sectionReports);
-
     const tags: ImageTag[] = sectionReports
       .map((r: any) => ({
         tag: r.name as string,
