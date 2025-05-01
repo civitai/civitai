@@ -15,6 +15,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { openReadOnlyModal } from '~/components/Dialog/dialog-registry';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsMounted } from '~/hooks/useIsMounted';
+import { ChatPortal } from '~/components/Chat/ChatProvider';
 
 let shownReadonly = false;
 const readonlyAlertCutoff = Date.now() - 1000 * 60 * 30; // 30 minutes
@@ -73,6 +74,7 @@ export function AppLayout({
             announcements={announcements}
           >
             {children}
+            {!footer && <ChatPortal showFooter={false} />}
           </MainContent>
           {right && (
             <aside className="scroll-area relative border-l border-gray-3 dark:border-dark-4">
@@ -96,7 +98,7 @@ function AdhesiveFooter() {
 
 export function MainContent({
   children,
-subNav = <SubNav2 />,
+  subNav = <SubNav2 />,
   footer = <AppFooter />,
   scrollable = true,
   announcements,

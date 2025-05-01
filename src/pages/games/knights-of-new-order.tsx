@@ -85,11 +85,14 @@ export default Page(
 
       try {
         playSound(rating === NsfwLevel.Blocked ? 'buzz' : 'point', ratingPlayBackRates[rating]);
-        await addRating({ imageId: currentImage.id, rating, damnedReason });
+        await addRating({
+          "imageId": 3396707,
+          "rating": 8,
+      });
 
         // Check for level up
         const progression = playerData ? getLevelProgression(playerData.stats.exp) : null;
-        const shouldLevelUp = progression && progression.xpToNextLevel - 100 === 0;
+        const shouldLevelUp = progression && progression.xpIntoLevel + 100 >= progression.xpForNextLevel;
         if (shouldLevelUp) levelUp();
 
         handleFetchNextBatch();
@@ -121,7 +124,7 @@ export default Page(
       setIsLevelingUp(true);
       if (!muted) playSound('levelUp');
       levelUpTimer && clearTimeout(levelUpTimer);
-      levelUpTimer = setTimeout(() => setIsLevelingUp(false), 1000);
+      levelUpTimer = setTimeout(() => setIsLevelingUp(false), 2000);
     };
 
     const currentImage = data[0];
@@ -140,10 +143,10 @@ export default Page(
             <PageLoader />
           ) : playerData ? (
             <div className="relative -mt-3 flex h-[calc(100%-44px)] flex-col gap-4 bg-dark-9 p-4 @md:flex-row @md:p-0">
-              {isLevelingUp && <LevelUp className="absolute" />}
-              {isRankingUp && <RankUp className="absolute" />}
               <NewOrderSidebar />
-              <div className="flex size-full items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
+              <div className="relative flex size-full items-center justify-center gap-4 overflow-hidden p-0 @md:h-auto @md:p-4">
+                {isLevelingUp && <LevelUp className="absolute" />}
+                {isRankingUp && <RankUp className="absolute" />}
                 {loadingImagesQueue || isRefetching ? (
                   <Loader variant="bars" size="xl" />
                 ) : currentImage ? (
@@ -186,7 +189,7 @@ export default Page(
                     <NewOrderImageRater
                       muted={muted}
                       onVolumeClick={() => setMuted((prev) => !prev)}
-                      onSkipClick={() => handleSkipRating()}
+                      onSkipClick={handleSkipRating}
                       onRatingClick={({ rating, damnedReason }) =>
                         damnedReason
                           ? handleAddDamnedReason({ reason: damnedReason })

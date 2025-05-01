@@ -22,7 +22,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
       timeoutRef = setTimeout(() => {
         onRatingClick(data);
         setShowReasons(false);
-      }, 500);
+      }, 200);
     },
     [onRatingClick]
   );
@@ -34,7 +34,7 @@ export function NewOrderImageRater({ muted, onRatingClick, onVolumeClick, onSkip
     timeoutRef = setTimeout(() => {
       onSkipClick();
       setShowReasons(false);
-    }, 500);
+    }, 200);
   }, [onSkipClick]);
 
   const handleHotkeyPress = useCallback(

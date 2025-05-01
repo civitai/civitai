@@ -18,25 +18,19 @@ const MAX_SMITE_COUNT = 3;
 const ranksExplanation: Record<NewOrderRankType, React.ReactElement> = {
   [NewOrderRankType.Acolyte]: (
     <>
-      <p className="text-sm font-medium">
-        You are currently an Acolyte and have not yet joined the Knights of New Order.
-      </p>
+      <p>You are currently an Acolyte and have not yet joined the Knights of New Order.</p>
       <p>Keep leveling up to reach Knight rank and unlock all game features.</p>
     </>
   ),
   [NewOrderRankType.Knight]: (
     <>
-      <p className="text-sm font-medium">
-        You are a Knight of New Order and have access to all game features.
-      </p>
+      <p>You are a Knight of New Order and have access to all game features.</p>
       <p>Keep rating images and leveling up to earn blessed buzz and fervor to become a Templar.</p>
     </>
   ),
   [NewOrderRankType.Templar]: (
     <>
-      <p className="text-sm font-medium">
-        You are a Templar of New Order and have access to all game features.
-      </p>
+      <p>You are a Templar of New Order and have access to all game features.</p>
       <p>
         You&apos;ve reached the highest rank in the game and can now see a special queue of images
         to rate.
@@ -66,7 +60,7 @@ export function PlayerCard({
     <Paper className={clsx('flex items-center gap-4 py-2 md:p-4', className)} {...paperProps}>
       <div className="flex w-full flex-col gap-2">
         <div className="flex justify-between gap-2">
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-2">
             <UserAvatar user={user} size="md" radius={999} />
             {rank.iconUrl && (
               <EdgeMedia2 src={rank.iconUrl} className="size-8" type="image" width={32} />

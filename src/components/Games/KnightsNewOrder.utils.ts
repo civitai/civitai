@@ -56,7 +56,7 @@ export const useKnightsNewOrderListener = ({
   const { playerData } = useJoinKnightsNewOrder();
 
   // TODO.newOrder: rename this topic for global signals
-  useSignalTopic(SignalTopic.NewOrderPlayer);
+  // useSignalTopic(SignalTopic.NewOrderPlayer);
   useSignalTopic(playerData ? `${SignalTopic.NewOrderPlayer}:${playerData.id}` : undefined);
   useSignalTopic(playerData ? `${SignalTopic.NewOrderQueue}:${playerData.rankType}` : undefined);
 
@@ -215,10 +215,15 @@ export const useAddImageRating = () => {
       queryUtils.games.newOrder.getPlayer.setData(undefined, (old) => {
         if (!old) return old;
 
+        const matchedImage = prevQueue?.find((image) => image.id === payload.imageId);
+        const isCorrectRating = matchedImage?.nsfwLevel === payload.rating;
+
         return {
           ...old,
-          // TODO.newOrder: update other stats here
-          stats: { ...old.stats, exp: old.stats.exp + 100 },
+          stats: {
+            ...old.stats,
+            exp: matchedImage && isCorrectRating ? old.stats.exp + 100 : old.stats.exp - 100,
+          },
         };
       });
 

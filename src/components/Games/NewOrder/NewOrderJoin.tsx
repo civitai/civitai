@@ -1,7 +1,8 @@
-import { Button, Modal, Text, ThemeIcon } from '@mantine/core';
+import { Button, ThemeIcon } from '@mantine/core';
 import { IconShieldStar } from '@tabler/icons-react';
 import { useMemo, useState } from 'react';
 import { useJoinKnightsNewOrder } from '~/components/Games/KnightsNewOrder.utils';
+import { NewOrderRulesModal } from '~/components/Games/NewOrder/NewOrderRulesModal';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 
 export function NewOrderJoin() {
@@ -45,30 +46,7 @@ export function NewOrderJoin() {
           Learn More
         </Button>
       </div>
-      <Modal
-        size="lg"
-        onClose={() => setOpened(false)}
-        opened={opened}
-        title={
-          <Text color="orange.5" size="lg" weight={600}>
-            What is Knights of New Order?
-          </Text>
-        }
-        centered
-      >
-        <div className="flex flex-col gap-4">
-          <p>
-            Knights of New Order is a thrilling game where players take on the roles of knights in a
-            fantastical world. Engage in epic battles, form alliances, and embark on quests to
-            become the ultimate knight.
-          </p>
-          <p>
-            Join us now and experience the excitement of Knights of New Order. Will you rise to the
-            challenge and become a legendary knight?
-          </p>
-          {joinButton}
-        </div>
-      </Modal>
+      <NewOrderRulesModal opened={opened} onClose={() => setOpened(false)} footer={joinButton} />
     </div>
   );
 }

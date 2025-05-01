@@ -81,6 +81,7 @@ export default function JudgmentHistoryModal() {
                   data={images}
                   render={JudgmentHistoryItem}
                   itemId={(data) => data.image.id}
+                  withAds={false}
                 />
                 {hasNextPage && (
                   <InViewLoader
@@ -95,7 +96,7 @@ export default function JudgmentHistoryModal() {
                 )}
               </div>
             ) : (
-              <NoContent mt="lg" message="There are judgment entries" />
+              <NoContent mt="lg" message="There are no judgment entries" />
             )}
           </MasonryContainer>
         </MasonryProvider>

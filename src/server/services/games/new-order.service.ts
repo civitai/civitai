@@ -118,11 +118,13 @@ export async function smitePlayer({
   if (activeSmiteCount >= 3) return resetPlayer({ playerId, withNotification: true });
 
   const newSmiteCount = await smitesCounter.increment({ id: playerId });
-  signalClient.topicSend({
-    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
-    target: SignalMessages.NewOrderPlayerUpdate,
-    data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: newSmiteCount } },
-  });
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+      target: SignalMessages.NewOrderPlayerUpdate,
+      data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: newSmiteCount } },
+    })
+    .catch();
 
   createNotification({
     category: NotificationCategory.Other,
@@ -130,7 +132,7 @@ export async function smitePlayer({
     key: `new-order-smite-received:${playerId}`,
     userId: playerId,
     details: {},
-  });
+  }).catch();
 
   return smite;
 }
@@ -142,11 +144,13 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
   });
 
   const smiteCount = await smitesCounter.decrement({ id: playerId });
-  signalClient.topicSend({
-    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
-    target: SignalMessages.NewOrderPlayerUpdate,
-    data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: smiteCount } },
-  });
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+      target: SignalMessages.NewOrderPlayerUpdate,
+      data: { action: NewOrderSignalActions.UpdateStats, stats: { smites: smiteCount } },
+    })
+    .catch();
 
   createNotification({
     category: NotificationCategory.Other,
@@ -154,7 +158,7 @@ export async function cleanseSmite({ id, cleansedReason, playerId }: CleanseSmit
     key: `new-order-smite-cleansed:${playerId}`,
     userId: playerId,
     details: { cleansedReason },
-  });
+  }).catch();
 
   return smite;
 }
@@ -187,11 +191,13 @@ export async function addImageRating({
     await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
     await updatePendingImageRatings({ imageId, rating });
 
-    signalClient.topicSend({
-      topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
-      target: SignalMessages.NewOrderQueueUpdate,
-      data: { imageId, action: NewOrderSignalActions.RemoveImage },
-    });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { imageId, action: NewOrderSignalActions.RemoveImage },
+      })
+      .catch();
 
     return true;
   }
@@ -303,21 +309,27 @@ export async function addImageRating({
 
   // Check if player should be promoted
   const knightRank = await getNewOrderRanks({ name: 'Knight' });
-  if (knightRank && knightRank.minExp <= stats.exp) {
+  if (
+    player.rankType === NewOrderRankType.Acolyte &&
+    knightRank &&
+    knightRank.minExp <= stats.exp
+  ) {
     await dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
       data: { rankType: knightRank.type },
     });
 
-    signalClient.topicSend({
-      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
-      target: SignalMessages.NewOrderPlayerUpdate,
-      data: {
-        action: NewOrderSignalActions.RankUp,
-        rankType: knightRank.type,
-        rank: { ...knightRank },
-      },
-    });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+        target: SignalMessages.NewOrderPlayerUpdate,
+        data: {
+          action: NewOrderSignalActions.RankUp,
+          rankType: knightRank.type,
+          rank: { ...knightRank },
+        },
+      })
+      .catch();
   }
 
   // Now, process what to do with the image:
@@ -378,11 +390,13 @@ export async function addImageRating({
       // Clear image from the pool:
       valueInQueue.pool.reset({ id: imageId });
 
-      signalClient.topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:Knight`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: NewOrderSignalActions.RemoveImage },
-      });
+      signalClient
+        .topicSend({
+          topic: `${SignalTopic.NewOrderQueue}:Knight`,
+          target: SignalMessages.NewOrderQueueUpdate,
+          data: { imageId, action: NewOrderSignalActions.RemoveImage },
+        })
+        .catch();
     }
   }
 
@@ -424,11 +438,13 @@ export async function addImageRating({
     // Clear image from the pool:
     valueInQueue.pool.reset({ id: imageId });
 
-    signalClient.topicSend({
-      topic: `${SignalTopic.NewOrderQueue}:Templar`,
-      target: SignalMessages.NewOrderQueueUpdate,
-      data: { imageId, action: NewOrderSignalActions.RemoveImage },
-    });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:Templar`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { imageId, action: NewOrderSignalActions.RemoveImage },
+      })
+      .catch();
   }
 
   return { stats };
@@ -447,11 +463,11 @@ async function updatePendingImageRatings({
     query: `
       ALTER TABLE knights_new_order_image_rating
       UPDATE status = CASE
-        WHEN rating = ${rating} THEN ${NewOrderImageRatingStatus.Correct}
-        ELSE ${NewOrderImageRatingStatus.Failed}
+        WHEN rating = ${rating} THEN '${NewOrderImageRatingStatus.Correct}'
+        ELSE '${NewOrderImageRatingStatus.Failed}'
       END
       WHERE "imageId" = ${imageId}
-        AND status = ${NewOrderImageRatingStatus.Pending}
+        AND status = '${NewOrderImageRatingStatus.Pending}'
         AND rank != '${NewOrderRankType.Acolyte}'
     `,
   });
@@ -543,20 +559,22 @@ export async function resetPlayer({
 
   bustFetchThroughCache(`${REDIS_KEYS.NEW_ORDER.RATED}:${playerId}`);
 
-  signalClient.topicSend({
-    topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
-    target: SignalMessages.NewOrderPlayerUpdate,
-    data: {
-      action: NewOrderSignalActions.Reset,
-      rankType: NewOrderRankType.Acolyte,
-      stats: {
-        exp: 0,
-        fervor: 0,
-        smites: 0,
-        blessedBuzz: 0,
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.NewOrderPlayer}:${playerId}`,
+      target: SignalMessages.NewOrderPlayerUpdate,
+      data: {
+        action: NewOrderSignalActions.Reset,
+        rankType: NewOrderRankType.Acolyte,
+        stats: {
+          exp: 0,
+          fervor: 0,
+          smites: 0,
+          blessedBuzz: 0,
+        },
       },
-    },
-  });
+    })
+    .catch();
 
   if (withNotification)
     createNotification({
@@ -590,7 +608,7 @@ export async function getNewOrderRanks({ name }: { name: string }) {
 
 async function getRatedImages({ userId, startAt }: { userId: number; startAt: Date }) {
   const images = await fetchThroughCache(
-    REDIS_KEYS.NEW_ORDER.RATED,
+    `${REDIS_KEYS.NEW_ORDER.RATED}:${userId}`,
     async () => {
       const results = await clickhouse!.$query<{ imageId: number }>`
         SELECT 
@@ -640,20 +658,24 @@ export async function addImageToQueue({
       ratings: imageRaters[image.id],
     }));
 
-    signalClient.topicSend({
-      topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
-      target: SignalMessages.NewOrderQueueUpdate,
-      data: { images: imagesWithRaters, action: NewOrderSignalActions.AddImage },
-    });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { images: imagesWithRaters, action: NewOrderSignalActions.AddImage },
+      })
+      .catch();
 
     return true;
   }
 
-  signalClient.topicSend({
-    topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
-    target: SignalMessages.NewOrderQueueUpdate,
-    data: { images, action: NewOrderSignalActions.AddImage },
-  });
+  signalClient
+    .topicSend({
+      topic: `${SignalTopic.NewOrderQueue}:${rankType}`,
+      target: SignalMessages.NewOrderQueueUpdate,
+      data: { images, action: NewOrderSignalActions.AddImage },
+    })
+    .catch();
 
   return true;
 }
