@@ -38,6 +38,7 @@ import { generationPanel } from '~/store/generation.store';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height: number }) {
   const { classes, cx } = useStyles();
@@ -45,6 +46,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const { images, ...contextProps } = useImagesContext();
   const features = useFeatureFlags();
   const { running, helpers } = useTourContext();
+  const currentUser = useCurrentUser();
 
   const image = useImageStore(data);
   const { ref, inView } = useInView({ key: image.cosmetic ? 1 : 0 });
@@ -52,6 +54,7 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
   const isBlocked = image.ingestion === ImageIngestionStatus.Blocked || !!image.blockedFor;
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
   const isScanned = image.ingestion === ImageIngestionStatus.Scanned;
+  const isModerator = currentUser?.isModerator;
 
   const tags = useMemo(() => {
     if (!image.tags) return undefined;
@@ -154,6 +157,16 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         'duration' in image.metadata && (
                           <DurationBadge duration={image.metadata.duration ?? 0} />
                         )}
+                      {isModerator && image.minor && (
+                        <Badge variant="filled" radius="xl" h={26} color="pink.3">
+                          Minor
+                        </Badge>
+                      )}
+                      {isModerator && image.poi && (
+                        <Badge variant="filled" radius="xl" h={26} color="pink.3">
+                          POI
+                        </Badge>
+                      )}
                     </div>
                   </div>
                   {safe && (
@@ -241,8 +254,12 @@ export function ImagesCard({ data, height }: { data: ImagesInfiniteModel; height
                         <Text size="sm" inline>
                           This image has been blocked because it is has received a NSFW rating and
                           we could not verify that it was generated using AI. To restore the image,
-                          please <Anchor color="yellow.8" href={`/posts/${image.postId}/edit`}>update your post</Anchor> with metadata detailing the generation process
-                          &ndash; minimally the prompt used.
+                          please{' '}
+                          <Anchor color="yellow.8" href={`/posts/${image.postId}/edit`}>
+                            update your post
+                          </Anchor>{' '}
+                          with metadata detailing the generation process &ndash; minimally the
+                          prompt used.
                         </Text>
                       </div>
                     </Alert>

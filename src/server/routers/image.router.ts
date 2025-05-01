@@ -27,6 +27,7 @@ import {
   removeImageTechniques,
   removeImageTools,
   reportCsamImages,
+  toggleImageFlag,
   updateImageNsfwLevel,
   updateImageTechniques,
   updateImageTools,
@@ -66,6 +67,7 @@ import {
   updateImageTechniqueSchema,
   updateImageToolsSchema,
   removeImageResourceSchema,
+  toggleImageFlagSchema,
 } from './../schema/image.schema';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
@@ -207,4 +209,7 @@ export const imageRouter = router({
   getMyImages: protectedProcedure
     .input(infiniteQuerySchema)
     .query(({ input, ctx }) => getMyImages({ ...input, userId: ctx.user.id })),
+  toggleImageFlag: moderatorProcedure
+    .input(toggleImageFlagSchema)
+    .mutation(({ input, ctx }) => toggleImageFlag({ ...input })),
 });
