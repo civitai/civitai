@@ -48,6 +48,8 @@ export interface ImageProps {
   metadata?: MixedObject | null;
   publishedAt?: Date | null;
   thumbnailUrl?: string | null;
+  minor?: boolean;
+  poi?: boolean;
 }
 
 type ImageViewerState = {

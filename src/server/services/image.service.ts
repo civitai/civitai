@@ -52,6 +52,7 @@ import {
   GetEntitiesCoverImage,
   GetInfiniteImagesOutput,
   ImageEntityType,
+  ToggleImageFlagInput,
   imageMetaOutput,
   ImageRatingReviewOutput,
   ImageReviewQueueInput,
@@ -4950,3 +4951,22 @@ export async function getImagesModRules() {
 export async function bustImageModRulesCache() {
   await bustFetchThroughCache(REDIS_KEYS.CACHES.MOD_RULES.IMAGES);
 }
+
+export const toggleImageFlag = async ({ id, flag }: ToggleImageFlagInput) => {
+  const image = await dbRead.image.findUnique({
+    where: { id },
+    select: { [flag]: true },
+  });
+
+  if (!image) throw throwNotFoundError();
+
+  await dbWrite.image.update({
+    where: { id },
+    data: { [flag]: !image[flag] },
+  });
+
+  // Ensure we update the search index:
+  await imagesMetricsSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
+
+  return true;
+};
