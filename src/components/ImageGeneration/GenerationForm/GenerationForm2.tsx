@@ -254,7 +254,7 @@ export function GenerationFormContent() {
         if (params.engine) delete params.engine;
       }
     } else {
-      const keys = ['fluxMode', 'engine', 'fluxUltraAspectRatio'];
+      const keys = ['fluxMode', 'fluxUltraAspectRatio'];
       for (const key in params) {
         if (keys.includes(key)) delete params[key as keyof typeof params];
       }

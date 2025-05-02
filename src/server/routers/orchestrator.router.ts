@@ -191,10 +191,13 @@ export const orchestratorRouter = router({
         //   args.params.nsfw = !!nsfwLevel && nsfwNsfwLevels.includes(nsfwLevel);
         // }
         // TODO - handle createImageGen
-        if (input.params.engine && input.params.engine !== 'flux-pro-raw')
+        if (input.params.engine && input.params.engine !== 'flux-pro-raw') {
           return await createImageGen(args);
-        if (input.params.workflow === 'txt2img') return await createTextToImage({ ...args });
-        else return await createComfy({ ...args });
+        } else if (input.params.workflow === 'txt2img') {
+          return await createTextToImage({ ...args });
+        } else {
+          return await createComfy({ ...args });
+        }
       } catch (e) {
         if (e instanceof TRPCError && e.message.startsWith('Your prompt was flagged')) {
           await reportProhibitedRequestHandler({
@@ -224,11 +227,13 @@ export const orchestratorRouter = router({
 
         let step: TextToImageStepTemplate | ComfyStepTemplate | ImageGenStepTemplate;
         // TODO - handle createImageGenStep
-        if (args.params.engine && args.params.engine !== 'flux-pro-raw')
+        if (args.params.engine && args.params.engine !== 'flux-pro-raw') {
           step = await createImageGenStep(args);
-        else if (args.params.workflow === 'txt2img')
+        } else if (args.params.workflow === 'txt2img') {
           step = await createTextToImageStep({ ...args, whatIf: true });
-        else step = await createComfyStep({ ...args, whatIf: true });
+        } else {
+          step = await createComfyStep({ ...args, whatIf: true });
+        }
 
         const workflow = await submitWorkflow({
           token: args.token,

@@ -526,7 +526,7 @@ function formatImageGenStep({
       ...acc,
       [job.id]:
         output?.images
-          ?.filter((x) => x.jobId === job.id)
+          ?.filter((x) => (x.jobId ? x.jobId === job.id : true))
           .map((image) => ({
             type: 'image',
             workflowId,
