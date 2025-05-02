@@ -94,7 +94,7 @@ export default Page(
           levelNoticeRef.current.innerText = innerText;
           levelNoticeRef.current.style.display = 'block';
           setTimeout(() => {
-            levelNoticeRef.current!.style.display = 'none';
+            if (levelNoticeRef.current) levelNoticeRef.current.style.display = 'none';
           }, 200);
         }
 

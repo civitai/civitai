@@ -186,22 +186,6 @@ export async function addImageRating({
 
   if (!image) throw throwNotFoundError(`No image with id ${imageId}`);
 
-  // Update image nsfw level if the player is a mod
-  if (isModerator) {
-    await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
-    await updatePendingImageRatings({ imageId, rating });
-
-    signalClient
-      .topicSend({
-        topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
-        target: SignalMessages.NewOrderQueueUpdate,
-        data: { imageId, action: NewOrderSignalActions.RemoveImage },
-      })
-      .catch();
-
-    return true;
-  }
-
   const valueInQueue = await isImageInQueue({
     imageId,
     rankType:
@@ -216,13 +200,48 @@ export async function addImageRating({
   }
 
   if (valueInQueue.value >= 5 && valueInQueue.rank === NewOrderRankType.Knight) {
-    // Ignore this vote, was rated by enough players.
+    // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
+    await valueInQueue.pool.reset({ id: imageId });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:Knight`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { imageId, action: NewOrderSignalActions.RemoveImage },
+      })
+      .catch();
+
     return false;
   }
 
   if (valueInQueue.value >= 2 && valueInQueue.rank === NewOrderRankType.Templar) {
-    // Ignore this vote, was rated by enough players.
+    // Ignore this vote, was rated by enough players. Remove the image from the queue since it has enough votes
+    await valueInQueue.pool.reset({ id: imageId });
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:Templar`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { imageId, action: NewOrderSignalActions.RemoveImage },
+      })
+      .catch();
+
     return false;
+  }
+
+  // Update image nsfw level if the player is a mod
+  if (isModerator) {
+    await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId, isModerator });
+    await updatePendingImageRatings({ imageId, rating });
+    await valueInQueue.pool.reset({ id: imageId });
+
+    signalClient
+      .topicSend({
+        topic: `${SignalTopic.NewOrderQueue}:Inquisitor`,
+        target: SignalMessages.NewOrderQueueUpdate,
+        data: { imageId, action: NewOrderSignalActions.RemoveImage },
+      })
+      .catch();
+
+    return true;
   }
 
   const status =
@@ -252,6 +271,7 @@ export async function addImageRating({
         damnedReason,
         grantedExp,
         multiplier,
+        rank: player.rankType,
       });
     } catch (e) {
       const error = e as Error;
@@ -388,7 +408,8 @@ export async function addImageRating({
     }
 
     // Clear image from the pool:
-    valueInQueue.pool.reset({ id: imageId });
+    await updatePendingImageRatings({ imageId, rating });
+    await valueInQueue.pool.reset({ id: imageId });
 
     signalClient
       .topicSend({
@@ -430,11 +451,11 @@ export async function addImageRating({
     if (rating !== currentNsfwLevel && !processed) {
       // Else, we're good :)
       await updateImageNsfwLevel({ id: imageId, nsfwLevel: rating, userId: playerId });
-      await updatePendingImageRatings({ imageId, rating });
     }
 
     // Clear image from the pool:
-    valueInQueue.pool.reset({ id: imageId });
+    await updatePendingImageRatings({ imageId, rating });
+    await valueInQueue.pool.reset({ id: imageId });
 
     signalClient
       .topicSend({
@@ -493,9 +514,7 @@ export async function updatePlayerStats({
         : await correctJudgmentsCounter.getCount(playerId);
 
     const fervor = calculateFervor({ correctJudgments, allJudgments });
-
     const newFervor = await fervorCounter.increment({ id: playerId, value: fervor });
-    // TODO.newOrder: adjust buzz based on conversion rate
     const blessedBuzz = await blessedBuzzCounter.increment({ id: playerId, value: exp });
 
     stats = { ...stats, fervor: newFervor, blessedBuzz };
