@@ -27,6 +27,7 @@ function SourceImageUpload({
   removable = true,
   upscaleMultiplier,
   upscaleResolution,
+  className,
   ...inputWrapperProps
 }: {
   value?: SourceImageProps | null;
@@ -100,7 +101,7 @@ function SourceImageUpload({
       <Input.Wrapper
         {...inputWrapperProps}
         error={error ?? inputWrapperProps.error}
-        className="min-h-36"
+        className={clsx('min-h-36', className)}
       >
         {!value ? (
           <ImageDropzone

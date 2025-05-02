@@ -59,8 +59,8 @@ export function ViduInput({
 
 const viduSchema = z.object({
   engine: z.literal('vidu').catch('vidu'),
-  sourceImage: sourceImageSchema.optional(),
-  endSourceImage: sourceImageSchema.optional(),
+  sourceImage: sourceImageSchema.nullish(),
+  endSourceImage: sourceImageSchema.nullish(),
   prompt: promptSchema,
   enablePromptEnhancer: z.boolean().default(true),
   style: z.nativeEnum(ViduVideoGenStyle).catch(ViduVideoGenStyle.GENERAL),

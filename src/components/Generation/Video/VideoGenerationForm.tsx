@@ -48,7 +48,7 @@ export function VideoGenerationForm() {
   });
 
   const form = usePersistForm(engine, {
-    schema: z.record(z.string(), z.any()) as any,
+    schema: config.validationSchema as any,
     version: 1,
     reValidateMode: 'onSubmit',
     mode: 'onSubmit',
@@ -163,7 +163,6 @@ function SubmitButton2({ loading }: { loading: boolean }) {
   useEffect(() => {
     const subscription = watch(() => {
       const formData = getValues();
-      console.log({ formData });
       const whatIfData = config.whatIfProps.reduce<Record<string, unknown>>(
         (acc, prop) => ({ ...acc, [prop]: formData[prop] }),
         {}
@@ -188,8 +187,6 @@ function SubmitButton2({ loading }: { loading: boolean }) {
     //   setState({ cost: data.cost.base})
     // }
   }, [data]);
-
-  console.log({ query });
 
   return (
     <div className="flex flex-1 items-center gap-1 rounded-md bg-gray-2 p-1 pr-1.5 dark:bg-dark-5">

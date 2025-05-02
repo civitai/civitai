@@ -43,11 +43,11 @@ export function VideoGenerationConfig2<
   TSchema extends z.AnyZodObject = z.AnyZodObject,
   TOutput extends VideoGenInput = VideoGenInput,
   SchemaOutput = z.infer<TSchema>,
-  SchemaInput = z.input<TSchema>,
-  RefinedOutput extends SchemaOutput = SchemaOutput
+  SchemaInput = z.input<TSchema>
 >({
   defaultValues,
   superRefine,
+  schema,
   ...args
 }: {
   label: string;
@@ -59,20 +59,20 @@ export function VideoGenerationConfig2<
   defaultValues?: SchemaInput;
   superRefine?: (arg: SchemaOutput, ctx: RefinementCtx) => void;
 }) {
+  const validationSchema = superRefine ? schema.superRefine(superRefine as any) : schema;
+
   function validate(data: any) {
     const values = { ...defaultValues, ...data };
-    return superRefine
-      ? args.schema.superRefine(superRefine as any).parse(values)
-      : args.schema.parse(values);
+    return validationSchema.parse(values);
   }
 
   function getDefaultValues() {
-    return args.schema.parse(defaultValues);
+    return schema.parse(defaultValues);
   }
 
   function getWhatIfValues(data: any) {
-    return args.schema.parse({ ...defaultValues, ...data });
+    return schema.parse({ ...defaultValues, ...data });
   }
 
-  return { ...args, getDefaultValues, validate, getWhatIfValues };
+  return { ...args, schema, validationSchema, getDefaultValues, validate, getWhatIfValues };
 }

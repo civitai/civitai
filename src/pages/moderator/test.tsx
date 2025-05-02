@@ -127,7 +127,7 @@ function Test() {
         <ExampleSelect />
 
         <ExamplePopover /> */}
-        <CustomAspectRatio minResolution={64} maxResolution={5000} defaultResolution={320} />
+        {/* <CustomAspectRatio minResolution={64} maxResolution={5000} defaultResolution={320} /> */}
         {/* <FormWrapper engine="vidu">
 
         </FormWrapper> */}
